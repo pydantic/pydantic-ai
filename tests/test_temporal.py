@@ -2722,7 +2722,7 @@ web_search_model = OpenAIResponsesModel(
 web_search_agent = Agent(
     web_search_model,
     name='web_search_agent',
-    native_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+    capabilities=[NativeTool(WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX')))],
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -3296,7 +3296,7 @@ code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code 
 builtin_tool_agent = Agent(
     web_search_builtin_model,
     name='builtin_tool_dynamic_agent',
-    native_tools=[_select_builtin_tool],
+    capabilities=[NativeTool(_select_builtin_tool)],
 )
 
 builtin_tool_temporal_agent = TemporalAgent(

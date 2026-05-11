@@ -242,7 +242,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -267,7 +266,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -291,7 +289,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -336,14 +333,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.run')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -366,7 +364,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             output_retries=output_retries,
             toolsets=toolsets,
-            native_tools=native_tools,
             capabilities=capabilities,
             spec=spec,
         ) as agent_run:
@@ -436,7 +433,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -461,7 +457,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -485,7 +480,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -529,14 +523,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_sync'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -559,7 +556,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_retries=output_retries,
                 infer_name=False,
                 toolsets=toolsets,
-                native_tools=native_tools,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
@@ -585,7 +581,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -610,7 +605,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -635,7 +629,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -686,7 +679,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
@@ -696,7 +688,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -723,7 +719,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_retries=output_retries,
             infer_name=False,
             toolsets=toolsets,
-            native_tools=native_tools,
             capabilities=capabilities,
             spec=spec,
         ) as agent_run:
@@ -886,7 +881,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -910,7 +904,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -933,7 +926,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -986,7 +978,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
@@ -996,7 +987,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream_sync'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -1018,7 +1013,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_retries=output_retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                native_tools=native_tools,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
@@ -1047,7 +1041,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentEventStream[OutputDataT]: ...
@@ -1071,7 +1064,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentEventStream[RunOutputDataT]: ...
@@ -1094,7 +1086,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
@@ -1155,7 +1146,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
@@ -1163,7 +1153,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             An `AgentEventStream` async context manager yielding stream events `AgentStreamEvent` and finally a
             `AgentRunResultEvent` with the final run result.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream_events'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -1188,7 +1182,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 metadata=metadata,
                 output_retries=output_retries,
                 toolsets=toolsets,
-                native_tools=native_tools,
                 capabilities=capabilities,
                 spec=spec,
             )
@@ -1211,7 +1204,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         output_retries: int | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
@@ -1243,7 +1235,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     output_retries=output_retries,
                     infer_name=False,
                     toolsets=toolsets,
-                    native_tools=native_tools,
                     event_stream_handler=event_stream_handler,
                     capabilities=capabilities,
                     spec=spec,
@@ -1290,7 +1281,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -1314,7 +1304,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -1339,7 +1328,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -1427,7 +1415,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
@@ -1465,7 +1452,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
-                Per-run `native_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.

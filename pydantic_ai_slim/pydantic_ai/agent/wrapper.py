@@ -128,7 +128,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -152,7 +151,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -176,7 +174,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
@@ -262,14 +259,15 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         async with self.wrapped.iter(
@@ -288,7 +286,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_retries=output_retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            native_tools=native_tools,
             capabilities=capabilities,
             spec=spec,
         ) as run:
@@ -322,7 +319,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
-                Per-run `native_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.

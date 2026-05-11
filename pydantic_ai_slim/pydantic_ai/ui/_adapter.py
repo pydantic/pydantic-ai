@@ -38,7 +38,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
@@ -473,7 +472,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AbstractNativeTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
@@ -494,11 +493,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
         from .. import _utils
 
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'UIAdapter.run_stream_native'
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if deferred_tool_results is None:
@@ -529,9 +531,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        capabilities: list[AbstractCapability[AgentDepsT]] = []
+        run_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if self.manage_system_prompt == 'server':
-            capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+        if capabilities:
+            run_capabilities.extend(capabilities)
+        if extra_capabilities:
+            run_capabilities.extend(extra_capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
             async with self.agent.run_stream_events(
@@ -548,8 +554,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                native_tools=native_tools,
-                capabilities=capabilities,
+                capabilities=run_capabilities,
             ) as stream:
                 async for event in stream:
                     yield event
@@ -572,7 +577,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AbstractNativeTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         **_deprecated_kwargs: Any,
     ) -> AsyncIterator[EventT]:
@@ -594,15 +599,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
-        from .. import _utils
-
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
+        # Forward the legacy `builtin_tools=` kwarg through to `run_stream_native` for backward
+        # compatibility — its dedicated helper will emit a deprecation warning and route
+        # the items through capabilities.
         return self.transform_stream(
             self.run_stream_native(
                 output_type=output_type,
@@ -618,7 +622,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                native_tools=native_tools,
+                capabilities=capabilities,
+                **_deprecated_kwargs,
             ),
             on_complete=on_complete,
         )
@@ -642,7 +647,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        native_tools: Sequence[AbstractNativeTool] | None = None,
+        capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -671,7 +676,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
@@ -683,9 +689,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
-        from .. import _utils
-
-        native_tools = _utils.consume_deprecated_builtin_tools(kwargs, native_tools)
+        # Extract the legacy `builtin_tools=` kwarg from `**kwargs` before passing the rest to
+        # `from_request`, so subclasses receive only their own adapter-specific extras.
+        legacy_builtin_tools_kwargs: dict[str, Any] = {}
+        if 'builtin_tools' in kwargs:
+            legacy_builtin_tools_kwargs['builtin_tools'] = kwargs.pop('builtin_tools')
 
         try:
             from starlette.responses import Response
@@ -729,7 +737,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                native_tools=native_tools,
+                capabilities=capabilities,
                 on_complete=on_complete,
+                **legacy_builtin_tools_kwargs,
             ),
         )

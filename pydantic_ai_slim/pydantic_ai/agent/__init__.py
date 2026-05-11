@@ -49,16 +49,13 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
-from .._warnings import PydanticAIDeprecationWarning  # imported here to avoid a circular import
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
-from ..capabilities.native_tool import NativeTool as NativeToolCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -106,7 +103,6 @@ if TYPE_CHECKING:
     from pydantic_graph import GraphRunContext
 
     from ..mcp import MCPServer
-    from ..native_tools import AbstractNativeTool
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -247,7 +243,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -280,7 +275,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
@@ -311,7 +305,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -363,8 +356,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
-            native_tools: The native (provider-side) tools that the agent will use. This depends on the model, as some models
-                may not support certain tools. If the model doesn't support a given native tool, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
@@ -430,20 +421,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
 
-        if 'builtin_tools' in _deprecated_kwargs:
-            warnings.warn(
-                '`Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
-                'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
-                '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
-                PydanticAIDeprecationWarning,
-                stacklevel=3,
-            )
-            legacy_native_tools = _deprecated_kwargs.pop('builtin_tools')
-            if not native_tools:
-                native_tools = legacy_native_tools
+        capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
 
-        for native_tool in native_tools:
-            capabilities.append(NativeToolCap(native_tool))
         if prepare_tools is not None:
             capabilities.append(PrepareTools(prepare_tools))
         if prepare_output_tools is not None:
@@ -590,7 +569,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -624,7 +602,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -657,7 +634,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -697,7 +673,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context: Pydantic validation context for tool arguments and outputs.
             output_retries: Max retries for output validation, overrides spec `output_retries` if provided.
             tools: Tools to register with the agent.
-            native_tools: Native tools for the agent.
             prepare_tools: Custom function to prepare tool definitions.
             prepare_output_tools: Custom function to prepare output tool definitions.
             toolsets: Toolsets to register with the agent.
@@ -715,10 +690,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        legacy_native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, None)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'Agent.from_spec'
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
-        if legacy_native_tools is not None and not native_tools:
-            native_tools = legacy_native_tools
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
 
@@ -739,10 +714,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         if capabilities:
             all_capabilities.extend(capabilities)
-        # Translate `native_tools=` into `NativeTool` capabilities so we can pass them
-        # through the (non-deprecated) `capabilities=` constructor kwarg.
-        for native_tool in native_tools:
-            all_capabilities.append(NativeToolCap(native_tool))
+        if extra_capabilities:
+            all_capabilities.extend(extra_capabilities)
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -802,7 +775,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -837,7 +809,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -871,7 +842,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        native_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -896,10 +866,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
-        legacy_native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, None)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'Agent.from_file'
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
-        if legacy_native_tools is not None and not native_tools:
-            native_tools = legacy_native_tools
+        merged_capabilities: Sequence[AgentCapability[Any]] | None
+        if extra_capabilities:
+            merged_capabilities = [*(capabilities or ()), *extra_capabilities]
+        else:
+            merged_capabilities = capabilities
 
         spec = AgentSpec.from_file(path, fmt=fmt)
         return cls.from_spec(
@@ -917,7 +892,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=validation_context,
             output_retries=output_retries,
             tools=tools,
-            native_tools=native_tools,
             prepare_tools=prepare_tools,
             prepare_output_tools=prepare_output_tools,
             toolsets=toolsets,
@@ -929,7 +903,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
-            capabilities=capabilities,
+            capabilities=merged_capabilities,
         )
 
     @staticmethod
@@ -1017,7 +991,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -1041,7 +1014,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -1065,7 +1037,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
@@ -1154,14 +1125,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -1367,8 +1339,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
+        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
+        # preserving any additional per-run capability-contributed native tools (e.g. from
+        # `capabilities=[NativeTool(...)]`) on top.
         if some_native_tools := self._override_builtin_tools.get():
-            cap_native_tools = list(some_native_tools.value)
+            extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+            for cap in extra_capabilities:
+                extra_native_tools.extend(cap.get_native_tools())
+            cap_native_tools = [*some_native_tools.value, *extra_native_tools]
 
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -1445,7 +1423,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
-            native_tools=[*cap_native_tools, *(native_tools or [])],
+            native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -1859,7 +1837,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
-                Per-run `native_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
@@ -2803,7 +2780,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         models: ModelsParam = None,
-        native_tools: list[AbstractNativeTool] | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
@@ -2822,6 +2798,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Note that the `deps` and `model_settings` will be the same for each request.
         To provide different `deps` for each request use the lower-level adapters directly.
 
+        The agent's configured native tools (registered via `capabilities=[NativeTool(...)]`
+        or higher-level capabilities like `WebSearch()`) are automatically exposed as
+        options in the UI.
+
         Args:
             models: Additional models to make available in the UI. Can be:
                 - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-6']`)
@@ -2829,9 +2809,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
-            native_tools: Additional native tools to make available in the UI.
-                The agent's configured native tools are always included. Tool labels
-                in the UI are derived from the tool's `label` property.
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
@@ -2861,7 +2838,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        # Legacy `builtin_tools=` on `to_web` historically forwarded to the UI's `native_tools=`
+        # (additional native tools shown as options in the UI). Continue to forward there to
+        # preserve behavior, but emit a deprecation warning encouraging the
+        # `capabilities=[NativeTool(...)]` migration path on the underlying agent.
+        legacy_native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, None)
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         from ..ui._web import create_web_app
@@ -2869,7 +2850,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return create_web_app(
             self,
             models=models,
-            native_tools=native_tools,
+            native_tools=legacy_native_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

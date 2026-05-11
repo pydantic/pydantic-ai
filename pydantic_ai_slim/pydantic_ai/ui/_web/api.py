@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
@@ -166,11 +167,12 @@ def create_api_app(
 
         model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
         request_native_tools = [tool for tool in ui_native_tools if tool.unique_id in extra_data.builtin_tools]
+        request_capabilities: list[NativeTool[AgentDepsT]] = [NativeTool(tool) for tool in request_native_tools]
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
             model=model_ref,
-            native_tools=request_native_tools,
+            capabilities=request_capabilities,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

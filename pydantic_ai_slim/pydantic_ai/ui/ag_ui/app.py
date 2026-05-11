@@ -12,7 +12,6 @@ from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
@@ -58,7 +57,6 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        native_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,
@@ -97,7 +95,6 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            native_tools: Optional additional native tools for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -121,7 +118,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         """
         from ... import _utils
 
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'AGUIApp')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         super().__init__(
@@ -158,7 +155,6 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                native_tools=native_tools,
                 on_complete=on_complete,
             )
 

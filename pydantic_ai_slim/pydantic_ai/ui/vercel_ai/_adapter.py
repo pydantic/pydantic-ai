@@ -82,8 +82,8 @@ if TYPE_CHECKING:
 
     from ...agent import AbstractAgent
     from ...agent.abstract import AgentMetadata
+    from ...capabilities import AbstractCapability
     from ...models import KnownModelName, Model
-    from ...native_tools import AbstractNativeTool
     from ...output import OutputSpec
     from ...settings import ModelSettings
     from ...tools import DeferredToolApprovalResult
@@ -178,17 +178,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        native_tools: Sequence[AbstractNativeTool] | None = None,
+        capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
-        from ... import _utils
-
-        native_tools = _utils.consume_deprecated_builtin_tools(kwargs, native_tools)
-
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -207,7 +203,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
-            native_tools=native_tools,
+            capabilities=capabilities,
             on_complete=on_complete,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,

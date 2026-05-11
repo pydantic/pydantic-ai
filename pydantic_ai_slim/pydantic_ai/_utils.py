@@ -744,13 +744,17 @@ def consume_deprecated_builtin_tools(
 ) -> _T:
     """Pop a deprecated `builtin_tools=` kwarg, warn, and reconcile it with `native_tools=`.
 
-    Used by per-call entry points (`run`/`iter`/`run_stream`/`override`/dispatchers/etc.)
-    after the renaming of `builtin_tools=` to `native_tools=`. The kwarg stays
-    functional but emits a `PydanticAIDeprecationWarning` (visible by default,
-    `UserWarning` subclass) at runtime.
+    Used by `override()` (and its `WrapperAgent` counterpart), where `native_tools=`
+    survives as a first-party kwarg. The legacy `builtin_tools=` kwarg stays functional
+    but emits a `PydanticAIDeprecationWarning` (visible by default, `UserWarning`
+    subclass) at runtime.
 
     Returns `native_tools` if the caller passed an explicit value (anything other
     than `None`/`UNSET`); otherwise the legacy value.
+
+    For per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    use [`consume_deprecated_builtin_tools_as_capabilities`][pydantic_ai._utils.consume_deprecated_builtin_tools_as_capabilities]
+    instead — those surfaces no longer expose a `native_tools=` kwarg.
     """
     from ._warnings import PydanticAIDeprecationWarning
 
@@ -770,6 +774,40 @@ def consume_deprecated_builtin_tools(
     if native_tools is None or native_tools is UNSET:
         return legacy
     return native_tools
+
+
+def consume_deprecated_builtin_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and return native-tool capability wrappers.
+
+    Returns a list of [`NativeTool`][pydantic_ai.capabilities.NativeTool] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    Used by per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    where the `native_tools=` parameter has been removed. For `override()` (which keeps
+    `native_tools=`), use
+    [`consume_deprecated_builtin_tools`][pydantic_ai._utils.consume_deprecated_builtin_tools] instead.
+    """
+    if 'builtin_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import NativeTool
+
+    warnings.warn(
+        f'`{owner}(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
+        'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
+        '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [NativeTool(t) for t in legacy]
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)

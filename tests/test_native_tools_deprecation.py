@@ -331,36 +331,39 @@ def test_agent_builtin_tools_constructor_deprecated():
 
 
 async def test_agent_run_builtin_tools_kwarg_deprecated():
-    """`agent.run(..., builtin_tools=[...])` warns and forwards to `native_tools=`."""
+    """`agent.run(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
     agent = Agent(TestModel())
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`builtin_tools=` is deprecated, use `native_tools=`',
+        match=r'`agent\.run\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             await agent.run('hi', builtin_tools=[WebSearchTool()])  # pyright: ignore[reportCallIssue]
 
 
 def test_agent_run_sync_builtin_tools_kwarg_deprecated():
-    """`agent.run_sync(..., builtin_tools=[...])` warns and forwards to `native_tools=`."""
+    """`agent.run_sync(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
     agent = Agent(TestModel())
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`builtin_tools=` is deprecated, use `native_tools=`',
+        match=r'`agent\.run_sync\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             agent.run_sync('hi', builtin_tools=[WebSearchTool()])  # pyright: ignore[reportCallIssue]
 
 
 async def test_agent_run_stream_builtin_tools_kwarg_deprecated():
-    """`agent.run_stream(..., builtin_tools=[...])` warns and forwards to `native_tools=`."""
+    """`agent.run_stream(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
     agent = Agent(TestModel())
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`builtin_tools=` is deprecated, use `native_tools=`',
+        match=r'`agent\.run_stream\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             async with agent.run_stream('hi', builtin_tools=[WebSearchTool()]):  # pyright: ignore[reportCallIssue]
@@ -368,12 +371,13 @@ async def test_agent_run_stream_builtin_tools_kwarg_deprecated():
 
 
 async def test_agent_iter_builtin_tools_kwarg_deprecated():
-    """`agent.iter(..., builtin_tools=[...])` warns and forwards to `native_tools=`."""
+    """`agent.iter(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
     agent = Agent(TestModel())
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`builtin_tools=` is deprecated, use `native_tools=`',
+        match=r'`agent\.iter\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             async with agent.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]

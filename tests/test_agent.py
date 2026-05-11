@@ -9594,7 +9594,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
 
 
 def test_agent_native_tools_runtime_vs_agent_level():
-    """Test that runtime native_tools parameter is merged with agent-level native_tools."""
+    """Test that runtime `capabilities=[NativeTool(...)]` is merged with agent-level native tools."""
     model = TestModel()
 
     agent = Agent(
@@ -9611,10 +9611,12 @@ def test_agent_native_tools_runtime_vs_agent_level():
     with pytest.raises(Exception, match='TestModel does not support built-in tools'):
         agent.run_sync(
             'Hello',
-            native_tools=[
-                WebSearchTool(search_context_size='high'),
-                MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
-                MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            capabilities=[
+                NativeTool(WebSearchTool(search_context_size='high')),
+                NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp')),
+                NativeTool(
+                    MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token')
+                ),
             ],
         )
 
@@ -9659,7 +9661,7 @@ def test_agent_override_native_tools_replaces_agent_level_tools():
 
 
 def test_agent_override_native_tools_preserves_runtime_additive_tools():
-    """Test that runtime native_tools are still added to overridden native tools."""
+    """Test that runtime `capabilities=[NativeTool(...)]` are still added to overridden native tools."""
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -9669,7 +9671,7 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     ):
         agent.run_sync(
             'Hello',
-            native_tools=[MCPServerTool(id='example', url='https://mcp.example.com/mcp')],
+            capabilities=[NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))],
         )
 
     assert model.last_model_request_parameters is not None
@@ -9856,12 +9858,12 @@ async def test_sync_dynamic_tool():
 
 
 async def test_dynamic_tool_in_run_call():
-    """Verify dynamic tools can be passed to agent.run()."""
+    """Verify dynamic tools can be passed to agent.run() via `capabilities=[NativeTool(...)]`."""
     model = TestModel()
     agent = Agent(model, deps_type=UserContext)
 
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location='Berlin'), native_tools=[prepared_web_search])
+        await agent.run('Hello', deps=UserContext(location='Berlin'), capabilities=[NativeTool(prepared_web_search)])
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools
