@@ -60,6 +60,16 @@ def _build_model(app: Starlette, *, api_key: str = 'test-key') -> tuple[OpenResp
     return model, client
 
 
+def _build_model_no_transport(*, api_key: str = 'test-key') -> tuple[OpenResponsesModel, httpx.AsyncClient]:
+    """Build an `OpenResponsesModel` without an ASGI transport — for tests that don't hit the wire."""
+    client = httpx.AsyncClient(base_url='http://test')
+    model = OpenResponsesModel(
+        model_name='inner',
+        provider=OpenAIProvider(api_key=api_key, base_url='http://test/v1', http_client=client),
+    )
+    return model, client
+
+
 def _sse_body(events: list[tuple[str, dict[str, Any]]]) -> str:
     """Render a list of (event_type, payload) tuples as an SSE response body."""
     lines: list[str] = []
@@ -285,16 +295,8 @@ async def test_request_stream_raises_model_http_error_on_4xx(allow_model_request
 
 
 async def test_build_request_body_carries_tools_instructions_and_settings() -> None:
-    """Round-trip the request body construction so tools/instructions/settings reach the wire."""
-    captured: dict[str, Any] = {}
-
-    async def handler(request: Request) -> Response:
-        captured.update(await request.json())
-        captured['headers'] = dict(request.headers)
-        return JSONResponse({'id': 'r', 'model': 'inner', 'status': 'completed', 'output': []})
-
-    app = Starlette(routes=[Route('/v1/responses', handler, methods=['POST'])])
-    model, client = _build_model(app)
+    """Direct test of request body construction — tools/instructions/settings reach the wire shape."""
+    model, client = _build_model_no_transport()
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -383,12 +385,7 @@ async def test_streamed_response_close_stream_closes_underlying_response(allow_m
 
 def test_system_property_returns_openresponses() -> None:
     """The `system` property surfaces the provider name used in `ModelResponse.provider_name`."""
-
-    async def handler(_request: Request) -> Response:
-        return JSONResponse({})
-
-    app = Starlette(routes=[Route('/v1/responses', handler, methods=['POST'])])
-    model, _client = _build_model(app)
+    model, _client = _build_model_no_transport()
     assert model.system == 'openresponses'
 
 
@@ -396,11 +393,7 @@ async def test_request_body_streams_flag_propagates() -> None:
     """`stream=True` flag flips the body field; `tools` are emitted when registered."""
     from pydantic_ai.tools import ToolDefinition
 
-    async def handler(_request: Request) -> Response:
-        return JSONResponse({})
-
-    app = Starlette(routes=[Route('/v1/responses', handler, methods=['POST'])])
-    model, client = _build_model(app)
+    model, client = _build_model_no_transport()
 
     parameters = ModelRequestParameters()
     parameters.tool_defs = {
@@ -621,12 +614,7 @@ async def test_request_silently_ignores_malformed_wire_items(allow_model_request
 
 async def test_request_body_omits_settings_when_values_are_none() -> None:
     """`_build_request_body` skips settings whose values are `None`."""
-
-    async def handler(_request: Request) -> Response:
-        return JSONResponse({'output': []})
-
-    app = Starlette(routes=[Route('/v1/responses', handler, methods=['POST'])])
-    model, client = _build_model(app)
+    model, client = _build_model_no_transport()
     from pydantic_ai.settings import ModelSettings
 
     settings: ModelSettings = {'top_p': 0.9}
@@ -644,17 +632,7 @@ async def test_request_body_omits_settings_when_values_are_none() -> None:
 
 async def test_build_headers_handles_missing_api_key_and_non_string_extra_headers() -> None:
     """`_build_headers` omits `Authorization` when api_key is absent and skips non-string extra headers."""
-
-    async def handler(_request: Request) -> Response:
-        return JSONResponse({})
-
-    app = Starlette(routes=[Route('/v1/responses', handler, methods=['POST'])])
-    transport = httpx.ASGITransport(app=app)
-    client = httpx.AsyncClient(transport=transport, base_url='http://test')
-    model = OpenResponsesModel(
-        model_name='inner',
-        provider=OpenAIProvider(api_key='unset', base_url='http://test/v1', http_client=client),
-    )
+    model, client = _build_model_no_transport()
     # Strip the api_key so `getattr(..., 'api_key', None)` falsy path runs.
     model.client.api_key = ''
     headers = model._build_headers(  # pyright: ignore[reportPrivateUsage]

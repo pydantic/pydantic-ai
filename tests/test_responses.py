@@ -1899,11 +1899,12 @@ async def test_function_tool_result_suppressed_in_openai_compat_mode() -> None:
     from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart as _ToolReturnPart
 
     event_stream = _bare_event_stream()  # default mode is `openai_compat`
-    events: list[Any] = []
-    async for ev in event_stream.handle_function_tool_result(
-        FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='c', content='x'))
-    ):
-        events.append(ev)
+    events = [
+        ev
+        async for ev in event_stream.handle_function_tool_result(
+            FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='c', content='x'))
+        )
+    ]
     assert events == []
 
 
@@ -1915,11 +1916,12 @@ async def test_function_tool_result_skipped_for_unknown_call_id_in_openresponses
         run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
         mode='openresponses',
     )
-    events: list[Any] = []
-    async for ev in event_stream.handle_function_tool_result(
-        FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='never-started', content='x'))
-    ):
-        events.append(ev)
+    events = [
+        ev
+        async for ev in event_stream.handle_function_tool_result(
+            FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='never-started', content='x'))
+        )
+    ]
     assert events == []
 
 
@@ -1931,11 +1933,12 @@ async def test_function_tool_result_skipped_for_retry_prompt_part_in_openrespons
         run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
         mode='openresponses',
     )
-    events: list[Any] = []
-    async for ev in event_stream.handle_function_tool_result(
-        FunctionToolResultEvent(part=RetryPromptPart(content='retry me', tool_name='t', tool_call_id='c1'))
-    ):
-        events.append(ev)
+    events = [
+        ev
+        async for ev in event_stream.handle_function_tool_result(
+            FunctionToolResultEvent(part=RetryPromptPart(content='retry me', tool_name='t', tool_call_id='c1'))
+        )
+    ]
     assert events == []
 
 
