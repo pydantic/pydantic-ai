@@ -60,7 +60,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
@@ -8353,10 +8353,8 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == agent.description
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
-    assert wrapper_agent.render_description() == 'wrapped description'
-    # AbstractAgent's default `render_description` returns `description` as-is — exercised here for
-    # external subclasses that don't override it (Agent and WrapperAgent both do).
-    assert AbstractAgent.render_description(wrapper_agent) == 'wrapped description'  # type: ignore[type-var]
+    # `render_description` is `Agent`-only; setting via `wrapper_agent.description` mutates the wrapped agent.
+    assert agent.render_description() == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability

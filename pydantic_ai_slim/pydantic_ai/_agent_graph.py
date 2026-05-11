@@ -46,7 +46,7 @@ from .tools import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from .agent.abstract import AbstractAgent
+    from .agent import Agent
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
@@ -200,7 +200,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
-    agent: AbstractAgent[DepsT, Any] | None = None
+    agent: Agent[DepsT, Any] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
