@@ -2921,9 +2921,12 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
 
     async def event_stream_handler(_ctx: RunContext[None], stream: _AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
-            if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
-                if event.part.tool_name == 'search_tools':
-                    typed_at_start.append(isinstance(event.part, ToolSearchCallPart))
+            if (
+                isinstance(event, PartStartEvent)
+                and isinstance(event.part, ToolCallPart)
+                and event.part.tool_name == 'search_tools'
+            ):
+                typed_at_start.append(isinstance(event.part, ToolSearchCallPart))
 
     await agent.run('find a mortgage tool', event_stream_handler=event_stream_handler)
 
