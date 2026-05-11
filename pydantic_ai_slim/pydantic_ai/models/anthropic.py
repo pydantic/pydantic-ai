@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
+import base64
 import io
+import urllib.parse
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -9,6 +11,7 @@ from datetime import datetime
 from typing import Any, Literal, TypeAlias, cast, overload
 
 from pydantic import TypeAdapter
+from pydantic_core import to_json
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -93,7 +96,10 @@ try:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        NotGiven,
         Omit,
+        RequestOptions,
+        Timeout,
         omit as OMIT,
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
@@ -814,10 +820,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
-
-        # standalone function to make it easier to override
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(
             tools, model_request_parameters, model_settings
@@ -836,6 +838,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return await self._messages_count_tokens_bedrock(
+                system=system_prompt or OMIT,
+                messages=anthropic_messages,
+                model=self._model_name,
+                max_tokens=model_settings.get('max_tokens', 4096),
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
+                mcp_servers=mcp_servers or OMIT,
+                betas=sorted(betas) or OMIT,
+                output_config=output_config or OMIT,
+                cache_control=auto_cache_control or OMIT,
+                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                context_management=context_management or OMIT,
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                speed=self._effective_speed(model_settings, anthropic_profile),
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
+            )
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -854,6 +876,68 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
+
+    async def _messages_count_tokens_bedrock(
+        self,
+        *,
+        system: str | list[BetaTextBlockParam] | Omit,
+        messages: list[BetaMessageParam],
+        model: AnthropicModelName,
+        max_tokens: int,
+        tools: list[BetaToolUnionParam] | Omit,
+        tool_choice: BetaToolChoiceParam | Omit,
+        mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] | Omit,
+        betas: list[AnthropicBetaParam] | Omit,
+        output_config: BetaOutputConfigParam | Omit,
+        cache_control: BetaCacheControlEphemeralParam | Omit,
+        thinking: BetaThinkingConfigParam | Omit,
+        context_management: BetaContextManagementConfigParam | Omit,
+        timeout: float | Timeout | None | NotGiven,
+        speed: Literal['standard', 'fast'] | Omit,
+        extra_headers: dict[str, str],
+        extra_body: object | None,
+    ) -> BetaMessageTokensCount:
+        body: dict[str, object] = {
+            'anthropic_version': 'bedrock-2023-05-31',
+            'max_tokens': max_tokens,
+            'messages': messages,
+        }
+        for key, value in (
+            ('system', system),
+            ('tools', tools),
+            ('tool_choice', tool_choice),
+            ('mcp_servers', mcp_servers),
+            ('output_config', output_config),
+            ('cache_control', cache_control),
+            ('thinking', thinking),
+            ('context_management', context_management),
+            ('speed', speed),
+        ):
+            if not isinstance(value, Omit):
+                body[key] = value
+        if not isinstance(betas, Omit):
+            body['anthropic_beta'] = betas
+        if is_str_dict(extra_body):
+            body.update(extra_body)
+
+        options: RequestOptions = {'headers': {**extra_headers, 'Content-Type': 'application/json'}}
+        if not isinstance(timeout, NotGiven):
+            options['timeout'] = timeout
+
+        quoted_model = urllib.parse.quote(str(model), safe=':')
+        encoded_body = base64.b64encode(to_json(body)).decode()
+        content = to_json({'input': {'invokeModel': {'body': encoded_body}}})
+        with _map_api_errors(self.model_name):
+            response = await self.client.post(
+                f'/model/{quoted_model}/count-tokens',
+                cast_to=dict[str, object],
+                content=content,
+                options=options,
+            )
+
+        if not isinstance(input_tokens := response.get('inputTokens'), int):
+            raise UnexpectedModelBehavior('Unexpected Bedrock count tokens response')
+        return BetaMessageTokensCount(input_tokens=input_tokens)
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
