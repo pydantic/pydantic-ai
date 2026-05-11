@@ -383,7 +383,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case CompactionPart():  # pragma: no cover
                 async for e in self.handle_compaction(part):
                     yield e
-            case AgentContextPart():
+            case AgentContextPart():  # pragma: no branch
                 async for e in self.handle_agent_context(part):
                     yield e
 

@@ -1679,18 +1679,79 @@ async def test_history_loader_invoked_with_conversation_key() -> None:
     assert seen_keys == ['resp_prev']
 
 
-async def test_history_loader_skipped_when_no_conversation_id() -> None:
-    """No `conversation` / `previous_response_id` → loader is not called (fresh run)."""
-    called = False
+async def test_history_loader_returning_empty_list_falls_through_to_fresh_run() -> None:
+    """Loader returning `[]` (no prior turns) is treated as no history — fresh run, no warning."""
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'ok'
 
     async def loader(_key: str) -> list[ModelMessage]:
-        nonlocal called
-        called = True
         return []
 
+    agent = Agent(model=FunctionModel(stream_function=stream))
+
+    async def endpoint(request: Request) -> Any:
+        return await ResponsesAdapter[None, str].dispatch_request(request, agent=agent, history_loader=loader)
+
+    app = Starlette()
+    app.router.add_route('/v1/responses', endpoint, methods=['POST'])
+    body = json.dumps(
+        {'model': 'test', 'stream': True, 'input': 'follow-up', 'previous_response_id': 'resp_unknown'}
+    ).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body) as resp:
+            text = ''.join(resp.iter_text())
+    # The stream completed successfully without raising.
+    assert 'response.completed' in text
+
+
+async def test_dispatch_request_uses_explicit_output_type_and_instructions() -> None:
+    """Passing explicit `output_type` / `instructions` to `dispatch_request` skips the request-side fallback."""
+    seen_instructions: list[str | None] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        # Capture the instructions surfaced into AgentInfo.
+        seen_instructions.append(info.instructions)
+        yield 'ok'
+
+    agent = Agent(model=FunctionModel(stream_function=stream))
+
+    async def endpoint(request: Request) -> Any:
+        return await ResponsesAdapter[None, str].dispatch_request(
+            request,
+            agent=agent,
+            output_type=str,
+            instructions='explicit override',
+        )
+
+    app = Starlette()
+    app.router.add_route('/v1/responses', endpoint, methods=['POST'])
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': 'hi',
+            # Both fields populated on the request to exercise the False branch
+            # of `if output_type is None:` / `if instructions is None:` in dispatch_request.
+            'instructions': 'request-side instructions',
+            'text': {'format': {'type': 'json_object'}},
+        }
+    ).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body) as resp:
+            ''.join(resp.iter_text())
+    # Explicit instructions won over the request's instructions field.
+    assert seen_instructions == ['explicit override']
+
+
+async def test_history_loader_skipped_when_no_conversation_id() -> None:
+    """No `conversation` / `previous_response_id` → loader is not called (fresh run)."""
+    from unittest.mock import AsyncMock
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    loader: AsyncMock = AsyncMock(return_value=[])
     agent = Agent(model=FunctionModel(stream_function=stream))
 
     async def endpoint(request: Request) -> Any:
@@ -1702,7 +1763,7 @@ async def test_history_loader_skipped_when_no_conversation_id() -> None:
     with TestClient(app) as client:
         with client.stream('POST', '/v1/responses', content=body) as resp:
             ''.join(resp.iter_text())
-    assert called is False
+    loader.assert_not_called()
 
 
 def test_response_id_is_uuid7_format() -> None:

@@ -417,7 +417,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                 elif isinstance(part, CompactionPart):
                     pass
                 elif isinstance(part, AgentContextPart):
-                    response_tokens += _estimate_string_tokens(part.content)
+                    pass
                 else:
                     assert_never(part)
         else:
