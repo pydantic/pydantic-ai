@@ -1,9 +1,21 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
+"""Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+)
 
 
 @dataclass(kw_only=True)
@@ -52,6 +64,12 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
+    anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = '20250825'
+    """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`."""
+
+    anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
+    """The Anthropic code execution tool versions supported by the model."""
+
     anthropic_supports_task_budgets: bool = False
     """Whether the model supports `output_config.task_budget`.
 
@@ -98,6 +116,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
+    default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
+        model_name
+    )
     supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
     return AnthropicModelProfile(
@@ -110,5 +131,18 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
+        anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
     )
+
+
+def _code_execution_tool_versions(
+    model_name: str,
+) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
+    versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
+    default_version: AnthropicCodeExecutionToolVersion = '20250825'
+    if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
+        default_version = '20260120'
+        versions = (*versions, default_version)
+    return default_version, versions

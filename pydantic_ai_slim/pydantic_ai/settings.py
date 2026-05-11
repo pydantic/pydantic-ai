@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from httpx import Timeout
@@ -19,6 +20,27 @@ Not all providers support all levels. When a level is not natively supported,
 it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
 that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
+
+ToolChoiceScalar = Literal['none', 'required', 'auto']
+
+
+@dataclass
+class ToolOrOutput:
+    """Restricts function tools while keeping output tools and direct text/image output available.
+
+    Use this when you want to control which function tools the model can use
+    in an agent run while still allowing the agent to complete with structured output,
+    text, or images.
+
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.
+    """
+
+    function_tools: list[str]
+    """The names of function tools available to the model."""
+
+
+ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
+"""Type alias for all valid tool_choice values."""
 
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
@@ -59,8 +81,10 @@ Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be serializable using Pydantic.
     """
 
     max_tokens: int
@@ -142,6 +166,40 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * xAI
+    """
+
+    tool_choice: ToolChoice
+    """Control which function tools the model can use.
+
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation
+    and examples.
+
+    * `None` (default): Defaults to `'auto'` behavior
+    * `'auto'`: All tools available, model decides whether to use them
+    * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
+    * `'required'`: Forces tool use; excludes output tools so the agent cannot produce a final response when set statically
+    * `list[str]`: Only specified tools; excludes output tools so the agent cannot produce a final response when set statically
+    * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
+
+    Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
+    of [`Agent.run`][pydantic_ai.Agent.run] or the agent's own `model_settings`) raises a
+    `UserError`, because it would force a tool call on every step and prevent the agent from
+    producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
+    first step only), return a callable from a capability's
+    [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] —
+    those values are trusted to adapt across steps. For single API calls without an agent
+    loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request].
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic (`'required'` and specific tools not supported with thinking enabled)
+    * Google
+    * Groq
+    * Mistral
+    * HuggingFace
+    * Bedrock
     * xAI
     """
 

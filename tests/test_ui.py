@@ -27,6 +27,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -194,7 +196,13 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
         yield f'<function-tool-call name={event.part.tool_name!r}>{event.part.args}</function-tool-call>'
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
-        yield f'<function-tool-result name={event.result.tool_name!r}>{event.result.content}</function-tool-result>'
+        yield f'<function-tool-result name={event.part.tool_name!r}>{event.part.content}</function-tool-result>'
+
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-call name={event.part.tool_name!r}>{event.part.args}</output-tool-call>'
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-result name={event.part.tool_name!r}>{event.part.content}</output-tool-result>'
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
@@ -502,7 +510,8 @@ async def test_run_stream_output_tool():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Final result processed.</function-tool-result>",
+            '<output-tool-call name=\'final_result\'>{"query":"Hello world"}</output-tool-call>',
+            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
             '</request>',
             "<run-result>{'results': [{'title': '\"Hello, World!\" program', 'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program'}]}</run-result>",
             '</stream>',
@@ -613,9 +622,64 @@ async def test_run_stream_output_tool_error():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<output-tool-result name='final_result'>Tool execution was interrupted by an error.</output-tool-result>",
             "<error type='ValueError'>Output validation failed</error>",
             '</request>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_output_tool_validation_retry_dedupes_legacy_events():
+    """Validation-failure paths emit dual `Output*` + legacy `Function*` events; the UI layer dedupes by `tool_call_id`."""
+
+    class OutputType(BaseModel):
+        value: str
+
+    call_count = 0
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: invalid args → validation failure → dual emission (Output* + legacy Function*)
+            yield {0: DeltaToolCall(name='final_result', json_args='{"bad": "x"}', tool_call_id='out_1')}
+        else:
+            # Retry: valid args → success path emits only Output*
+            yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='out_2')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=OutputType)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    # Each output tool call should produce exactly one `<output-tool-result>` and zero `<function-tool-result>` —
+    # the legacy `FunctionToolResultEvent` emitted on the failure path for `out_1` is dedupped at the UI layer.
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"bad": "x"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            '<output-tool-call name=\'final_result\'>{"bad": "x"}</output-tool-call>',
+            "<output-tool-result name='final_result'>[{'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad': 'x'}}]</output-tool-result>",
+            '</request>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"value": "ok"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            '<output-tool-call name=\'final_result\'>{"value": "ok"}</output-tool-call>',
+            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
+            '</request>',
+            "<run-result>value='ok'</run-result>",
             '</stream>',
         ]
     )

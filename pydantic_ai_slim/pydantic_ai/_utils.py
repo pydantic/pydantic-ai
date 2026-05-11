@@ -220,6 +220,26 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     return final_results
 
 
+async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> None:
+    """Cancel any tasks still running and wait for them to finish unwinding.
+
+    Cleanup-only: results and exceptions from `tasks` are intentionally discarded so a
+    cancelled child cannot replace an exception already propagating in the caller.
+    Use after `asyncio.create_task` when an outer cancel/exception means the spawned
+    tasks must be torn down before the caller exits.
+    """
+    for task in tasks:
+        if not task.done():
+            task.cancel(msg=msg)
+
+    # Pydantic Graph runs nodes under AnyIO cancel scopes. Once the outer scope
+    # is cancelled, AnyIO uses level cancellation and can keep re-cancelling at
+    # each await. Shield the drain so child tasks get one explicit cancel above,
+    # then can finish normal async `finally` cleanup before we re-raise.
+    with anyio.CancelScope(shield=True):
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class Unset:
     """A singleton to represent an unset value."""
 
