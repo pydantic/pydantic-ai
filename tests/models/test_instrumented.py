@@ -9,6 +9,9 @@ import pytest
 from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
+# These tests legitimately exercise the (now-deprecated) `InstrumentedModel` /
+# `instrument_model` direct construction path. The corresponding deprecation
+# warning is silenced project-wide via the `filterwarnings` config in `pyproject.toml`.
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,

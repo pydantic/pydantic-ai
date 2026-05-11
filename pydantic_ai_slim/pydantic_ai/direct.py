@@ -300,7 +300,7 @@ def _prepare_model(
     if instrument is None:
         instrument = agent.Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
 
-    return instrumented_models.instrument_model(model_instance, instrument)
+    return instrumented_models.instrument_model(model_instance, instrument, _internal_use=True)
 
 
 @dataclass
