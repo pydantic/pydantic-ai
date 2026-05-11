@@ -1938,7 +1938,7 @@ async def test_temporal_agent_override_builtin_tools_in_workflow(allow_model_req
         with workflow_raises(
             UserError,
             snapshot(
-                'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                'Native tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
             await client.execute_workflow(
