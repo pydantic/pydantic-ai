@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
+from typing_extensions import assert_never
 
 from .._utils import is_str_dict, now_utc as _now_utc
 from ..exceptions import ModelHTTPError
@@ -288,6 +289,8 @@ class OpenResponsesModel(OpenAIResponsesModel):
                                 'content': item.content,
                             }
                         )
+            else:
+                assert_never(message)
         return items
 
     def _process_dict_response(self, payload: dict[str, Any]) -> ModelResponse:

@@ -1854,3 +1854,129 @@ async def test_agent_context_part_is_suppressed_in_openai_compat_mode() -> None:
     events = await _collect_from_stream(event_stream, parts())
     item_types = [e.get('item', {}).get('type') for e in events if 'item' in e]
     assert 'pydantic_ai:agent_context' not in item_types
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Coverage backfill: defensive early-return branches in adapter + event stream
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_auto_mode_skips_non_dict_input_items() -> None:
+    """`mode='auto'` resolution skips list/string items inside `input[]` without crashing."""
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': [
+                'plain string item — skipped',
+                ['nested list — skipped'],
+                {'type': 'message', 'role': 'user', 'content': 'hi'},
+            ],
+        }
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.resolved_mode == 'openai_compat'
+
+
+def test_text_format_with_non_dict_format_value_returns_none() -> None:
+    """`text.format` that isn't a dict short-circuits to `None`."""
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'x', 'text': {'format': 'json_object'}}).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.request_output_type is None
+
+
+def test_text_format_json_schema_without_schema_returns_none() -> None:
+    """`text.format.type=json_schema` without a `schema` dict short-circuits to `None`."""
+    body = json.dumps(
+        {'model': 'test', 'stream': True, 'input': 'x', 'text': {'format': {'type': 'json_schema'}}}
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.request_output_type is None
+
+
+async def test_function_tool_result_suppressed_in_openai_compat_mode() -> None:
+    """`mode='openai_compat'`: `handle_function_tool_result` early-returns without emitting items."""
+    from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart as _ToolReturnPart
+
+    event_stream = _bare_event_stream()  # default mode is `openai_compat`
+    events: list[Any] = []
+    async for ev in event_stream.handle_function_tool_result(
+        FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='c', content='x'))
+    ):
+        events.append(ev)
+    assert events == []
+
+
+async def test_function_tool_result_skipped_for_unknown_call_id_in_openresponses_mode() -> None:
+    """`mode='openresponses'`: a tool return whose call wasn't started as an extension item is skipped."""
+    from pydantic_ai.messages import FunctionToolResultEvent, ToolReturnPart as _ToolReturnPart
+
+    event_stream = ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        mode='openresponses',
+    )
+    events: list[Any] = []
+    async for ev in event_stream.handle_function_tool_result(
+        FunctionToolResultEvent(part=_ToolReturnPart(tool_name='t', tool_call_id='never-started', content='x'))
+    ):
+        events.append(ev)
+    assert events == []
+
+
+async def test_function_tool_result_skipped_for_retry_prompt_part_in_openresponses_mode() -> None:
+    """`mode='openresponses'`: a retry-prompt result (not a `ToolReturnPart`) is skipped."""
+    from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart
+
+    event_stream = ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        mode='openresponses',
+    )
+    events: list[Any] = []
+    async for ev in event_stream.handle_function_tool_result(
+        FunctionToolResultEvent(part=RetryPromptPart(content='retry me', tool_name='t', tool_call_id='c1'))
+    ):
+        events.append(ev)
+    assert events == []
+
+
+def test_agent_context_input_with_invalid_fields_is_skipped() -> None:
+    """Malformed `pydantic_ai:agent_context` input items (missing/non-string fields) are silently dropped."""
+    items: list[Any] = [
+        {'type': 'pydantic_ai:agent_context', 'from_agent': None, 'content': 'x'},
+        {'type': 'pydantic_ai:agent_context', 'from_agent': 'g', 'role': 'context', 'content': ''},
+        {'type': 'message', 'role': 'user', 'content': 'hello'},
+    ]
+    messages = ResponsesAdapter.load_messages(items)
+    request_parts = [p for m in messages for p in m.parts]
+    system_parts = [
+        p for p in request_parts if type(p).__name__ == 'SystemPromptPart' and 'role=' in getattr(p, 'content', '')
+    ]
+    # Both malformed items skipped; only the message item materializes as a user prompt.
+    assert system_parts == []
+
+
+async def test_agent_context_after_open_text_closes_message_item_first() -> None:
+    """`AgentContextPart` mid-stream after an open text message closes the message item before emitting."""
+    event_stream = ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        mode='openresponses',
+    )
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(index=0, part=TextPart(content='hello'))
+        yield PartStartEvent(
+            index=1,
+            part=AgentContextPart(content='inserted mid-stream', from_agent='guardrail', role='context'),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    item_event_types = [
+        (e['type'], e.get('item', {}).get('type')) for e in events if e['type'].startswith('response.output_item.')
+    ]
+    # The open `message` item is closed before the `pydantic_ai:agent_context` item is emitted.
+    assert ('response.output_item.done', 'message') in item_event_types
+    assert ('response.output_item.added', 'pydantic_ai:agent_context') in item_event_types
+    # The message-done event precedes the agent_context add.
+    message_done_idx = item_event_types.index(('response.output_item.done', 'message'))
+    context_added_idx = item_event_types.index(('response.output_item.added', 'pydantic_ai:agent_context'))
+    assert message_done_idx < context_added_idx
