@@ -44,7 +44,7 @@ uvx library-skills --all
 
 The `--all` flag is required because the skill is bundled in `pydantic-ai-slim`, which is a transitive dependency of the `pydantic-ai` meta-package. Without it, `library-skills` only scans direct dependencies and won't discover the skill.
 
-Add `--claude` to install into `.claude/skills` instead of the default `.agents/skills` directory, since Claude Code doesn't read from `.agents`.
+Add `--claude` to also install into `.claude/skills/` alongside the default `.agents/skills/` directory, since Claude Code doesn't read from `.agents/`.
 
 ## See Also
 
