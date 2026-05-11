@@ -17,7 +17,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -32,18 +31,20 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.openresponses import OpenResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from .conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
+    import httpx
+
+    from pydantic_ai.models.openresponses import OpenResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.ui.responses import ResponsesAdapter
 
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(not imports_successful(), reason='openai or starlette not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='openai, starlette, or httpx_sse not installed'),
 ]
 
 
