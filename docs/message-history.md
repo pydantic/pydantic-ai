@@ -275,7 +275,7 @@ in `result.all_messages()` for `run_stream`) with `state='interrupted'`:
 - A partial [`ModelRequest`][pydantic_ai.messages.ModelRequest] holds the tool returns that completed
   before a tool raised or the run was cancelled.
 
-```python {title="capture_interrupted_run.py" test="skip"}
+```python {title="capture_interrupted_run.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ModelRequest, ModelResponse, capture_run_messages
 
 agent = Agent('openai:gpt-5.2')
