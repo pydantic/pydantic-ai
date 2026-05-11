@@ -69,7 +69,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             import warnings
 
             warnings.warn(
-                'MCP() defaults will change in v2: it will run locally via FastMCP instead of '
+                'MCP() defaults will change in v2: it will run the MCP server locally instead of '
                 "preferring the model's built-in MCP support. To keep the current builtin-preferred "
                 'behavior (with local as a fallback), pass `builtin=True`. To adopt the new '
                 'local-first behavior now, install the MCP extra (`pip install '
@@ -129,7 +129,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             return local
         raise UserError(
             f'MCP(local={name!r}) is not a known strategy. '
-            'Pass `local=True` for the default FastMCP/MCPServer transport, or a Tool/callable directly.'
+            'Pass `local=True` for the default local MCP transport, or a Tool/callable directly.'
         )
 
     def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
