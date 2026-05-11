@@ -254,17 +254,21 @@ def test_native_or_local_tool_builtin_kwarg_deprecated():
 
 def test_web_search_builtin_kwarg_deprecated():
     """`WebSearch(builtin=...)` warns and routes to `native=`."""
+    # `local=False` avoids invoking `_default_local()` (DuckDuckGo lookup),
+    # which would emit unrelated warnings in slim CI environments.
     with pytest.warns(
         PydanticAIDeprecationWarning,
         match=r'`WebSearch\(builtin=\.\.\.\)` is deprecated, use `native=`',
     ):
-        cap = WebSearch(builtin=False)
-    assert cap.native is False
+        cap = WebSearch(builtin=WebSearchTool(), local=False)
+    assert isinstance(cap.native, WebSearchTool)
 
 
 @pytest.mark.skipif(not mcp_imports(), reason='mcp not installed')
 def test_mcp_builtin_kwarg_deprecated():
     """`MCP(builtin=...)` warns and routes to `native=`."""
+    # `local=False` avoids invoking `_default_local()` (imports `pydantic_ai.mcp`),
+    # which would fail when the `mcp` extra isn't installed.
     with pytest.warns(
         PydanticAIDeprecationWarning,
         match=r'`MCP\(builtin=\.\.\.\)` is deprecated, use `native=`',
@@ -273,6 +277,7 @@ def test_mcp_builtin_kwarg_deprecated():
             builtin=MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
             url='https://mcp.deepwiki.com/mcp',
             id='deepwiki',
+            local=False,
         )
     assert isinstance(cap.native, MCPServerTool)
 
