@@ -1924,7 +1924,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 class SimpleAgentWorkflowWithOverrideBuiltinTools:
     @workflow.run
     async def run(self, prompt: str) -> None:
-        with simple_temporal_agent.override(capabilities=[NativeTool(WebSearchTool())]):
+        with simple_temporal_agent.override(native_tools=[WebSearchTool()]):
             pass
 
 
@@ -3423,8 +3423,8 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'search model'
         assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
-        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+        assert web_search_builtin_model.last_model_request_parameters.native_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.native_tools[0], WebSearchTool)
 
         output = await client.execute_workflow(
             BuiltinToolWorkflow.run,
@@ -3434,9 +3434,9 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'code model'
         assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert code_execution_builtin_model.last_model_request_parameters.native_tools
         assert isinstance(
-            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            code_execution_builtin_model.last_model_request_parameters.native_tools[0],
             CodeExecutionTool,
         )
 
@@ -3461,9 +3461,9 @@ async def test_builtins_in_workflow_with_runtime_model_override(allow_model_requ
 
     # Verify the web search model received the WebSearchTool in its request parameters
     assert isinstance(web_search_builtin_override_model.last_model_request_parameters, ModelRequestParameters)
-    assert web_search_builtin_override_model.last_model_request_parameters.builtin_tools
+    assert web_search_builtin_override_model.last_model_request_parameters.native_tools
     assert isinstance(
-        web_search_builtin_override_model.last_model_request_parameters.builtin_tools[0],
+        web_search_builtin_override_model.last_model_request_parameters.native_tools[0],
         WebSearchTool,
     )
 

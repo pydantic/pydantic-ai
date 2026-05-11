@@ -13,9 +13,9 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..capabilities.native_or_local import (  # pyright: ignore[reportPrivateUsage]
+from ..capabilities.native_or_local import (
     NativeOrLocalTool,
-    _wrap_init_with_builtin_alias,
+    _wrap_init_with_builtin_alias,  # pyright: ignore[reportPrivateUsage]
 )
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
