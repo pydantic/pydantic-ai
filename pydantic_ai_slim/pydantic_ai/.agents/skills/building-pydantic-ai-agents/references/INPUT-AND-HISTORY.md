@@ -45,17 +45,18 @@ Important distinctions:
 
 ## Manage Context Size
 
-Use `history_processors=[...]` to trim or rewrite message history before each model request.
+Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request.
 
 ```python
 from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
 
 
 async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:] if len(messages) > 10 else messages
 
 
-agent = Agent('openai:gpt-5.2', history_processors=[keep_recent])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
 ```
 
 Good uses:
