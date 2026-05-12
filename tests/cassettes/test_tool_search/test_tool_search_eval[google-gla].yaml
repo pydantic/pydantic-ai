@@ -61,11 +61,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1166'
+      - '940'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1291
+      - gfet4t7; dur=968
       transfer-encoding:
       - chunked
       vary:
@@ -79,27 +79,26 @@ interactions:
           - functionCall:
               args:
                 queries:
-                - currency exchange rate
-                - USD to EUR
-                - forex rates
-              id: xf9sdwkl
+                - exchange rate
+                - currency conversion
+              id: yot5i3fn
               name: search_tools
-            thoughtSignature: Ep4DCpsDAQw51seCVCi6XsXVv10NsGien6a35JyUjSmkWT/BvQI5zeElQ9L/tdqxCAzHqPSgD4gJOsyY98Y7pGGnFUMS6DQUQu5Kno0SiInaF4Wrlmo0HjdEbscqZkpRlkQEuSx59OshIx8OZQUF0ILqTzdaFnzP332kqvOvE4Ntqa8e5iqEplIVAxMqPCYbC7qBHhqZe6HYi9f+cgOIJvyPgHVVTiG9fALiMVJ+sEeFhvF59tQqRX+eBVgy9pywuG1W8fO7Oy1y5QrAn45+P4HGfKULZoBs9YT6Gju0kSF3RnTEnY5meRUTjLARDIydI96RwisyIl5BlJsB8ca1Q4nohpZ12Xtk1l2P0LuBHfAV6PwWW9Dfpy9PO0x/f3sMZD1NJ6G5wBaKc33WN6DhnJj3mUOxHS2DX0VjudhdPyUZq0yKQHvITSasr0W9oCJLSl/ymVvCeL1CVeSkHpef1u+tHiVdel3AenLzj6Xq6nktAVD2Z4ftgcM8k2Qxi29QGg3NsAR/jUGX/GXVZl7w6UF3QpUqkhcGem9VL3TKaiwh
+            thoughtSignature: Ev0BCvoBAQw51sfd5MI/wdoCp3+LbECLCuznjBItxHJtcEnpXhIuvxa2xoBJ1bC6I1jT9hr8pcfiRJZu3VZeHc7Ha15UaH3nEvPVVH5O9xpt/7ppGkyPzfb/ilFaaimM9kMqWBemP1sn1c7z0QDSc3icHM1exaVy5P7prDAdQVzKXXN+MDUUghQN6jpGTeTlb1t+tJ0cOVH2pylmfwBfeXlmPqn035wPh//kG9KvMqeLf9z6SBSVtA5TwtPhpEucsMpBs6EjzpsnmF/ryYGCNAgvS4gVLeotnKSx9bKGTiJRtO5AoTqm7iau0i1O/tOMg9ympsYzNitLJT3KjkD//A==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: q7oDaswj9Z2q2w-8iLG4Ag
+      responseId: mr0Dap30Jbm6mtkPw5mKiAM
       usageMetadata:
-        candidatesTokenCount: 30
+        candidatesTokenCount: 22
         promptTokenCount: 220
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 220
         serviceTier: standard
-        thoughtsTokenCount: 76
-        totalTokenCount: 326
+        thoughtsTokenCount: 44
+        totalTokenCount: 286
     status:
       code: 200
       message: OK
@@ -112,7 +111,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2618'
+      - '2391'
       content-type:
       - application/json
       host:
@@ -127,16 +126,15 @@ interactions:
         - functionCall:
             args:
               queries:
-              - currency exchange rate
-              - USD to EUR
-              - forex rates
-            id: xf9sdwkl
+              - exchange rate
+              - currency conversion
+            id: yot5i3fn
             name: search_tools
-          thoughtSignature: Ep4DCpsDAQw51seCVCi6XsXVv10NsGien6a35JyUjSmkWT_BvQI5zeElQ9L_tdqxCAzHqPSgD4gJOsyY98Y7pGGnFUMS6DQUQu5Kno0SiInaF4Wrlmo0HjdEbscqZkpRlkQEuSx59OshIx8OZQUF0ILqTzdaFnzP332kqvOvE4Ntqa8e5iqEplIVAxMqPCYbC7qBHhqZe6HYi9f-cgOIJvyPgHVVTiG9fALiMVJ-sEeFhvF59tQqRX-eBVgy9pywuG1W8fO7Oy1y5QrAn45-P4HGfKULZoBs9YT6Gju0kSF3RnTEnY5meRUTjLARDIydI96RwisyIl5BlJsB8ca1Q4nohpZ12Xtk1l2P0LuBHfAV6PwWW9Dfpy9PO0x_f3sMZD1NJ6G5wBaKc33WN6DhnJj3mUOxHS2DX0VjudhdPyUZq0yKQHvITSasr0W9oCJLSl_ymVvCeL1CVeSkHpef1u-tHiVdel3AenLzj6Xq6nktAVD2Z4ftgcM8k2Qxi29QGg3NsAR_jUGX_GXVZl7w6UF3QpUqkhcGem9VL3TKaiwh
+          thoughtSignature: Ev0BCvoBAQw51sfd5MI_wdoCp3-LbECLCuznjBItxHJtcEnpXhIuvxa2xoBJ1bC6I1jT9hr8pcfiRJZu3VZeHc7Ha15UaH3nEvPVVH5O9xpt_7ppGkyPzfb_ilFaaimM9kMqWBemP1sn1c7z0QDSc3icHM1exaVy5P7prDAdQVzKXXN-MDUUghQN6jpGTeTlb1t-tJ0cOVH2pylmfwBfeXlmPqn035wPh__kG9KvMqeLf9z6SBSVtA5TwtPhpEucsMpBs6EjzpsnmF_ryYGCNAgvS4gVLeotnKSx9bKGTiJRtO5AoTqm7iau0i1O_tOMg9ympsYzNitLJT3KjkD__A==
         role: model
       - parts:
         - functionResponse:
-            id: xf9sdwkl
+            id: yot5i3fn
             name: search_tools
             response:
               discovered_tools:
@@ -198,11 +196,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '938'
+      - '802'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1113
+      - gfet4t7; dur=867
       transfer-encoding:
       - chunked
       vary:
@@ -217,24 +215,24 @@ interactions:
               args:
                 from_currency: USD
                 to_currency: EUR
-              id: jusrqat3
+              id: qebf65or
               name: get_exchange_rate
-            thoughtSignature: Ev8BCvwBAQw51sd+4Cl6u8QaYd92aP0oGIHnynZfst2OtlyW3epYHC9lfl97sutzjv6XaFWLDl/rsiXrT8KdftR9MqkIgC1GU/rMPTS3ce+wDcOfWsOOQOkRmOFY0zvCidXrLehMN9ffOv9aecva6NrOuAmBBVELPk+CGCChyOIUV1pI42+gmvVZFvU47hPvO/5dFM6q1o+VjCh/PS1h1cGX+fr7B+CpYniOfL7u9JEtMl2qJmJaZweRjOLKVO8TlhqS+JJLvBeKLCNtDl5WU41A8hrW/VmsdcuUhsksoBa4/aQq7qOAHWm1pR4FspSJ4igD/yzV3b+MdXg5TMXPD1dk
+            thoughtSignature: EpgBCpUBAQw51selFMLxoLSuY1dh1EsjPJZrn90x+kyLnJDdZgC1APWdFbJbrn+CRH1D7in2PXrfrjMdgze6oUbibauhkJpSLv8e60RdrsRS8m5iW18jK470FfoN7IfT2CfEQ34oWBg3sHSObKhzWxq5uFZs2s447KJdRysTSmO5rwtbKI7quV8bHNKMaXjLsfNQQ0QDkeu84R0=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: rLoDavmcDou0qtsPr9nPsAo
+      responseId: m70DauDSLt6UmtkPyvmT4Qc
       usageMetadata:
         candidatesTokenCount: 28
-        promptTokenCount: 433
+        promptTokenCount: 393
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 433
+          tokenCount: 393
         serviceTier: standard
-        thoughtsTokenCount: 49
-        totalTokenCount: 510
+        thoughtsTokenCount: 26
+        totalTokenCount: 447
     status:
       code: 200
       message: OK
@@ -247,7 +245,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3289'
+      - '2926'
       content-type:
       - application/json
       host:
@@ -262,16 +260,15 @@ interactions:
         - functionCall:
             args:
               queries:
-              - currency exchange rate
-              - USD to EUR
-              - forex rates
-            id: xf9sdwkl
+              - exchange rate
+              - currency conversion
+            id: yot5i3fn
             name: search_tools
-          thoughtSignature: Ep4DCpsDAQw51seCVCi6XsXVv10NsGien6a35JyUjSmkWT_BvQI5zeElQ9L_tdqxCAzHqPSgD4gJOsyY98Y7pGGnFUMS6DQUQu5Kno0SiInaF4Wrlmo0HjdEbscqZkpRlkQEuSx59OshIx8OZQUF0ILqTzdaFnzP332kqvOvE4Ntqa8e5iqEplIVAxMqPCYbC7qBHhqZe6HYi9f-cgOIJvyPgHVVTiG9fALiMVJ-sEeFhvF59tQqRX-eBVgy9pywuG1W8fO7Oy1y5QrAn45-P4HGfKULZoBs9YT6Gju0kSF3RnTEnY5meRUTjLARDIydI96RwisyIl5BlJsB8ca1Q4nohpZ12Xtk1l2P0LuBHfAV6PwWW9Dfpy9PO0x_f3sMZD1NJ6G5wBaKc33WN6DhnJj3mUOxHS2DX0VjudhdPyUZq0yKQHvITSasr0W9oCJLSl_ymVvCeL1CVeSkHpef1u-tHiVdel3AenLzj6Xq6nktAVD2Z4ftgcM8k2Qxi29QGg3NsAR_jUGX_GXVZl7w6UF3QpUqkhcGem9VL3TKaiwh
+          thoughtSignature: Ev0BCvoBAQw51sfd5MI_wdoCp3-LbECLCuznjBItxHJtcEnpXhIuvxa2xoBJ1bC6I1jT9hr8pcfiRJZu3VZeHc7Ha15UaH3nEvPVVH5O9xpt_7ppGkyPzfb_ilFaaimM9kMqWBemP1sn1c7z0QDSc3icHM1exaVy5P7prDAdQVzKXXN-MDUUghQN6jpGTeTlb1t-tJ0cOVH2pylmfwBfeXlmPqn035wPh__kG9KvMqeLf9z6SBSVtA5TwtPhpEucsMpBs6EjzpsnmF_ryYGCNAgvS4gVLeotnKSx9bKGTiJRtO5AoTqm7iau0i1O_tOMg9ympsYzNitLJT3KjkD__A==
         role: model
       - parts:
         - functionResponse:
-            id: xf9sdwkl
+            id: yot5i3fn
             name: search_tools
             response:
               discovered_tools:
@@ -283,13 +280,13 @@ interactions:
             args:
               from_currency: USD
               to_currency: EUR
-            id: jusrqat3
+            id: qebf65or
             name: get_exchange_rate
-          thoughtSignature: Ev8BCvwBAQw51sd-4Cl6u8QaYd92aP0oGIHnynZfst2OtlyW3epYHC9lfl97sutzjv6XaFWLDl_rsiXrT8KdftR9MqkIgC1GU_rMPTS3ce-wDcOfWsOOQOkRmOFY0zvCidXrLehMN9ffOv9aecva6NrOuAmBBVELPk-CGCChyOIUV1pI42-gmvVZFvU47hPvO_5dFM6q1o-VjCh_PS1h1cGX-fr7B-CpYniOfL7u9JEtMl2qJmJaZweRjOLKVO8TlhqS-JJLvBeKLCNtDl5WU41A8hrW_VmsdcuUhsksoBa4_aQq7qOAHWm1pR4FspSJ4igD_yzV3b-MdXg5TMXPD1dk
+          thoughtSignature: EpgBCpUBAQw51selFMLxoLSuY1dh1EsjPJZrn90x-kyLnJDdZgC1APWdFbJbrn-CRH1D7in2PXrfrjMdgze6oUbibauhkJpSLv8e60RdrsRS8m5iW18jK470FfoN7IfT2CfEQ34oWBg3sHSObKhzWxq5uFZs2s447KJdRysTSmO5rwtbKI7quV8bHNKMaXjLsfNQQ0QDkeu84R0=
         role: model
       - parts:
         - functionResponse:
-            id: jusrqat3
+            id: qebf65or
             name: get_exchange_rate
             response:
               return_value: 1 USD = 0.92 EUR
@@ -349,11 +346,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '431'
+      - '430'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=812
+      - gfet4t7; dur=661
       transfer-encoding:
       - chunked
       vary:
@@ -369,15 +366,15 @@ interactions:
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: rboDav3UH9_BqtsPw_jIqQg
+      responseId: nL0DaviiIrShqtsPuKjsKQ
       usageMetadata:
         candidatesTokenCount: 15
-        promptTokenCount: 536
+        promptTokenCount: 473
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 536
+          tokenCount: 473
         serviceTier: standard
-        totalTokenCount: 551
+        totalTokenCount: 488
     status:
       code: 200
       message: OK
@@ -443,11 +440,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1137'
+      - '836'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1267
+      - gfet4t7; dur=971
       transfer-encoding:
       - chunked
       vary:
@@ -462,17 +459,17 @@ interactions:
               args:
                 queries:
                 - stock price
-                - finance data
-                - AAPL stock
-              id: iho1zoej
+                - financial data
+                - market data
+              id: i1menwaq
               name: search_tools
-            thoughtSignature: Eo0DCooDAQw51sehEtlgfxFQtD5bG/3YQ606ZqgYZ8LiypbIXjU9DfNg0Nb9mTpic47Tr2H3J9CLOM+cQr1F0ZJZaBxxQ+tzdh0dv4CxCKbJKX7/2eH5hEnq9oYFZXzP0HtdZM1BC3y8GDPXajeAInYFKS+8WSgFXK3m7JB5kgYvbpH8h+yB5E4rL8fMNCiompw4NduIai8JqQTg0sSz7kfWWTDJq3j7vO4j0ytkqnEgKiSb8zlrD1Rhc7MVtcmoZu/PYvsjxlxfmBRASlhYgCWusAdh1ri7sa/ESeICPgn7uXxUU2/c7CIy+hEQ3kpG0Pl/+Piw7toQFf30KbR2WjQ5t4jEc78P4QgxwLYsZn/dgiGxZtQ0/n56d6hD3oI6xkIhsjzDyo/5wALL5YBsCQYKpu/hisqL6D1TfvSsjFqXkQGnhCQpuA//TFGQ0cAJvf45h6OundscM6xRpFkuIV16ngZzYkCH/18P3iYnmSu2r0LmGg7eN5FKbSYFm58hKN7rBWT9uUZo98zlEiWPMg==
+            thoughtSignature: EqsBCqgBAQw51sey85muPaO5rYklDdcwk2GL8TNw2wrC0Ef9r7qLBVoo6REI7hFZblUaYIgQOwfE5gKFJlhWOYALAuRmaDBObZSBNGsVfA4FeVCJ9OVlgN0mzpwrED4ZVEynhx3lk2mcKoCFoFqutLiMWe9SIfbq5PveVOeOImOA5RpNvgDZtdBy7r7Nkf8+RBgz+qZRn66nrspo7YPWb/fLByteGeMBQEsyuqWR
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: rroDauCrF7-5qtsPle_UwAk
+      responseId: nb0Daq3jEPiVmtkPg5aKqQE
       usageMetadata:
         candidatesTokenCount: 27
         promptTokenCount: 219
@@ -480,8 +477,8 @@ interactions:
         - modality: TEXT
           tokenCount: 219
         serviceTier: standard
-        thoughtsTokenCount: 77
-        totalTokenCount: 323
+        thoughtsTokenCount: 26
+        totalTokenCount: 272
     status:
       code: 200
       message: OK
@@ -494,7 +491,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2465'
+      - '2164'
       content-type:
       - application/json
       host:
@@ -510,15 +507,15 @@ interactions:
             args:
               queries:
               - stock price
-              - finance data
-              - AAPL stock
-            id: iho1zoej
+              - financial data
+              - market data
+            id: i1menwaq
             name: search_tools
-          thoughtSignature: Eo0DCooDAQw51sehEtlgfxFQtD5bG_3YQ606ZqgYZ8LiypbIXjU9DfNg0Nb9mTpic47Tr2H3J9CLOM-cQr1F0ZJZaBxxQ-tzdh0dv4CxCKbJKX7_2eH5hEnq9oYFZXzP0HtdZM1BC3y8GDPXajeAInYFKS-8WSgFXK3m7JB5kgYvbpH8h-yB5E4rL8fMNCiompw4NduIai8JqQTg0sSz7kfWWTDJq3j7vO4j0ytkqnEgKiSb8zlrD1Rhc7MVtcmoZu_PYvsjxlxfmBRASlhYgCWusAdh1ri7sa_ESeICPgn7uXxUU2_c7CIy-hEQ3kpG0Pl_-Piw7toQFf30KbR2WjQ5t4jEc78P4QgxwLYsZn_dgiGxZtQ0_n56d6hD3oI6xkIhsjzDyo_5wALL5YBsCQYKpu_hisqL6D1TfvSsjFqXkQGnhCQpuA__TFGQ0cAJvf45h6OundscM6xRpFkuIV16ngZzYkCH_18P3iYnmSu2r0LmGg7eN5FKbSYFm58hKN7rBWT9uUZo98zlEiWPMg==
+          thoughtSignature: EqsBCqgBAQw51sey85muPaO5rYklDdcwk2GL8TNw2wrC0Ef9r7qLBVoo6REI7hFZblUaYIgQOwfE5gKFJlhWOYALAuRmaDBObZSBNGsVfA4FeVCJ9OVlgN0mzpwrED4ZVEynhx3lk2mcKoCFoFqutLiMWe9SIfbq5PveVOeOImOA5RpNvgDZtdBy7r7Nkf8-RBgz-qZRn66nrspo7YPWb_fLByteGeMBQEsyuqWR
         role: model
       - parts:
         - functionResponse:
-            id: iho1zoej
+            id: i1menwaq
             name: search_tools
             response:
               discovered_tools:
@@ -577,11 +574,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '913'
+      - '829'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1136
+      - gfet4t7; dur=979
       transfer-encoding:
       - chunked
       vary:
@@ -595,24 +592,24 @@ interactions:
           - functionCall:
               args:
                 symbol: AAPL
-              id: mwbnl2hv
+              id: a0u2vv54
               name: stock_lookup
-            thoughtSignature: EoQCCoECAQw51sf48vBpZiCyt0J7LN1dMqac8RN+is+zAGU8402ClSTKQCy472l/8kYVDKe82gCd9NOwYyZOFPuA5zbBo8OcQmQw9ExL7tA5AlqDQjv/aunh2OGNtriIz9wbpcd2uuLYEgbxotN9xLhrAd1vI/a/DVV95uH+vyQvSCkpA4XrnjEs+4shYXhzn/hFXCb7VLe4RwBBOoCWjU7Z188+J9KGbj2+JWtgizv+NBUflQ0PbMpQt9E+15tphjvp4sfzhp8JyChL+ZGnIQdqNLpL4mM6o/3nMLJHpML7T2YVfOqtEax6Q6ImB2D8lXm8eCqsTmpzIBhUmrJZe2FGlGXuh7c=
+            thoughtSignature: EsYBCsMBAQw51scB3gJrhIMtKXWNg6yJFvgkDmQFNXu65FTXsWgLNRappNoIJsdEI4pJYGyRecnm8NnjxjKjED4JlisOP+pbn0Tq+KC4eqM6YRZUhVLpcSjNfncA8YPe8uxJsjTQ94NH2xUPYFRh5wpJJ5P5j2kF5Jm0HCdWI4RW2zZAbyPCkzFLZJ+X5z5D+Y6volKhKT1gx+WdX6/L12Bpj6V2lTalqnatVFlriRPUFFbEHqJJ7xSkDzCKFnBml71DyY/0ypJ8
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: r7oDavD2Ko7pqtsP0O-YwAE
+      responseId: nr0DaqXUGvaVmtkPp_KFkQE
       usageMetadata:
         candidatesTokenCount: 16
-        promptTokenCount: 402
+        promptTokenCount: 351
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 402
+          tokenCount: 351
         serviceTier: standard
-        thoughtsTokenCount: 50
-        totalTokenCount: 468
+        thoughtsTokenCount: 35
+        totalTokenCount: 402
     status:
       code: 200
       message: OK
@@ -625,7 +622,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3109'
+      - '2724'
       content-type:
       - application/json
       host:
@@ -641,15 +638,15 @@ interactions:
             args:
               queries:
               - stock price
-              - finance data
-              - AAPL stock
-            id: iho1zoej
+              - financial data
+              - market data
+            id: i1menwaq
             name: search_tools
-          thoughtSignature: Eo0DCooDAQw51sehEtlgfxFQtD5bG_3YQ606ZqgYZ8LiypbIXjU9DfNg0Nb9mTpic47Tr2H3J9CLOM-cQr1F0ZJZaBxxQ-tzdh0dv4CxCKbJKX7_2eH5hEnq9oYFZXzP0HtdZM1BC3y8GDPXajeAInYFKS-8WSgFXK3m7JB5kgYvbpH8h-yB5E4rL8fMNCiompw4NduIai8JqQTg0sSz7kfWWTDJq3j7vO4j0ytkqnEgKiSb8zlrD1Rhc7MVtcmoZu_PYvsjxlxfmBRASlhYgCWusAdh1ri7sa_ESeICPgn7uXxUU2_c7CIy-hEQ3kpG0Pl_-Piw7toQFf30KbR2WjQ5t4jEc78P4QgxwLYsZn_dgiGxZtQ0_n56d6hD3oI6xkIhsjzDyo_5wALL5YBsCQYKpu_hisqL6D1TfvSsjFqXkQGnhCQpuA__TFGQ0cAJvf45h6OundscM6xRpFkuIV16ngZzYkCH_18P3iYnmSu2r0LmGg7eN5FKbSYFm58hKN7rBWT9uUZo98zlEiWPMg==
+          thoughtSignature: EqsBCqgBAQw51sey85muPaO5rYklDdcwk2GL8TNw2wrC0Ef9r7qLBVoo6REI7hFZblUaYIgQOwfE5gKFJlhWOYALAuRmaDBObZSBNGsVfA4FeVCJ9OVlgN0mzpwrED4ZVEynhx3lk2mcKoCFoFqutLiMWe9SIfbq5PveVOeOImOA5RpNvgDZtdBy7r7Nkf8-RBgz-qZRn66nrspo7YPWb_fLByteGeMBQEsyuqWR
         role: model
       - parts:
         - functionResponse:
-            id: iho1zoej
+            id: i1menwaq
             name: search_tools
             response:
               discovered_tools:
@@ -660,13 +657,13 @@ interactions:
         - functionCall:
             args:
               symbol: AAPL
-            id: mwbnl2hv
+            id: a0u2vv54
             name: stock_lookup
-          thoughtSignature: EoQCCoECAQw51sf48vBpZiCyt0J7LN1dMqac8RN-is-zAGU8402ClSTKQCy472l_8kYVDKe82gCd9NOwYyZOFPuA5zbBo8OcQmQw9ExL7tA5AlqDQjv_aunh2OGNtriIz9wbpcd2uuLYEgbxotN9xLhrAd1vI_a_DVV95uH-vyQvSCkpA4XrnjEs-4shYXhzn_hFXCb7VLe4RwBBOoCWjU7Z188-J9KGbj2-JWtgizv-NBUflQ0PbMpQt9E-15tphjvp4sfzhp8JyChL-ZGnIQdqNLpL4mM6o_3nMLJHpML7T2YVfOqtEax6Q6ImB2D8lXm8eCqsTmpzIBhUmrJZe2FGlGXuh7c=
+          thoughtSignature: EsYBCsMBAQw51scB3gJrhIMtKXWNg6yJFvgkDmQFNXu65FTXsWgLNRappNoIJsdEI4pJYGyRecnm8NnjxjKjED4JlisOP-pbn0Tq-KC4eqM6YRZUhVLpcSjNfncA8YPe8uxJsjTQ94NH2xUPYFRh5wpJJ5P5j2kF5Jm0HCdWI4RW2zZAbyPCkzFLZJ-X5z5D-Y6volKhKT1gx-WdX6_L12Bpj6V2lTalqnatVFlriRPUFFbEHqJJ7xSkDzCKFnBml71DyY_0ypJ8
         role: model
       - parts:
         - functionResponse:
-            id: mwbnl2hv
+            id: a0u2vv54
             name: stock_lookup
             response:
               return_value: 'Stock AAPL: $150.00'
@@ -727,7 +724,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=876
+      - gfet4t7; dur=851
       transfer-encoding:
       - chunked
       vary:
@@ -743,15 +740,15 @@ interactions:
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: sLoDauW0NqWVmtkPvaz2kAE
+      responseId: n70Daoj0HdSsqtsP_qqimAE
       usageMetadata:
         candidatesTokenCount: 16
-        promptTokenCount: 494
+        promptTokenCount: 428
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 494
+          tokenCount: 428
         serviceTier: standard
-        totalTokenCount: 510
+        totalTokenCount: 444
     status:
       code: 200
       message: OK
@@ -817,11 +814,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1182'
+      - '1502'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1538
+      - gfet4t7; dur=1719
       transfer-encoding:
       - chunked
       vary:
@@ -835,24 +832,24 @@ interactions:
           - text: |-
               "Hello, how are you?" can be translated into French in a few ways depending on the level of formality:
 
-              *   **Formal/Polite:** *Bonjour, comment allez-vous ?*
-              *   **Informal (to a friend or peer):** *Salut, comment vas-tu ?*
-              *   **Casual/Common:** *Salut, ça va ?*
-            thoughtSignature: EuACCt0CAQw51scla20m/zITpX3Meo6mmGXahZn2MHDNmVJfE4DF1hL8krTJqhVLj8Xbs/dfLtwbpHGZm92Q8ngiQ52HJbtEgJwCvTMLoZw/ynDeDTs4KwzoZOvGMVpiPCy5XQUewEObcOb/N5jwJalyy8J40ddTUX2dN2DQpidgF1l9eT1cBL/jC94BJGLUM5B1ynflp2iOWA5NRV1MkPKUwz0yzjSbY5dSRGavgf8PiGkeKCN9Td6rt5UGtgYLskS/drp/likOdXIifrDyUYyBwvnaCAKpjG/6+h006ohQVEEaD0Ce6+uqiSJfmLGKjOORyoY2pQx5O0WdDFsCwL/VNEtTyHcq8v+o4AdfjLSLACRJ3nJleERWbb/QgCL8I695Z8N4gbYxLfNeQvGtubbm1C/HxPNjJey7Ib6t0StDR9oEXsTHpvsgr4qsOh4Bbdj4ImAzbGcI2JKWO4DzK7FN5A==
+              *   **Formal (or to a group):** "Bonjour, comment allez-vous ?"
+              *   **Informal (to a friend):** "Salut, comment vas-tu ?"
+              *   **Casual/Common:** "Salut, ça va ?"
+            thoughtSignature: EssECsgEAQw51sds6GQ5/C4MGBPDcu+7EG29uDZJ3fSES/LOCfCcR0t0HUihhP8Z7ZQ3+IonX52K4ISluAO2OKQMRJ6cUqv0ROVGaLh9y/kuyMaZl8gef0/hx9oo8OdaYZtKhXFQQedTMGdhDoG5vdzpurDKm7uxGk4gk5F+WRWu/0mdRqJVBfNXnb20OB7vvNjubff1OM/1N0UKMXp9d4n6/1k7WDvD3k0SQXfyUHFCb64u8E1R2h4ZEX+HLt3dUr4KtFAStO5O6pPlONMURi7lwte5fBYThtTaq7qZqU8UDA5TyhdAmS2H1AYs6clRoROd2siyC5yzx2ZxzpmjFTSOKswQkj+X8wOf+bEtd0Wrh1ukrGigkjxq/f6Z7NS9jAI96PqXGvXUdaM3g0T1qEYYijxX5sEDFc2T9ZKTrF7f4iM3XM5JXUrfAs7j7nNV2Xp8CIlD1NkNUN0gYoCbHpDbfxsETkWEiwRkIYhnpWSKs00ZrYHE2qI3gWx0ESImX2eM8QpYh3EpkRs8DItUQgsXbQgbQvxrazJmP8luYQJOeBblDhgTBxzqQ4Bqob7HzEwbPk0W980N8aVW3ieh+SwvOGlZ9zF3YmPtXFZkqMC9PiAec8wuU04dcYkOSk9PtCREbOQ5MAk40uhAqD3BV7vcklxTUA4IVn5SmuWi3z612Jjt8dbXCOgHQVLwZ32ZLsxS8E5p1womfjLMaE6CCYsong9OW+l8KcvK2xME+L+5g2xOXTiejAnPWMbFkMLvgY7Lp8dfwk8jtnGjjzc=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: sboDas2GKoaVmtkP25u90Ac
+      responseId: oL0DatfED7uKqtsP_ZrRwAE
       usageMetadata:
-        candidatesTokenCount: 79
+        candidatesTokenCount: 77
         promptTokenCount: 220
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 220
         serviceTier: standard
-        thoughtsTokenCount: 80
-        totalTokenCount: 379
+        thoughtsTokenCount: 153
+        totalTokenCount: 450
     status:
       code: 200
       message: OK
@@ -918,11 +915,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1175'
+      - '1059'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1543
+      - gfet4t7; dur=1620
       transfer-encoding:
       - chunked
       vary:
@@ -939,15 +936,15 @@ interactions:
                 - flight booking
                 - search flights
                 - book flight
-              id: fa90fkrw
+              id: 1rw0qtec
               name: search_tools
-            thoughtSignature: EqcDCqQDAQw51sctEIThrgp7boVh2b8OC/LzpGV2/dN10sGKMk05FTNs7gEpHSS7VXbAC3t0Yplu4DqO6rK1xHRDZt5TLktJInu/fLwgpbih0ZKb2Q0+HEG4wSxzaNj1A2DR27ZavBolYLtU8m1F6rSzWCx7MifEy2tf1SnUmjt0pDci+T/8YvelHunqXPRy3BQsleGtZEOuhmlNTwwjz2mfJP0GLASfE9p57VJhUBu9zNVreRUoB3PV5I+G4BOlqC5+NR1QzOuC6zZIf4R8EKElPbDuAkU3fLbWIluhmi5Z2cL/pm61eFYB7ktGckg/7gbuwEUfLDzi0GHrPcmvw09avNiFUz2xiMMRqyERkgHMdQbccJvTxDxh2iOxGN51WE+zOtVY7D7JpR/dPOGVw49IPMAQWVPvtuM6GWX3vkAaQG1+qE8OZKxYtQThRcqO50aPfoXrn+7+/cYWZcanhc2v3OO11KPoeqf7L1vUvNopZfhXU8pwlJ7ZX8hfi4kMpXZHMkVKNxpr8AFC6MLflNAREafBHAkzznC1xKnNVRvYqQ/WimmO0WL0
+            thoughtSignature: Es8CCswCAQw51sfr9PqjT/0iBSJ3NxMS6qmtQ8gWZ6fmW0jSQ2kR8dl5DC0uJ4Se3/PwYvAIPvNuB2T/UyP7SE15234MdpyUCnXjTBnkxgi00m3MWqCGljkbrsVEoqq5lRXJe9BaJhtOwgIe9VYpdK60xMMEub1AueQqcfifU6wLNT8/FLugfQKPo/RUYVUvMPf2DnPlARsErRbkwviyj5dogQTA4dSmKUrkbkS13fmcOZZeJcs+aBElVbN45Z7AXhyRFOH5MzW0qiKCbZf2t7Nw6rJobxpzrs9gcUYMviTPTsSs0/sAQ7wQl8H2zleC7p+fQ1JC0HClGxZCUuCgqU6CDWXt4TOOAUmPpk7WUCP7k1nxF4nDYo9lakkQOikYj707/6vxF60OlxuGFMDEZJbTdIZ3vVVhBVzh22udVPL29EzDzr5PvRiwo56GzJ8vRD4=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: s7oDar7HGJq8qtsPu6C2gAE
+      responseId: or0DaoS8CPaVmtkPp_KFkQE
       usageMetadata:
         candidatesTokenCount: 27
         promptTokenCount: 221
@@ -955,8 +952,8 @@ interactions:
         - modality: TEXT
           tokenCount: 221
         serviceTier: standard
-        thoughtsTokenCount: 93
-        totalTokenCount: 341
+        thoughtsTokenCount: 63
+        totalTokenCount: 311
     status:
       code: 200
       message: OK
@@ -969,7 +966,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2285'
+      - '2169'
       content-type:
       - application/json
       host:
@@ -987,13 +984,13 @@ interactions:
               - flight booking
               - search flights
               - book flight
-            id: fa90fkrw
+            id: 1rw0qtec
             name: search_tools
-          thoughtSignature: EqcDCqQDAQw51sctEIThrgp7boVh2b8OC_LzpGV2_dN10sGKMk05FTNs7gEpHSS7VXbAC3t0Yplu4DqO6rK1xHRDZt5TLktJInu_fLwgpbih0ZKb2Q0-HEG4wSxzaNj1A2DR27ZavBolYLtU8m1F6rSzWCx7MifEy2tf1SnUmjt0pDci-T_8YvelHunqXPRy3BQsleGtZEOuhmlNTwwjz2mfJP0GLASfE9p57VJhUBu9zNVreRUoB3PV5I-G4BOlqC5-NR1QzOuC6zZIf4R8EKElPbDuAkU3fLbWIluhmi5Z2cL_pm61eFYB7ktGckg_7gbuwEUfLDzi0GHrPcmvw09avNiFUz2xiMMRqyERkgHMdQbccJvTxDxh2iOxGN51WE-zOtVY7D7JpR_dPOGVw49IPMAQWVPvtuM6GWX3vkAaQG1-qE8OZKxYtQThRcqO50aPfoXrn-7-_cYWZcanhc2v3OO11KPoeqf7L1vUvNopZfhXU8pwlJ7ZX8hfi4kMpXZHMkVKNxpr8AFC6MLflNAREafBHAkzznC1xKnNVRvYqQ_WimmO0WL0
+          thoughtSignature: Es8CCswCAQw51sfr9PqjT_0iBSJ3NxMS6qmtQ8gWZ6fmW0jSQ2kR8dl5DC0uJ4Se3_PwYvAIPvNuB2T_UyP7SE15234MdpyUCnXjTBnkxgi00m3MWqCGljkbrsVEoqq5lRXJe9BaJhtOwgIe9VYpdK60xMMEub1AueQqcfifU6wLNT8_FLugfQKPo_RUYVUvMPf2DnPlARsErRbkwviyj5dogQTA4dSmKUrkbkS13fmcOZZeJcs-aBElVbN45Z7AXhyRFOH5MzW0qiKCbZf2t7Nw6rJobxpzrs9gcUYMviTPTsSs0_sAQ7wQl8H2zleC7p-fQ1JC0HClGxZCUuCgqU6CDWXt4TOOAUmPpk7WUCP7k1nxF4nDYo9lakkQOikYj707_6vxF60OlxuGFMDEZJbTdIZ3vVVhBVzh22udVPL29EzDzr5PvRiwo56GzJ8vRD4=
         role: model
       - parts:
         - functionResponse:
-            id: fa90fkrw
+            id: 1rw0qtec
             name: search_tools
             response:
               discovered_tools: []
@@ -1041,11 +1038,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1604'
+      - '1585'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1850
+      - gfet4t7; dur=1656
       transfer-encoding:
       - chunked
       vary:
@@ -1062,24 +1059,24 @@ interactions:
                 - travel
                 - airline
                 - booking
-              id: 9wpssmq5
+              id: fwzli938
               name: search_tools
-            thoughtSignature: EvcFCvQFAQw51sd5hEQ9+tNd5KCF5wPpsyPn0zHnXEsdA3KdQcJwPUz0GYN2uAszgfveb/fDofg5xnCHt0skDMOLCmfCTHUeSSnYxs6rhLuqMMOp9Lo00LEeJQ/+tooOPBN4AakvdZmFwvwKy+GjjL8z51toyVmXnKmgzOdfb376OI8kGoL9IzPY5ws0ZLmS65659kfjcvxachF5qhM2byVwYhwGgKat+7o1yPnrrQfvmumZkjD/+A59rxNARp0EmQ4TAXpco7Q9bL7OMMmw0DGxOEYGg4QO37xapsfS5tB0YOGiqvKIWojRe5ZJD4bX+frdG8e3K8b+CFLbSchvYUUIXfmfKfRM6MJH79z0rvV5L97rPbudwhd24gddq4Mc0iLNtsvoQJw8dlsqVwvhQelRMQKrKf+2F2oOnVBfDlMMx0Rr/VGG36edpRI7ZVsvISTvoBWFVG88rzAnmJaEPyOqNtzN02oZzJc2+INeXKRjC54Gbe+Li2Lz2xsGiFbIFbkXfbPop1bGQsOzsvuUZNxbzR9eYAE4gP+vmySZo9cWXUZKEPZPeaLP5Ju4svB0SV7d47msq4g+Dzo5If7/OI3N6xcOF2mCJHSWkDcMP52T86DQD1RAY1B4KurXNEK1cO8sL6eiHIKsz3OUY8MTxeNuj/OAemej66ekVQxtXER6MAbZl8Hk0D3C8HdDO9D8Fb/QQa2OLWz8PDlMS9q/zNCW638W8IGg1GhWbIvv7mpwRKBxwpA23su3XYeJMKSkN2Fw23gG2AxtS7reuc4rUbkOR+4hYpQjS780OwwkRB/EW0KYfPEOobsEwtGIb8egyhjAyeX6wGzAlk1iCWt49buwQSviROgvvC8e1iMWFJU+e+mc85RIkcMtxGh6fTIGBPfT89dfJp0Eg46mJZgkd9W5FNRrAOtVyEV8ZmV+NRbqauEr5oDTVzNaOncFi4s6nTcyTHYIjzhUF11DSXBKmZFrXlIUppCipwLPoHsN3iXoleXM064eDV1/
+            thoughtSignature: EugFCuUFAQw51scftfVJhd7Gk8v0FuDB74fzpWfGaXwUUSUji400QJi2pr3zQ/EkfQPyjxnI8Wzu94ULQYDpyetrXs9CL9hVaFbIdciPVXX1V/A+206+4S0KwhI+e67YY8gQ1sML/miRL8M8h+MVYmNgm1+PxFnQ5ECUg37iktJcl7rAnNoIpHGSiFdq/ZtHAa3BaOcFdimUeLOI3GH556OnVSVLL1wlI5yRCIayj/tsab1G7PJjRXKIwqlWQoR1074Xg0i01DHERWUfvIlPlEW3OvKD5YNYF8tZdy9wBqRN/LFEbCwrVDtptj8ZhCoilhBCEQl8rZLIqyDbLIACiK0uQH55Lnvh9fS9yXuxqpCLhXTzyAuCWmIAbskgH9OL+2QZBCQmZ93R5Dej4NQ4z8aJrLIYaaeUF/YjVUz8MBS236764vsTdg9wUF6M989R8U5xbnn5JII8IPLJnBlWwhxhp8Zz0bwPnljMnOYwDvp477yg+09pMSXlJaihSIEA8LN0juLwhfkW3LIGJKM2sosYTGZCF39GbtcUmin+ZnZkrz+/V2ZcSxAbhIjLAcXOv/+E+i3ar74CgIkk+XIxW/pjNT3e5+oRcwYo5msaTYDB7Sf7Qu8Z+yaX81v/W9pJkCi8nfagkzPAf/Jcfhk7lJ8S6QN84h0YOazgKu6wBYPF/JyNfhwWG0bLd9EXNWxY+uhxp0jwTBqCofY5eEff1ZnE4cdAqKGNagZGqFFQdFgzDwskdM6PGN8xNaLoia5oNtZ8RISA9KoIT3KymUwBPO1UGEzXQ/cDTzV3uzjkteU9fXmvMmdmrsbXnBo739A2hD/XEnRu4d6NaRChGi3IDsM3ghzQcT66SNmH6b2uZSwH4mkpkR26/5hFYF9QNpS6BHDNkAPIHH6VFFVOR4f/roIhdG7zXYY3Fo//tLV1W7FXhlHExAQhfqW7gJLFHf/C7h1phg6I5udLEanI8ZbIP4JfOe2vQwT74Hgw
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: tboDaq8fhLWq2w-pzezRAQ
+      responseId: o70DaqqdMrmrqtsP29GCuQE
       usageMetadata:
         candidatesTokenCount: 24
-        promptTokenCount: 373
+        promptTokenCount: 343
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 373
+          tokenCount: 343
         serviceTier: standard
-        thoughtsTokenCount: 172
-        totalTokenCount: 569
+        thoughtsTokenCount: 154
+        totalTokenCount: 521
     status:
       code: 200
       message: OK
@@ -1092,7 +1089,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3685'
+      - '3549'
       content-type:
       - application/json
       host:
@@ -1110,13 +1107,13 @@ interactions:
               - flight booking
               - search flights
               - book flight
-            id: fa90fkrw
+            id: 1rw0qtec
             name: search_tools
-          thoughtSignature: EqcDCqQDAQw51sctEIThrgp7boVh2b8OC_LzpGV2_dN10sGKMk05FTNs7gEpHSS7VXbAC3t0Yplu4DqO6rK1xHRDZt5TLktJInu_fLwgpbih0ZKb2Q0-HEG4wSxzaNj1A2DR27ZavBolYLtU8m1F6rSzWCx7MifEy2tf1SnUmjt0pDci-T_8YvelHunqXPRy3BQsleGtZEOuhmlNTwwjz2mfJP0GLASfE9p57VJhUBu9zNVreRUoB3PV5I-G4BOlqC5-NR1QzOuC6zZIf4R8EKElPbDuAkU3fLbWIluhmi5Z2cL_pm61eFYB7ktGckg_7gbuwEUfLDzi0GHrPcmvw09avNiFUz2xiMMRqyERkgHMdQbccJvTxDxh2iOxGN51WE-zOtVY7D7JpR_dPOGVw49IPMAQWVPvtuM6GWX3vkAaQG1-qE8OZKxYtQThRcqO50aPfoXrn-7-_cYWZcanhc2v3OO11KPoeqf7L1vUvNopZfhXU8pwlJ7ZX8hfi4kMpXZHMkVKNxpr8AFC6MLflNAREafBHAkzznC1xKnNVRvYqQ_WimmO0WL0
+          thoughtSignature: Es8CCswCAQw51sfr9PqjT_0iBSJ3NxMS6qmtQ8gWZ6fmW0jSQ2kR8dl5DC0uJ4Se3_PwYvAIPvNuB2T_UyP7SE15234MdpyUCnXjTBnkxgi00m3MWqCGljkbrsVEoqq5lRXJe9BaJhtOwgIe9VYpdK60xMMEub1AueQqcfifU6wLNT8_FLugfQKPo_RUYVUvMPf2DnPlARsErRbkwviyj5dogQTA4dSmKUrkbkS13fmcOZZeJcs-aBElVbN45Z7AXhyRFOH5MzW0qiKCbZf2t7Nw6rJobxpzrs9gcUYMviTPTsSs0_sAQ7wQl8H2zleC7p-fQ1JC0HClGxZCUuCgqU6CDWXt4TOOAUmPpk7WUCP7k1nxF4nDYo9lakkQOikYj707_6vxF60OlxuGFMDEZJbTdIZ3vVVhBVzh22udVPL29EzDzr5PvRiwo56GzJ8vRD4=
         role: model
       - parts:
         - functionResponse:
-            id: fa90fkrw
+            id: 1rw0qtec
             name: search_tools
             response:
               discovered_tools: []
@@ -1129,13 +1126,13 @@ interactions:
               - travel
               - airline
               - booking
-            id: 9wpssmq5
+            id: fwzli938
             name: search_tools
-          thoughtSignature: EvcFCvQFAQw51sd5hEQ9-tNd5KCF5wPpsyPn0zHnXEsdA3KdQcJwPUz0GYN2uAszgfveb_fDofg5xnCHt0skDMOLCmfCTHUeSSnYxs6rhLuqMMOp9Lo00LEeJQ_-tooOPBN4AakvdZmFwvwKy-GjjL8z51toyVmXnKmgzOdfb376OI8kGoL9IzPY5ws0ZLmS65659kfjcvxachF5qhM2byVwYhwGgKat-7o1yPnrrQfvmumZkjD_-A59rxNARp0EmQ4TAXpco7Q9bL7OMMmw0DGxOEYGg4QO37xapsfS5tB0YOGiqvKIWojRe5ZJD4bX-frdG8e3K8b-CFLbSchvYUUIXfmfKfRM6MJH79z0rvV5L97rPbudwhd24gddq4Mc0iLNtsvoQJw8dlsqVwvhQelRMQKrKf-2F2oOnVBfDlMMx0Rr_VGG36edpRI7ZVsvISTvoBWFVG88rzAnmJaEPyOqNtzN02oZzJc2-INeXKRjC54Gbe-Li2Lz2xsGiFbIFbkXfbPop1bGQsOzsvuUZNxbzR9eYAE4gP-vmySZo9cWXUZKEPZPeaLP5Ju4svB0SV7d47msq4g-Dzo5If7_OI3N6xcOF2mCJHSWkDcMP52T86DQD1RAY1B4KurXNEK1cO8sL6eiHIKsz3OUY8MTxeNuj_OAemej66ekVQxtXER6MAbZl8Hk0D3C8HdDO9D8Fb_QQa2OLWz8PDlMS9q_zNCW638W8IGg1GhWbIvv7mpwRKBxwpA23su3XYeJMKSkN2Fw23gG2AxtS7reuc4rUbkOR-4hYpQjS780OwwkRB_EW0KYfPEOobsEwtGIb8egyhjAyeX6wGzAlk1iCWt49buwQSviROgvvC8e1iMWFJU-e-mc85RIkcMtxGh6fTIGBPfT89dfJp0Eg46mJZgkd9W5FNRrAOtVyEV8ZmV-NRbqauEr5oDTVzNaOncFi4s6nTcyTHYIjzhUF11DSXBKmZFrXlIUppCipwLPoHsN3iXoleXM064eDV1_
+          thoughtSignature: EugFCuUFAQw51scftfVJhd7Gk8v0FuDB74fzpWfGaXwUUSUji400QJi2pr3zQ_EkfQPyjxnI8Wzu94ULQYDpyetrXs9CL9hVaFbIdciPVXX1V_A-206-4S0KwhI-e67YY8gQ1sML_miRL8M8h-MVYmNgm1-PxFnQ5ECUg37iktJcl7rAnNoIpHGSiFdq_ZtHAa3BaOcFdimUeLOI3GH556OnVSVLL1wlI5yRCIayj_tsab1G7PJjRXKIwqlWQoR1074Xg0i01DHERWUfvIlPlEW3OvKD5YNYF8tZdy9wBqRN_LFEbCwrVDtptj8ZhCoilhBCEQl8rZLIqyDbLIACiK0uQH55Lnvh9fS9yXuxqpCLhXTzyAuCWmIAbskgH9OL-2QZBCQmZ93R5Dej4NQ4z8aJrLIYaaeUF_YjVUz8MBS236764vsTdg9wUF6M989R8U5xbnn5JII8IPLJnBlWwhxhp8Zz0bwPnljMnOYwDvp477yg-09pMSXlJaihSIEA8LN0juLwhfkW3LIGJKM2sosYTGZCF39GbtcUmin-ZnZkrz-_V2ZcSxAbhIjLAcXOv_-E-i3ar74CgIkk-XIxW_pjNT3e5-oRcwYo5msaTYDB7Sf7Qu8Z-yaX81v_W9pJkCi8nfagkzPAf_Jcfhk7lJ8S6QN84h0YOazgKu6wBYPF_JyNfhwWG0bLd9EXNWxY-uhxp0jwTBqCofY5eEff1ZnE4cdAqKGNagZGqFFQdFgzDwskdM6PGN8xNaLoia5oNtZ8RISA9KoIT3KymUwBPO1UGEzXQ_cDTzV3uzjkteU9fXmvMmdmrsbXnBo739A2hD_XEnRu4d6NaRChGi3IDsM3ghzQcT66SNmH6b2uZSwH4mkpkR26_5hFYF9QNpS6BHDNkAPIHH6VFFVOR4f_roIhdG7zXYY3Fo__tLV1W7FXhlHExAQhfqW7gJLFHf_C7h1phg6I5udLEanI8ZbIP4JfOe2vQwT74Hgw
         role: model
       - parts:
         - functionResponse:
-            id: 9wpssmq5
+            id: fwzli938
             name: search_tools
             response:
               discovered_tools: []
@@ -1183,11 +1180,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1875'
+      - '912'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2139
+      - gfet4t7; dur=1130
       transfer-encoding:
       - chunked
       vary:
@@ -1198,27 +1195,23 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: "I'm sorry, but I don't have the capability to book flights directly as I don't have access to travel booking
-              tools or personal payment information. \n\nHowever, I can help you plan your trip! For a flight from New York
-              (JFK/EWR) to London (LHR/LGW) next week, I recommend checking popular travel sites like Google Flights, Kayak,
-              or Expedia to compare prices and schedules. \n\nIf you'd like, I can help you:\n1. **Find things to do in London.**\n2.
-              **Check the weather in London for next week.**\n3. **Calculate time zone differences.**\n\nWould you like me
-              to check the weather in London for you?"
-            thoughtSignature: EvYECvMEAQw51scRsO6VmIiCAZBvRYtcFCSHDu7Ectfye1ffov7mc68Nn5XDdNlzvwz8zJberwAzm2aIIV+uuT5FVL7CMoeBHYZc0t5/HFm8TmL8uGqOAO4gQztNFKiokP3M/wHzBi7hNtkFr1A289CFagubIFOQHUysToIwGpZ7lHx+LItpqIBtCugAHF6n+Oa1ocQ0+CfyfsEf/IK6h3lGn5CNfJmgKbW1+iLPFbP/TnTaX+CJr+XYIML171CG1q5duQPOXMaRLqkRsW7xmNwwhVxyu1wQQ8Y+7HyZiV0pRJLmYnvwQi7CwDiCXaDowo8Zk6oEzhjl0LfeUTURzbgw8h8PnDaIauOJZqKz5h0f5bmG4PaFrZANbTIIFVN6GOoeOtIWiIzxWqbX2xtPRiKwkW8hYJma9/yUHQ6X8jCEQU37iLQQe5ZmiCvjsDBuEMxYNA6vRZHqg5PJwq1Z4FVXJzXq3FCEMmMGpG17DUhlMQOiy9cx5q58rirHsQ0BvvThVsXYvlm0YENy06qxldM+nqIQ4fDAqdJQxJTotnuupxclMGadi5kVkRIHptdNi+22JoFK9ZsS0GkvAACbQhyGPsraPCcLukE0oFn46V2h4G2SBxxzN3xkDtcYogv0BljoZIoBzi0ksfg95qrhkoU31CMXQ9ZJwXKiEw0nZ0eUM7sZvR5S6cr9jT/wSBGXnN+JdXPZTQMlZVvYuu6yZ9Cj5unueSLG6TxeMIQXR0WflsMaqUd9lm1O0c/UdPhAF1WRSSPL8o6tBkBCU4XRHa9/nomLY0mDtlakarf9l/bCTP1tnagf7Wv8uFE89Y03Owtn/qR2uDOe
+          - text: I'm sorry, but I don't have the ability to book flights directly. You'll need to visit an airline's website
+              or a travel booking platform like Expedia, Kayak, or Google Flights to arrange your trip from New York to London.
+            thoughtSignature: EsABCr0BAQw51scwPRJ6qU5JK4+/x0x7WySgp+lt4kAiC5Ju+rT+w8zlEUXhWCYeHLTFa5O1fnwZQtetmjKzhXHGepcdxasHZaOwpl4LD9MeFQZSkaYUjGshRSw+xGIDBdjJ46Ah1EnrkdaKrKgjX5JJcPcT5caTghAJ4AGKpB6i45j5QrfXBk7VKn516t+KZsi9sFkYUqPGdbxiCBlMRWqSIGuJVovQ36X6yYN8ck/UQoIjBimmHxs0Kko4clYMR8VD
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: troDat2CMLm6mtkPw5mKiAM
+      responseId: pb0DaquLIJeRmtkP9KOckAE
       usageMetadata:
-        candidatesTokenCount: 151
-        promptTokenCount: 601
+        candidatesTokenCount: 53
+        promptTokenCount: 553
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 601
+          tokenCount: 553
         serviceTier: standard
-        thoughtsTokenCount: 116
-        totalTokenCount: 868
+        thoughtsTokenCount: 30
+        totalTokenCount: 636
     status:
       code: 200
       message: OK

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -54,7 +54,8 @@ from pydantic_ai.messages import (
     _model_request_part_discriminator,  # pyright: ignore[reportPrivateUsage]
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.native_tools._tool_search import ToolSearchTool  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -245,8 +246,21 @@ def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
 
 
 def _build_agent(model_name: str) -> Agent[None, str]:
-    """Build an agent with a visible tool and several deferred tools for testing."""
-    agent: Agent[None, str] = Agent(model=model_name)
+    """Build an agent with a visible tool and several deferred tools for testing.
+
+    Forces the local `search_tools` function-tool path on every provider by removing
+    `ToolSearchTool` from the model profile's `supported_native_tools`. This eval
+    exercises OUR search-tool prompts and behavior; providers' native tool-search
+    paths use the provider's own prompts and aren't under test here.
+    """
+    model = infer_model(model_name)
+    # Override the cached profile to drop ToolSearchTool — forces the local path
+    # uniformly across providers with and without native tool-search support.
+    model.__dict__['profile'] = replace(
+        model.profile,
+        supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+    )
+    agent: Agent[None, str] = Agent(model=model)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -359,11 +373,11 @@ _CASES = [
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': "['currency exchange rate USD EUR current exchange rate']",
+                    'keywords': "['exchange rate currency USD EUR current']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': "['stock price market quote current AAPL', 'financial market quote stock']",
+                    'keywords': "['stock price market quote AAPL current']",
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {'keywords': None, 'tool_calls': []},
@@ -378,24 +392,23 @@ _CASES = [
         model_name='anthropic:claude-sonnet-4-5',
         marks=[
             pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
-            # Sonnet 4.5 declines to call `tool_search_tool_bm25` for the vague
-            # `exchange_rate` prompt — answers from training rather than searching.
-            # Model behavior, not credentials (cassette records successfully). Removing
-            # this xfail requires either prompt-engineering the eval cases or having the
-            # ToolSearch capability auto-inject a search-first system instruction — both
-            # out of scope for this PR.
-            pytest.mark.xfail(reason='Sonnet 4.5 declines native tool_search without explicit guidance'),
         ],
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': 'exchange rate currency USD EUR',
+                    'keywords': "['currency exchange rate', 'USD EUR conversion', 'foreign exchange', 'currency converter']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
-                'stock_price': {'keywords': 'stock price quote ticker', 'tool_calls': ['search_tools', 'stock_lookup']},
-                'translation': {'keywords': 'translate translation language French', 'tool_calls': ['search_tools']},
+                'stock_price': {
+                    'keywords': "['stock price', 'AAPL', 'ticker symbol', 'market data', 'financial data']",
+                    'tool_calls': ['search_tools', 'stock_lookup', 'stock_lookup'],
+                },
+                'translation': {
+                    'keywords': "['translate', 'translation', 'French', 'language']",
+                    'tool_calls': ['search_tools'],
+                },
                 'no_matching_tool': {
-                    'keywords': 'flight booking reservation travel airline',
+                    'keywords': "['book flight', 'flight booking', 'airline reservation', 'travel booking']",
                     'tool_calls': ['search_tools'],
                 },
             }
@@ -409,11 +422,11 @@ _CASES = [
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': "['currency exchange rate', 'USD to EUR', 'forex rates']",
+                    'keywords': "['exchange rate', 'currency conversion']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': "['stock price', 'finance data', 'AAPL stock']",
+                    'keywords': "['stock price', 'financial data', 'market data']",
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {'keywords': None, 'tool_calls': []},

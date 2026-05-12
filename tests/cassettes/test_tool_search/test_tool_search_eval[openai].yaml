@@ -60,17 +60,17 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '824'
+      - '810'
       content-type:
       - application/json
       openai-processing-ms:
-      - '730'
+      - '517'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -88,18 +88,18 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"queries":["currency exchange rate USD EUR current exchange rate"]}'
+              arguments: '{"queries":["exchange rate currency USD EUR current"]}'
               name: search_tools
-            id: call_uj40q9SN5vjNt40FGVO4N11i
+            id: call_HXEEsG0rVIvymWmAHG4fgIwp
             type: function
-      created: 1778535757
-      id: chatcmpl-DeSgXvx439TevvQi7vt9CPfqTSmed
+      created: 1778630006
+      id: chatcmpl-DerCgrXIgNClo6ZRYU2V8y2DCZLGK
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 25
+        completion_tokens: 23
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -109,7 +109,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 290
+        total_tokens: 288
     status:
       code: 200
       message: OK
@@ -122,7 +122,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2119'
+      - '2105'
       content-type:
       - application/json
       host:
@@ -136,14 +136,14 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"queries":["currency exchange rate USD EUR current exchange rate"]}'
+            arguments: '{"queries":["exchange rate currency USD EUR current"]}'
             name: search_tools
-          id: call_uj40q9SN5vjNt40FGVO4N11i
+          id: call_HXEEsG0rVIvymWmAHG4fgIwp
           type: function
       - content: '{"discovered_tools":[{"name":"get_exchange_rate","description":"Look up the current exchange rate between
           two currencies."}]}'
         role: tool
-        tool_call_id: call_uj40q9SN5vjNt40FGVO4N11i
+        tool_call_id: call_HXEEsG0rVIvymWmAHG4fgIwp
       model: gpt-5.4-mini
       stream: false
       tool_choice: auto
@@ -202,7 +202,7 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -212,7 +212,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '711'
+      - '744'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -232,10 +232,10 @@ interactions:
           - function:
               arguments: '{"from_currency":"USD","to_currency":"EUR"}'
               name: get_exchange_rate
-            id: call_dGQOkqbv8gsd70c0O2td6HXt
+            id: call_qTaxogV7BR0lJzQLma0VcCh9
             type: function
-      created: 1778535758
-      id: chatcmpl-DeSgYvOduZAltsCjvBa43SA7X2ITR
+      created: 1778630007
+      id: chatcmpl-DerChaCW7nxQu6kZhH0RJhGe9FuXn
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
@@ -247,11 +247,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 358
+        prompt_tokens: 356
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 382
+        total_tokens: 380
     status:
       code: 200
       message: OK
@@ -264,7 +264,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2445'
+      - '2431'
       content-type:
       - application/json
       host:
@@ -278,25 +278,25 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"queries":["currency exchange rate USD EUR current exchange rate"]}'
+            arguments: '{"queries":["exchange rate currency USD EUR current"]}'
             name: search_tools
-          id: call_uj40q9SN5vjNt40FGVO4N11i
+          id: call_HXEEsG0rVIvymWmAHG4fgIwp
           type: function
       - content: '{"discovered_tools":[{"name":"get_exchange_rate","description":"Look up the current exchange rate between
           two currencies."}]}'
         role: tool
-        tool_call_id: call_uj40q9SN5vjNt40FGVO4N11i
+        tool_call_id: call_HXEEsG0rVIvymWmAHG4fgIwp
       - content: null
         role: assistant
         tool_calls:
         - function:
             arguments: '{"from_currency":"USD","to_currency":"EUR"}'
             name: get_exchange_rate
-          id: call_dGQOkqbv8gsd70c0O2td6HXt
+          id: call_qTaxogV7BR0lJzQLma0VcCh9
           type: function
       - content: 1 USD = 0.92 EUR
         role: tool
-        tool_call_id: call_dGQOkqbv8gsd70c0O2td6HXt
+        tool_call_id: call_qTaxogV7BR0lJzQLma0VcCh9
       model: gpt-5.4-mini
       stream: false
       tool_choice: auto
@@ -355,7 +355,7 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -365,7 +365,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '996'
+      - '619'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -381,8 +381,8 @@ interactions:
           content: The current exchange rate is **1 USD = 0.92 EUR**.
           refusal: null
           role: assistant
-      created: 1778535763
-      id: chatcmpl-DeSgd65bf9rcV8wsU030J5PTnIb7u
+      created: 1778630008
+      id: chatcmpl-DerCi9A015JUcpUouSxCES3T5Hj6Y
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
@@ -394,11 +394,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 402
+        prompt_tokens: 400
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 421
+        total_tokens: 419
     status:
       code: 200
       message: OK
@@ -463,17 +463,17 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '843'
+      - '809'
       content-type:
       - application/json
       openai-processing-ms:
-      - '710'
+      - '678'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -491,18 +491,18 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"queries":["stock price market quote current AAPL", "financial market quote stock"]}'
+              arguments: '{"queries":["stock price market quote AAPL current"]}'
               name: search_tools
-            id: call_5kOWi9vkfgm8UTTqQd7eO448
+            id: call_I0Yk90iUIGFHEQBlkTfJGj4U
             type: function
-      created: 1778535764
-      id: chatcmpl-DeSgerSU1DvAuhR39vPFiqosKQMss
+      created: 1778630009
+      id: chatcmpl-DerCjVZPzYuW3ilMjQ2noN1awUqOT
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 30
+        completion_tokens: 24
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -512,7 +512,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 294
+        total_tokens: 288
     status:
       code: 200
       message: OK
@@ -525,7 +525,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2482'
+      - '2448'
       content-type:
       - application/json
       host:
@@ -539,14 +539,14 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"queries":["stock price market quote current AAPL", "financial market quote stock"]}'
+            arguments: '{"queries":["stock price market quote AAPL current"]}'
             name: search_tools
-          id: call_5kOWi9vkfgm8UTTqQd7eO448
+          id: call_I0Yk90iUIGFHEQBlkTfJGj4U
           type: function
       - content: '{"discovered_tools":[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."},{"name":"get_exchange_rate","description":"Look
           up the current exchange rate between two currencies."}]}'
         role: tool
-        tool_call_id: call_5kOWi9vkfgm8UTTqQd7eO448
+        tool_call_id: call_I0Yk90iUIGFHEQBlkTfJGj4U
       model: gpt-5.4-mini
       stream: false
       tool_choice: auto
@@ -618,7 +618,7 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -628,7 +628,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '720'
+      - '791'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -648,10 +648,10 @@ interactions:
           - function:
               arguments: '{"symbol":"AAPL"}'
               name: stock_lookup
-            id: call_8VfsOtYmbkd6lNDKrEwkyWH4
+            id: call_gaKxiqVgOxxX9Q3RvqvtKKCn
             type: function
-      created: 1778535765
-      id: chatcmpl-DeSgfrE4RNcQZjt5xE382nERRBB56
+      created: 1778630010
+      id: chatcmpl-DerCk4JbIbzS0pe06vnmDKJQdEjbI
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
@@ -663,11 +663,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 399
+        prompt_tokens: 394
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 417
+        total_tokens: 412
     status:
       code: 200
       message: OK
@@ -680,7 +680,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2776'
+      - '2742'
       content-type:
       - application/json
       host:
@@ -694,25 +694,25 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"queries":["stock price market quote current AAPL", "financial market quote stock"]}'
+            arguments: '{"queries":["stock price market quote AAPL current"]}'
             name: search_tools
-          id: call_5kOWi9vkfgm8UTTqQd7eO448
+          id: call_I0Yk90iUIGFHEQBlkTfJGj4U
           type: function
       - content: '{"discovered_tools":[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."},{"name":"get_exchange_rate","description":"Look
           up the current exchange rate between two currencies."}]}'
         role: tool
-        tool_call_id: call_5kOWi9vkfgm8UTTqQd7eO448
+        tool_call_id: call_I0Yk90iUIGFHEQBlkTfJGj4U
       - content: null
         role: assistant
         tool_calls:
         - function:
             arguments: '{"symbol":"AAPL"}'
             name: stock_lookup
-          id: call_8VfsOtYmbkd6lNDKrEwkyWH4
+          id: call_gaKxiqVgOxxX9Q3RvqvtKKCn
           type: function
       - content: 'Stock AAPL: $150.00'
         role: tool
-        tool_call_id: call_8VfsOtYmbkd6lNDKrEwkyWH4
+        tool_call_id: call_gaKxiqVgOxxX9Q3RvqvtKKCn
       model: gpt-5.4-mini
       stream: false
       tool_choice: auto
@@ -784,7 +784,7 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -794,7 +794,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '844'
+      - '605'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -810,8 +810,8 @@ interactions:
           content: AAPL is currently **$150.00**.
           refusal: null
           role: assistant
-      created: 1778535766
-      id: chatcmpl-DeSggmXB0sEhQafD6hbTPvEh3If6y
+      created: 1778630011
+      id: chatcmpl-DerCl0fkkyBT9vhkhzOKaCcDhQ3fU
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
@@ -823,11 +823,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 436
+        prompt_tokens: 431
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 450
+        total_tokens: 445
     status:
       code: 200
       message: OK
@@ -892,17 +892,17 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '640'
+      - '655'
       content-type:
       - application/json
       openai-processing-ms:
-      - '799'
+      - '350'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -915,17 +915,17 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: Bonjour, comment ça va ?
+          content: « Bonjour, comment allez-vous ? »
           refusal: null
           role: assistant
-      created: 1778535769
-      id: chatcmpl-DeSgjzxkHKvwTuG7D31XCyTiu0z26
+      created: 1778630012
+      id: chatcmpl-DerCmbyPjXhGVTbEvsZ94Pklags7m
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 9
+        completion_tokens: 11
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -935,7 +935,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 274
+        total_tokens: 276
     status:
       code: 200
       message: OK
@@ -1000,17 +1000,17 @@ interactions:
   response:
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1250'
+      - '1195'
       content-type:
       - application/json
       openai-processing-ms:
-      - '1609'
+      - '1545'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -1023,22 +1023,28 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: "I can help plan it, but I can't directly book flights from here unless I have a flight-booking tool connected.\n\nIf
-            you want, I can still help by:\n- finding the best flight options,\n- drafting the exact booking details you need,\n-
-            or helping you compare choices.\n\nTo proceed, I'd need:\n1. Your departure airport in New York  \n   - JFK, LGA,
-            or EWR?\n2. Your preferred dates next week  \n   - \"next week\" can mean different days\n3. One-way or round-trip\n4.
-            Number of passengers\n5. Any preferences  \n   - nonstop vs. flexible, cabin class, budget, airline, baggage\n\nIf
-            you share those, I'll help you narrow it down quickly."
+          content: |-
+            I can help plan it, but I can't directly book flights from here.
+
+            If you want, I can help you find the best option by narrowing it down. Please send:
+            - Departure airport in New York: JFK, LGA, or EWR
+            - London airport preference: LHR, LGW, STN, LTN, or "any"
+            - Number of passengers
+            - Cabin class: economy, premium economy, business, first
+            - Flexible dates or exact travel dates for next week
+            - Any preferences: nonstop only, cheapest, preferred airline, baggage included
+
+            If you'd like, I can also help you compare typical flight options and build a booking-ready search.
           refusal: null
           role: assistant
-      created: 1778535770
-      id: chatcmpl-DeSgkygfCbGTLYhX0rHio3FxJvry3
+      created: 1778630012
+      id: chatcmpl-DerCmWe7e9IO3mFLuTcRREPZnMZp2
       model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 162
+        completion_tokens: 147
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -1048,7 +1054,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 428
+        total_tokens: 413
     status:
       code: 200
       message: OK
