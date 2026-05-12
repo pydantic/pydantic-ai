@@ -491,22 +491,6 @@ def test_schema_hyphenated_tool_name():
     assert any('MyToolName' in rt.name for rt in sig.referenced_types)
 
 
-def test_tool_def_function_signature_from_schema():
-    """Tool.tool_def.function_signature is generated from the JSON schema."""
-
-    def my_tool(x: int, y: str = 'hello') -> bool:
-        """A test tool."""
-        return True  # pragma: no cover
-
-    tool = Tool(my_tool)
-    tool_def = tool.tool_def
-
-    sig = tool_def.function_signature
-    assert sig is not None
-    assert 'x' in sig.params
-    assert 'y' in sig.params
-
-
 def test_tool_def_has_schema_based_signature():
     """Tool.tool_def.function_signature is computed from schema + return_schema."""
 

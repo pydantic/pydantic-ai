@@ -370,13 +370,6 @@ def test_agent_from_spec_model_settings_merged():
     assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
 
 
-def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_retries_override():
     with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)

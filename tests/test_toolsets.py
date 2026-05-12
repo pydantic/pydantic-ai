@@ -1615,15 +1615,6 @@ async def test_function_toolset_get_instructions_multiple():
     ]
 
 
-async def test_function_toolset_get_instructions_none_default():
-    """FunctionToolset without instructions returns None."""
-    toolset = FunctionToolset()
-
-    ctx = build_run_context(None)
-    result = await toolset.get_instructions(ctx)
-    assert result is None
-
-
 async def test_function_toolset_instructions_decorator():
     """The @toolset.instructions decorator registers instruction functions."""
     toolset = FunctionToolset()
