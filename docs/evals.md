@@ -26,7 +26,7 @@ title: Pydantic Evals
 **Evaluators:**
 
 - [Evaluators Overview](evals/evaluators/overview.md) - Compare evaluator types and learn when to use each approach
-- [Native Evaluators](evals/evaluators/built-in.md) - Complete reference for exact match, instance checks, and other ready-to-use evaluators
+- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference for exact match, instance checks, and other ready-to-use evaluators
 - [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
 - [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
@@ -200,7 +200,7 @@ _(This example is complete, it can be run "as is")_
 Learn more:
 
 - [Evaluators Overview](evals/evaluators/overview.md) - When to use different types
-- [Native Evaluators](evals/evaluators/built-in.md) - Complete reference
+- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
@@ -280,7 +280,7 @@ For comprehensive coverage of all classes, methods, and configuration options, s
 <!-- TODO - this would be the perfect place for a full tutorial or case study  -->
 1. **Start with simple evaluations** using [Quick Start](evals/quick-start.md)
 2. **Understand the data model** with [Core Concepts](evals/core-concepts.md)
-3. **Explore built-in evaluators** in [Native Evaluators](evals/evaluators/built-in.md)
+3. **Explore built-in evaluators** in [Built-in Evaluators](evals/evaluators/built-in.md)
 4. **Integrate with Logfire** for visualization: [Logfire Integration](evals/how-to/logfire-integration.md)
 5. **Build comprehensive test suites** with [Dataset Management](evals/how-to/dataset-management.md)
 6. **Implement custom evaluators** for domain-specific metrics: [Custom Evaluators](evals/evaluators/custom.md)

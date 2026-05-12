@@ -56,7 +56,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-## Native Reducers
+## Built-in Reducers
 
 Pydantic Graph provides several common reducer types out of the box:
 
