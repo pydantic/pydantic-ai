@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelRequest, UserPromptPart
 from pydantic_ai.direct import model_request_stream_sync
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -187,3 +187,45 @@ def test_streamed_response_sync_get_and_usage_property_then_call():
         assert repr(usage_call).startswith('RequestUsage(')
         assert (usage_call == 'not-a-request-usage') is False
         assert (response_call == 'not-a-model-response') is False
+
+
+# Serialization round-trips ────────────────────────────────────────────────
+
+
+def test_deprecated_callable_response_round_trips_through_typeadapter():
+    """The `ModelResponse` returned by the deprecated `stream.get()` survives a JSON round-trip.
+
+    The wrapper is a `ModelResponse` subclass with extra attribute state (`_deprecation_message`).
+    Pydantic must serialize it using the parent dataclass schema and rehydrate it as a plain
+    `ModelResponse` with the same field values.
+    """
+    messages = [ModelRequest(parts=[UserPromptPart(content='hello')])]
+    with model_request_stream_sync(TestModel(), messages) as stream:
+        for _ in stream:
+            pass
+        with pytest.warns(DeprecationWarning):
+            wrapped = stream.get()
+
+    serialized = ModelMessagesTypeAdapter.dump_json([wrapped])
+    [revived] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(revived, ModelResponse)
+    assert revived == wrapped
+
+
+async def test_deprecated_callable_run_usage_serializes_via_pydantic():
+    """`agent.run(...)` returns a result whose `usage()` (deprecated) is a `RunUsage` subclass.
+
+    The wrapper survives `RunUsage`'s pydantic dump/validate cycle without leaking
+    the `_deprecation_message` attribute.
+    """
+    from pydantic import TypeAdapter
+
+    agent = Agent(TestModel())
+    result = await agent.run('hello')
+    with pytest.warns(DeprecationWarning):
+        wrapped_usage = result.usage()
+    assert isinstance(wrapped_usage, RunUsage)
+
+    adapter = TypeAdapter(RunUsage)
+    revived = adapter.validate_json(adapter.dump_json(wrapped_usage))
+    assert revived == wrapped_usage
