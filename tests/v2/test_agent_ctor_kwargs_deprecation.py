@@ -1,12 +1,13 @@
 """1.x deprecation warnings for `Agent.__init__` kwargs whose migration target is a capability.
 
-Card 40 (v2 prep). Two kwargs in scope:
+Three kwargs in scope:
 
 - `event_stream_handler=` -> `capabilities=[ProcessEventStream(handler)]`
-- `prepare_tools=` -> `capabilities=[Hooks(prepare_tools=...)]`
+- `prepare_tools=` -> `capabilities=[PrepareTools(prepare_tools)]`
+- `prepare_output_tools=` -> `capabilities=[PrepareOutputTools(prepare_output_tools)]`
 
-The card also lists `output_validators=` and `prepare_output_function=` but those are
-not actual `Agent.__init__` kwargs in 1.x, so they're excluded from this PR.
+`output_validators=` is not an `Agent.__init__` kwarg in 1.x (it's only set via decorator),
+so it's intentionally excluded.
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Hooks, PrepareTools, ProcessEventStream
+from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ProcessEventStream
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 pytestmark = [pytest.mark.anyio]
@@ -98,10 +101,16 @@ async def test_prepare_tools_kwarg_emits_deprecation_warning():
         Agent(_make_model(), prepare_tools=_noop_prep)
 
 
+async def test_prepare_tools_kwarg_warning_points_at_capability():
+    """The migration target named in the warning is the `PrepareTools` capability,
+    not the `Hooks(prepare_tools=...)` hook — both work but the capability is the cleaner v2 path."""
+    with pytest.warns(DeprecationWarning, match=r'capabilities=\[PrepareTools\(prepare_tools\)\]'):
+        Agent(_make_model(), prepare_tools=_noop_prep)
+
+
 async def test_prepare_tools_kwarg_warning_mentions_function_tools_only_rescoping():
-    """PR #4859 narrowed `prepare_tools` from all-tools to function-tools-only.
-    The deprecation warning has to surface that rescoping so users know they may
-    also need `Hooks(prepare_output_tools=...)` to preserve old behavior."""
+    """PR #4859 narrowed `prepare_tools` from all-tools to function-tools-only. The deprecation
+    warning surfaces that so users know they may also need `PrepareOutputTools` to preserve old behavior."""
     with pytest.warns(DeprecationWarning, match=r'prepare_tools` runs only on function tools'):
         Agent(_make_model(), prepare_tools=_noop_prep)
 
@@ -118,11 +127,11 @@ async def test_prepare_tools_kwarg_remaps_to_capability():
     await agent.run('hello')
 
 
-async def test_prepare_tools_kwarg_vs_hooks_capability_equivalence():
-    """`Agent(prepare_tools=fn)` and `Agent(capabilities=[Hooks(prepare_tools=fn)])` produce
-    the same observable behavior — the prepare callback runs once per step with the same tool defs."""
+async def test_prepare_tools_kwarg_vs_capability_equivalence():
+    """`Agent(prepare_tools=fn)` and `Agent(capabilities=[PrepareTools(fn)])` produce the same
+    observable behavior — the prepare callback runs once per step with the same tool defs."""
     kwarg_calls: list[int] = []
-    hooks_calls: list[int] = []
+    cap_calls: list[int] = []
 
     def my_tool(x: int) -> int:
         return x  # pragma: no cover
@@ -131,16 +140,74 @@ async def test_prepare_tools_kwarg_vs_hooks_capability_equivalence():
         kwarg_calls.append(len(tool_defs))
         return tool_defs
 
-    async def hooks_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        hooks_calls.append(len(tool_defs))
+    async def cap_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        cap_calls.append(len(tool_defs))
         return tool_defs
 
     with pytest.warns(DeprecationWarning, match=r'prepare_tools'):
         kwarg_agent = Agent(_make_model(), tools=[my_tool], prepare_tools=kwarg_prep)
-    hooks_agent = Agent(_make_model(), tools=[my_tool], capabilities=[Hooks(prepare_tools=hooks_prep)])
+    cap_agent = Agent(_make_model(), tools=[my_tool], capabilities=[PrepareTools(cap_prep)])
 
     kwarg_result = await kwarg_agent.run('hello')
-    hooks_result = await hooks_agent.run('hello')
+    cap_result = await cap_agent.run('hello')
 
-    assert kwarg_result.output == hooks_result.output
-    assert kwarg_calls == hooks_calls
+    assert kwarg_result.output == cap_result.output
+    assert kwarg_calls == cap_calls
+
+
+# --- prepare_output_tools= ---------------------------------------------------------------
+
+
+async def test_prepare_output_tools_kwarg_emits_deprecation_warning():
+    with pytest.warns(
+        DeprecationWarning,
+        match=r'`Agent\(prepare_output_tools=\.\.\.\)` is deprecated and will be removed in v2\.0',
+    ):
+        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)
+
+
+async def test_prepare_output_tools_kwarg_warning_points_at_capability():
+    with pytest.warns(DeprecationWarning, match=r'capabilities=\[PrepareOutputTools\(prepare_output_tools\)\]'):
+        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)
+
+
+async def test_prepare_output_tools_kwarg_remaps_to_capability():
+    """The kwarg auto-injects a `PrepareOutputTools` capability into the agent's capability list,
+    and the prepare callback fires once during a run."""
+    seen: list[int] = []
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen.append(len(tool_defs))
+        return tool_defs
+
+    with pytest.warns(DeprecationWarning, match=r'prepare_output_tools'):
+        agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=prep)
+
+    assert any(isinstance(cap, PrepareOutputTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
+    await agent.run('hello')
+    assert seen, 'prepare_output_tools callback should have fired'
+
+
+async def test_prepare_output_tools_kwarg_vs_capability_equivalence():
+    """`Agent(prepare_output_tools=fn)` and `Agent(capabilities=[PrepareOutputTools(fn)])` produce
+    the same observable behavior."""
+    kwarg_calls: list[int] = []
+    cap_calls: list[int] = []
+
+    async def kwarg_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        kwarg_calls.append(len(tool_defs))
+        return tool_defs
+
+    async def cap_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        cap_calls.append(len(tool_defs))
+        return tool_defs
+
+    with pytest.warns(DeprecationWarning, match=r'prepare_output_tools'):
+        kwarg_agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=kwarg_prep)
+    cap_agent = Agent(TestModel(), output_type=ToolOutput(str), capabilities=[PrepareOutputTools(cap_prep)])
+
+    kwarg_result = await kwarg_agent.run('hello')
+    cap_result = await cap_agent.run('hello')
+
+    assert kwarg_result.output == cap_result.output
+    assert kwarg_calls == cap_calls

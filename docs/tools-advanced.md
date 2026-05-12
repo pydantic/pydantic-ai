@@ -265,7 +265,7 @@ Here's an example that makes all tools strict if the model is an OpenAI model:
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.models.test import TestModel
 
 
@@ -278,7 +278,7 @@ async def turn_on_strict_if_openai(
 
 
 test_model = TestModel()
-agent = Agent(test_model, capabilities=[Hooks(prepare_tools=turn_on_strict_if_openai)])
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
 
 
 @agent.tool_plain
@@ -303,7 +303,7 @@ Here's another example that conditionally filters out the tools by name if the d
 ```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import PrepareTools
 
 
 def launch_potato(target: str) -> str:
@@ -321,7 +321,7 @@ async def filter_out_tools_by_name(
 agent = Agent(
     'test',
     tools=[Tool(launch_potato)],
-    capabilities=[Hooks(prepare_tools=filter_out_tools_by_name)],
+    capabilities=[PrepareTools(filter_out_tools_by_name)],
     deps_type=bool,
 )
 

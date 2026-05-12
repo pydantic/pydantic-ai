@@ -770,7 +770,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass — these are also what the agent-level [`prepare_tools=`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools=`][pydantic_ai.tools.ToolsPrepareFunc] kwargs inject, so kwarg and capability share one execution path.
+For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass.
 
 #### Event stream hook
 

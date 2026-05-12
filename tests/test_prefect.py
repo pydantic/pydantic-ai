@@ -189,20 +189,25 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    event_stream_handler=event_stream_handler,
-    instrument=True,  # Enable instrumentation for testing
-    name='complex_agent',
-)
+# See note in `tests/test_temporal.py`: `PrefectAgent` reads `agent.event_stream_handler`,
+# which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
+# the handler through capabilities.
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', DeprecationWarning)
+    complex_agent = Agent(
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        event_stream_handler=event_stream_handler,
+        instrument=True,  # Enable instrumentation for testing
+        name='complex_agent',
+    )
 complex_prefect_agent = PrefectAgent(complex_agent)
 
 

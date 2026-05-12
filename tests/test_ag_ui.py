@@ -57,6 +57,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -2104,7 +2105,7 @@ async def test_request_with_state() -> None:
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_inputs = [
@@ -2207,7 +2208,7 @@ async def test_request_with_state_with_custom_handler() -> None:
     agent: Agent[CustomStateDeps, str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=CustomStateDeps,
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_input = create_input(
