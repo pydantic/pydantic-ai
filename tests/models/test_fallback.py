@@ -507,6 +507,24 @@ success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
 
 
+async def empty_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    """Yields whitespace only — assembled response has no actionable text content,
+    so a handler that requires non-whitespace text rejects it.
+    """
+    yield ' '
+
+
+empty_model_stream = FunctionModel(stream_function=empty_response_stream)
+
+
+def reject_empty_text(response: ModelResponse) -> bool:
+    """Reject responses where no TextPart has non-whitespace content."""
+    for part in response.parts:
+        if isinstance(part, TextPart) and part.content and part.content.strip():
+            return False
+    return True
+
+
 async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
@@ -1731,3 +1749,79 @@ async def test_fallback_model_concurrent_entry():
     await task2
     assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
     assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_response_handler_triggers_streaming() -> None:
+    """When the first streaming model's assembled response is rejected by a response
+    handler, FallbackModel transparently switches to the next model — no exception
+    surfaces to the caller, and the final ModelResponse comes from the second model.
+    """
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+    async with agent.run_stream('input') as result:
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+
+    # The final assembled response must come from success_model_stream (not the empty one).
+    assert any(any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts) for r in responses), (
+        'Expected the success-model output ("world") to appear in the streamed responses'
+    )
+    assert result.is_complete
+
+
+async def test_response_handler_all_streams_rejected() -> None:
+    """If every streaming model produces a response rejected by the handler,
+    FallbackModel raises a FallbackExceptionGroup that carries a ResponseRejected
+    in its sub-exceptions list.
+    """
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        empty_model_stream,
+        fallback_on=[reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with agent.run_stream('hello') as result:
+            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
+    rejected = [e for e in exc_info.value.exceptions if isinstance(e, ResponseRejected)]
+    assert rejected, f'Expected ResponseRejected in exception group, got: {exc_info.value.exceptions}'
+
+
+async def test_stream_mixed_exception_and_response_rejection_streaming() -> None:
+    """failure_model_stream raises during stream open; empty_model_stream's
+    response is rejected by the handler; success_model_stream is accepted.
+    The chain walks all three before producing the final response.
+    """
+    fallback_model = FallbackModel(
+        failure_model_stream,
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+    async with agent.run_stream('input') as result:
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+    assert any(any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts) for r in responses), (
+        'Expected success-model output ("world") to appear in the streamed responses'
+    )
+    assert result.is_complete
+
+
+async def test_stream_legacy_path_when_no_response_handlers_streaming() -> None:
+    """When fallback_on contains only exception types/handlers, FallbackModel uses
+    the legacy single-yield path (no _FallbackStreamedResponse wrapper). This pins
+    the backward-compat behaviour explicitly.
+    """
+    fallback_model = FallbackModel(
+        success_model_stream,
+        failure_model_stream,
+        fallback_on=(ModelHTTPError,),
+    )
+    agent = Agent(model=fallback_model)
+    async with agent.run_stream('input') as result:
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+    assert responses
+    assert result.is_complete

@@ -337,9 +337,14 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
-!!! note "Non-streaming only"
-    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
-    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
+!!! note "Streaming UX caveat"
+    Response-based fallback works for both non-streaming (`agent.run()`, `agent.run_sync()`)
+    and streaming (`agent.run_stream()`) requests. For streaming, the consumer will see events
+    from rejected models followed by events from the accepted model — for a UI rendering
+    streamed text, this typically appears as a brief "false start" (e.g., a thinking part with
+    no answer) followed by the real response. Acceptable for most agent loops; consumers that
+    cannot tolerate concatenated events from multiple models should use the non-streaming
+    `request()` path instead, which only emits the accepted response.
 
 The `fallback_on` parameter accepts:
 
@@ -459,6 +464,46 @@ fallback_model = FallbackModel(
     ],
 )
 ```
+
+#### Streaming Example
+
+Response handlers also work with `agent.run_stream`. When a streaming model's assembled
+response is rejected by a handler, `FallbackModel` transparently opens a stream against
+the next model in the chain and continues iterating — the consumer sees a single
+streamed sequence throughout, with events from rejected models concatenated before
+the accepted model's events.
+
+```python {title="fallback_on_stream.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def reject_empty_text(response: ModelResponse) -> bool:
+    """Reject responses with no actionable (non-whitespace) text part."""
+    for part in response.parts:
+        if isinstance(part, TextPart) and part.content and part.content.strip():
+            return False
+    return True
+
+
+fallback_model = FallbackModel(
+    'anthropic:claude-haiku-3-5',  # occasionally returns thinking-only output
+    'anthropic:claude-sonnet-4-5',  # used as fallback
+    fallback_on=reject_empty_text,
+)
+agent = Agent(model=fallback_model)
+
+
+async def main():
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for chunk in result.stream_text(debounce_by=None):
+            print(chunk)
+```
+
+If every model's streamed response is rejected, `FallbackModel` raises a
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] containing
+[`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] in its sub-exceptions.
 
 ### Exception Handling in Middleware and Decorators
 

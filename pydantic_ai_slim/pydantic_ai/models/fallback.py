@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
@@ -11,12 +12,13 @@ import anyio
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import get_first_param_type, is_async_callable, now_utc as _now_utc
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelResponse
+from ..messages import ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -63,6 +65,96 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     """Check if value is a single exception type."""
     return isinstance(value, type) and issubclass(value, Exception)
+
+
+@dataclass(kw_only=True)
+class _FallbackStreamedResponse(StreamedResponse):
+    """A StreamedResponse that orchestrates fallback across multiple models.
+
+    Yielded by FallbackModel.request_stream when at least one ResponseHandler is
+    configured. Iterates self._fallback_models in order: opens each model's
+    underlying stream, forwards every event live to the consumer (no buffering),
+    mirrors deltas to self._parts_manager so .get() reflects the accepted model's
+    response, and at end-of-stream calls self._should_fallback_handler(self.get()).
+    On rejection, resets parts state and continues to the next model. The consumer
+    iterates a single async iterator throughout — they will see events from
+    rejected models followed by events from the accepted model.
+    """
+
+    _fallback_models: list[Model]
+    _request_args: tuple[Any, ...]
+    _should_fallback_handler: Callable[[Exception | ModelResponse], Awaitable[bool]]
+    _on_model_selected: Callable[[Model, ModelRequestParameters], None]
+    _accepted_model: Model | None = field(default=None, init=False)
+    _accepted_timestamp: datetime | None = field(default=None, init=False)
+    _accepted_provider_name: str | None = field(default=None, init=False)
+    _accepted_provider_url: str | None = field(default=None, init=False)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        exceptions: list[Exception] = []
+        rejected_responses: list[ModelResponse] = []
+
+        messages, model_settings, model_request_parameters, run_context = self._request_args
+
+        for model in self._fallback_models:
+            # Reset parts so a rejected previous model doesn't bleed into self.get()
+            # for the next attempt. _usage is overwritten on each event below, so the
+            # caller ends up seeing only the accepted model's usage — matching the
+            # non-streaming request() semantics.
+            self._parts_manager = ModelResponsePartsManager()
+
+            try:
+                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                async with model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as inner_sr:
+                    async for event in inner_sr:
+                        # Mirror inner state so self.get() reflects this model's assembled response.
+                        self._parts_manager = inner_sr._parts_manager
+                        self._usage = inner_sr._usage
+                        yield event
+
+                    inner_response = inner_sr.get()
+                    if await self._should_fallback_handler(inner_response):
+                        rejected_responses.append(inner_response)
+                        continue
+
+                    self._accepted_model = model
+                    self._accepted_timestamp = inner_sr.timestamp
+                    self._accepted_provider_name = inner_sr.provider_name
+                    self._accepted_provider_url = inner_sr.provider_url
+                    self.finish_reason = inner_sr.finish_reason
+                    self.provider_response_id = inner_sr.provider_response_id
+                    self.provider_details = inner_sr.provider_details
+                    self._on_model_selected(model, prepared_parameters)
+                    return
+            except Exception as exc:
+                if await self._should_fallback_handler(exc):
+                    exceptions.append(exc)
+                    continue
+                raise  # pragma: no cover
+
+        _raise_fallback_exception_group(exceptions, rejected_responses)
+
+    @property
+    def model_name(self) -> str:
+        if self._accepted_model is None:
+            return 'fallback:pending'
+        return self._accepted_model.model_name
+
+    @property
+    def timestamp(self) -> datetime:
+        if self._accepted_timestamp is not None:
+            return self._accepted_timestamp
+        return _now_utc()
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._accepted_provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._accepted_provider_url
 
 
 @dataclass(init=False)
@@ -250,7 +342,23 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+        """Try each model in sequence until one succeeds.
+
+        When at least one response handler is configured in `fallback_on`, yields a
+        wrapper StreamedResponse that transparently retries on the next model if a
+        streamed response is rejected. Otherwise uses the legacy single-yield path
+        that only handles exception-based fallback during stream initialisation.
+        """
+        if self._response_handlers:
+            yield _FallbackStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _fallback_models=self.models,
+                _request_args=(messages, model_settings, model_request_parameters, run_context),
+                _should_fallback_handler=self._should_fallback,
+                _on_model_selected=self._set_span_attributes,
+            )
+            return
+
         exceptions: list[Exception] = []
 
         for model in self.models:
