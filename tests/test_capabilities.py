@@ -6618,6 +6618,78 @@ def test_native_or_local_native_unique_id_non_abstract():
         cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
 
 
+def test_native_or_local_base_unknown_strategy_raises():
+    """`NativeOrLocalTool(local='foo')` raises a UserError from the default `_resolve_local_strategy`."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+
+    with pytest.raises(UserError, match=r"`local='foo'` is not supported"):
+        NativeOrLocalTool(native=WebSearchTool(), local='foo')
+
+
+def test_native_or_local_preserves_passed_tool_instance():
+    """A pre-wrapped `Tool` passed as `local` is preserved (not re-wrapped or treated as a callable)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+    from pydantic_ai.tools import Tool as ToolDirect
+
+    def my_search(query: str) -> str:
+        return f'results for {query}'  # pragma: no cover
+
+    tool = ToolDirect(my_search)
+    cap = NativeOrLocalTool(native=WebSearchTool(), local=tool)
+    assert cap.local is tool
+
+
+def test_websearch_unknown_strategy_raises():
+    """WebSearch(local='not_a_real_strategy') → UserError naming the unknown strategy."""
+    with pytest.raises(UserError, match='not a known strategy'):
+        WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
+
+def test_websearch_duckduckgo_missing_install_hint(monkeypatch: pytest.MonkeyPatch):
+    """`WebSearch(local='duckduckgo')` raises a UserError with install hint when the extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.duckduckgo':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[duckduckgo\]'):
+        WebSearch(local='duckduckgo')
+
+
+def test_webfetch_unknown_strategy_raises():
+    """WebFetch(local='not_a_real_strategy') → UserError naming the unknown strategy."""
+    with pytest.raises(UserError, match='not a known strategy'):
+        WebFetch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
+
+def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
+    """`WebFetch(local=True)` raises a UserError with install hint when the `web-fetch` extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[web-fetch\]'):
+        WebFetch(local=True)
+
+
+def test_mcp_unknown_strategy_raises():
+    """MCP(url=..., local='not_a_real_strategy') → UserError naming the unknown strategy."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.raises(UserError, match='not a known strategy'):
+        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)  # type: ignore[arg-type]
+
+
 def test_validate_capability_not_dataclass():
     """Custom capability type without @dataclass raises ValueError."""
     from pydantic_ai.agent.spec import get_capability_registry
