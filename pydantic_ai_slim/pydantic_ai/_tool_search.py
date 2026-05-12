@@ -132,16 +132,27 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
-    def args_as_dict(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, raise_if_invalid: bool = False
-    ) -> ToolSearchArgs:
-        """Return the typed tool-search args.
+    def typed_args(self) -> ToolSearchArgs:
+        """Typed accessor for the validated tool-search arguments.
 
         Streaming-partial parts may still have `args: str` (unparsed JSON);
-        once finalized, `args_as_dict` returns the validated
-        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs].
+        once finalized, returns the validated
+        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]. For raw access
+        that handles unparsed JSON gracefully, use the inherited `args_as_dict()`.
         """
-        return cast('ToolSearchArgs', super().args_as_dict(raise_if_invalid=raise_if_invalid))
+        return cast('ToolSearchArgs', self.args_as_dict())
+
+    @property
+    def queries(self) -> list[str]:
+        """Subfield accessor for `typed_args()['queries']`.
+
+        Returns an empty list if args haven't been parsed yet (streaming-partial).
+        """
+        raw = self.args_as_dict()
+        queries = raw.get('queries')
+        if isinstance(queries, list):
+            return [q for q in cast('list[Any]', queries) if isinstance(q, str)]
+        return []
 
 
 @dataclass(repr=False)
@@ -161,7 +172,7 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
     # `tool_name` override: removing `content`'s default would otherwise place a non-default
     # field after a default one in the synthesized `__init__`.
-    content: ToolSearchReturnContent = field(kw_only=True)  # pyright: ignore[reportIncompatibleVariableOverride]
+    content: ToolSearchReturnContent = field(kw_only=True)
     """Discovered-tools payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
@@ -173,6 +184,21 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
+
+    @property
+    def discovered_tools(self) -> list[ToolSearchMatch]:
+        """Subfield accessor for `content['discovered_tools']`."""
+        return self.content['discovered_tools']
+
+    @property
+    def message(self) -> str | None:
+        """Subfield accessor for `content.get('message')`.
+
+        The message is `NotRequired` on
+        [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
+        returns `None` when no message was set (e.g. on non-empty match returns).
+        """
+        return self.content.get('message')
 
 
 @dataclass(repr=False)
@@ -205,16 +231,27 @@ class ToolSearchCallPart(ToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
-    def args_as_dict(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, raise_if_invalid: bool = False
-    ) -> ToolSearchArgs:
-        """Return the typed tool-search args.
+    def typed_args(self) -> ToolSearchArgs:
+        """Typed accessor for the validated tool-search arguments.
 
         Streaming-partial parts may still have `args: str` (unparsed JSON);
-        once finalized, `args_as_dict` returns the validated
-        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs].
+        once finalized, returns the validated
+        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]. For raw access
+        that handles unparsed JSON gracefully, use the inherited `args_as_dict()`.
         """
-        return cast('ToolSearchArgs', super().args_as_dict(raise_if_invalid=raise_if_invalid))
+        return cast('ToolSearchArgs', self.args_as_dict())
+
+    @property
+    def queries(self) -> list[str]:
+        """Subfield accessor for `typed_args()['queries']`.
+
+        Returns an empty list if args haven't been parsed yet (streaming-partial).
+        """
+        raw = self.args_as_dict()
+        queries = raw.get('queries')
+        if isinstance(queries, list):
+            return [q for q in cast('list[Any]', queries) if isinstance(q, str)]
+        return []
 
 
 @dataclass(repr=False)
@@ -235,7 +272,7 @@ class ToolSearchReturnPart(ToolReturnPart):
     # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
     # `tool_name` override: removing `content`'s default would otherwise place a non-default
     # field after a default one in the synthesized `__init__`.
-    content: ToolSearchReturnContent = field(kw_only=True)  # pyright: ignore[reportIncompatibleVariableOverride]
+    content: ToolSearchReturnContent = field(kw_only=True)
     """Discovered-tools payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
@@ -247,6 +284,21 @@ class ToolSearchReturnPart(ToolReturnPart):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
+
+    @property
+    def discovered_tools(self) -> list[ToolSearchMatch]:
+        """Subfield accessor for `content['discovered_tools']`."""
+        return self.content['discovered_tools']
+
+    @property
+    def message(self) -> str | None:
+        """Subfield accessor for `content.get('message')`.
+
+        The message is `NotRequired` on
+        [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
+        returns `None` when no message was set (e.g. on non-empty match returns).
+        """
+        return self.content.get('message')
 
 
 _TOOL_SEARCH_CALL_ARGS_TA: pydantic.TypeAdapter[str | ToolSearchArgs | None] = pydantic.TypeAdapter(
