@@ -3708,6 +3708,93 @@ def test_model_response_part_discriminator_recognizes_typed_instances() -> None:
     assert _model_response_part_discriminator(local_call) == 'tool-search-call'
 
 
+def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
+    """Dict-form parts with an unregistered `tool_kind` fall through to the bare `part_kind`.
+
+    Exercises the registry-miss branch in both discriminator functions: `_TYPED_PART_TAGS`
+    doesn't contain `(part_kind, 'unknown-kind')`, so the discriminator returns the bare
+    `part_kind` rather than a typed-subclass tag.
+
+    Calls the discriminator directly because constructing a valid ModelMessage with
+    `tool_kind='unknown-kind'` would fail Pydantic's `ToolPartKind` Literal validation
+    upstream — the registry-miss branch is internal logic, not a deserialization path
+    that any well-formed input would take.
+    """
+
+    return_raw = {
+        'part_kind': 'tool-return',
+        'tool_name': 'something',
+        'tool_kind': 'unknown-kind',
+        'content': 'hello',
+        'tool_call_id': 'c1',
+    }
+    assert _model_request_part_discriminator(return_raw) == 'tool-return'
+
+    call_raw = {
+        'part_kind': 'tool-call',
+        'tool_name': 'something',
+        'tool_kind': 'unknown-kind',
+        'args': {'x': 1},
+        'tool_call_id': 'c1',
+    }
+    assert _model_response_part_discriminator(call_raw) == 'tool-call'
+
+
+def test_typed_call_part_accessors_return_typed_shapes() -> None:
+    """`typed_args()` and `queries` on typed call parts read the parsed args.
+
+    Covers both the local-fallback (`ToolSearchCallPart`) and native server-side
+    (`BuiltinToolSearchCallPart`) variants — they're symmetric.
+    """
+
+    local_call = ToolSearchCallPart(args={'queries': ['weather', 'github']}, tool_call_id='c1')
+    assert local_call.typed_args() == {'queries': ['weather', 'github']}
+    assert local_call.queries == ['weather', 'github']
+
+    builtin_call = BuiltinToolSearchCallPart(
+        args={'queries': ['weather']}, tool_call_id='c2', provider_name='anthropic'
+    )
+    assert builtin_call.typed_args() == {'queries': ['weather']}
+    assert builtin_call.queries == ['weather']
+
+
+def test_typed_call_part_queries_returns_empty_for_unparsed_args() -> None:
+    """`queries` returns `[]` when args haven't parsed to a dict-with-queries yet.
+
+    Covers the streaming-partial path where `args` is still a partial JSON string
+    (or None) and `args_as_dict()` falls back to `{}` or `{INVALID_JSON: ...}`.
+    """
+
+    none_part = ToolSearchCallPart(args=None, tool_call_id='c1')
+    assert none_part.queries == []
+
+    builtin_none = BuiltinToolSearchCallPart(args=None, tool_call_id='c2', provider_name='anthropic')
+    assert builtin_none.queries == []
+
+
+def test_builtin_tool_search_return_part_message_accessor() -> None:
+    """`message` on `BuiltinToolSearchReturnPart` reads `content.get('message')`.
+
+    The native server-side path doesn't currently populate `message` (Anthropic emits
+    its own error/result blocks), so this accessor exists for symmetry with the local
+    return part. Exercise it directly to lock in the contract.
+    """
+
+    with_message = BuiltinToolSearchReturnPart(
+        content={'discovered_tools': [], 'message': 'no matches'},
+        tool_call_id='c1',
+        provider_name='anthropic',
+    )
+    assert with_message.message == 'no matches'
+
+    without_message = BuiltinToolSearchReturnPart(
+        content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+        tool_call_id='c2',
+        provider_name='anthropic',
+    )
+    assert without_message.message is None
+
+
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     """Custom search functions can be `async`; the toolset awaits them."""
 
