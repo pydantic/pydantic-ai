@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -29,12 +29,14 @@ from pydantic_ai._tool_search import (
     synthesize_local_from_builtin_call,
     synthesize_local_tool_search_messages,
 )
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.builtin_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.capabilities import CAPABILITY_TYPES
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     BuiltinToolSearchCallPart,
@@ -43,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     ToolPartKind,
     ToolReturnPart,
@@ -54,6 +57,7 @@ from pydantic_ai.messages import (
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
@@ -2876,11 +2880,6 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
     `function_tools` (Rule 1) on the assumption the model handles tool search
     server-side via the native wire shape.
     """
-    from collections.abc import AsyncIterable as _AsyncIterable
-
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool
-    from pydantic_ai.messages import AgentStreamEvent, PartStartEvent
-    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
     class NoNativeToolSearchModel(FunctionModel):
         """A `FunctionModel` that drops `ToolSearchTool` from its supported builtins so the
@@ -2915,7 +2914,7 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
 
     typed_at_start: list[bool] = []
 
-    async def event_stream_handler(_ctx: RunContext[None], stream: _AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             if (
                 isinstance(event, PartStartEvent)
@@ -2943,8 +2942,6 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     `_parse_discovered_tools`' isinstance check nor the legacy-metadata reader caught
     it, so previously-discovered tools reverted to hidden on every subsequent turn.
     """
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)

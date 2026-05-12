@@ -489,7 +489,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                         split_emitted = True
                     out.append(
                         _messages.ModelRequest(
-                            parts=cast('list[ModelRequestPart]', [synthesize_local_from_builtin_return(part)]),
+                            parts=[synthesize_local_from_builtin_return(part)],
                         ),
                     )
                     buffer = []
