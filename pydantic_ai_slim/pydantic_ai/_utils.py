@@ -770,10 +770,11 @@ def install_deprecated_kwarg_alias(
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            if new not in kwargs:
-                kwargs[new] = kwargs.pop(old)
-            else:
-                kwargs.pop(old)
+            # When both `old` and `new` are present, the user explicitly typed the legacy spelling, so
+            # let it win. The common path that puts both keys here is `dataclasses.replace(obj, <old>=...)`,
+            # which silently re-passes every existing field value as `<new>=...`. The deprecation
+            # warning still tells the caller they're on the legacy kwarg.
+            kwargs[new] = kwargs.pop(old)
         orig_init(self, *args, **kwargs)
 
     cls.__init__ = wrapper

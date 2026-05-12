@@ -568,8 +568,14 @@ async def test_wrapper_agent_iter_builtin_tools_kwarg_deprecated():
 # --- Override path where BOTH `native_tools=` and `builtin_tools=` are passed ---
 
 
-def test_native_or_local_tool_native_wins_when_both_kwargs_passed():
-    """`WebSearch(native=..., builtin=...)` warns and the explicit `native=` wins; the legacy `builtin=` is discarded."""
+def test_native_or_local_tool_legacy_wins_when_both_kwargs_passed():
+    """`WebSearch(native=..., builtin=...)` warns and the legacy `builtin=` wins.
+
+    The dominant trigger for "both kwargs present" is `dataclasses.replace(obj, builtin=...)`,
+    which silently re-passes every existing field value as `native=...`. Letting the
+    legacy spelling win preserves the explicit value the caller actually typed; the
+    deprecation warning still informs them they should switch to `native=`.
+    """
     explicit_native = WebSearchTool()
     legacy_builtin = WebSearchTool()
 
@@ -582,7 +588,7 @@ def test_native_or_local_tool_native_wins_when_both_kwargs_passed():
             builtin=legacy_builtin,  # pyright: ignore[reportCallIssue]
             local=False,
         )
-    assert cap.native is explicit_native
+    assert cap.native is legacy_builtin
 
 
 def test_native_or_local_tool_getattr_unknown_attribute_raises():
@@ -595,8 +601,14 @@ def test_native_or_local_tool_getattr_unknown_attribute_raises():
 # --- `ModelRequestParameters` constructor: both kwargs passed ---
 
 
-def test_model_request_parameters_native_tools_wins_when_both_kwargs_passed():
-    """`ModelRequestParameters(native_tools=..., builtin_tools=...)` warns and the explicit `native_tools=` wins."""
+def test_model_request_parameters_legacy_wins_when_both_kwargs_passed():
+    """`ModelRequestParameters(native_tools=..., builtin_tools=...)` warns and the legacy `builtin_tools=` wins.
+
+    The dominant trigger for "both kwargs present" is `dataclasses.replace(obj, builtin_tools=...)`,
+    which silently re-passes every existing field value as `native_tools=...`. Letting the
+    legacy spelling win preserves the explicit value the caller actually typed; the
+    deprecation warning still informs them they should switch to `native_tools=`.
+    """
     explicit = WebSearchTool()
     legacy = CodeExecutionTool()
 
@@ -609,7 +621,7 @@ def test_model_request_parameters_native_tools_wins_when_both_kwargs_passed():
             builtin_tools=[legacy],  # pyright: ignore[reportCallIssue]
         )
 
-    assert params.native_tools == [explicit]
+    assert params.native_tools == [legacy]
 
 
 # --- `UIAdapter` deprecations ---
@@ -758,8 +770,14 @@ def test_tool_definition_prefer_builtin_attribute_deprecated():
     assert result == td.prefer_native == 'web_search'
 
 
-def test_tool_definition_prefer_native_wins_when_both_kwargs_passed():
-    """`ToolDefinition(prefer_native=..., prefer_builtin=...)` warns and the explicit `prefer_native=` wins."""
+def test_tool_definition_prefer_legacy_wins_when_both_kwargs_passed():
+    """`ToolDefinition(prefer_native=..., prefer_builtin=...)` warns and the legacy `prefer_builtin=` wins.
+
+    The dominant trigger for "both kwargs present" is `dataclasses.replace(obj, prefer_builtin=...)`,
+    which silently re-passes every existing field value as `prefer_native=...`. Letting the
+    legacy spelling win preserves the explicit value the caller actually typed; the
+    deprecation warning still informs them they should switch to `prefer_native=`.
+    """
     with pytest.warns(
         PydanticAIDeprecationWarning,
         match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `prefer_native=`',
@@ -771,7 +789,7 @@ def test_tool_definition_prefer_native_wins_when_both_kwargs_passed():
             prefer_native='web_search',
             prefer_builtin='code_execution',  # pyright: ignore[reportCallIssue]
         )
-    assert td.prefer_native == 'web_search'
+    assert td.prefer_native == 'code_execution'
 
 
 def test_model_profile_supported_builtin_tools_constructor_deprecated():
@@ -800,8 +818,15 @@ def test_model_profile_supported_builtin_tools_attribute_deprecated():
     assert result == profile.supported_native_tools == frozenset({WebSearchTool})
 
 
-def test_model_profile_supported_native_tools_wins_when_both_kwargs_passed():
-    """`ModelProfile(supported_native_tools=..., supported_builtin_tools=...)` warns and the explicit `supported_native_tools=` wins."""
+def test_model_profile_supported_legacy_wins_when_both_kwargs_passed():
+    """`ModelProfile(supported_native_tools=..., supported_builtin_tools=...)` warns and the legacy `supported_builtin_tools=` wins.
+
+    The dominant trigger for "both kwargs present" is
+    `dataclasses.replace(obj, supported_builtin_tools=...)`, which silently re-passes
+    every existing field value as `supported_native_tools=...`. Letting the legacy
+    spelling win preserves the explicit value the caller actually typed; the deprecation
+    warning still informs them they should switch to `supported_native_tools=`.
+    """
     from pydantic_ai.profiles import ModelProfile
 
     with pytest.warns(
@@ -813,7 +838,7 @@ def test_model_profile_supported_native_tools_wins_when_both_kwargs_passed():
             supported_native_tools=frozenset({WebSearchTool}),
             supported_builtin_tools=frozenset({CodeExecutionTool}),  # pyright: ignore[reportCallIssue]
         )
-    assert profile.supported_native_tools == frozenset({WebSearchTool})
+    assert profile.supported_native_tools == frozenset({CodeExecutionTool})
 
 
 def test_model_profile_subclass_supported_builtin_tools_constructor_deprecated():
@@ -1014,8 +1039,14 @@ def test_image_generation_subagent_tool_builtin_tool_attribute_deprecated():
     assert result is native_tool
 
 
-def test_image_generation_subagent_tool_native_tool_wins_when_both_kwargs_passed():
-    """When both kwargs are passed, the explicit `native_tool=` wins and the legacy `builtin_tool=` is dropped."""
+def test_image_generation_subagent_tool_legacy_wins_when_both_kwargs_passed():
+    """When both kwargs are passed, the legacy `builtin_tool=` wins and the new `native_tool=` is dropped.
+
+    The dominant trigger for "both kwargs present" is `dataclasses.replace(obj, builtin_tool=...)`,
+    which silently re-passes every existing field value as `native_tool=...`. Letting the
+    legacy spelling win preserves the explicit value the caller actually typed; the
+    deprecation warning still informs them they should switch to `native_tool=`.
+    """
     from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
     from pydantic_ai.native_tools import ImageGenerationTool
 
@@ -1031,7 +1062,7 @@ def test_image_generation_subagent_tool_native_tool_wins_when_both_kwargs_passed
             native_tool=explicit,
             builtin_tool=legacy,  # pyright: ignore[reportCallIssue]
         )
-    assert subagent.native_tool is explicit
+    assert subagent.native_tool is legacy
 
 
 def test_image_generation_tool_factory_builtin_tool_kwarg_deprecated():
@@ -1139,3 +1170,110 @@ def test_agent_from_spec_with_builtin_or_local_tool_capability_key_deprecated():
                     'capabilities': [{'BuiltinOrLocalTool': {'native': {'kind': 'web_search'}}}],
                 }
             )
+
+
+# --- `dataclasses.replace(obj, <legacy_kwarg>=...)` round-trip lock-in tests ---
+#
+# These tests cover the silent-drop bug where `dataclasses.replace` rebuilds the kwargs
+# dict by reading every existing field value off `obj` (under the renamed name) AND
+# overlaying the caller's `**changes` (with the legacy name). Both names end up in the
+# wrapped `__init__`'s `**kwargs`, and the deprecated-kwarg helper must let the legacy
+# value win — not the implicit re-passed `obj.<new>` value.
+
+
+def test_tool_definition_replace_with_prefer_builtin_routes_to_prefer_native():
+    """`replace(td, prefer_builtin=...)` warns AND the legacy value reaches `prefer_native`."""
+    from dataclasses import replace
+
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(name='foo', prefer_native='web_search')
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `prefer_native=`',
+    ):
+        td2 = replace(td, prefer_builtin='code_execution')
+    assert td2.prefer_native == 'code_execution'
+
+
+def test_model_profile_replace_with_supported_builtin_tools_routes_to_supported_native_tools():
+    """`replace(profile, supported_builtin_tools=...)` warns AND the legacy value reaches `supported_native_tools`."""
+    from dataclasses import replace
+
+    from pydantic_ai.profiles import ModelProfile
+
+    profile = ModelProfile()
+    # The default `supported_native_tools` has 8 entries — the bug previously caused
+    # the implicit re-pass to win, silently overriding the caller's explicit empty set.
+    assert len(profile.supported_native_tools) > 0
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile2 = replace(profile, supported_builtin_tools=frozenset())
+    assert profile2.supported_native_tools == frozenset()
+
+
+def test_google_profile_replace_with_supports_native_output_with_builtin_tools_routes_to_native():
+    """`replace(profile, google_supports_native_output_with_builtin_tools=...)` round-trips through the renamed field."""
+    from dataclasses import replace
+
+    from pydantic_ai.profiles.google import GoogleModelProfile
+
+    profile = GoogleModelProfile(google_supports_native_output_with_native_tools=False)
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`GoogleModelProfile\(google_supports_native_output_with_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `google_supports_native_output_with_native_tools=`',
+    ):
+        profile2 = replace(profile, google_supports_native_output_with_builtin_tools=True)
+    assert profile2.google_supports_native_output_with_native_tools is True
+
+
+def test_native_or_local_tool_replace_with_builtin_routes_to_native():
+    """`replace(WebSearch(...), builtin=...)` warns AND the legacy value reaches `native`.
+
+    `local=False` avoids `_default_local()` (DuckDuckGo lookup) in slim CI.
+    """
+    from dataclasses import replace
+
+    cap = WebSearch(native=WebSearchTool(), local=False)
+    new_tool = WebSearchTool()
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`WebSearch\(builtin=\.\.\.\)` is deprecated, use `native=`',
+    ):
+        cap2 = replace(cap, builtin=new_tool)
+    assert cap2.native is new_tool
+
+
+def test_image_generation_subagent_tool_replace_with_builtin_tool_routes_to_native_tool():
+    """`replace(subagent, builtin_tool=...)` warns AND the legacy value reaches `native_tool`."""
+    from dataclasses import replace
+
+    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    subagent = ImageGenerationSubagentTool(model='openai-responses:gpt-5', native_tool=ImageGenerationTool())
+    new_tool = ImageGenerationTool()
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ImageGenerationSubagentTool\(builtin_tool=\.\.\.\)` is deprecated, use `native_tool=`',
+    ):
+        subagent2 = replace(subagent, builtin_tool=new_tool)
+    assert subagent2.native_tool is new_tool
+
+
+def test_model_request_parameters_replace_with_builtin_tools_routes_to_native_tools():
+    """`replace(params, builtin_tools=...)` warns AND the legacy list reaches `native_tools`."""
+    from dataclasses import replace
+
+    params = ModelRequestParameters(native_tools=[WebSearchTool()])
+    legacy_tools = [CodeExecutionTool()]
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelRequestParameters\(builtin_tools=\.\.\.\)` is deprecated, use `native_tools=`',
+    ):
+        params2 = replace(params, builtin_tools=legacy_tools)
+    assert params2.native_tools == legacy_tools

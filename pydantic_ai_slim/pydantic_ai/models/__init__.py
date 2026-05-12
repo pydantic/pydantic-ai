@@ -585,10 +585,12 @@ def _model_request_parameters_init(self: ModelRequestParameters, **kwargs: Any) 
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )
-        if 'native_tools' not in kwargs:
-            kwargs['native_tools'] = kwargs.pop('builtin_tools')
-        else:
-            kwargs.pop('builtin_tools')
+        # When both `builtin_tools` and `native_tools` are present, the user explicitly typed
+        # the legacy spelling, so let it win. The common path that puts both keys here is
+        # `dataclasses.replace(obj, builtin_tools=...)`, which silently re-passes every
+        # existing field value as `native_tools=...`. The deprecation warning still tells the
+        # caller they're on the legacy kwarg.
+        kwargs['native_tools'] = kwargs.pop('builtin_tools')
     _ModelRequestParameters_orig_init(self, **kwargs)
 
 

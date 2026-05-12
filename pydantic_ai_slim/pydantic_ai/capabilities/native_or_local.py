@@ -33,10 +33,12 @@ def _wrap_init_with_builtin_alias(cls: type[Any]) -> None:
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            if 'native' not in kwargs:
-                kwargs['native'] = kwargs.pop('builtin')
-            else:
-                kwargs.pop('builtin')
+            # When both `builtin` and `native` are present, the user explicitly typed the legacy
+            # spelling, so let it win. The common path that puts both keys here is
+            # `dataclasses.replace(obj, builtin=...)`, which silently re-passes every existing
+            # field value as `native=...`. The deprecation warning still tells the caller
+            # they're on the legacy kwarg.
+            kwargs['native'] = kwargs.pop('builtin')
         orig_init(self, *args, **kwargs)
 
     cls.__init__ = wrapper
