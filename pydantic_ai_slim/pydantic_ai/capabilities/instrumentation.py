@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -11,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import SpanKind, StatusCode
+from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
@@ -28,7 +28,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -138,7 +138,11 @@ class Instrumentation(AbstractCapability[Any]):
                 if settings.include_content and span.is_recording():
                     span.set_attribute(
                         'final_result',
-                        (result.output if isinstance(result.output, str) else json.dumps(serialize_any(result.output))),
+                        (
+                            result.output
+                            if isinstance(result.output, str)
+                            else to_json(serialize_any(result.output)).decode()
+                        ),
                     )
 
                 return result
@@ -168,14 +172,14 @@ class Instrumentation(AbstractCapability[Any]):
 
         if settings.version == 1:
             attrs: dict[str, Any] = {
-                'all_messages_events': json.dumps(
+                'all_messages_events': to_json(
                     [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                )
+                ).decode()
             }
         else:
             last_instructions = get_instructions(message_history, self._last_model_request_parameters)
             attrs = {
-                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
+                'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
                 **settings.system_instructions_attributes(last_instructions),
             }
 
@@ -189,7 +193,7 @@ class Instrumentation(AbstractCapability[Any]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = json.dumps(serialize_any(metadata))
+            attrs['metadata'] = to_json(serialize_any(metadata)).decode()
 
         usage_attrs = (
             {
@@ -203,7 +207,7 @@ class Instrumentation(AbstractCapability[Any]):
         return {
             **usage_attrs,
             **attrs,
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {
@@ -211,7 +215,7 @@ class Instrumentation(AbstractCapability[Any]):
                         'final_result': {'type': 'object'},
                     },
                 }
-            ),
+            ).decode(),
         }
 
     # ------------------------------------------------------------------
@@ -249,17 +253,17 @@ class Instrumentation(AbstractCapability[Any]):
             **model_attributes(model),
             **model_request_parameters_attributes(prepared_parameters),
             **get_agent_run_baggage_attributes(),
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {'model_request_parameters': {'type': 'object'}},
                 }
-            ),
+            ).decode(),
         }
 
         tool_definitions = build_tool_definitions(prepared_parameters)
         if tool_definitions:
-            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
+            attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
 
         if prepared_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
@@ -349,7 +353,7 @@ class Instrumentation(AbstractCapability[Any]):
             **({names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
             **get_agent_run_baggage_attributes(),
             'logfire.msg': f'running tool: {call.tool_name}',
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {
@@ -365,7 +369,7 @@ class Instrumentation(AbstractCapability[Any]):
                         'gen_ai.tool.call.id': {},
                     },
                 }
-            ),
+            ).decode(),
         }
 
     async def wrap_tool_execute(
@@ -390,19 +394,15 @@ class Instrumentation(AbstractCapability[Any]):
             try:
                 tool_result = await handler(args)
                 if include_content and span.is_recording():
-                    from pydantic_ai import messages as _messages
-
                     span.set_attribute(
                         names.tool_result_attr,
-                        tool_result
-                        if isinstance(tool_result, str)
-                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                        tool_result if isinstance(tool_result, str) else tool_return_ta.dump_json(tool_result).decode(),
                     )
             except (CallDeferred, ApprovalRequired) as exc:
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
                     try:
-                        metadata_str = json.dumps(exc.metadata)
+                        metadata_str = to_json(exc.metadata).decode()
                     except (TypeError, ValueError):
                         metadata_str = repr(exc.metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
@@ -465,9 +465,9 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = json.dumps(output)
+            attributes[names.tool_arguments_attr] = to_json(output).decode()
 
-        attributes['logfire.json_schema'] = json.dumps(
+        attributes['logfire.json_schema'] = to_json(
             {
                 'type': 'object',
                 'properties': {
@@ -483,7 +483,7 @@ class Instrumentation(AbstractCapability[Any]):
                     **({'gen_ai.tool.call.id': {}} if tool_call is not None and tool_call.tool_call_id else {}),
                 },
             }
-        )
+        ).decode()
 
         with settings.tracer.start_as_current_span(
             names.get_output_tool_span_name(span_target),
@@ -503,7 +503,7 @@ class Instrumentation(AbstractCapability[Any]):
             if include_content and span.is_recording():
                 span.set_attribute(
                     names.tool_result_attr,
-                    result if isinstance(result, str) else json.dumps(serialize_any(result)),
+                    result if isinstance(result, str) else to_json(serialize_any(result)).decode(),
                 )
 
         return result
