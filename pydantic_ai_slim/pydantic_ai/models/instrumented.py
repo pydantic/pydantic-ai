@@ -514,8 +514,17 @@ class InstrumentedModel(WrapperModel):
                     try:
                         price_calculation = response.cost()
                     except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
+                        model_id = (
+                            f'{response.provider_name}:{response.model_name}'
+                            if response.provider_name
+                            else response.model_name
+                        )
+                        warnings.warn(
+                            f'No pricing data found for {model_id}; `operation.cost` will not be set. '
+                            'Upgrade `genai-prices` or call `pydantic_ai.prices.update_in_background()` '
+                            'to keep pricing up to date.',
+                            CostCalculationFailedWarning,
+                        )
                     except Exception as e:
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning

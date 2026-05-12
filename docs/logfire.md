@@ -110,7 +110,7 @@ Logfire's [LLM Panels](https://pydantic.dev/docs/logfire/observe/llm-panels/#how
 
 The cost breakdown applies the provider's published rates per token type. Cached input tokens (`cache_read_tokens`), cache writes (`cache_write_tokens`), and audio tokens are billed at different rates from regular input/output tokens when the provider differentiates them, and `genai-prices` reflects that in the total. See [Cost Estimation](agent.md#cost-estimation) for the underlying API and how to inspect the breakdown in code.
 
-If `operation.cost` is missing on a span (so Logfire shows no cost, or a fallback computed from raw input/output tokens that ignores cached pricing), the model or provider isn't known to the installed `genai-prices` snapshot — typically because the model was released after the version bundled with Pydantic AI. Two fixes, in order of preference:
+If `operation.cost` is missing on a span (so Logfire shows no cost, or a fallback computed from raw input/output tokens that ignores cached pricing), the model or provider isn't known to the installed `genai-prices` snapshot — typically because the model was released after the version bundled with Pydantic AI. Pydantic AI emits a [`CostCalculationFailedWarning`][pydantic_ai.models.instrumented.CostCalculationFailedWarning] (once per unknown model, via [`warnings.warn`](https://docs.python.org/3/library/warnings.html)) naming the model that couldn't be priced. Two fixes, in order of preference:
 
 1. Upgrade `genai-prices`:
 
