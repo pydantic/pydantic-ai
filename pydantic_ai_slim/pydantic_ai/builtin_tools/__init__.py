@@ -602,12 +602,13 @@ class FileSearchTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
-# Imported after the base class is defined — `tool_search.py` subclasses
+# Imported after the base class is defined — `_tool_search.py` subclasses
 # `AbstractBuiltinTool`, so the import has to follow. Loading the submodule registers
-# `ToolSearchTool` in `BUILTIN_TOOL_TYPES` via `__init_subclass__`. The tool-search
-# types are intentionally not re-exported here; consumers import them from
-# `pydantic_ai.builtin_tools.tool_search`.
-from . import tool_search as tool_search  # noqa: E402
+# `ToolSearchTool` in `BUILTIN_TOOL_TYPES` via `__init_subclass__`. `ToolSearchTool` is
+# framework-internal (constructed exclusively by the
+# [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) and intentionally not
+# re-exported here; user-facing strategy types live on `pydantic_ai.capabilities`.
+from . import _tool_search as _tool_search  # noqa: E402
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
@@ -624,5 +625,5 @@ SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() i
 """Get the set of all builtin tool types (excluding deprecated tools)."""
 
 BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}
 )

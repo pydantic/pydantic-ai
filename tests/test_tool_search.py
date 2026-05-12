@@ -29,7 +29,7 @@ from pydantic_ai._tool_search import (
     synthesize_local_from_builtin_call,
     synthesize_local_tool_search_messages,
 )
-from pydantic_ai.builtin_tools.tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.builtin_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.capabilities import CAPABILITY_TYPES
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch

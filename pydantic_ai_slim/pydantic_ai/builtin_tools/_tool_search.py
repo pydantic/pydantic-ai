@@ -39,15 +39,12 @@ __all__ = [
     'ToolSearchLocalStrategy',
     'ToolSearchFunc',
     'ToolSearchStrategy',
-    'ToolSearchToolStrategy',
     'TOOL_SEARCH_FUNCTION_TOOL_NAME',
-    'ToolSearchTool',
 ]
 
 
 ToolSearchNativeStrategy = Literal['bm25', 'regex']
-"""Named provider-native tool search strategy carried on
-[`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool].
+"""Named provider-native tool search strategy.
 
 `'bm25'` and `'regex'` correspond to Anthropic's server-side tool search variants.
 OpenAI's Responses API does not expose distinct named native strategies, so these values
@@ -102,21 +99,23 @@ route to for provider-side "client-executed" custom callable modes (Anthropic to
 blocks; OpenAI `execution='client'`)."""
 
 
-ToolSearchToolStrategy = Literal['bm25', 'regex', 'custom']
-"""Strategy literal carried on [`ToolSearchTool.strategy`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool.strategy].
+_ToolSearchToolStrategy = Literal['bm25', 'regex', 'custom']
+"""Strategy literal carried on `ToolSearchTool.strategy`.
 
-Extends [`ToolSearchNativeStrategy`][pydantic_ai.builtin_tools.tool_search.ToolSearchNativeStrategy]
+Extends [`ToolSearchNativeStrategy`][pydantic_ai.capabilities.ToolSearchNativeStrategy]
 with `'custom'`, which marks an instance whose discovery is performed by a callable on our
-side. The user-facing `ToolSearchStrategy` union (in the
-[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) does not include
-`'custom'` — users pass the callable directly and the capability sets
+side. The user-facing [`ToolSearchStrategy`][pydantic_ai.capabilities.ToolSearchStrategy]
+union (in the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) does not
+include `'custom'` — users pass the callable directly and the capability sets
 `strategy='custom'` on the builtin internally.
 """
 
 
 @dataclass(kw_only=True)
 class ToolSearchTool(AbstractBuiltinTool):
-    """A builtin tool that enables native provider tool search.
+    """Framework-internal: users access tool search via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability — do not construct directly.
+
+    A builtin tool that enables native provider tool search.
 
     Tools marked as part of the search corpus (via `with_builtin='tool_search'`
     on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
@@ -144,7 +143,7 @@ class ToolSearchTool(AbstractBuiltinTool):
       (named strategies `'bm25'`/`'regex'` are not supported).
     """
 
-    strategy: ToolSearchToolStrategy | None = None
+    strategy: _ToolSearchToolStrategy | None = None
     """The search strategy to use.
 
     * `None` (default): use the provider's default native search. On Anthropic this is

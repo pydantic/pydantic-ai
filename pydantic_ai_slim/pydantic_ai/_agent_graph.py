@@ -20,7 +20,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+from pydantic_ai.builtin_tools._tool_search import ToolSearchTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall

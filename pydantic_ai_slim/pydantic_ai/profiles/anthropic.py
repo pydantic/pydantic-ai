@@ -10,7 +10,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..builtin_tools.tool_search import ToolSearchTool
+from ..builtin_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
 

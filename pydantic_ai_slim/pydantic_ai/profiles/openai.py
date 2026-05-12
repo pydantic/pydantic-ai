@@ -14,7 +14,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
-from ..builtin_tools.tool_search import ToolSearchTool
+from ..builtin_tools._tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..settings import ThinkingLevel
 from . import ModelProfile

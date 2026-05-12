@@ -23,7 +23,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..builtin_tools.tool_search import (
+from ..builtin_tools._tool_search import (
     ToolSearchArgs,
     ToolSearchMatch,
     ToolSearchTool,

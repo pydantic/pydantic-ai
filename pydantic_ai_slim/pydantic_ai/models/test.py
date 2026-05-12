@@ -15,7 +15,7 @@ from typing_extensions import assert_never
 from .. import _utils
 from .._run_context import RunContext
 from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
-from ..builtin_tools.tool_search import ToolSearchTool
+from ..builtin_tools._tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,

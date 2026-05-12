@@ -27,7 +27,7 @@ from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
-from ..builtin_tools.tool_search import ToolSearchTool
+from ..builtin_tools._tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -802,8 +802,7 @@ class Model(ABC, Generic[InterfaceClient]):
         * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
           optional builtin is silently dropped (no error raised). It does NOT govern the
           corpus-empty drop below.
-        * The corpus-empty drop is specific to
-          [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]'s
+        * The corpus-empty drop is specific to the framework-managed tool-search builtin's
           corpus-management role: an *optional* `ToolSearchTool` is dropped when its
           corpus ends up empty after filtering, since sending it with no deferred tools
           to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —

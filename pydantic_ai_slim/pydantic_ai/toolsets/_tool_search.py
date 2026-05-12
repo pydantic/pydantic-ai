@@ -6,8 +6,7 @@ know which model will actually serve the request — think `FallbackModel`), the
 emits one entry per deferred tool with both `with_builtin='tool_search'` and the
 current local visibility on `defer_loading`, then lets
 [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
-specific model's support for the [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]
-builtin:
+specific model's support for the framework-managed tool-search builtin:
 
 * On the native path the adapter keeps every corpus member (regardless of local
   discovery state) and applies its provider-specific wire format — e.g. setting
@@ -35,7 +34,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from ..builtin_tools.tool_search import (
+from ..builtin_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
     ToolSearchMatch,
@@ -89,7 +88,7 @@ def _tokenize(text: str) -> set[str]:
 
 
 def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.builtin_tools.tool_search.ToolSearchFunc].
+    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc].
 
     Score each tool by how many query keywords appear in its name or description, then
     return matching names ordered by descending score. Used both as the default
@@ -196,9 +195,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     not initially presented to the model — they become available after the model
     discovers them via search.
 
-    When the model supports the [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]
-    builtin, discovery is handled by the provider and the deferred tools are sent to the API
-    with `defer_loading=True` on the wire.
+    When the model supports the framework-managed tool-search builtin, discovery is
+    handled by the provider and the deferred tools are sent to the API with
+    `defer_loading=True` on the wire.
     """
 
     search_fn: ToolSearchFunc[AgentDepsT] | None = None
@@ -443,5 +442,5 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _build_return(matches: list[ToolSearchMatch]) -> ToolSearchReturnContent:
-        """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]."""
+        """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
         return {'discovered_tools': matches}

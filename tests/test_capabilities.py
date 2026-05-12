@@ -28,7 +28,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     XSearchTool,
 )
-from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+from pydantic_ai.builtin_tools._tool_search import ToolSearchTool
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,

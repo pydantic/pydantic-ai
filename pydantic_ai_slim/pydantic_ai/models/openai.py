@@ -35,7 +35,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
-from ..builtin_tools.tool_search import (
+from ..builtin_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchArgs,
     ToolSearchMatch,
@@ -4254,7 +4254,7 @@ def _build_tool_search_return_part(
     """Build the typed return part for an OpenAI tool search, with or without output.
 
     Writes the cross-provider
-    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
     to `content` (with as much detail as the provider returned — name and description
     for OpenAI's full function-tool definitions) and stashes the `status` field on
     `provider_details`.

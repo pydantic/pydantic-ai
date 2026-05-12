@@ -82,7 +82,7 @@ class ToolSearchArgs(TypedDict):
 
 
 class ToolSearchReturnContent(TypedDict):
-    """Typed return value of [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool].
+    """Typed return value of the framework-managed tool-search builtin.
 
     Carried on
     [`BuiltinToolSearchReturnPart.content`][pydantic_ai.messages.BuiltinToolSearchReturnPart.content]

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .._run_context import AgentDepsT
-from ..builtin_tools.tool_search import (
+from ..builtin_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
     ToolSearchStrategy,
@@ -14,7 +14,7 @@ from ..builtin_tools.tool_search import (
 )
 
 # `ToolDefinition` is referenced via forward-string from `ToolSearchFunc`
-# (defined in `builtin_tools/tool_search.py`, where it can't be eagerly imported because
+# (defined in `builtin_tools/_tool_search.py`, where it can't be eagerly imported because
 # of the `tools.py` ↔ `builtin_tools` circular). Import it eagerly here so dataclass-spec
 # generation (`get_type_hints` on `ToolSearch.__init__`) can resolve the forward reference
 # against this module's globals.

@@ -1,6 +1,12 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai.builtin_tools._tool_search import (
+    ToolSearchFunc as ToolSearchFunc,
+    ToolSearchLocalStrategy as ToolSearchLocalStrategy,
+    ToolSearchNativeStrategy as ToolSearchNativeStrategy,
+    ToolSearchStrategy as ToolSearchStrategy,
+)
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
@@ -116,6 +122,10 @@ __all__ = [
     'Thinking',
     'ThreadExecutor',
     'ToolSearch',
+    'ToolSearchFunc',
+    'ToolSearchLocalStrategy',
+    'ToolSearchNativeStrategy',
+    'ToolSearchStrategy',
     'Toolset',
     'WebFetch',
     'WebSearch',

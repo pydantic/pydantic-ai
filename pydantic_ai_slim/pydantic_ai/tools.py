@@ -785,7 +785,7 @@ class ToolDefinition:
     ] = None
     """If set, this tool is kept on the wire when the named builtin is supported, with the
     builtin's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
-    on the request param for [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]).
+    on the request param for the framework-managed tool-search builtin).
 
     Symmetric pair with `unless_builtin`:
 
