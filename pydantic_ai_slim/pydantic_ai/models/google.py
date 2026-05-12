@@ -100,10 +100,13 @@ try:
         SafetySettingDict,
         ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
+        ToolCall,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
+        ToolResponse,
+        ToolType,
         UrlContextDict,
         UrlContextMetadata,
         VideoMetadataDict,
@@ -116,6 +119,14 @@ except ImportError as _import_error:
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
+
+_TOOL_TYPE_TO_BUILTIN_TOOL_NAME: dict[ToolType, str] = {
+    ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
+    ToolType.URL_CONTEXT: WebFetchTool.kind,
+    ToolType.FILE_SEARCH: FileSearchTool.kind,
+}
+
+_BUILTIN_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.items()}
 
 
 LatestGoogleModelNames = Literal[
@@ -1450,69 +1461,54 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, accepted_provider_names: frozenset[str]) -> ContentDict | None:  # noqa: C901
+def _content_model_response(
+    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
+) -> ContentDict | None:
     # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
     # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
     # routes its thinking signatures and built-in tool parts back to this provider.
     parts: list[PartDict] = []
-    thinking_part_signature: str | None = None
-    function_call_requires_signature: bool = True
-    for item in m.parts:
-        part: PartDict = {}
-        if (
-            item.provider_details
-            and (thought_signature := item.provider_details.get('thought_signature'))
-            and (m.provider_name in accepted_provider_names or item.provider_name in accepted_provider_names)
-        ):
-            part['thought_signature'] = base64.b64decode(thought_signature)
-        elif thinking_part_signature:
-            part['thought_signature'] = base64.b64decode(thinking_part_signature)
-        thinking_part_signature = None
+    # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
+    pending_thinking_signature: str | None = None
+    # Gemini requires the first `function_call` in a turn to carry a thought_signature; subsequent
+    # ones don't. Per https://ai.google.dev/gemini-api/docs/thought-signatures#signatures-in-function-calling-parts.
+    # Tracked here so each `ToolCallPart` arm can decide whether to fall back to the documented dummy signature.
+    needs_function_call_signature = True
 
+    for item in m.parts:
+        item_signature = _decode_inline_thought_signature(item, m, accepted_provider_names)
+        if item_signature is None and pending_thinking_signature is not None:
+            item_signature = base64.b64decode(pending_thinking_signature)
+        pending_thinking_signature = None
+
+        part: PartDict | None
         if isinstance(item, ToolCallPart):
-            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
-            part['function_call'] = function_call
-            if function_call_requires_signature and not part.get('thought_signature'):
-                # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
-                # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
-                # > or "skip_thought_signature_validator"
-                # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
-                # > You can set thought_signature to skip_thought_signature_validator
-                # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
-                part['thought_signature'] = b'skip_thought_signature_validator'
-            # Only the first function call requires a signature
-            function_call_requires_signature = False
+            part = _function_call_part_dict(item, item_signature, needs_signature=needs_function_call_signature)
+            needs_function_call_signature = False
         elif isinstance(item, TextPart):
-            part['text'] = item.content
+            part = _attach_signature({'text': item.content}, item_signature)
         elif isinstance(item, ThinkingPart):
             if item.provider_name in accepted_provider_names and item.signature:
-                # The thought signature is to be included on the _next_ part, not the thinking part itself
-                thinking_part_signature = item.signature
-
+                # The signature attaches to the _next_ part, not the thinking part itself.
+                pending_thinking_signature = item.signature
             if item.content:
-                part['text'] = item.content
-                part['thought'] = True
+                part = _attach_signature({'text': item.content, 'thought': True}, item_signature)
+            else:
+                part = None
         elif isinstance(item, BuiltinToolCallPart):
-            if item.provider_name in accepted_provider_names:
-                if item.tool_name == CodeExecutionTool.kind:
-                    part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
-                elif item.tool_name == WebSearchTool.kind:
-                    # Web search calls are not sent back
-                    pass
+            part = _builtin_tool_call_part_dict(
+                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+            )
         elif isinstance(item, BuiltinToolReturnPart):
-            if item.provider_name in accepted_provider_names:
-                if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
-                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
-                elif item.tool_name == WebSearchTool.kind:
-                    # Web search results are not sent back
-                    pass
+            part = _builtin_tool_return_part_dict(
+                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+            )
         elif isinstance(item, FilePart):
-            content = item.content
-            inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
-            part['inline_data'] = inline_data_dict
+            inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
+            part = _attach_signature({'inline_data': inline_data_dict}, item_signature)
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
-            pass
+            part = None
         else:
             assert_never(item)
 
@@ -1522,6 +1518,109 @@ def _content_model_response(m: ModelResponse, accepted_provider_names: frozenset
     if not parts:
         return None
     return ContentDict(role='model', parts=parts)
+
+
+def _decode_inline_thought_signature(
+    item: ModelResponsePart, m: ModelResponse, accepted_provider_names: frozenset[str]
+) -> bytes | None:
+    """Decode the thought signature stored on `item.provider_details`, if any.
+
+    Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
+    applies (either missing, or the response originated from a different provider).
+    """
+    if not item.provider_details:
+        return None
+    if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
+        return None  # pragma: no cover
+    raw = item.provider_details.get('thought_signature')
+    if not raw:
+        return None  # pragma: no cover
+    return base64.b64decode(raw)
+
+
+def _attach_signature(part: PartDict, signature: bytes | None) -> PartDict:
+    if signature is not None:
+        part['thought_signature'] = signature
+    return part
+
+
+def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, needs_signature: bool) -> PartDict:
+    part: PartDict = {
+        'function_call': FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id),
+    }
+    part = _attach_signature(part, signature)
+    if signature is None and needs_signature:
+        # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
+        # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
+        # the documented dummy `skip_thought_signature_validator` works for both Gemini developer API and Google Cloud.
+        part['thought_signature'] = b'skip_thought_signature_validator'
+    return part
+
+
+def _builtin_tool_call_part_dict(
+    item: BuiltinToolCallPart,
+    accepted_provider_names: frozenset[str],
+    signature: bytes | None,
+    *,
+    supports_tool_combination: bool,
+) -> PartDict | None:
+    if item.provider_name not in accepted_provider_names:
+        return None
+    if item.tool_name == CodeExecutionTool.kind:
+        return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
+    if tool_type is None:  # pragma: no cover
+        raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
+    if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
+        return None
+    part: PartDict = {
+        'tool_call': {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()},
+    }
+    return _attach_signature(part, signature)
+
+
+def _builtin_tool_return_part_dict(
+    item: BuiltinToolReturnPart,
+    accepted_provider_names: frozenset[str],
+    signature: bytes | None,
+    *,
+    supports_tool_combination: bool,
+) -> PartDict | None:
+    if item.provider_name not in accepted_provider_names:
+        return None
+    if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
+        return _attach_signature(
+            {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
+            signature,
+        )
+    tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
+    if tool_type is None:  # pragma: no cover
+        raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
+    if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
+        return None
+    response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
+    part: PartDict = {
+        'tool_response': {'id': item.tool_call_id, 'tool_type': tool_type, 'response': response},
+    }
+    return _attach_signature(part, signature)
+
+
+def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combination: bool) -> bool:
+    """Whether a server-side builtin-tool part can be echoed back to Gemini as `tool_call` / `tool_response`.
+
+    Two reasons to skip:
+
+    1. The model doesn't support tool combination (pre-Gemini-3) — those models never emit
+       `tool_call`/`tool_response` parts and reject them in request bodies.
+    2. The `tool_call_id` was synthesized by pydantic-ai (the `pyd_ai_` prefix from
+       [`generate_tool_call_id`][pydantic_ai._utils.generate_tool_call_id]) — i.e. the part was
+       reconstructed from `grounding_metadata` / `url_context_metadata` and never had a real
+       Google id. Gemini rejects unknown ids, so message histories built before this round-trip
+       support landed must drop those parts even on Gemini 3+.
+    """
+    if not supports_tool_combination:
+        return False
+    return not tool_call_id.startswith('pyd_ai_')
 
 
 def _process_part(
