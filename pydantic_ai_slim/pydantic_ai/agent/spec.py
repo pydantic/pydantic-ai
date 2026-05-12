@@ -27,6 +27,17 @@ DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 
+LEGACY_CAPABILITY_NAMES: Mapping[str, str] = {
+    'BuiltinTool': 'NativeTool',
+    'BuiltinOrLocalTool': 'NativeOrLocalTool',
+}
+"""Deprecated capability spec names that warn on use and resolve to their renamed equivalents.
+
+`NativeOrLocalTool` is not in `CAPABILITY_TYPES` (it is a base class for subclassing, not
+direct spec construction). For `BuiltinOrLocalTool`, the warning fires telling the user
+about the rename, then resolution proceeds and fails with the usual "valid choices" error
+— consistent with what happens if they typed `NativeOrLocalTool` directly."""
+
 
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
@@ -333,6 +344,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=ctx.instantiate,
+            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
     else:
         return load_from_registry(
@@ -341,6 +353,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
+            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
 
 

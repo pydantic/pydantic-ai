@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
-from collections.abc import AsyncIterable, AsyncIterator
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -16,6 +19,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
+    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -26,7 +30,10 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestContext,
     ModelResponse,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -45,10 +52,11 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
-from pydantic_ai.capabilities import CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
+from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
@@ -59,7 +67,12 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings(
+        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
+    ),
+]
 
 
 class Foo(BaseModel):
@@ -3065,7 +3078,7 @@ async def test_unknown_tool_call_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                result=RetryPromptPart(
+                part=RetryPromptPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
@@ -3073,7 +3086,7 @@ async def test_unknown_tool_call_events():
                 ),
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='known_tool',
                     content=10,
                     tool_call_id=IsStr(),
@@ -3100,8 +3113,50 @@ async def test_unknown_tool_call_events():
     )
 
 
-async def test_output_tool_validation_failure_events():
-    """Test that output tools that fail validation emit events during streaming."""
+async def test_output_tool_success_events():
+    """Test that a successful output tool call emits `OutputToolCallEvent` and `OutputToolResultEvent`."""
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as event_stream:
+                    async for event in event_stream:
+                        events.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(OutputType(value='hello'))
+
+    assert events == snapshot(
+        [
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'hello'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+        ]
+    )
+
+
+async def test_output_tool_events():
+    """Test that output tools emit events during streaming for both validation failure and success."""
 
     def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         """Mock function that calls final_result tool with invalid data."""
@@ -3125,7 +3180,7 @@ async def test_output_tool_validation_failure_events():
 
     assert events == snapshot(
         [
-            FunctionToolCallEvent(
+            OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
                     args={'bad_value': 'invalid'},
@@ -3133,8 +3188,8 @@ async def test_output_tool_validation_failure_events():
                 ),
                 args_valid=False,
             ),
-            FunctionToolResultEvent(
-                result=RetryPromptPart(
+            OutputToolResultEvent(
+                part=RetryPromptPart(
                     content=[
                         ErrorDetails(
                             type='missing',
@@ -3148,10 +3203,96 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            # Note: No FunctionToolCallEvent for the successful output tool call
-            # Output tools only emit FunctionToolCallEvent on validation/execution failure
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'bad_value': 'invalid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=False,
+            ),
+            FunctionToolResultEvent(
+                part=RetryPromptPart(
+                    tool_name='final_result',
+                    content=[
+                        {
+                            'type': 'missing',
+                            'loc': ('value',),
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        }
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'valid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
         ]
     )
+
+
+def _tool_call_and_return_ids_from_messages(messages: list[ModelMessage]) -> tuple[set[str], set[str]]:
+    call_ids: set[str] = set()
+    return_ids: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                call_ids.add(part.tool_call_id)
+            elif isinstance(part, ToolReturnPart):
+                return_ids.add(part.tool_call_id)
+    return call_ids, return_ids
+
+
+async def test_output_tool_event_history_has_no_dangling_call():
+    """Regression test for #2640: event-reconstructed history should not have a dangling output tool call.
+
+    Every `OutputToolCallEvent` seen on the event stream should have a matching
+    `OutputToolResultEvent`, and the tool_call_ids should match those in `all_messages()`.
+    """
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as handle_stream:
+                    async for event in handle_stream:
+                        events.append(event)
+
+    call_ids_from_events = {e.part.tool_call_id for e in events if isinstance(e, OutputToolCallEvent)}
+    return_ids_from_events = {e.part.tool_call_id for e in events if isinstance(e, OutputToolResultEvent)}
+
+    # No dangling calls: every call seen on the event stream has a matching result.
+    assert call_ids_from_events == return_ids_from_events
+    assert None not in call_ids_from_events
+
+    # And the event-stream view matches `all_messages()`.
+    assert agent_run.result is not None
+    call_ids_from_messages, return_ids_from_messages = _tool_call_and_return_ids_from_messages(
+        agent_run.result.all_messages()
+    )
+    assert call_ids_from_events == call_ids_from_messages
+    assert return_ids_from_events == return_ids_from_messages
 
 
 async def test_output_function_model_retry_in_stream():
@@ -3279,10 +3420,28 @@ def test_function_tool_event_tool_call_id_properties():
 
     # Prepare a ToolReturnPart with a fixed ID
     return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='return_id_456')
-    result_event = FunctionToolResultEvent(result=return_part)
+    result_event = FunctionToolResultEvent(part=return_part)
 
     # The event should expose the same `tool_call_id` as the result part
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
+
+
+def test_function_tool_result_event_deprecated_result_alias():
+    """`FunctionToolResultEvent(result=...)` and `event.result` keep working with a `DeprecationWarning`."""
+    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='ret_1')
+
+    with pytest.warns(DeprecationWarning, match=r'`result=\.\.\.` to `FunctionToolResultEvent` is deprecated'):
+        event = FunctionToolResultEvent(result=return_part)
+    assert event.part is return_part
+
+    with pytest.warns(DeprecationWarning, match=r'`result` is deprecated, use `part` instead\.'):
+        assert event.result is return_part  # pyright: ignore[reportDeprecated]
+
+    with pytest.raises(TypeError, match='either `part` or `result`'):
+        FunctionToolResultEvent(part=return_part, result=return_part)
+
+    with pytest.raises(TypeError, match='missing required argument'):
+        FunctionToolResultEvent()
 
 
 async def test_tool_raises_call_deferred():
@@ -3581,7 +3740,7 @@ async def test_run_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3659,7 +3818,7 @@ def test_run_sync_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3710,7 +3869,7 @@ async def test_run_stream_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3755,7 +3914,7 @@ async def test_stream_tool_returning_user_content():
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_image',
                     content=ImageUrl(
                         url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
@@ -3815,7 +3974,7 @@ async def test_run_stream_events():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3940,8 +4099,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
-            break
+        await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
 
@@ -3985,7 +4143,7 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                result=RetryPromptPart(
+                part=RetryPromptPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
@@ -4005,7 +4163,7 @@ async def test_args_validator_failure_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id=IsStr(),
@@ -4063,7 +4221,7 @@ async def test_args_validator_event_args_valid_field():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id='pyd_ai_tool_call_id__add_numbers',
@@ -4196,7 +4354,7 @@ async def test_event_ordering_call_before_result():
                 f'FunctionToolResultEvent for {event.tool_call_id} appeared before FunctionToolCallEvent'
             )
         elif isinstance(event, FunctionToolResultEvent):
-            result_id = event.result.tool_call_id
+            result_id = event.part.tool_call_id
             result_ids_seen.add(result_id)
             assert result_id in call_ids_seen, (
                 f'FunctionToolResultEvent for {result_id} appeared without prior FunctionToolCallEvent'
@@ -4284,9 +4442,9 @@ async def test_args_valid_none_for_tool_denied():
     assert tool_call_events[0].args_valid is None
 
     # FunctionToolResultEvent should contain the denial message
-    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool']
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.part.tool_name == 'my_tool']
     assert result_events
-    assert result_events[0].result.content == 'User denied this tool call'
+    assert result_events[0].part.content == 'User denied this tool call'
 
 
 async def test_deferred_tool_validation_event_in_stream():
@@ -4312,3 +4470,298 @@ async def test_deferred_tool_validation_event_in_stream():
     assert tool_call_events
     # TestModel generates valid args (x=0 by default), so validation passes
     assert tool_call_events[0].args_valid is True
+
+
+# region: Stream cancellation tests
+
+
+async def test_run_stream_cancel():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.cancelled
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    # StreamedResponse.get() sets state='interrupted' when _cancelled is True
+    assert result.response.state == 'interrupted'
+
+
+async def test_run_stream_cancel_all_messages_includes_interrupted_response():
+    """After cancelling a stream, all_messages() should include the interrupted ModelResponse."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    # The interrupted ModelResponse must appear in all_messages()
+    msgs = result.all_messages()
+    assert msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_guard_suppresses_transport_error():
+    """When cancel() is called mid-stream and iteration continues, _stream_cancel_guard
+    suppresses the simulated transport error and the stream ends gracefully."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        chunks: list[str] = []
+        async for text in result.stream_text(delta=True, debounce_by=None):
+            chunks.append(text)
+            if not result.cancelled:  # pragma: no branch
+                await result.cancel()
+                # Don't break: let the loop call anext() again, which resumes
+                # the generator into the _cancelled check and exercises the
+                # _stream_cancel_guard suppression branch.
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_after_complete():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        await result.get_output()
+        assert result.is_complete
+        # Cancelling an already-completed stream sets the flag but doesn't error
+        await result.cancel()
+        assert result.cancelled
+
+
+async def test_completed_streamed_response_cancel_noop():
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.get() is response
+    assert response.state == 'complete'
+
+
+async def test_run_stream_events_aclose():
+    agent = Agent(TestModel())
+
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    async with agent.run_stream_events('Hello') as stream:
+        async for event in stream:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, PartStartEvent):  # pragma: no branch
+                await stream.aclose()
+                break
+
+        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
+        assert [e async for e in stream] == []
+
+        # Double close is a no-op.
+        await stream.aclose()
+
+    assert len(events) >= 1
+
+
+async def test_run_stream_events_break_cleanup():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('Hello') as stream:
+        await anext(stream)
+
+    # __aexit__ closed the generator (because _closed was False);
+    # no task leak, no error.
+
+
+async def test_agent_event_stream_standalone_break_cleanup():
+    cleanup_finished = asyncio.Event()
+
+    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+        finally:
+            cleanup_finished.set()
+
+    stream = AgentEventStream(generator())
+    async for _ in stream:  # pragma: no branch
+        break
+
+    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+
+
+async def test_run_stream_events_standalone_deprecation():
+    agent = Agent(TestModel())
+
+    stream = agent.run_stream_events('Hello')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        async for _ in stream:  # pragma: no branch
+            break
+    await stream.aclose()
+
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, DeprecationWarning)
+    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
+        caught[0].message
+    )
+
+
+async def test_run_stream_events_external_task_cancellation():
+    """When the outer task is cancelled, the CancelledError handler forwards cancellation to the producer."""
+    never = asyncio.Event()
+
+    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+        await never.wait()  # block forever so the consumer is still awaiting when we cancel
+
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)  # let the task start and block on the stream
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
+    # Test for https://github.com/pydantic/pydantic-ai/issues/5132.
+    cleanup_finished = asyncio.Event()
+    first_event_seen = asyncio.Event()
+
+    class SlowCleanupTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[None] | None = None,
+        ) -> AsyncIterator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    yield stream
+                finally:
+                    await asyncio.sleep(0.2)
+                    cleanup_finished.set()
+
+    agent = Agent(SlowCleanupTestModel(custom_output_text='hello'))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            await anext(stream)
+            first_event_seen.set()
+            await asyncio.sleep(10)
+
+    task = asyncio.create_task(consume())
+    await first_event_seen.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
+    """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
+
+    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
+    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
+    `wrap_model_request` cleanup never runs.
+    """
+    cleanup_finished = asyncio.Event()
+    started = asyncio.Event()
+    never_finishes = asyncio.Future[ModelResponse]()
+
+    class WrapModelRequestCapability(AbstractCapability[None]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[None],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            try:
+                started.set()
+                # Suspend before calling handler() so we sit inside the readiness wait at
+                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                return await never_finishes
+            finally:
+                # Without the drain on the readiness wait, this finally never runs.
+                cleanup_finished.set()
+
+    agent = Agent(TestModel(), capabilities=[WrapModelRequestCapability()])
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+# endregion
