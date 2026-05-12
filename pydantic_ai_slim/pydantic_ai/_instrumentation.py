@@ -10,6 +10,7 @@ from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
+from pydantic_core import to_json
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -106,9 +107,7 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    import json
-
-    return {'model_request_parameters': json.dumps(serialize_any(model_request_parameters))}
+    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:

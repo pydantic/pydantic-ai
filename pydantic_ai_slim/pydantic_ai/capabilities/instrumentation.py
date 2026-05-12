@@ -306,15 +306,8 @@ class Instrumentation(AbstractCapability[Any]):
 
                     record_metrics = _record_metrics
 
-                    if not span.is_recording():
-                        return
-
-                    settings.handle_messages(request_context.messages, response, system, span, prepared_parameters)
-
-                    attributes_to_set: dict[str, Any] = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
+                    # Compute cost before the `is_recording()` gate so `_record_metrics`
+                    # always emits cost data, even when the span is dropped by sampling.
                     try:
                         price_calculation = response.cost()
                     except LookupError:
@@ -324,7 +317,17 @@ class Instrumentation(AbstractCapability[Any]):
                             f'Failed to get cost from response: {type(e).__name__}: {e}',
                             CostCalculationFailedWarning,
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return
+
+                    settings.handle_messages(request_context.messages, response, system, span, prepared_parameters)
+
+                    attributes_to_set: dict[str, Any] = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+                    if price_calculation is not None:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     if response.provider_response_id is not None:
