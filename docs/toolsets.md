@@ -370,6 +370,9 @@ _(This example is complete, it can be run "as is")_
 
 This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
 
+!!! warning
+    The same [`None` → "disable all" semantics and `UserWarning`](tools-advanced.md#prepare-tools) apply here as for the `Agent`-level `prepare_tools` argument: return the `tool_defs` argument for passthrough, or `[]` to intentionally expose no tools.
+
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
 To easily chain different modifications, you can also call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset instead of directly constructing a `PreparedToolset`.

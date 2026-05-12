@@ -37,6 +37,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
@@ -5298,8 +5299,28 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        result = await agent.run('hello')
+        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+            result = await agent.run('hello')
         assert result.output == 'tools: []'
+
+    async def test_prepare_tools_empty_list_does_not_warn(self):
+        """Returning [] is the explicit 'disable all' alternative and must not emit the warning."""
+
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UserWarning)
+            await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5447,7 +5468,8 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        result = await agent.run('hello')
+        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+            result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
     async def test_only_sees_output_tools(self):
