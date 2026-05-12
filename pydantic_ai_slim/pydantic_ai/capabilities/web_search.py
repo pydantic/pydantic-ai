@@ -4,35 +4,36 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias  # pyright: ignore[reportPrivateUsage]
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
 class WebSearch(NativeOrLocalTool[AgentDepsT]):
     """Web search capability.
 
-    Uses the model's builtin web search when available, falling back to a local
+    Uses the model's native web search when available, falling back to a local
     function tool (DuckDuckGo by default) when it isn't.
     """
 
     search_context_size: Literal['low', 'medium', 'high'] | None
-    """Controls how much context is retrieved from the web. Builtin-only; ignored by local tools."""
+    """Controls how much context is retrieved from the web. Native-only; ignored by local tools."""
 
     user_location: WebSearchUserLocation | None
-    """Localize search results based on user location. Builtin-only; ignored by local tools."""
+    """Localize search results based on user location. Native-only; ignored by local tools."""
 
     blocked_domains: list[str] | None
-    """Domains to exclude from results. Requires builtin support."""
+    """Domains to exclude from results. Requires native support."""
 
     allowed_domains: list[str] | None
-    """Only include results from these domains. Requires builtin support."""
+    """Only include results from these domains. Requires native support."""
 
     max_uses: int | None
-    """Maximum number of web searches per run. Requires builtin support."""
+    """Maximum number of web searches per run. Requires native support."""
 
     def __init__(
         self,
@@ -94,4 +95,4 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
 
 
-_wrap_init_with_builtin_alias(WebSearch)
+install_deprecated_kwarg_alias(WebSearch, old='builtin', new='native')

@@ -575,26 +575,7 @@ class ModelRequestParameters:
 # Wrap the dataclass-generated `__init__` so direct construction still accepts a
 # deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
 # `validation_alias` on the `native_tools` field above.)
-_ModelRequestParameters_orig_init = ModelRequestParameters.__init__
-
-
-def _model_request_parameters_init(self: ModelRequestParameters, **kwargs: Any) -> None:
-    if 'builtin_tools' in kwargs:
-        warnings.warn(
-            '`ModelRequestParameters(builtin_tools=...)` is deprecated, use `native_tools=` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        # When both `builtin_tools` and `native_tools` are present, the user explicitly typed
-        # the legacy spelling, so let it win. The common path that puts both keys here is
-        # `dataclasses.replace(obj, builtin_tools=...)`, which silently re-passes every
-        # existing field value as `native_tools=...`. The deprecation warning still tells the
-        # caller they're on the legacy kwarg.
-        kwargs['native_tools'] = kwargs.pop('builtin_tools')
-    _ModelRequestParameters_orig_init(self, **kwargs)
-
-
-ModelRequestParameters.__init__ = _model_request_parameters_init
+_utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
 @dataclass(kw_only=True)

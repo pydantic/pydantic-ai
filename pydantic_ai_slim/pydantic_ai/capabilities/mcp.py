@@ -6,11 +6,12 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias  # pyright: ignore[reportPrivateUsage]
+from .native_or_local import NativeOrLocalTool
 
 try:
     from pydantic_ai.mcp import MCPServer
@@ -25,7 +26,7 @@ except ImportError:  # pragma: lax no cover
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
-    Uses the model's builtin MCP server support when available, connecting
+    Uses the model's native MCP server support when available, connecting
     directly via HTTP when it isn't.
     """
 
@@ -36,16 +37,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
 
     authorization_token: str | None
-    """Authorization header value for MCP server requests. Passed to both builtin and local."""
+    """Authorization header value for MCP server requests. Passed to both native and local."""
 
     headers: dict[str, str] | None
-    """HTTP headers for MCP server requests. Passed to both builtin and local."""
+    """HTTP headers for MCP server requests. Passed to both native and local."""
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Applied to both builtin and local."""
+    """Filter to only these tools. Applied to both native and local."""
 
     description: str | None
-    """Description of the MCP server. Builtin-only; ignored by local tools."""
+    """Description of the MCP server. Native-only; ignored by local tools."""
 
     def __init__(
         self,
@@ -119,4 +120,4 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return toolset
 
 
-_wrap_init_with_builtin_alias(MCP)
+install_deprecated_kwarg_alias(MCP, old='builtin', new='native')

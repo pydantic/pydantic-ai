@@ -4,13 +4,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias  # pyright: ignore[reportPrivateUsage]
+from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
@@ -20,22 +21,22 @@ if TYPE_CHECKING:
 class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
-    Uses the model's builtin image generation when available. When the model doesn't
+    Uses the model's native image generation when available. When the model doesn't
     support it and `fallback_model` is provided, falls back to a local tool that
     delegates to a subagent running the specified image-capable model.
 
     Image generation settings (`quality`, `size`, etc.) are forwarded to the
-    [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] used by
-    both the builtin and the local fallback subagent. When passing a custom `builtin`
+    [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] used by
+    both the native and the local fallback subagent. When passing a custom `native`
     instance, its settings are also used for the fallback subagent; capability-level
-    fields override any `builtin` instance settings.
+    fields override any `native` instance settings.
     """
 
     fallback_model: ImageGenerationFallbackModel
     """Model to use for image generation when the agent's model doesn't support it natively.
 
     Must be a model that supports image generation via the
-    [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] builtin.
+    [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] native tool.
     This requires a conversational model with image generation support, not a dedicated
     image-only API. Examples:
 
@@ -46,7 +47,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     that returns a `Model` instance.
     """
 
-    # Keep these fields in sync with ImageGenerationTool in builtin_tools.py.
+    # Keep these fields in sync with ImageGenerationTool in native_tools.py.
 
     action: Literal['generate', 'edit', 'auto'] | None
     """Whether to generate a new image or edit an existing image.
@@ -199,4 +200,4 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
 
 
-_wrap_init_with_builtin_alias(ImageGeneration)
+install_deprecated_kwarg_alias(ImageGeneration, old='builtin', new='native')

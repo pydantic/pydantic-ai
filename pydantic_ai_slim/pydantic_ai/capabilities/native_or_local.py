@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import functools
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -15,33 +15,6 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
-
-
-def _wrap_init_with_builtin_alias(cls: type[Any]) -> None:
-    """Install a wrapper around `cls.__init__` that accepts the deprecated `builtin=` kwarg.
-
-    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
-    from leaking into Pydantic's JSON-schema introspection of capability classes.
-    """
-    orig_init = cls.__init__
-
-    @functools.wraps(orig_init)
-    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
-        if 'builtin' in kwargs:
-            warnings.warn(
-                f'`{type(self).__name__}(builtin=...)` is deprecated, use `native=` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            # When both `builtin` and `native` are present, the user explicitly typed the legacy
-            # spelling, so let it win. The common path that puts both keys here is
-            # `dataclasses.replace(obj, builtin=...)`, which silently re-passes every existing
-            # field value as `native=...`. The deprecation warning still tells the caller
-            # they're on the legacy kwarg.
-            kwargs['native'] = kwargs.pop('builtin')
-        orig_init(self, *args, **kwargs)
-
-    cls.__init__ = wrapper
 
 
 @dataclass(init=False)
@@ -201,4 +174,4 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         raise AttributeError(name)
 
 
-_wrap_init_with_builtin_alias(NativeOrLocalTool)
+install_deprecated_kwarg_alias(NativeOrLocalTool, old='builtin', new='native')

@@ -4,18 +4,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias  # pyright: ignore[reportPrivateUsage]
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
 class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available, falling back to a local
+    Uses the model's native URL fetching when available, falling back to a local
     function tool (markdownify-based fetch by default) when it isn't.
 
     The local fallback requires the `web-fetch` optional group::
@@ -24,19 +25,19 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Only fetch from these domains. Enforced locally when native is unavailable."""
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Never fetch from these domains. Enforced locally when native is unavailable."""
 
     max_uses: int | None
-    """Maximum number of fetches per run. Requires builtin support."""
+    """Maximum number of fetches per run. Requires native support."""
 
     enable_citations: bool | None
-    """Enable citations for fetched content. Builtin-only; ignored by local tools."""
+    """Enable citations for fetched content. Native-only; ignored by local tools."""
 
     max_content_tokens: int | None
-    """Maximum content length in tokens. Builtin-only; ignored by local tools."""
+    """Maximum content length in tokens. Native-only; ignored by local tools."""
 
     def __init__(
         self,
@@ -101,4 +102,4 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         return self.max_uses is not None
 
 
-_wrap_init_with_builtin_alias(WebFetch)
+install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')

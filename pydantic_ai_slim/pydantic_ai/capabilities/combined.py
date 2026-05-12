@@ -114,10 +114,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
-        builtin_tools: list[AgentNativeTool[AgentDepsT]] = []
+        native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            builtin_tools.extend(capability.get_native_tools() or [])
-        return builtin_tools
+            native_tools.extend(capability.get_native_tools() or [])
+        return native_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

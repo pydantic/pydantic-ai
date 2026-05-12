@@ -140,7 +140,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, builtin tools). The exception is
+    settings, toolsets, native tools). The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
@@ -275,7 +275,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
-        """Return builtin tools to register with the agent."""
+        """Return native tools to register with the agent."""
         return []
 
     def get_builtin_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
