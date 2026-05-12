@@ -1512,7 +1512,7 @@ def infer_model(  # noqa: C901
                 "In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. "
                 "Use 'openai-chat:' to keep current Chat Completions behavior, or "
                 "'openai-responses:' to opt in early.",
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
         return OpenAIChatModel(model_name, provider=provider)
