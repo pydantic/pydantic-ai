@@ -124,17 +124,25 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-!!! warning "Deprecated in 1.x, removed in v2"
-    [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] and [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] are deprecated and will be removed in v2. See [Migrating from deprecated APIs](#migrating-from-deprecated-apis) below for runnable before/after examples.
+When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://www.starlette.io/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
 
-This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agent into a stand-alone ASGI application:
+```py {title="ag_ui_app.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
-```py {title="ag_ui_app.py" hl_lines="4"}
 from pydantic_ai import Agent
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-app = AGUIApp(agent)
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -144,6 +152,9 @@ uvicorn ag_ui_app:app
 ```
 
 This will expose the agent as an AG-UI server, and your frontend can start sending requests to it.
+
+!!! note "Migrating from `AGUIApp` or `Agent.to_ag_ui()`"
+    The previous version of this section used [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], which (along with [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui]) is deprecated in 1.x and removed in v2. See [Migrating from deprecated APIs](#migrating-from-deprecated-apis) below for side-by-side before/after examples.
 
 ## Migrating from deprecated APIs
 

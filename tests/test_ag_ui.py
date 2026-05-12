@@ -105,6 +105,8 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    # Intentionally exercises the deprecated `pydantic_ai.ag_ui` shim — the module-level
+    # `DeprecationWarning` is filtered via the matching entry in `pyproject.toml`.
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
         AGUIAdapter,

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from textwrap import dedent
 
 from pydantic import BaseModel
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from ag_ui.core import CustomEvent, EventType
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.ui import StateDeps
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 
 class DocumentState(BaseModel):
@@ -75,4 +80,12 @@ async def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     )
 
 
-app = AGUIApp(agent, deps=StateDeps(DocumentState()))  # pyright: ignore[reportDeprecated]
+deps = StateDeps(DocumentState())
+
+
+async def run_agent(request: Request) -> Response:
+    # `dispatch_request` mutates `deps.state` from the request, so give each request its own copy.
+    return await AGUIAdapter.dispatch_request(request, agent=agent, deps=replace(deps))
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
