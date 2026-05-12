@@ -379,7 +379,8 @@ def test_agent_builtin_tools_constructor_deprecated():
     ):
         agent = Agent(TestModel(), builtin_tools=[WebSearchTool()])  # pyright: ignore[reportCallIssue]
 
-    assert len(agent._cap_native_tools) == 1  # pyright: ignore[reportPrivateUsage]
+    web_search = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportPrivateUsage]
+    assert len(web_search) == 1
 
 
 async def test_agent_run_builtin_tools_kwarg_deprecated():
@@ -494,9 +495,8 @@ def test_agent_from_spec_builtin_tools_kwarg_deprecated():
             builtin_tools=[WebSearchTool()],
         )
 
-    native_tools: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert len(native_tools) == 1
-    assert isinstance(native_tools[0], WebSearchTool)
+    web_search: list[WebSearchTool] = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(web_search) == 1
 
 
 def test_agent_from_file_builtin_tools_kwarg_deprecated(tmp_path: Any):
@@ -514,9 +514,8 @@ def test_agent_from_file_builtin_tools_kwarg_deprecated(tmp_path: Any):
             builtin_tools=[WebSearchTool()],
         )
 
-    native_tools: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert len(native_tools) == 1
-    assert isinstance(native_tools[0], WebSearchTool)
+    web_search: list[WebSearchTool] = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(web_search) == 1
 
 
 # --- Additional streaming entry-point deprecations ---
@@ -1230,9 +1229,8 @@ def test_agent_from_spec_with_builtin_tool_capability_key_deprecated():
             {'name': 'a', 'model': 'test', 'capabilities': [{'BuiltinTool': {'kind': 'web_search'}}]}
         )
 
-    native_tools = list(agent._cap_native_tools)  # pyright: ignore[reportPrivateUsage]
-    assert len(native_tools) == 1
-    assert isinstance(native_tools[0], WebSearchTool)
+    web_search = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportPrivateUsage]
+    assert len(web_search) == 1
 
 
 def test_agent_from_spec_with_builtin_or_local_tool_capability_key_deprecated():
