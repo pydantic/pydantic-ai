@@ -896,7 +896,7 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
     UploadedFileErrorCase(
         id='google_vertex_non_gcs_uri',
         provider='google_vertex',
-        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-vertex'),
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
         match=r'UploadedFile for GoogleModel \(Vertex\) must use a GCS URI',
     ),
 ]
@@ -946,9 +946,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
 async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    file = UploadedFile(
-        file_id='gs://bucket/path/file.pdf', provider_name='google-vertex', media_type='application/pdf'
-    )
+    file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
     ]

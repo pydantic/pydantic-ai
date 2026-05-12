@@ -5219,7 +5219,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
         content=[
             UploadedFile(
                 file_id='files/video123',
-                provider_name='google-gla',
+                provider_name='google',
                 media_type='video/mp4',
                 vendor_metadata={'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                 identifier='my-custom-id',
@@ -5235,7 +5235,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                 provider_metadata={
                     'pydantic_ai': {
                         'file_id': 'files/video123',
-                        'provider_name': 'google-gla',
+                        'provider_name': 'google',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
                     }
@@ -5258,7 +5258,7 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
                     provider_metadata={
                         'pydantic_ai': {
                             'file_id': 'files/video123',
-                            'provider_name': 'google-gla',
+                            'provider_name': 'google',
                             'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                             'identifier': 'my-custom-id',
                         }
@@ -5277,7 +5277,7 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
                         content=[
                             UploadedFile(
                                 file_id='files/video123',
-                                provider_name='google-gla',
+                                provider_name='google',
                                 _media_type='video/mp4',
                                 media_type='video/mp4',
                                 vendor_metadata={

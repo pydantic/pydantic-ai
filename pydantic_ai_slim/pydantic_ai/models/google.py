@@ -389,7 +389,8 @@ class GoogleModel(Model[Client]):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
+        provider: Literal['google', 'google-cloud', 'google-gla', 'google-vertex', 'gateway']
+        | Provider[Client] = 'google',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -398,8 +399,8 @@ class GoogleModel(Model[Client]):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[google.genai.AsyncClient]`.
-                Defaults to 'google-gla'.
+                'google' (Gemini developer API) or 'google-cloud' (Google Cloud, formerly known as Vertex AI),
+                or an instance of `Provider[google.genai.AsyncClient]`. Defaults to 'google'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
@@ -428,6 +429,20 @@ class GoogleModel(Model[Client]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
+    # (`google-vertex` / `google-gla`) so history captured against the old provider
+    # name still routes correctly through the new model class.
+    _GOOGLE_CLOUD_SYSTEMS = frozenset({'google-cloud', 'google-vertex'})
+    _GEMINI_API_SYSTEMS = frozenset({'google', 'google-gla'})
+
+    @property
+    def _matching_provider_names(self) -> frozenset[str]:
+        if self.system in self._GOOGLE_CLOUD_SYSTEMS:
+            return self._GOOGLE_CLOUD_SYSTEMS
+        if self.system in self._GEMINI_API_SYSTEMS:
+            return self._GEMINI_API_SYSTEMS
+        return frozenset({self.system})  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
@@ -490,7 +505,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name != 'google-gla':
+        if self._provider.name not in self._GEMINI_API_SYSTEMS:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             config.update(  # pragma: lax no cover
                 system_instruction=generation_config.get('system_instruction'),
@@ -561,7 +576,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system == 'google-vertex':
+        if self.system in self._GOOGLE_CLOUD_SYSTEMS:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -793,7 +808,7 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system == 'google-vertex':
+        if self.system in self._GOOGLE_CLOUD_SYSTEMS:
             headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
@@ -982,7 +997,7 @@ class GoogleModel(Model[Client]):
 
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
-                maybe_content = _content_model_response(m, self.system)
+                maybe_content = _content_model_response(m, self._matching_provider_names)
                 if maybe_content:
                     contents.append(maybe_content)
             else:
@@ -1044,22 +1059,22 @@ class GoogleModel(Model[Client]):
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
 
-        GLA uses the Files API (https:// URIs). Vertex uses GCS (gs:// URIs).
-        The Files API is not available on Vertex AI.
+        The Gemini developer API uses the Files API (https:// URIs). Google Cloud uses GCS
+        (gs:// URIs). The Files API is not available on Google Cloud.
         """
-        if file.provider_name != self.system:
+        if file.provider_name not in self._matching_provider_names:
             raise UserError(
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
+                f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system == 'google-vertex':
+        if self.system in self._GOOGLE_CLOUD_SYSTEMS:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
-                    f'UploadedFile for GoogleModel (Vertex) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
+                    f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
                 )
         elif not file.file_id.startswith('https://'):
             raise UserError(
-                f'UploadedFile for GoogleModel (GLA) must use a file URI from the Google Files API '
+                f'UploadedFile for GoogleModel (Gemini developer API) must use a file URI from the Google Files API '
                 f'(https://generativelanguage.googleapis.com/...), got: {file.file_id}'
             )
         return file.file_id, file.media_type
@@ -1077,12 +1092,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+            file.is_youtube or (file.url.startswith('gs://') and self.system in self._GOOGLE_CLOUD_SYSTEMS)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system == 'google-gla'
+                self.system in self._GEMINI_API_SYSTEMS
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
@@ -1435,7 +1450,10 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict | None:  # noqa: C901
+def _content_model_response(m: ModelResponse, accepted_provider_names: frozenset[str]) -> ContentDict | None:  # noqa: C901
+    # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
+    # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
+    # routes its thinking signatures and built-in tool parts back to this provider.
     parts: list[PartDict] = []
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
@@ -1444,7 +1462,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         if (
             item.provider_details
             and (thought_signature := item.provider_details.get('thought_signature'))
-            and (m.provider_name == provider_name or item.provider_name == provider_name)
+            and (m.provider_name in accepted_provider_names or item.provider_name in accepted_provider_names)
         ):
             part['thought_signature'] = base64.b64decode(thought_signature)
         elif thinking_part_signature:
@@ -1467,7 +1485,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         elif isinstance(item, TextPart):
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
-            if item.provider_name == provider_name and item.signature:
+            if item.provider_name in accepted_provider_names and item.signature:
                 # The thought signature is to be included on the _next_ part, not the thinking part itself
                 thinking_part_signature = item.signature
 
@@ -1475,14 +1493,14 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 part['text'] = item.content
                 part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
-            if item.provider_name == provider_name:
+            if item.provider_name in accepted_provider_names:
                 if item.tool_name == CodeExecutionTool.kind:
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search calls are not sent back
                     pass
         elif isinstance(item, BuiltinToolReturnPart):
-            if item.provider_name == provider_name:
+            if item.provider_name in accepted_provider_names:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
                 elif item.tool_name == WebSearchTool.kind:

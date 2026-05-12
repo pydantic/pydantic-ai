@@ -21,9 +21,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.gcp import GCPProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -48,8 +48,8 @@ with try_import() as imports_successful:
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google', GoogleProvider, 'GOOGLE_API_KEY'),
-        ('gcp', GCPProvider, 'Your default credentials were not found'),
-        ('google-vertex', GCPProvider, 'Your default credentials were not found'),
+        ('google-cloud', GoogleCloudProvider, 'Your default credentials were not found'),
+        ('google-vertex', GoogleCloudProvider, 'Your default credentials were not found'),
         ('google-gla', GoogleProvider, 'GOOGLE_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
@@ -69,7 +69,7 @@ with try_import() as imports_successful:
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('outlines', OutlinesProvider, None),
-        ('vertexai', GCPProvider, 'Your default credentials were not found'),
+        ('vertexai', GoogleCloudProvider, 'Your default credentials were not found'),
     ]
 
 if not imports_successful():
@@ -89,7 +89,7 @@ def empty_env():
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 @pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
-    if provider in ('google-vertex', 'vertexai', 'gcp'):
+    if provider in ('google-vertex', 'vertexai', 'google-cloud'):
         try:
             infer_provider(provider)
         except (GoogleAuthError, UserError, ValueError):  # pragma: no branch

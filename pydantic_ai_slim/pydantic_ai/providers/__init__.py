@@ -49,6 +49,10 @@ class Provider(ABC, Generic[InterfaceClient]):
     @property
     @abstractmethod
     def name(self) -> str:
+        # Returned value flows into ModelMessage.provider_name on every part.
+        # Thinking-tag detection and built-in-tool detection check this value when
+        # the model class loads history, so silently renaming breaks replay of any
+        # message history captured against the old name.
         """The provider name."""
         raise NotImplementedError()
 
@@ -125,11 +129,11 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         provider = 'google'
     elif provider == 'google-vertex':
         warnings.warn(
-            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'gcp:' instead.",
+            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        provider = 'gcp'
+        provider = 'google-cloud'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
@@ -155,10 +159,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .google import GoogleProvider
 
         return GoogleProvider
-    elif provider == 'gcp':
-        from .gcp import GCPProvider
+    elif provider == 'google-cloud':
+        from .google_cloud import GoogleCloudProvider
 
-        return GCPProvider
+        return GoogleCloudProvider
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
@@ -277,13 +281,13 @@ def infer_provider(provider: str) -> Provider[Any]:
         return GoogleProvider()
     elif provider == 'google-vertex':
         warnings.warn(
-            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'gcp:' instead.",
+            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        from .gcp import GCPProvider
+        from .google_cloud import GoogleCloudProvider
 
-        return GCPProvider()
+        return GoogleCloudProvider()
 
     provider_class = infer_provider_class(provider)
     return provider_class()

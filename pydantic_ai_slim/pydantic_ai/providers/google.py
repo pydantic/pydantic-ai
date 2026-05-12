@@ -28,7 +28,11 @@ class GoogleProvider(Provider[Client]):
 
     @property
     def name(self) -> str:
-        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # pyright: ignore[reportPrivateUsage]
+        # Returned value flows into ModelMessage.provider_name on every part.
+        # Thinking-tag detection and built-in-tool detection check this value when
+        # the model class loads history, so silently renaming breaks replay of any
+        # message history captured against the old name.
+        return 'google-cloud' if self._client._api_client.vertexai else 'google'  # pyright: ignore[reportPrivateUsage]
 
     @property
     def base_url(self) -> str:
@@ -53,7 +57,7 @@ class GoogleProvider(Provider[Client]):
         *,
         credentials: Credentials | None = None,
         project: str | None = None,
-        location: VertexAILocation | Literal['global'] | str | None = None,
+        location: GoogleCloudLocation | Literal['global'] | str | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None: ...
@@ -77,7 +81,7 @@ class GoogleProvider(Provider[Client]):
         api_key: str | None = None,
         credentials: Credentials | None = None,
         project: str | None = None,
-        location: VertexAILocation | Literal['global'] | str | None = None,
+        location: GoogleCloudLocation | Literal['global'] | str | None = None,
         vertexai: bool | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -88,39 +92,45 @@ class GoogleProvider(Provider[Client]):
         Args:
             api_key: The `API key <https://ai.google.dev/gemini-api/docs/api-key>`_ to
                 use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            credentials: The credentials to use for authentication when calling the Vertex AI APIs. Credentials can be
-                obtained from environment variables and default credentials. For more information, see Set up
-                Application Default Credentials. Applies to the Vertex AI API only.
+            credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
+                be obtained from environment variables and default credentials. For more information, see Set up
+                Application Default Credentials. Applies to Google Cloud only.
             project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
-                (for example, GOOGLE_CLOUD_PROJECT). Applies to the Vertex AI API only.
+                (for example, GOOGLE_CLOUD_PROJECT). Applies to Google Cloud only.
             location: The location to send API requests to (for example, us-central1). Can be obtained from environment variables.
-                Applies to the Vertex AI API only.
-            vertexai: Force the use of the Vertex AI API. If `False`, the Google Generative Language API will be used.
-                Defaults to `False` unless `location`, `project`, or `credentials` are provided.
+                Applies to Google Cloud only.
+            vertexai: Force the use of Google Cloud (formerly known as Vertex AI). If `False`, the Gemini developer API
+                will be used. Defaults to `False` unless `location`, `project`, or `credentials` are provided.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google API.
         """
-        if vertexai is True:
-            warnings.warn(
-                '`GoogleProvider(vertexai=True, ...)` is deprecated and will be removed in v2.0. '
-                'Use `GCPProvider(...)` instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        elif vertexai is False:
-            warnings.warn(
-                '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
-                "drop the explicit `vertexai=False` (it's the default).",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
             vertex_ai_args_used = bool(location or project or credentials)
+            if vertexai is True or vertex_ai_args_used:
+                # Detect Google Cloud usage from any signal — explicit flag OR any Vertex-only kwarg. The
+                # google-genai SDK also implicitly routes to Google Cloud when env vars like
+                # `GOOGLE_GENAI_USE_VERTEXAI=1` are set, but we can't detect that from kwargs alone — users
+                # in that scenario should pass one of these kwargs (or just switch to `GoogleCloudProvider`).
+                warnings.warn(
+                    '`GoogleProvider(...)` with Google Cloud (formerly known as Vertex AI) arguments '
+                    '(`vertexai=True`, `location=`, `project=`, or `credentials=`) is deprecated and will '
+                    'be removed in v2.0. Use `GoogleCloudProvider(...)` instead, which only accepts the '
+                    'Google Cloud arguments.',
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            elif vertexai is False:
+                warnings.warn(
+                    '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
+                    "drop the explicit `vertexai=False` (it's the default).",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
             if vertexai is None:
                 vertexai = vertex_ai_args_used
 
@@ -145,7 +155,7 @@ class GoogleProvider(Provider[Client]):
                 if api_key is None:
                     raise UserError(
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                        ' to use the Google Generative Language API.'
+                        ' to use the Gemini developer API.'
                     )
                 self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
             else:
@@ -170,6 +180,8 @@ class GoogleProvider(Provider[Client]):
                     http_options=http_options,
                 )
         else:
+            # Custom client overrides everything — we can't reliably tell whether it points at Google Cloud
+            # or the Gemini developer API, so suppress the deprecation. The user picked their own client.
             self._client = client
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
@@ -178,7 +190,7 @@ class GoogleProvider(Provider[Client]):
         api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
-VertexAILocation = Literal[
+GoogleCloudLocation = Literal[
     'asia-east1',
     'asia-east2',
     'asia-northeast1',
@@ -209,6 +221,9 @@ VertexAILocation = Literal[
     'us-west1',
     'us-west4',
 ]
-"""Regions available for Vertex AI.
+"""Regions available for Google Cloud.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 """
+
+VertexAILocation = GoogleCloudLocation
+"""Deprecated alias for `GoogleCloudLocation`."""
