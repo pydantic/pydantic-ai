@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolPartKind,
 )
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
@@ -72,7 +73,7 @@ class ModelResponsePartsManager:
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
-    def _tool_kind_for(self, tool_name: str) -> str | None:
+    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
         if self.model_request_parameters is None:
             return None
         for td in self.model_request_parameters.function_tools:

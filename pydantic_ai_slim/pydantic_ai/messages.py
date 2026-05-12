@@ -1065,6 +1065,19 @@ else:
     )
 
 
+ToolPartKind: TypeAlias = Literal['tool-search']
+"""Discriminator value for the typed call/return-part subclass associated with a tool.
+
+Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
+[`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
+[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Extended as new
+typed-part families (e.g. web search) gain dedicated subclasses.
+
+Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
+`'function'`, `'output'`, `'external'`, `'unapproved'`).
+"""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1083,25 +1096,17 @@ class BaseToolReturnPart:
 
     _: KW_ONLY
 
-    tool_kind: str | None = None
-    """Identifier for the framework or builtin that emitted this return.
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
 
-    `None` for any part the framework hasn't promoted to a typed subclass — including all
-    user-defined tools and all builtins without a dedicated typed subclass. The current set of
-    typed subclasses that override this with a `Literal` default is:
+    `None` for any part without a typed subclass — including all user-defined tools and all
+    builtins without a dedicated typed call/return shape. Subclasses that pin this to a
+    [`ToolPartKind`][pydantic_ai.messages.ToolPartKind] literal:
 
     * [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
-      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool_search'`
+      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool-search'`
     * [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart] /
-      [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart] — `'tool_search'`
-
-    Drives the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] /
-    [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart] discriminator alongside
-    `part_kind` so dispatch promotes a base part to its typed subclass when both fields match.
-    Builtins without a typed subclass (web search, code execution, file search, image generation,
-    MCP server tools, etc.) keep `tool_kind=None` because their payloads are not validated
-    against a cross-provider typed shape — the discriminator only promotes when there's a
-    validated subclass to promote into.
+      [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart] — `'tool-search'`
     """
 
     metadata: Any = None
@@ -1748,13 +1753,11 @@ class BaseToolCallPart:
 
     _: KW_ONLY
 
-    tool_kind: str | None = None
-    """Identifier for the framework or builtin that emitted this call.
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
 
     See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
-    the full semantics. Drives the [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart]
-    discriminator alongside `part_kind` so dispatch promotes a base part to its typed subclass
-    when both fields match.
+    the full semantics.
     """
 
     id: str | None = None
@@ -1953,7 +1956,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
     if isinstance(v, dict):
         kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'tool-return' and tool_kind == 'tool_search':
+        if kind == 'tool-return' and tool_kind == 'tool-search':
             return 'tool-search-return'
         return kind if isinstance(kind, str) else None
     elif isinstance(v, ToolSearchReturnPart):
@@ -1992,11 +1995,11 @@ def _model_response_part_discriminator(v: Any) -> str | None:
     if isinstance(v, dict):
         kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'builtin-tool-call' and tool_kind == 'tool_search':
+        if kind == 'builtin-tool-call' and tool_kind == 'tool-search':
             return 'builtin-tool-search-call'
-        elif kind == 'builtin-tool-return' and tool_kind == 'tool_search':
+        elif kind == 'builtin-tool-return' and tool_kind == 'tool-search':
             return 'builtin-tool-search-return'
-        elif kind == 'tool-call' and tool_kind == 'tool_search':
+        elif kind == 'tool-call' and tool_kind == 'tool-search':
             return 'tool-search-call'
         else:
             return kind if isinstance(kind, str) else None

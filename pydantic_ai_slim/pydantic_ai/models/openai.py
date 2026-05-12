@@ -4239,7 +4239,7 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
         tool_call_id=call_id,
         id=item.id,
         provider_name=provider_name,
-        tool_kind='tool_search',
+        tool_kind='tool-search',
     )
 
 

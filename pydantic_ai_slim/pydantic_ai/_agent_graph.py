@@ -1987,7 +1987,7 @@ async def _call_tool(
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
     # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
-    # (e.g. `'tool_search'`), promote the return part to that subclass. This keeps the
+    # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
     # typed identity intact across multi-turn history: the next turn's discovery parser /
     # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
     tool_def = tool_manager.get_tool_def(call.tool_name)

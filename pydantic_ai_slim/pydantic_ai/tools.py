@@ -16,7 +16,7 @@ from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -798,19 +798,18 @@ class ToolDefinition:
     this provider); otherwise it's kept as a regular function tool.
     """
 
-    tool_kind: str | None = None
-    """Discriminator for promoting message parts to a typed subclass on this tool's behalf.
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for the typed subclass of the message parts emitted on this tool's behalf (e.g. `'tool-search'`).
 
-    Set this to the matching emitter identifier (e.g. `'tool_search'`) when the tool's
-    arguments and return value follow a cross-provider typed shape that has a registered
-    typed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
+    Set this when the tool's arguments and return value follow a cross-provider typed shape
+    that has a registered typed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
     [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] subclass. The framework copies
     this onto the part's `tool_kind` field and narrows the part to its typed subclass at
     construction time on both the call side (model-emitted) and the return side (framework-
     constructed). Leaving it `None` (the default) is the right answer for user-defined tools.
 
-    Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about
-    invocation semantics ('function' / 'output' / 'external' / 'unapproved').
+    Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
+    semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
     """
 
     return_schema: ObjectJsonSchema | None = None

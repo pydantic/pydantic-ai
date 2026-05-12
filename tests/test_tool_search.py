@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolPartKind,
     ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -2701,13 +2702,13 @@ def test_optional_builtin_dropped_with_empty_corpus():
 
 
 def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolCallPart` with `tool_kind='tool_search'`
+    """Direct construction of `BuiltinToolCallPart` with `tool_kind='tool-search'`
     promotes to `BuiltinToolSearchCallPart` via the narrowing registry."""
     base = BuiltinToolCallPart(
         tool_name='tool_search',
         args={'queries': ['mortgage']},
         tool_call_id='c1',
-        tool_kind='tool_search',
+        tool_kind='tool-search',
         provider_name='anthropic',
         provider_details={'strategy': 'bm25'},
     )
@@ -2723,13 +2724,13 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
 
 
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolReturnPart` with `tool_kind='tool_search'`
+    """Direct construction of `BuiltinToolReturnPart` with `tool_kind='tool-search'`
     promotes to `BuiltinToolSearchReturnPart` via the narrowing registry."""
     base = BuiltinToolReturnPart(
         tool_name='tool_search',
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
-        tool_kind='tool_search',
+        tool_kind='tool-search',
         provider_name='anthropic',
     )
     narrowed = BuiltinToolReturnPart.narrow_type(base)
@@ -2742,7 +2743,12 @@ def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
 
 def test_narrow_type_unknown_tool_kind_returns_input_unchanged() -> None:
     """Unknown `tool_kind` values aren't promoted (future builtins not yet typed)."""
-    base = BuiltinToolCallPart(tool_name='something_unregistered', args={}, tool_call_id='c1', tool_kind='custom_kind')
+    base = BuiltinToolCallPart(
+        tool_name='something_unregistered',
+        args={},
+        tool_call_id='c1',
+        tool_kind=cast('ToolPartKind', 'custom_kind'),  # forward-compat: discriminator unknown to the current registry
+    )
     assert BuiltinToolCallPart.narrow_type(base) is base
 
 
@@ -2772,7 +2778,7 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
             {
                 'part_kind': 'builtin-tool-call',
                 'tool_name': 'tool_search',
-                'tool_kind': 'tool_search',
+                'tool_kind': 'tool-search',
                 'args': {'queries': ['mortgage']},
                 'tool_call_id': 'c1',
                 'provider_name': 'anthropic',
@@ -2780,7 +2786,7 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
             {
                 'part_kind': 'builtin-tool-return',
                 'tool_name': 'tool_search',
-                'tool_kind': 'tool_search',
+                'tool_kind': 'tool-search',
                 'content': {'discovered_tools': [{'name': 'foo', 'description': None}]},
                 'tool_call_id': 'c1',
                 'provider_name': 'anthropic',
@@ -2977,7 +2983,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     ]
     assert len(search_calls) == 1
     assert isinstance(search_calls[0], ToolSearchCallPart)
-    assert search_calls[0].tool_kind == 'tool_search'
+    assert search_calls[0].tool_kind == 'tool-search'
 
     # The framework-constructed return part is typed (via `_call_tool` dispatch hook).
     search_returns = [
@@ -2989,7 +2995,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     ]
     assert len(search_returns) == 1
     assert isinstance(search_returns[0], ToolSearchReturnPart)
-    assert search_returns[0].tool_kind == 'tool_search'
+    assert search_returns[0].tool_kind == 'tool-search'
     # And the typed content carries the discovery.
     content = cast(ToolSearchReturnContent, search_returns[0].content)
     assert {m['name'] for m in content['discovered_tools']} == {'calculate_mortgage'}
@@ -3092,7 +3098,7 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
 
 def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() -> None:
     """`synthesize_local_tool_search_messages` also reaches into existing `ModelRequest`
-    parts: a base `ToolReturnPart` carrying `tool_kind='tool_search'` (e.g. one
+    parts: a base `ToolReturnPart` carrying `tool_kind='tool-search'` (e.g. one
     constructed manually before going through the discriminator) is promoted to its
     typed `ToolSearchReturnPart` subclass in place. Mirrors the response-side
     promotion so cross-provider history stays uniformly typed regardless of where
@@ -3106,7 +3112,7 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
                     tool_name='search_tools',
                     content={'discovered_tools': [{'name': 'foo', 'description': None}]},
                     tool_call_id='c1',
-                    tool_kind='tool_search',
+                    tool_kind='tool-search',
                 ),
             ],
         ),
@@ -3250,17 +3256,17 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
 
 
 def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
-    """A `ToolCallPart` with `tool_kind='tool_search'` promotes to `ToolSearchCallPart`.
+    """A `ToolCallPart` with `tool_kind='tool-search'` promotes to `ToolSearchCallPart`.
 
     Promotion is keyed on `tool_kind`, not `tool_name` — a framework-emitted call carries
-    `tool_kind='tool_search'` so it round-trips as the typed subclass.
+    `tool_kind='tool-search'` so it round-trips as the typed subclass.
     """
 
     part = ToolCallPart(
         tool_name='search_tools',
         args={'queries': ['mortgage']},
         tool_call_id='c1',
-        tool_kind='tool_search',
+        tool_kind='tool-search',
     )
     narrowed = ToolCallPart.narrow_type(part)
     assert isinstance(narrowed, ToolSearchCallPart)
@@ -3304,7 +3310,7 @@ def test_pydantic_validation_accepts_search_tools_collision_when_tool_kind_unset
 
 
 def test_pydantic_validation_promotes_local_tool_return_with_tool_kind_set() -> None:
-    """A serialized `tool-return` carrying `tool_kind='tool_search'` and a typed-shape
+    """A serialized `tool-return` carrying `tool_kind='tool-search'` and a typed-shape
     `discovered_tools` payload is promoted to `ToolSearchReturnPart` by Pydantic's
     discriminated-union dispatch — the discriminator routes (part_kind, tool_kind)
     to the typed tag so deserialization rebuilds the typed subclass directly."""
@@ -3316,7 +3322,7 @@ def test_pydantic_validation_promotes_local_tool_return_with_tool_kind_set() -> 
                 {
                     'part_kind': 'tool-return',
                     'tool_name': 'search_tools',
-                    'tool_kind': 'tool_search',
+                    'tool_kind': 'tool-search',
                     'content': {'discovered_tools': [{'name': 'foo', 'description': None}]},
                     'tool_call_id': 'c1',
                 },
@@ -3654,14 +3660,14 @@ def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
 
 
 def test_narrow_type_local_return_promotes_with_tool_kind_set() -> None:
-    """A base `ToolReturnPart` with `tool_kind='tool_search'` and a valid typed-content
+    """A base `ToolReturnPart` with `tool_kind='tool-search'` and a valid typed-content
     payload is promoted to `ToolSearchReturnPart` by `narrow_type`. Mirror of the
     builtin-side promotion test, exercising the local (function-tool) variant."""
     base = ToolReturnPart(
         tool_name='search_tools',
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
-        tool_kind='tool_search',
+        tool_kind='tool-search',
     )
     narrowed = ToolReturnPart.narrow_type(base)
     assert isinstance(narrowed, ToolSearchReturnPart)
@@ -3692,7 +3698,7 @@ def test_model_request_part_discriminator_recognizes_tool_search_return_instance
 
 
 def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch() -> None:
-    """A dict-shaped `ToolCallPart` with `tool_kind='tool_search'` gets dispatched to
+    """A dict-shaped `ToolCallPart` with `tool_kind='tool-search'` gets dispatched to
     `ToolSearchCallPart` via the discriminator (covers the `'tool-call'` branch)."""
 
     raw = [
@@ -3702,7 +3708,7 @@ def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch()
                 {
                     'part_kind': 'tool-call',
                     'tool_name': 'search_tools',
-                    'tool_kind': 'tool_search',
+                    'tool_kind': 'tool-search',
                     'args': {'queries': ['x']},
                     'tool_call_id': 'c1',
                 },

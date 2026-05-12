@@ -129,7 +129,7 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     partial-args still arrive as `str` until they're complete.
     """
 
-    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
 
@@ -157,7 +157,7 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
     """
 
-    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
 
 
@@ -188,7 +188,7 @@ class ToolSearchCallPart(ToolCallPart):
     partial-args still arrive as `str` until they're complete.
     """
 
-    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
 
@@ -217,7 +217,7 @@ class ToolSearchReturnPart(ToolReturnPart):
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
     """
 
-    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
 
 
@@ -245,37 +245,37 @@ def _narrow_builtin_tool_search_call(part: BuiltinToolCallPart) -> BuiltinToolSe
     if isinstance(part, BuiltinToolSearchCallPart):
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return _copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool_search')
+    return _copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
 def _narrow_builtin_tool_search_return(part: BuiltinToolReturnPart) -> BuiltinToolSearchReturnPart:
     if isinstance(part, BuiltinToolSearchReturnPart):
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return _copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool_search')
+    return _copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
 def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
     if isinstance(part, ToolSearchCallPart):
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return _copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool_search')
+    return _copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
 def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
     if isinstance(part, ToolSearchReturnPart):
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return _copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool_search')
+    return _copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
 # Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
 # so user-defined tools that happen to share `tool_name` with a typed subclass are not
 # accidentally promoted.
-_BUILTIN_CALL_NARROWERS['tool_search'] = _narrow_builtin_tool_search_call
-_BUILTIN_RETURN_NARROWERS['tool_search'] = _narrow_builtin_tool_search_return
-_TOOL_CALL_NARROWERS['tool_search'] = _narrow_tool_search_call
-_TOOL_RETURN_NARROWERS['tool_search'] = _narrow_tool_search_return
+_BUILTIN_CALL_NARROWERS['tool-search'] = _narrow_builtin_tool_search_call
+_BUILTIN_RETURN_NARROWERS['tool-search'] = _narrow_builtin_tool_search_return
+_TOOL_CALL_NARROWERS['tool-search'] = _narrow_tool_search_call
+_TOOL_RETURN_NARROWERS['tool-search'] = _narrow_tool_search_return
 
 
 def _split_response(original: ModelResponse, parts: list[ModelResponsePart], *, first: bool) -> ModelResponse:
@@ -387,7 +387,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
             else:
                 out.append(msg)
         elif isinstance(msg, _messages.ModelRequest):
-            # Translate any framework-emitted `ToolReturnPart` with `tool_kind='tool_search'`
+            # Translate any framework-emitted `ToolReturnPart` with `tool_kind='tool-search'`
             # on requests — covers fresh code paths that constructed a base `ToolReturnPart`
             # directly while still flagging it as framework-emitted. Dispatching on `tool_kind`
             # rather than `tool_name` means a user tool literally named `search_tools` is left
@@ -398,7 +398,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                 if (
                     isinstance(part, ToolReturnPart)
                     and not isinstance(part, ToolSearchReturnPart)
-                    and part.tool_kind == 'tool_search'
+                    and part.tool_kind == 'tool-search'
                 ):
                     promoted = ToolReturnPart.narrow_type(part)
                     if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
