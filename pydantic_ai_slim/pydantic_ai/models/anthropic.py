@@ -1277,7 +1277,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                            input=cast('dict[str, Any]', response_part.args_as_dict()),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
@@ -1314,7 +1314,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_search',
-                                    input=response_part.args_as_dict(),
+                                    input=cast('dict[str, Any]', response_part.args_as_dict()),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name in (
@@ -1327,7 +1327,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name=anthropic_tool_name,
-                                    input=response_part.args_as_dict(),
+                                    input=cast('dict[str, Any]', response_part.args_as_dict()),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == WebFetchTool.kind:
@@ -1335,7 +1335,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_fetch',
-                                    input=response_part.args_as_dict(),
+                                    input=cast('dict[str, Any]', response_part.args_as_dict()),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:

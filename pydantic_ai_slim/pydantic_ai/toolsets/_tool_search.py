@@ -46,7 +46,6 @@ from ..exceptions import ModelRetry, UserError
 from ..messages import (
     BuiltinToolSearchReturnPart,
     ModelRequest,
-    ToolReturn,
     ToolReturnPart,
     ToolSearchReturnPart,
 )
@@ -89,7 +88,7 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search_fn(_ctx: RunContext[Any], keywords: str, tools: Sequence[ToolDefinition]) -> list[str]:
+def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
     """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.builtin_tools.tool_search.ToolSearchFunc].
 
     Score each tool by how many query keywords appear in its name or description, then
@@ -99,7 +98,7 @@ def keywords_search_fn(_ctx: RunContext[Any], keywords: str, tools: Sequence[Too
     choice routes through the same dispatch path as a user-supplied callable, which
     enables client-executed-native wire on supporting providers (cache benefit).
     """
-    terms = _tokenize(keywords)
+    terms = _tokenize(' '.join(queries))
     if not terms:
         return []
     scored: list[tuple[int, str]] = []
@@ -130,7 +129,7 @@ _DEFAULT_PARAMETER_DESCRIPTION = (
 
 def _search_tools_signature(
     queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
-) -> list[str]:  # pragma: no cover - schema source only, never invoked
+) -> ToolSearchReturnContent:  # pragma: no cover - schema source only, never invoked
     """Source-of-truth signature for the `search_tools` function tool.
 
     Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator
@@ -144,7 +143,7 @@ def _search_tools_signature(
     model-emitted local calls AND cross-provider-synthesized history (Anthropic native
     `bm25`/`regex` and OpenAI Responses `tool_search_call`, both normalized to `queries`).
     """
-    return queries
+    raise NotImplementedError
 
 
 _SEARCH_TOOL_FN_SCHEMA = Tool(_search_tools_signature).function_schema
@@ -205,7 +204,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     search_fn: ToolSearchFunc[AgentDepsT] | None = None
     """Optional custom search function. If `None`, the default keyword-overlap algorithm is used.
 
-    Receives the run context, the raw query string, and the deferred tool definitions, and
+    Receives the run context, the list of search queries, and the deferred tool definitions, and
     returns the matching tool names ordered by relevance. Both sync and async implementations
     are accepted.
     """
@@ -362,26 +361,28 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     async def _search_tools(
         self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
-    ) -> ToolReturn:
+    ) -> ToolSearchReturnContent:
         """Run the configured search strategy over the deferred-but-not-yet-discovered tools."""
-        queries: list[str] = tool_args.get('queries') or []
-        joined = ' '.join(queries).strip()
-        if not joined:
+        queries: list[str] = tool_args['queries']
+        if not any(q.strip() for q in queries):
             raise ModelRetry('Please provide at least one non-empty search query.')
 
-        if self.search_fn is not None:
-            return await self._run_search_fn(joined, ctx, search_tool)
-        return self._run_keywords_search(joined, search_tool)
+        fn = self.search_fn
+        if fn is not None:
+            return await self._run_search_fn(fn, queries, ctx, search_tool)
+        return self._run_keywords_search(queries, search_tool)
 
-    def _run_keywords_search(self, query: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+    def _run_keywords_search(
+        self, queries: Sequence[str], search_tool: _SearchTool[AgentDepsT]
+    ) -> ToolSearchReturnContent:
         """Score each tool by how many query tokens appear in its name/description.
 
-        Tokenizes on alphanumeric runs for both the query and the indexed terms, so the
+        Tokenizes on alphanumeric runs for both the queries and the indexed terms, so the
         top hit for "github profile" is `github_get_me` (two matches) without matching
-        substrings inside longer words like `comment` for the query `me`. Multiple queries
-        are joined upstream — the same token-overlap score applies to the union.
+        substrings inside longer words like `comment` for the query `me`. Tokens from all
+        queries are unioned — the same token-overlap score applies across the set.
         """
-        terms = self._search_terms(query, None)
+        terms = self._search_terms(' '.join(queries), None)
         if not terms:
             raise ModelRetry('Please provide at least one non-empty search query.')
 
@@ -401,14 +402,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return self._build_return(matches)
 
     async def _run_search_fn(
-        self, query: str, ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
-    ) -> ToolReturn:
+        self,
+        fn: ToolSearchFunc[AgentDepsT],
+        queries: Sequence[str],
+        ctx: RunContext[AgentDepsT],
+        search_tool: _SearchTool[AgentDepsT],
+    ) -> ToolSearchReturnContent:
         """Invoke a user-provided strategy, validating that the returned names are known."""
-        assert self.search_fn is not None
-
         tool_defs_by_name = {tool_def.name: tool_def for tool_def in search_tool.corpus}
 
-        result = self.search_fn(ctx, query, search_tool.corpus)
+        result = fn(ctx, queries, search_tool.corpus)
         if inspect.isawaitable(result):
             result = await result
 
@@ -424,7 +427,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
 
     @classmethod
-    def _empty_return(cls) -> ToolReturn:
+    def _empty_return(cls) -> ToolSearchReturnContent:
         """Shaped "no matches" return: empty discovered_tools list with a user-visible message.
 
         Sending only the typed
@@ -433,14 +436,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         retry searching with the same keywords; adapters that need the message on the wire
         (Anthropic custom-callable empty-results path) read it from there too.
         """
-        return_value: ToolSearchReturnContent = {
+        return {
             'discovered_tools': [],
             'message': cls._NO_MATCHES_MESSAGE,
         }
-        return ToolReturn(return_value=return_value)
 
     @staticmethod
-    def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:
+    def _build_return(matches: list[ToolSearchMatch]) -> ToolSearchReturnContent:
         """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]."""
-        return_value: ToolSearchReturnContent = {'discovered_tools': matches}
-        return ToolReturn(return_value=return_value)
+        return {'discovered_tools': matches}

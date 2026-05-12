@@ -59,18 +59,20 @@ ToolSearchLocalStrategy = Literal['keywords']
 
 `'keywords'` opts into the built-in keyword-overlap algorithm explicitly — use this
 to lock in the current local algorithm rather than the `None` default (which lets
-Pydantic AI pick the best algorithm per provider and may change over time). Matches
-the parameter shape (`queries: list[str]`) on the local `search_tools` function tool.
+Pydantic AI pick the best algorithm per provider and may change over time).
+
+Future local strategies (e.g. local BM25, TF-IDF, regex) will join this Literal as
+they're added; the single-member shape today is forward-compat scaffolding.
 """
 
 ToolSearchFunc = Callable[
-    [RunContext[AgentDepsT], str, Sequence['ToolDefinition']],
+    [RunContext[AgentDepsT], Sequence[str], Sequence['ToolDefinition']],
     Sequence[str] | Awaitable[Sequence[str]],
 ]
 """Custom search function for
 [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s `strategy` field.
 
-Takes the run context, the natural-language query, and the deferred tool definitions,
+Takes the run context, the list of search queries, and the deferred tool definitions,
 and returns the matching tool names ordered by relevance. Both sync and async
 implementations are accepted.
 
@@ -83,7 +85,7 @@ ToolSearchStrategy = Union[ToolSearchFunc[AgentDepsT], ToolSearchLocalStrategy, 
 * `'keywords'`: force the local keyword-overlap algorithm regardless of provider.
 * `'bm25'` / `'regex'`: force a specific provider-native strategy (Anthropic). The
   request fails on providers that can't honor the choice.
-* Callable `(ctx, query, tools) -> names`: custom search function. Used locally, and also
+* Callable `(ctx, queries, tools) -> names`: custom search function. Used locally, and also
   by the native "client-executed" surface on providers that support it (Anthropic custom
   tool-reference blocks, OpenAI `ToolSearchToolParam(execution='client')`).
 

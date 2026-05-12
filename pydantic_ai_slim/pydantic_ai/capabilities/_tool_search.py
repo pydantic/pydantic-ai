@@ -80,9 +80,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Custom search function — used locally, and by provider-native "client-executed"
     # modes when supported.
     def my_search(
-        ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:
-        return [t.name for t in tools if query.lower() in (t.description or '').lower()]
+        return [
+            t.name
+            for t in tools
+            if any(q.lower() in (t.description or '').lower() for q in queries)
+        ]
 
     agent = Agent(
         'anthropic:claude-sonnet-4-6',
@@ -106,7 +110,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     * `'bm25'` / `'regex'`: force a specific Anthropic native strategy. Raises on
       providers that can't honor the choice (including OpenAI, which has no named
       native strategies).
-    * Callable `(ctx, query, tools) -> names`: custom search function (sync or async).
+    * Callable `(ctx, queries, tools) -> names`: custom search function (sync or async).
       Used locally, and by the native "client-executed" surface on providers that support
       it (Anthropic custom tool-reference blocks, OpenAI `execution='client'`).
     """

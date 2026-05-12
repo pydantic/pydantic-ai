@@ -132,6 +132,17 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
+    def args_as_dict(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, *, raise_if_invalid: bool = False
+    ) -> ToolSearchArgs:
+        """Return the typed tool-search args.
+
+        Streaming-partial parts may still have `args: str` (unparsed JSON);
+        once finalized, `args_as_dict` returns the validated
+        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs].
+        """
+        return cast('ToolSearchArgs', super().args_as_dict(raise_if_invalid=raise_if_invalid))
+
 
 @dataclass(repr=False)
 class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
@@ -193,6 +204,17 @@ class ToolSearchCallPart(ToolCallPart):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
+
+    def args_as_dict(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, *, raise_if_invalid: bool = False
+    ) -> ToolSearchArgs:
+        """Return the typed tool-search args.
+
+        Streaming-partial parts may still have `args: str` (unparsed JSON);
+        once finalized, `args_as_dict` returns the validated
+        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs].
+        """
+        return cast('ToolSearchArgs', super().args_as_dict(raise_if_invalid=raise_if_invalid))
 
 
 @dataclass(repr=False)
@@ -398,6 +420,12 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
             # directly while still flagging it as framework-emitted. Dispatching on `tool_kind`
             # rather than `tool_name` means a user tool literally named `search_tools` is left
             # alone as a base `ToolReturnPart`.
+            #
+            # Common case: the request carries no tool-search returns at all — bail before
+            # allocating a fresh parts list.
+            if not any(isinstance(part, ToolReturnPart) and part.tool_kind == 'tool-search' for part in msg.parts):
+                out.append(msg)
+                continue
             request_changed = False
             new_request_parts: list[ModelRequestPart] = []
             for part in msg.parts:

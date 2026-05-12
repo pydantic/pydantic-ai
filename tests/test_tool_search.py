@@ -45,7 +45,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolPartKind,
-    ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnContent,
@@ -573,13 +572,11 @@ async def test_tool_search_toolset_search_returns_matching_tools():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mortgage']}, ctx, search_tool)
     assert result == snapshot(
-        ToolReturn(
-            return_value={
-                'discovered_tools': [
-                    {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
-                ]
-            },
-        )
+        {
+            'discovered_tools': [
+                {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
+            ]
+        }
     )
 
 
@@ -593,8 +590,7 @@ async def test_tool_search_toolset_search_is_case_insensitive():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['STOCK']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    rv = cast(ToolSearchReturnContent, result.return_value)
+    rv = cast(ToolSearchReturnContent, result)
     assert len(rv['discovered_tools']) == 1
     assert rv['discovered_tools'][0]['name'] == 'stock_price'
 
@@ -609,8 +605,7 @@ async def test_tool_search_toolset_search_matches_description():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['cryptocurrency']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    rv = cast(ToolSearchReturnContent, result.return_value)
+    rv = cast(ToolSearchReturnContent, result)
     assert len(rv['discovered_tools']) == 1
     assert rv['discovered_tools'][0]['name'] == 'crypto_price'
 
@@ -636,14 +631,12 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['github profile']}, ctx, search_tool)
     assert result == snapshot(
-        ToolReturn(
-            return_value={
-                'discovered_tools': [
-                    {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
-                    {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
-                ]
-            },
-        )
+        {
+            'discovered_tools': [
+                {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
+                {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
+            ]
+        }
     )
 
 
@@ -668,14 +661,12 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['stock price']}, ctx, search_tool)
     assert result == snapshot(
-        ToolReturn(
-            return_value={
-                'discovered_tools': [
-                    {'name': 'stock_price', 'description': 'Get the current stock price.'},
-                    {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
-                ]
-            },
-        )
+        {
+            'discovered_tools': [
+                {'name': 'stock_price', 'description': 'Get the current stock price.'},
+                {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+            ]
+        }
     )
 
 
@@ -700,9 +691,7 @@ async def test_tool_search_toolset_does_not_match_substrings_inside_words():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['get me']}, ctx, search_tool)
     assert result == snapshot(
-        ToolReturn(
-            return_value={'discovered_tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
-        )
+        {'discovered_tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]}
     )
 
 
@@ -716,8 +705,7 @@ async def test_tool_search_toolset_search_returns_no_matches():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['nonexistent']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot(
+    assert result == snapshot(
         {'discovered_tools': [], 'message': 'No matching tools found. The tools you need may not be available.'}
     )
 
@@ -767,8 +755,7 @@ async def test_tool_search_toolset_max_results():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    rv = cast(ToolSearchReturnContent, result.return_value)
+    rv = cast(ToolSearchReturnContent, result)
     assert len(rv['discovered_tools']) == 10
 
 
@@ -980,8 +967,7 @@ async def test_tool_search_toolset_tool_with_none_description():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['no_desc']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot({'discovered_tools': [{'name': 'no_desc_tool', 'description': None}]})
+    assert result == snapshot({'discovered_tools': [{'name': 'no_desc_tool', 'description': None}]})
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
@@ -1174,10 +1160,10 @@ async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
 
 async def test_tool_search_toolset_custom_search_fn_is_used():
     """A custom ``search_fn`` replaces the default keyword-matching algorithm."""
-    calls: list[str] = []
+    calls: list[Sequence[str]] = []
 
-    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
-        calls.append(query)
+    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        calls.append(queries)
         # Pick anything with 'price' in the name, regardless of query tokens.
         return [t.name for t in tools if 'price' in t.name]
 
@@ -1187,14 +1173,13 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
 
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == {
+    assert result == {
         'discovered_tools': [
             {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
             {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
         ]
     }
-    assert calls == ['anything']
+    assert calls == [['anything']]
 
 
 async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
@@ -1206,7 +1191,7 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
     ``Model.prepare_request``, not here."""
 
     def custom_search(
-        ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:  # pragma: no cover
         return []
 
@@ -1315,7 +1300,9 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     gets unlocked for the next turn."""
     pytest.importorskip('anthropic')
 
-    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def match_exchange_rate(
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
@@ -2161,7 +2148,9 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     local ``search_tools`` function, and the resulting ``ToolReturnPart`` is replayed
     as a ``tool_search_output`` (execution='client') carrying the discovered tool defs."""
 
-    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def match_exchange_rate(
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
@@ -2368,7 +2357,9 @@ async def test_openai_client_tool_search_streaming(allow_model_requests: None, o
     callable strategy, the model follows up with the discovered deferred tool, and
     the run completes with a final text response."""
 
-    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def match_exchange_rate(
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
@@ -2487,7 +2478,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     """Names returned by ``search_fn`` that aren't in the deferred set are discarded."""
 
-    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         return ['stock_price', 'not_a_real_tool', 'crypto_price']
 
     toolset = _create_function_toolset()
@@ -2496,8 +2487,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
 
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == {
+    assert result == {
         'discovered_tools': [
             {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
             {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
@@ -2508,7 +2498,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
 async def test_tool_search_toolset_custom_search_fn_no_matches():
     """Custom search function returning no names produces the 'no matches' message."""
 
-    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         return []
 
     toolset = _create_function_toolset()
@@ -2517,8 +2507,7 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
 
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == {
+    assert result == {
         'discovered_tools': [],
         'message': 'No matching tools found. The tools you need may not be available.',
     }
@@ -2530,7 +2519,9 @@ async def test_tool_search_capability_strategy_callable_registers_custom_builtin
     ``tool_reference`` result blocks, OpenAI's ``execution='client'``) can use it; models
     without support drop it as optional and fall back to the local ``search_tools`` tool."""
 
-    def noop(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
+    def noop(
+        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ) -> list[str]:  # pragma: no cover
         return []
 
     cap = ToolSearch(strategy=noop)
@@ -3723,7 +3714,9 @@ def test_model_response_part_discriminator_recognizes_typed_instances() -> None:
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     """Custom search functions can be `async`; the toolset awaits them."""
 
-    async def async_match(_ctx: RunContext[None], _query: str, tools: Sequence[ToolDefinition]) -> Sequence[str]:
+    async def async_match(
+        _ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ) -> Sequence[str]:
         return [t.name for t in tools]
 
     ts = ToolSearchToolset(wrapped=_create_function_toolset(), search_fn=async_match)
@@ -3731,8 +3724,7 @@ async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
     result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['weather']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    return_value = cast(dict[str, Any], result.return_value)
+    return_value = cast(dict[str, Any], result)
     discovered_names = {match['name'] for match in return_value['discovered_tools']}
     # `_create_function_toolset` registers a fixed set of deferred tools; verify the
     # async search function received the corpus and returned discoverable names.
@@ -4319,16 +4311,16 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
 
 
 def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
-    """The shared keyword algorithm returns `[]` when the query tokenizes to nothing
+    """The shared keyword algorithm returns `[]` when the queries tokenize to nothing
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
 
     ctx = _build_run_context(None)
-    assert keywords_search_fn(ctx, '   ', []) == []
+    assert keywords_search_fn(ctx, ['   '], []) == []
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
-    assert keywords_search_fn(ctx, '!!!', []) == []
+    assert keywords_search_fn(ctx, ['!!!'], []) == []
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
@@ -4352,7 +4344,6 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
     result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mortgage']}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    return_value = cast(dict[str, Any], result.return_value)
+    return_value = cast(dict[str, Any], result)
     discovered_names = {match['name'] for match in return_value['discovered_tools']}
     assert 'calculate_mortgage' in discovered_names

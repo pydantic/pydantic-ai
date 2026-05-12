@@ -946,7 +946,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'name': 'nova_code_interpreter',
-                                    'input': item.args_as_dict(),
+                                    'input': cast('dict[str, Any]', item.args_as_dict()),
                                     'type': 'server_tool_use',
                                 }
                                 content.append({'toolUse': server_tool_use_block_param})
