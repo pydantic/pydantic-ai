@@ -774,6 +774,19 @@ def test_tool_definition_prefer_builtin_attribute_deprecated():
     assert result == td.unless_builtin == 'web_search'
 
 
+def test_tool_definition_managed_by_builtin_attribute_deprecated():
+    """Reading `ToolDefinition.managed_by_builtin` warns and returns `with_builtin`."""
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(name='foo', with_builtin='tool_search')
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\.managed_by_builtin` is deprecated, use `ToolDefinition\.with_builtin`',
+    ):
+        result = td.managed_by_builtin
+    assert result == td.with_builtin == 'tool_search'
+
+
 def test_tool_definition_prefer_legacy_wins_when_both_kwargs_passed():
     """`ToolDefinition(unless_builtin=..., prefer_builtin=...)` warns and the legacy `prefer_builtin=` wins.
 
