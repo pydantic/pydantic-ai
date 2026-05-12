@@ -260,18 +260,21 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def _handle_tool_call(self, event: ToolCallEvent) -> AsyncIterator[BaseChunk]:
         part = event.part
 
-        # Validation failed: suppress `tool-input-available` and remember the part so
-        # `_handle_tool_result` can emit `tool-input-error` (with the validation message)
-        # when the matching `RetryPromptPart` arrives.
-        if event.args_valid is False:
-            self._invalidated_tool_calls[part.tool_call_id] = part
-            return
-
         # `args_valid is None` covers resume of non-`ToolApproved` deferred results
         # (`ToolDenied`, `ModelRetry`, direct return) and the output-tool
         # end-strategy-skipped path. The original `tool-input-available` already fired
         # on the first agent run; re-emitting here would be misleading.
         if event.args_valid is None:
+            return
+
+        # SDK v6+ supports `tool-input-error`, so we suppress `tool-input-available` on
+        # validation failure and let `_handle_tool_result` emit the dedicated error chunk
+        # when the matching `RetryPromptPart` arrives. v5 does not have `tool-input-error`;
+        # for v5 we keep the pre-PR behavior of emitting `tool-input-available` regardless
+        # of validity (with `tool-output-error` later from the result handler) so the tool
+        # call lifecycle stays observable for v5 frontends.
+        if event.args_valid is False and self.sdk_version >= 6:
+            self._invalidated_tool_calls[part.tool_call_id] = part
             return
 
         yield ToolInputAvailableChunk(

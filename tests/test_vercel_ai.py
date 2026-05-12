@@ -2261,6 +2261,8 @@ async def test_run_stream_response_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
+    # Default `sdk_version=5` — `tool-input-error` is v6-only, so v5 keeps the pre-PR
+    # lifecycle of `tool-input-available` followed by `tool-output-error` on validation failure.
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -2271,10 +2273,14 @@ async def test_run_stream_response_error():
                 'toolName': 'unknown_tool',
             },
             {
-                'type': 'tool-input-error',
+                'type': 'tool-input-available',
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
                 'input': {},
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': IsStr(),
                 'errorText': """\
 Unknown tool name: 'unknown_tool'. No tools available.
 
@@ -2287,6 +2293,12 @@ Fix the errors and try again.\
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+                'input': {},
             },
             {
                 'type': 'tool-output-error',
@@ -6322,6 +6334,46 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_input_error_sdk_v5_falls_back_to_input_available():
+    """`tool-input-error` is v6-only. For v5, validation failure must keep the pre-PR lifecycle:
+    `tool-input-available` (emitted regardless of `args_valid`) followed by `tool-output-error`
+    from the result handler — so v5 frontends never see an unrecognized chunk."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_v5_err', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_v5_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-error' not in chunk_types
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'finish',
         ]
     )
 
