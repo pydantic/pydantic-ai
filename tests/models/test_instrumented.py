@@ -15,8 +15,6 @@ from opentelemetry.trace import NoOpTracerProvider
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FilePart,
@@ -26,6 +24,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -42,6 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from pydantic_ai.settings import ModelSettings
@@ -195,7 +196,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -440,7 +441,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -543,7 +544,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -668,7 +669,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                         'server.port': 8000,
                         'model_request_parameters': {
                             'function_tools': [],
-                            'builtin_tools': [],
+                            'native_tools': [],
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
@@ -807,7 +808,7 @@ Fix the errors and try again.\
                         'server.port': 8000,
                         'model_request_parameters': {
                             'function_tools': [],
-                            'builtin_tools': [],
+                            'native_tools': [],
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
@@ -1825,7 +1826,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1875,20 +1876,20 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     )
 
 
-def test_message_with_builtin_tool_calls():
+def test_message_with_native_tool_calls():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
                 TextPart('text1'),
-                BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
-                BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
+                NativeToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
+                NativeToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
                 TextPart('text2'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     'web_search',
                     '{"query": "weather: San Francisco, CA", "type": "search"}',
                     tool_call_id='tool_call_2',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     'web_search',
                     [
                         {
@@ -2057,7 +2058,7 @@ def test_build_tool_definitions():
 
     params = ModelRequestParameters(
         function_tools=[tool_without_params, tool_with_params, tool_no_description],
-        builtin_tools=[],
+        native_tools=[],
         output_tools=[],
         output_mode='text',
         output_object=None,
@@ -2117,7 +2118,7 @@ def test_annotate_tool_call_otel_metadata():
                 metadata={'foo': 'bar'},
             ),
         ],
-        builtin_tools=[],
+        native_tools=[],
         output_tools=[],
         output_mode='text',
         output_object=None,
@@ -2143,7 +2144,7 @@ def test_annotate_tool_call_otel_metadata():
 
 def test_builtin_code_execution_otel_metadata_in_otel_messages():
     """Builtin code execution tool calls carry code_arg metadata in OTel output."""
-    call_part = BuiltinToolCallPart(
+    call_part = NativeToolCallPart(
         tool_name='code_execution', args={'code': '2 * 2'}, tool_call_id='call_1', provider_name='anthropic'
     )
     call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -2172,7 +2173,7 @@ def test_builtin_code_execution_otel_metadata_in_otel_messages():
 
 def test_builtin_code_execution_snippet_arg():
     """Bedrock's 'snippet' arg name is preserved in OTel output."""
-    call_part = BuiltinToolCallPart(
+    call_part = NativeToolCallPart(
         tool_name='code_execution', args={'snippet': '1 + 1'}, tool_call_id='call_1', provider_name='bedrock'
     )
     call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
@@ -2389,13 +2390,13 @@ def test_messages_to_otel_messages_cache_point_v4():
 
 
 def test_messages_to_otel_messages_builtin_tool_v4():
-    """Test that BuiltinToolCallPart works correctly with version 4."""
+    """Test that NativeToolCallPart works correctly with version 4."""
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
                 TextPart('text'),
-                BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
-                BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
+                NativeToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
+                NativeToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
             ]
         ),
     ]
@@ -2621,17 +2622,18 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
 
 
-@pytest.mark.filterwarnings('default:.*InstrumentedModel.*:DeprecationWarning')
 def test_instrumented_model_constructor_emits_deprecation_warning():
     """User-facing `InstrumentedModel(...)` construction emits a deprecation warning."""
     with pytest.warns(
-        DeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.InstrumentedModel` is deprecated'
+        PydanticAIDeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.InstrumentedModel` is deprecated'
     ):
         InstrumentedModel(MyModel(), InstrumentationSettings())
 
 
-@pytest.mark.filterwarnings('default:.*instrument_model.*:DeprecationWarning')
 def test_instrument_model_helper_emits_deprecation_warning():
     """User-facing `instrument_model(...)` helper emits a deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.instrument_model` is deprecated'):
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`pydantic_ai\.models\.instrumented\.instrument_model` is deprecated',
+    ):
         instrument_model(MyModel(), True)

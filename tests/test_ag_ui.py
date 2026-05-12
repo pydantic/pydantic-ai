@@ -21,8 +21,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FilePart,
@@ -34,6 +32,8 @@ from pydantic_ai import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -56,7 +56,6 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -68,6 +67,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
 
@@ -125,10 +125,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -1506,7 +1506,7 @@ def test_activity_message_file_part_missing_url() -> None:
         )
 
 
-_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
+_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, NativeToolReturnPart, SystemPromptPart)
 
 
 def _sync_part_timestamps(
@@ -1687,20 +1687,20 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
     Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
     has separate content and tool_calls fields. TextPart comes first (from content), then
-    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    NativeToolCallPart (from tool_calls), then NativeToolReturnPart (from subsequent ToolMessage).
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
                 TextPart(content='Based on the search...'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     args='{"query": "test"}',
                     provider_name='anthropic',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     content='Search results here',
@@ -1718,12 +1718,12 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
 
 def test_dump_builtin_tool_call_without_return() -> None:
-    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    """Test that NativeToolCallPart without a matching NativeToolReturnPart still dumps correctly."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_orphan',
                     args='{"query": "test"}',
@@ -2696,13 +2696,13 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "Hello, world!"}',
                         tool_call_id='search_1',
                         provider_name='function',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'results': [
@@ -2780,7 +2780,7 @@ async def test_builtin_tool_return_json_string_content_parsed() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.tool_name == 'web_fetch'
     assert return_part.tool_call_id == 'srvtoolu_abc123'
     assert return_part.provider_name == 'anthropic'
@@ -2815,7 +2815,7 @@ async def test_builtin_tool_return_plain_string_content_preserved() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == 'just a plain string, not JSON'
 
 
@@ -2847,7 +2847,7 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
 
 
@@ -2875,7 +2875,7 @@ async def test_builtin_tool_call() -> None:
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -2889,7 +2889,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -2904,7 +2904,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            2: BuiltinToolCallPart(
+            2: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query": "Hello world history"}',
                 tool_call_id='search_2',
@@ -2912,7 +2912,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            3: BuiltinToolReturnPart(
+            3: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [

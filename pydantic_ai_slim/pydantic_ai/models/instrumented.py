@@ -39,6 +39,7 @@ from pydantic_ai._instrumentation import (
 
 from .. import _otel_messages
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -65,7 +66,7 @@ def instrument_model(model: Model, instrument: InstrumentationSettings | bool, *
             '`pydantic_ai.models.instrumented.instrument_model` is deprecated; use the `Instrumentation` '
             'capability instead (e.g. `Agent(instrument=...)` or `capabilities=[Instrumentation(...)]`). '
             'This helper will be removed in v2.',
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
     if instrument and not isinstance(model, InstrumentedModel):
@@ -386,7 +387,7 @@ class InstrumentedModel(WrapperModel):
                 '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated; use the '
                 '`Instrumentation` capability instead (e.g. `Agent(instrument=...)` or '
                 '`capabilities=[Instrumentation(...)]`). The class will be removed in v2.',
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
         super().__init__(wrapped)

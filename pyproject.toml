@@ -47,7 +47,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -256,7 +256,7 @@ filterwarnings = [
     # `InstrumentedModel` / `instrument_model` direct construction is deprecated; tests for those classes
     # (`tests/models/test_instrumented.py`) and the backwards-compat path test in `tests/test_logfire.py`
     # exercise the deprecated entry points on purpose.
-    "ignore:.*(InstrumentedModel|instrument_model).*:DeprecationWarning",
+    "ignore:.*(InstrumentedModel|instrument_model).*:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
