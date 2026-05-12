@@ -54,7 +54,8 @@ with try_import() as anthropic_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -516,7 +517,7 @@ def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) 
     if not project:
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
     location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
-    return GoogleProvider(project=project, location=cast(VertexAILocation, location))  # pragma: no cover
+    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))  # pragma: no cover
 
 
 @pytest.fixture
@@ -897,7 +898,7 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
         id='google_vertex_non_gcs_uri',
         provider='google_vertex',
         uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
-        match=r'UploadedFile for GoogleModel \(Vertex\) must use a GCS URI',
+        match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
     ),
 ]
 

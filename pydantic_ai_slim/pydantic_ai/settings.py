@@ -59,14 +59,14 @@ Values:
 
 Per-provider mapping:
 
-| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google (Vertex AI) |
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud |
 |---|---|---|---|---|---|
 | `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
 | `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
 | `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
 | `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
 
-On Vertex AI the unified field maps only to safe PT-with-spillover variants so customers with
+On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
@@ -319,7 +319,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Bedrock
-    * Google (Gemini API and Vertex AI)
+    * Google (Gemini developer API and Google Cloud)
     """
 
     extra_body: object

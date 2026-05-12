@@ -98,7 +98,7 @@ Examples:
 
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
-- `google-gla:gemini-3-pro-preview`
+- `google:gemini-3-pro-preview`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 

@@ -116,6 +116,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -2735,7 +2736,7 @@ async def test_google_url_input_force_download(
 
 
 async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    provider = GoogleCloudProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
 
@@ -2960,7 +2961,7 @@ async def test_google_unified_service_tier_maps_to_vertex_spillover(
     used first when available; users who want to bypass PT entirely need
     `google_vertex_service_tier='flex_only'`/`'priority_only'` explicitly.
     """
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project', location='us-central1'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project', location='us-central1'))
     model_settings = GoogleModelSettings(service_tier=tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -5763,7 +5764,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -5774,7 +5775,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert old_google_response == snapshot(
         {
@@ -5798,7 +5799,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -5808,7 +5809,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert old_google_response == snapshot(
         {
@@ -5832,7 +5833,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -5842,7 +5843,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert old_google_response == snapshot(
         {
@@ -5870,7 +5871,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name=None,  # ModelResponse doesn't have provider_name set
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert response_with_item_provider_name == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -5888,7 +5889,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='openai',  # Different provider on ModelResponse
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert response_with_different_provider == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -5904,7 +5905,7 @@ def test_google_missing_tool_call_thought_signature():
             ],
             provider_name='openai',
         ),
-        frozenset({'google-gla'}),
+        frozenset({'google'}),
     )
     assert google_response == snapshot(
         {
@@ -6746,7 +6747,7 @@ async def test_google_service_tier_streamed_response_extraction(
 
 async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
     """Test that the new `google_vertex_service_tier` field works."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
     model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -6762,7 +6763,7 @@ async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
 
 async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_requests: None):
     """Test that unified `service_tier='auto'` works with Vertex (sets no headers)."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
     model_settings = GoogleModelSettings(service_tier='auto')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -6829,7 +6830,7 @@ async def test_google_service_tier_vertex_headers(
     expected_headers: dict[str, str],
 ):
     """Test that Vertex `google_vertex_service_tier` values set the expected HTTP headers."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
     model_settings = GoogleModelSettings(google_vertex_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -6870,7 +6871,7 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
 
 async def test_google_service_tier_deprecation_warning(allow_model_requests: None):
     """Reading the deprecated `google_service_tier` field emits a `DeprecationWarning`."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
     model_settings = GoogleModelSettings(google_service_tier='pt_then_flex')
 
     with pytest.warns(DeprecationWarning, match=r'`google_service_tier` is deprecated'):

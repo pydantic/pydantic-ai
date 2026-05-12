@@ -427,7 +427,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
-    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
+    * Google Cloud only. Only supported for 'jpeg' output format. Default: 75.
       Setting this will default `output_format` to 'jpeg' if not specified.
     """
 
@@ -437,7 +437,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
-    * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
+    * Google Cloud only. Default: 'png', or 'jpeg' if `output_compression` is set.
     """
 
     partial_images: int = 0

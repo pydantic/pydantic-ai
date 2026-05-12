@@ -203,7 +203,7 @@ See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for th
 
 ### Google
 
-[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Vertex AI.
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini developer API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
 
 #### Install
 
@@ -215,7 +215,7 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 #### Configuration
 
-To use `GoogleEmbeddingModel` with the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
+To use `GoogleEmbeddingModel` with the Gemini developer API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
 
 ```bash
 export GOOGLE_API_KEY='your-api-key'
@@ -239,27 +239,27 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
-##### Vertex AI
+##### Google Cloud
 
-To use Google's embedding models via Vertex AI instead of the Gemini Developer API, use the `gcp` provider prefix:
+To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini developer API, use the `google-cloud:` provider prefix:
 
-```python {title="google_vertex_embeddings.py"}
+```python {title="google_cloud_embeddings.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.google import GoogleEmbeddingModel
-from pydantic_ai.providers.gcp import GCPProvider
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 # Using provider prefix
-embedder = Embedder('gcp:gemini-embedding-001')
+embedder = Embedder('google-cloud:gemini-embedding-001')
 
 # Or with explicit provider configuration
 model = GoogleEmbeddingModel(
     'gemini-embedding-001',
-    provider=GCPProvider(project='my-project', location='us-central1'),
+    provider=GoogleCloudProvider(project='my-project', location='us-central1'),
 )
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google.md#vertex-ai-enterprisecloud) for more details on Vertex AI authentication options, including application default credentials, service accounts, and API keys.
+See the [Google provider documentation](models/google.md#google-cloud-enterprise) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
