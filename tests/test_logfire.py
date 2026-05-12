@@ -520,12 +520,12 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'prefer_builtin': None,
+                                'prefer_native': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }
                         ],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1005,7 +1005,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                 snapshot(
                     {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1025,7 +1025,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'prefer_builtin': None,
+                                'prefer_native': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }
@@ -1195,7 +1195,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

@@ -19,9 +19,9 @@ from typing import Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartStartEvent,
     ProviderDetailsDelta,
@@ -265,7 +265,7 @@ class ModelResponsePartsManager:
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent | None:
-        """Handle or update a tool call, creating or updating a `ToolCallPart`, `BuiltinToolCallPart`, or `ToolCallPartDelta`.
+        """Handle or update a tool call, creating or updating a `ToolCallPart`, `NativeToolCallPart`, or `ToolCallPartDelta`.
 
         Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
@@ -284,15 +284,15 @@ class ModelResponsePartsManager:
             provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
-            - A `PartStartEvent` if a new ToolCallPart or BuiltinToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart or NativeToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
-                a ToolCallPart, BuiltinToolCallPart, or ToolCallPartDelta.
+                a ToolCallPart, NativeToolCallPart, or ToolCallPartDelta.
         """
-        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart, int] | None = (
+        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart | NativeToolCallPart, int] | None = (
             None
         )
 
@@ -302,14 +302,14 @@ class ModelResponsePartsManager:
             # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
             if tool_name is None:
                 existing_matching_part_and_index = self._latest_part_if_of_type(
-                    ToolCallPart, BuiltinToolCallPart, ToolCallPartDelta
+                    ToolCallPart, NativeToolCallPart, ToolCallPartDelta
                 )
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
+                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart):
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 
@@ -325,7 +325,7 @@ class ModelResponsePartsManager:
             part = delta.as_part() or delta
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
-            if isinstance(part, ToolCallPart | BuiltinToolCallPart):
+            if isinstance(part, ToolCallPart | NativeToolCallPart):
                 return PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing part or delta with the new information
@@ -339,7 +339,7 @@ class ModelResponsePartsManager:
             )
             updated_part = delta.apply(existing_part)
             self._parts[part_index] = updated_part
-            if isinstance(updated_part, ToolCallPart | BuiltinToolCallPart):
+            if isinstance(updated_part, ToolCallPart | NativeToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
                     # We just upgraded a delta to a full part, so emit a PartStartEvent
                     return PartStartEvent(index=part_index, part=updated_part)

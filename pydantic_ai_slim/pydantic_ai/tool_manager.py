@@ -431,7 +431,7 @@ class ToolManager(Generic[AgentDepsT]):
         """Validate tool arguments without executing the tool.
 
         This method validates arguments BEFORE the tool is executed, allowing the caller to:
-        1. Emit FunctionToolCallEvent with accurate `args_valid` status
+        1. Emit `FunctionToolCallEvent` / `OutputToolCallEvent` with accurate `args_valid` status
         2. Handle validation failures differently from execution failures
         3. Decide whether to execute or defer based on validation result
 
@@ -625,12 +625,12 @@ class ToolManager(Generic[AgentDepsT]):
         else:
             semantic_value = validated.validated_args
 
-        # Output validators see the *global* output-retry budget (`max_result_retries`), so the same
+        # Output validators see the *global* output-retry budget (`max_output_retries`), so the same
         # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
         # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
         # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
         # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
-        # `max_result_retries`, the validator's `ctx.last_attempt` can fire before the run actually
+        # `max_output_retries`, the validator's `ctx.last_attempt` can fire before the run actually
         # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
         # `ctx.retry`/`ctx.retries[name]` semantics and is intentionally out of scope here.
         assert toolset.max_retries is not None

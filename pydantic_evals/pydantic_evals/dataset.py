@@ -1103,7 +1103,7 @@ async def _run_task_and_evaluators(
         A ReportCase containing the evaluation results.
     """
     lc: CaseLifecycle[Any, Any, Any] | None = None
-    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None = None
     trace_id: str | None = None
     span_id: str | None = None
     with logfire_span(
@@ -1194,19 +1194,20 @@ async def _run_task_and_evaluators(
                 trace_id=trace_id,
                 span_id=span_id,
             )
-
-        # Teardown exceptions are intentionally not caught here — they propagate
-        # to the caller. If your teardown may raise and you don't want it to crash
-        # the evaluation, handle exceptions within your teardown() implementation.
-        # If you don't like this behavior, let us know and we can change it.
-        if lc is not None:
-            await lc.teardown(result)
+        finally:
+            # Teardown exceptions are intentionally not caught here — they propagate
+            # to the caller. If your teardown may raise and you don't want it to crash
+            # the evaluation, handle exceptions within your teardown() implementation.
+            # If you don't like this behavior, let us know and we can change it.
+            if lc is not None:
+                await lc.teardown(result)
 
     if isinstance(result, ReportCase):
         # Update the total duration to reflect the teardown time.
         # Note this means that modifications to this field inside the teardown will not be reflected.
         result.total_duration = _get_span_duration(case_span, time.time() - t0)
 
+    assert result is not None
     return result
 
 
