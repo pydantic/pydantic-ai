@@ -22,8 +22,6 @@ from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -32,6 +30,8 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -372,7 +372,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
-                                    BuiltinToolCallPart(
+                                    NativeToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
                                         tool_call_id=original_id,
@@ -402,7 +402,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             except json.JSONDecodeError:
                                 pass
                         builder.add(
-                            BuiltinToolReturnPart(
+                            NativeToolReturnPart(
                                 tool_name=tool_name,
                                 content=content,
                                 tool_call_id=original_id,
@@ -588,7 +588,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
 
-        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
         def flush() -> None:
             nonlocal text_content, tool_calls_list, tool_messages
@@ -631,7 +631,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
                     )
                 )
-            elif isinstance(part, BuiltinToolCallPart):
+            elif isinstance(part, NativeToolCallPart):
                 prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
                 tool_calls_list.append(
                     ToolCall(
@@ -647,8 +647,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_call_id=prefixed_id,
                         )
                     )
-            elif isinstance(part, BuiltinToolReturnPart):
-                # Emitted when matching BuiltinToolCallPart is processed above.
+            elif isinstance(part, NativeToolReturnPart):
+                # Emitted when matching NativeToolCallPart is processed above.
                 pass
             elif isinstance(part, FilePart):
                 if preserve_file_data:
@@ -695,9 +695,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
-        - `BuiltinToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
+        - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
-        - `BuiltinToolReturnPart.provider_details` is lost.
+        - `NativeToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.

@@ -431,7 +431,7 @@ class ToolManager(Generic[AgentDepsT]):
         """Validate tool arguments without executing the tool.
 
         This method validates arguments BEFORE the tool is executed, allowing the caller to:
-        1. Emit FunctionToolCallEvent with accurate `args_valid` status
+        1. Emit `FunctionToolCallEvent` / `OutputToolCallEvent` with accurate `args_valid` status
         2. Handle validation failures differently from execution failures
         3. Decide whether to execute or defer based on validation result
 

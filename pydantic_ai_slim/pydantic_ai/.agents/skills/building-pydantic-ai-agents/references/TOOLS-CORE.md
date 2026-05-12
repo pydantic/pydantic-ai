@@ -98,5 +98,5 @@ agent = Agent(
 
 Good default split:
 
-- use `WebSearch()` capability when the user wants model-agnostic search with builtin fallback
+- use `WebSearch()` capability when the user wants model-agnostic search with native fallback
 - use `duckduckgo_search_tool()` / Tavily / Exa when the user explicitly wants those engines as tools
