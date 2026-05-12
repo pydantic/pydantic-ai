@@ -369,6 +369,34 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _merge_leading_system_messages(
+    openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
+) -> list[chat.ChatCompletionMessageParam]:
+    """Merge consecutive messages with `system_prompt_role` at the start of the list into a single message.
+
+    Required by strict OpenAI-compatible backends (some LiteLLM/vLLM deployments) that reject more than one
+    initial system message with `System message must be at the beginning.`
+
+    Only applies when system prompts are sent as `'system'` or `'developer'` role; with `'user'` role we
+    can't distinguish a system prompt cast as user from an actual user turn.
+    """
+    if system_prompt_role not in ('system', 'developer'):
+        return openai_messages
+
+    leading_count = next(
+        (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role),
+        len(openai_messages),
+    )
+    if leading_count < 2:
+        return openai_messages
+
+    # Content is always `str` here: it originates from `SystemPromptPart.content` or instruction
+    # `TextPart.content`, both of which are typed as `str`.
+    merged_content = '\n\n'.join(m['content'] for m in openai_messages[:leading_count])  # type: ignore[misc]
+    merged: chat.ChatCompletionMessageParam = {**openai_messages[0], 'content': merged_content}  # type: ignore[typeddict-item]
+    return [merged, *openai_messages[leading_count:]]
+
+
 def _drop_sampling_params_for_reasoning(
     profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings,
@@ -1343,8 +1371,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
@@ -1363,6 +1392,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if not profile.openai_chat_supports_multiple_system_messages:
+            openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
 
     @staticmethod
