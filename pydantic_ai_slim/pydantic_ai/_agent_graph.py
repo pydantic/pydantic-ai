@@ -914,6 +914,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
         )
 
+        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
+        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
+        #
+        # Run a first pass so `prepare_messages` sees a normalized history.
+        messages = _clean_message_history(messages)
+
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `BuiltinToolSearch*Part` instances translated
         # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
@@ -922,16 +929,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 1. The translation depends on `self.profile`, which is per-model state.
         # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
         #    each candidate runs `prepare_messages` itself with its own profile when chosen.
-        #
-        # Runs *before* `_clean_message_history` so structural quirks introduced by the
-        # translation (e.g. splitting a single `ModelResponse(call+return)` into
-        # `ModelResponse(call) + ModelRequest(return)`) merge cleanly with neighbouring
-        # `ModelRequest`s below.
         messages = model.prepare_messages(messages)
 
-        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
-        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
-        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
+        # Run again because `prepare_messages` can introduce new consecutive same-role messages
+        # — e.g. tool-search synthesis splitting a `ModelResponse(call+return)` into
+        # `ModelResponse(call) + ModelRequest(return)` adjacent to an existing `ModelRequest`.
+        # Cleanup is idempotent and cheap, so the symmetric pre/post pass keeps the adapter's
+        # view of history normalized regardless of which hook ran.
         messages = _clean_message_history(messages)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
