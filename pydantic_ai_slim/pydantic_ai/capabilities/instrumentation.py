@@ -12,9 +12,23 @@ from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import SpanKind, StatusCode
 
-from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
+from pydantic_ai._instrumentation import (
+    GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    GEN_AI_SYSTEM_ATTRIBUTE,
+    MODEL_SETTING_ATTRIBUTES,
+    CostCalculationFailedWarning,
+    InstrumentationNames,
+    annotate_tool_call_otel_metadata,
+    build_tool_definitions,
+    event_to_dict,
+    get_agent_run_baggage_attributes,
+    get_instructions,
+    model_attributes,
+    model_request_parameters_attributes,
+    serialize_any,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -90,8 +104,6 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        from pydantic_ai.models.instrumented import InstrumentedModel
-
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -126,11 +138,7 @@ class Instrumentation(AbstractCapability[Any]):
                 if settings.include_content and span.is_recording():
                     span.set_attribute(
                         'final_result',
-                        (
-                            result.output
-                            if isinstance(result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(result.output))
-                        ),
+                        (result.output if isinstance(result.output, str) else json.dumps(serialize_any(result.output))),
                     )
 
                 return result
@@ -155,22 +163,17 @@ class Instrumentation(AbstractCapability[Any]):
         metadata: dict[str, Any] | None,
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes."""
-        from pydantic_ai.messages import ModelRequest
-        from pydantic_ai.models.instrumented import InstrumentedModel
-
         settings = self.settings
         new_message_index = self._new_message_index
 
         if settings.version == 1:
             attrs: dict[str, Any] = {
                 'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
+                    [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
                 )
             }
         else:
-            last_instructions = InstrumentedModel._get_instructions(  # pyright: ignore[reportPrivateUsage]
-                message_history, self._last_model_request_parameters
-            )
+            last_instructions = get_instructions(message_history, self._last_model_request_parameters)
             attrs = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),
@@ -186,7 +189,7 @@ class Instrumentation(AbstractCapability[Any]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
+            attrs['metadata'] = json.dumps(serialize_any(metadata))
 
         usage_attrs = (
             {
@@ -222,16 +225,6 @@ class Instrumentation(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        from pydantic_ai.models.instrumented import (
-            GEN_AI_REQUEST_MODEL_ATTRIBUTE,
-            GEN_AI_SYSTEM_ATTRIBUTE,
-            MODEL_SETTING_ATTRIBUTES,
-            CostCalculationFailedWarning,
-            InstrumentedModel,
-            _annotate_tool_call_otel_metadata,  # pyright: ignore[reportPrivateUsage]
-            _build_tool_definitions,  # pyright: ignore[reportPrivateUsage]
-        )
-
         settings = self.settings
         model = request_context.model
 
@@ -244,7 +237,7 @@ class Instrumentation(AbstractCapability[Any]):
             request_context.model_request_parameters,
         )
         # Stash for `_run_span_end_attributes`: feeding the parameters into
-        # `_get_instructions` lets it use the canonical `instruction_parts` source
+        # `get_instructions` lets it use the canonical `instruction_parts` source
         # (which includes prompted-output template instructions and is properly sorted)
         # instead of falling back to reading `ModelRequest.instructions` from history.
         self._last_model_request_parameters = prepared_parameters
@@ -253,8 +246,8 @@ class Instrumentation(AbstractCapability[Any]):
         span_name = f'{operation} {model.model_name}'
         attributes: dict[str, Any] = {
             'gen_ai.operation.name': operation,
-            **InstrumentedModel.model_attributes(model),
-            **InstrumentedModel.model_request_parameters_attributes(prepared_parameters),
+            **model_attributes(model),
+            **model_request_parameters_attributes(prepared_parameters),
             **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
@@ -264,7 +257,7 @@ class Instrumentation(AbstractCapability[Any]):
             ),
         }
 
-        tool_definitions = _build_tool_definitions(prepared_parameters)
+        tool_definitions = build_tool_definitions(prepared_parameters)
         if tool_definitions:
             attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
 
@@ -329,7 +322,7 @@ class Instrumentation(AbstractCapability[Any]):
                     span.update_name(f'{operation} {request_model}')
 
                 response = await handler(request_context)
-                _annotate_tool_call_otel_metadata(response, prepared_parameters)
+                annotate_tool_call_otel_metadata(response, prepared_parameters)
                 finish(response)
                 return response
         finally:
@@ -454,8 +447,6 @@ class Instrumentation(AbstractCapability[Any]):
         if not output_context.has_function:
             return await handler(output)
 
-        from pydantic_ai.models.instrumented import InstrumentedModel
-
         settings = self.settings
         names = self._instrumentation_names
         include_content = settings.include_content
@@ -512,7 +503,7 @@ class Instrumentation(AbstractCapability[Any]):
             if include_content and span.is_recording():
                 span.set_attribute(
                     names.tool_result_attr,
-                    result if isinstance(result, str) else json.dumps(InstrumentedModel.serialize_any(result)),
+                    result if isinstance(result, str) else json.dumps(serialize_any(result)),
                 )
 
         return result

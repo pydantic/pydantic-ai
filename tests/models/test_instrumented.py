@@ -40,6 +40,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1009,7 +1010,7 @@ def test_messages_to_otel_events_serialization_errors():
     ]
 
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
         {
             'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
             'gen_ai.message.index': 0,
@@ -1048,7 +1049,7 @@ def test_messages_to_otel_events_instructions():
         ModelResponse(parts=[TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -1075,7 +1076,7 @@ def test_messages_to_otel_events_instructions_multiple_messages():
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -1108,7 +1109,7 @@ def test_messages_to_otel_events_compaction_part():
     ]
     settings = InstrumentationSettings()
     # CompactionPart is skipped; only the TextPart appears
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'assistant',
@@ -1170,7 +1171,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
@@ -1507,7 +1508,7 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings(include_binary_content=False)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
@@ -1540,9 +1541,7 @@ def test_messages_to_otel_events_with_text_content():
         ModelResponse(parts=[TextPart('text1')]),
     ]
     settings_with_content = InstrumentationSettings()
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)
-    ] == snapshot(
+    assert [event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {
@@ -1572,9 +1571,7 @@ def test_messages_to_otel_events_with_text_content():
         ]
     )
     settings_without_content = InstrumentationSettings(include_content=False)
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)
-    ] == snapshot(
+    assert [event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)] == snapshot(
         [
             {'role': 'system', 'event.name': 'gen_ai.system.message'},
             {
@@ -1629,7 +1626,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'system',
@@ -1740,7 +1737,7 @@ def test_message_with_thinking_parts():
         ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'assistant',
@@ -2036,8 +2033,8 @@ def test_cache_point_in_user_prompt():
 
 
 def test_build_tool_definitions():
-    """Test _build_tool_definitions with various tool configurations."""
-    from pydantic_ai.models.instrumented import _build_tool_definitions  # pyright: ignore[reportPrivateUsage]
+    """Test build_tool_definitions with various tool configurations."""
+    from pydantic_ai._instrumentation import build_tool_definitions
     from pydantic_ai.tools import ToolDefinition
 
     tool_without_params = ToolDefinition(
@@ -2069,7 +2066,7 @@ def test_build_tool_definitions():
         allow_image_output=False,
     )
 
-    result = _build_tool_definitions(params)
+    result = build_tool_definitions(params)
 
     assert result == [
         {'type': 'function', 'name': 'no_params_tool', 'description': 'A tool without parameters'},
@@ -2088,8 +2085,8 @@ def test_build_tool_definitions():
 
 
 def test_annotate_tool_call_otel_metadata():
-    """`_annotate_tool_call_otel_metadata` copies metadata from tool defs onto matching tool call parts."""
-    from pydantic_ai.models.instrumented import _annotate_tool_call_otel_metadata  # pyright: ignore[reportPrivateUsage]
+    """`annotate_tool_call_otel_metadata` copies metadata from tool defs onto matching tool call parts."""
+    from pydantic_ai._instrumentation import annotate_tool_call_otel_metadata
     from pydantic_ai.tools import ToolDefinition
 
     response = ModelResponse(
@@ -2129,7 +2126,7 @@ def test_annotate_tool_call_otel_metadata():
         allow_image_output=False,
     )
 
-    _annotate_tool_call_otel_metadata(response, params)
+    annotate_tool_call_otel_metadata(response, params)
 
     code_part = response.parts[0]
     assert isinstance(code_part, ToolCallPart)

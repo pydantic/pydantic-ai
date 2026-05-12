@@ -16,6 +16,7 @@ from pydantic_core import to_json
 from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -2682,7 +2683,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
+        instructions = get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:

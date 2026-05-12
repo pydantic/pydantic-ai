@@ -11,9 +11,9 @@ import anyio
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
+from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
-from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
@@ -292,8 +292,8 @@ class FallbackModel(Model):
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(
                         {
-                            **InstrumentedModel.model_attributes(model),
-                            **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
+                            **model_attributes(model),
+                            **model_request_parameters_attributes(model_request_parameters),
                         }
                     )
 
