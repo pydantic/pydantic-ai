@@ -461,7 +461,7 @@ def test_agent_from_spec_tool_timeout_override():
 
 
 def test_agent_from_spec_instrument():
-    with pytest.warns(DeprecationWarning, match=r'`instrument` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`instrument` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'instrument': True})
     assert agent.instrument is True
 
@@ -470,6 +470,15 @@ def test_agent_from_spec_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
+    """The `instrument=` kwarg on `from_file` is deprecated; the agent still gets configured."""
+    spec_path = tmp_path / 'spec.yaml'
+    spec_path.write_text('model: test\n')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
+        agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
     assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
