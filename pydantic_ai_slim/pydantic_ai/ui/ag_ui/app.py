@@ -41,9 +41,16 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     """ASGI application for running Pydantic AI agents with AG-UI protocol support."""
 
     @deprecated(
-        '`AGUIApp` is deprecated and will be removed in v2; '
-        'build a `Starlette` app with a route that calls `AGUIAdapter.dispatch_request(request, agent=agent)` instead. '
-        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for migration examples.'
+        '`AGUIApp` is deprecated and will be removed in 2.0. Replace:\n'
+        '    app = AGUIApp(agent)\n'
+        'with a bare Starlette app:\n'
+        '    from starlette.applications import Starlette\n'
+        '    from starlette.routing import Route\n'
+        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
+        '    async def run_agent(request):\n'
+        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
+        '    app = Starlette(routes=[Route("/", run_agent, methods=["POST"])])\n'
+        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.'
     )
     def __init__(
         self,

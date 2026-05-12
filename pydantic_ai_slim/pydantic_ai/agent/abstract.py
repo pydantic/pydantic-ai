@@ -1584,9 +1584,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @deprecated(
-        '`Agent.to_ag_ui()` is deprecated and will be removed in v2; '
-        'mount `AGUIAdapter.dispatch_request(request, agent=agent)` as a Starlette/FastAPI route instead. '
-        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for migration examples.'
+        '`Agent.to_ag_ui()` is deprecated and will be removed in 2.0. Replace:\n'
+        '    app = agent.to_ag_ui()\n'
+        'with a Starlette/FastAPI route:\n'
+        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
+        '    @app.post("/")\n'
+        '    async def run_agent(request):\n'
+        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
+        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.'
     )
     def to_ag_ui(
         self,
@@ -1615,13 +1620,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Returns an ASGI application that handles every AG-UI request by running the agent.
 
         Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
         To provide different `deps` for each request (e.g. based on the authenticated user),
-        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
-        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
+        compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly via [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] instead.
 
         Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')

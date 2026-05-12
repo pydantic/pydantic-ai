@@ -2,6 +2,91 @@
 
 In September 2025, Pydantic AI reached V1, which means we're committed to API stability: we will not introduce changes that break your code until V2. For more information, review our [Version Policy](version-policy.md).
 
+## V2 deprecations
+
+Surfaces deprecated in 1.x that will be removed in 2.0. The migrations shown here also work in 1.x today. The runtime `DeprecationWarning` for each surface links to the relevant section below.
+
+### AG-UI deprecations
+
+PR [#5345](https://github.com/pydantic/pydantic-ai/pull/5345) deprecates three surfaces in the AG-UI integration. All three keep working in 1.x; they go away in 2.0.
+
+#### `pydantic_ai.ag_ui` shim → `pydantic_ai.ui.ag_ui` + `pydantic_ai.ui`
+
+The shim module re-exports symbols that now live in two locations:
+
+- `AGUIAdapter` is in `pydantic_ai.ui.ag_ui`.
+- `SSE_CONTENT_TYPE`, `StateDeps`, `StateHandler`, and `OnCompleteFunc` are in `pydantic_ai.ui`.
+- The `handle_ag_ui_request` and `run_ag_ui` helpers are removed in 2.0 — call `AGUIAdapter.dispatch_request()` or compose `AGUIAdapter` directly.
+
+```python {test="skip" lint="skip"}
+# Before (deprecated)
+from pydantic_ai.ag_ui import AGUIAdapter, SSE_CONTENT_TYPE, StateDeps
+
+# After
+from pydantic_ai.ui import SSE_CONTENT_TYPE, StateDeps
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+```
+
+#### `Agent.to_ag_ui()` → `AGUIAdapter.dispatch_request`
+
+Mount a Starlette/FastAPI route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
+
+```python {test="skip" lint="skip"}
+# Before (deprecated)
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+app = agent.to_ag_ui()
+
+# After
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+
+app = FastAPI()
+
+
+@app.post('/')
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+```
+
+#### `AGUIApp` → `Starlette` + `AGUIAdapter.dispatch_request`
+
+Build the ASGI app directly with a [`Starlette`](https://www.starlette.io/applications/) route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
+
+```python {test="skip" lint="skip"}
+# Before (deprecated)
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
+
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+app = AGUIApp(agent)
+
+# After
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
 ## Breaking Changes
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.

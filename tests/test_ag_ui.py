@@ -105,18 +105,18 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    # Intentionally exercises the deprecated `pydantic_ai.ag_ui` shim — the module-level
-    # `DeprecationWarning` is filtered via the matching entry in `pyproject.toml`.
-    from pydantic_ai.ag_ui import (
-        SSE_CONTENT_TYPE,
-        AGUIAdapter,
-        OnCompleteFunc,
-        StateDeps,
-        handle_ag_ui_request,
-        run_ag_ui,
-    )
-    from pydantic_ai.ui.ag_ui import AGUIEventStream
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
+    from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+
+    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
+    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
+    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=DeprecationWarning
+        )
+        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -2300,8 +2300,9 @@ async def test_concurrent_runs() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.filterwarnings('ignore:`Agent.to_ag_ui\\(\\)` is deprecated:DeprecationWarning')
 async def test_to_ag_ui() -> None:
-    """Test the agent.to_ag_ui method."""
+    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
 
     agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
 

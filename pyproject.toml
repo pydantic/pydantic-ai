@@ -253,12 +253,6 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
-    # v2 deprecations: AG-UI shim module, `Agent.to_ag_ui()`, and `AGUIApp` class (cards 15, 19).
-    # The 1.x deprecation warnings are the contract; tests that assert on them use `pytest.warns`. All other call sites
-    # (in this test suite, docs, and examples) still use the legacy surfaces — that's a follow-up cleanup.
-    "ignore:The `pydantic_ai.ag_ui` module is deprecated:DeprecationWarning",
-    "ignore:`Agent.to_ag_ui\\(\\)` is deprecated:DeprecationWarning",
-    "ignore:`AGUIApp` is deprecated:DeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
