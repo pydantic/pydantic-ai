@@ -59,7 +59,7 @@ if TYPE_CHECKING:
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
-    from fastmcp.mcp_config import MCPConfig, infer_transport_type_from_url
+    from fastmcp.mcp_config import infer_transport_type_from_url
     from fastmcp.server import FastMCP
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 
@@ -84,7 +84,7 @@ try:
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
-    from fastmcp.mcp_config import MCPConfig, infer_transport_type_from_url
+    from fastmcp.mcp_config import infer_transport_type_from_url
     from fastmcp.server import FastMCP
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 except ImportError as _err:  # pragma: no cover
@@ -1487,12 +1487,13 @@ metadata.
 """
 
 
-MCPToolsetClient: TypeAlias = (
-    'FastMCPClient[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | MCPConfig | dict[str, Any] | str'
-)
+MCPToolsetClient: TypeAlias = 'FastMCPClient[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | str'
 """Anything `MCPToolset` accepts as its `client` argument — a pre-built `fastmcp.Client`, a FastMCP
-`ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, an
-`MCPConfig`/dict, or any other input FastMCP can build a transport from."""
+`ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, or a
+URL/path/script string.
+
+For multi-server JSON config files, use [`load_mcp_toolsets`][pydantic_ai.mcp.load_mcp_toolsets]
+instead — it expands env vars and constructs one `MCPToolset` per server entry."""
 
 
 _UNSET: Any = object()
@@ -1512,8 +1513,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     range of transports (HTTP, SSE, stdio, in-process FastMCP servers, multi-server configs).
 
     Pass any input that FastMCP can build a transport from — a URL, a script path, a `FastMCP`
-    server instance for in-process testing, an `MCPConfig` dict — or a pre-built `fastmcp.Client`
-    for full control over its configuration.
+    server instance for in-process testing — or a pre-built `fastmcp.Client` for full control over
+    its configuration. For multi-server JSON config files, use
+    [`load_mcp_toolsets`][pydantic_ai.mcp.load_mcp_toolsets] instead.
 
     Example — connect to a streamable-HTTP MCP server:
 

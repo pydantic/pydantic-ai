@@ -134,7 +134,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         url: str,
         *,
         builtin: MCPServerTool | bool = True,
-        local: str | dict[str, Any] | Literal[False] | None = None,
+        local: str | Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
@@ -144,9 +144,9 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         """Construct an `MCP` capability from spec-serializable args.
 
         Restricts the runtime-wide `local=` union to the JSON/YAML-serializable subset
-        (`str | dict | False | None`) so `AgentSpec` schema generation works. Non-serializable
-        runtime values like `fastmcp.Client`, `ClientTransport`, or pre-built `MCPToolset` instances
-        can still be passed to `MCP(...)` directly — they just can't roundtrip through a spec file.
+        (`str | False | None`) so `AgentSpec` schema generation works. Non-serializable runtime
+        values like `fastmcp.Client`, `ClientTransport`, or pre-built `MCPToolset` instances can
+        still be passed to `MCP(...)` directly — they just can't roundtrip through a spec file.
         """
         return cls(
             url,

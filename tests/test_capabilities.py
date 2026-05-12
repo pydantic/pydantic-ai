@@ -1376,12 +1376,7 @@ Supported by:
                             'title': 'Builtin',
                         },
                         'local': {
-                            'anyOf': [
-                                {'type': 'string'},
-                                {'additionalProperties': True, 'type': 'object'},
-                                {'const': False, 'type': 'boolean'},
-                                {'type': 'null'},
-                            ],
+                            'anyOf': [{'type': 'string'}, {'const': False, 'type': 'boolean'}, {'type': 'null'}],
                             'title': 'Local',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},

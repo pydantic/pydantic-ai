@@ -1376,8 +1376,11 @@ class MCPToolsetDynamicToolsetAgentWorkflow:
 
 
 @pytest.mark.skip(
-    reason='Needs a recorded cassette for the deepwiki MCP call. Record locally with '
-    '`pytest --record-mode=once tests/test_temporal.py::test_mcptoolset_dynamic_toolset_in_workflow`.'
+    reason='`MCPToolset` (fastmcp Client) currently fails `Failed to initialize server session` '
+    'inside a Temporal activity — the background `asyncio.create_task(_session_runner)` in '
+    'fastmcp interacts poorly with the activity task lifecycle. The legacy `MCPServerStreamableHTTP` '
+    'parallel test passes because it uses the bare `mcp` SDK transports instead. Needs further '
+    'investigation — likely fixable in `TemporalMCPToolset.__aenter__` / `connect_session` setup.'
 )
 async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
     """`@agent.toolset` returning an `MCPToolset` works in a Temporal workflow.
