@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from .._utils import install_deprecated_kwarg_alias
 from ..settings import ThinkingLevel
 from . import ModelProfile
 
@@ -76,9 +75,6 @@ class AnthropicModelProfile(ModelProfile):
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
     """
-
-
-install_deprecated_kwarg_alias(AnthropicModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {

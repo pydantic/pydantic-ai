@@ -1053,3 +1053,89 @@ def test_image_generation_tool_factory_builtin_tool_kwarg_deprecated():
     # The legacy value reaches the subagent's `native_tool` field via the factory.
     subagent_self = tool.function.__self__  # pyright: ignore[reportFunctionMemberAccess]
     assert subagent_self.native_tool is legacy_tool
+
+
+# --- Profile-subclass and spec-loader deprecations (post-audit catch-ups) ---
+
+
+def test_bedrock_profile_supported_builtin_tools_constructor_deprecated():
+    """`BedrockModelProfile(supported_builtin_tools=...)` warns and routes to `supported_native_tools=`.
+
+    Lock-in for the audit gap where `BedrockModelProfile` (in `providers/bedrock.py`)
+    was missed when the prior fix wired the deprecated kwarg through each known profile
+    subclass via explicit `install_deprecated_kwarg_alias` calls.
+    """
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`BedrockModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile = BedrockModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
+    assert profile.supported_native_tools == frozenset({WebSearchTool})
+
+
+def test_user_subclass_modelprofile_supported_builtin_tools_constructor_deprecated():
+    """User-defined `@dataclass(kw_only=True)` subclasses of `ModelProfile` still accept the legacy kwarg.
+
+    Lock-in for the lazy-install pattern in `ModelProfile.__new__`: each subclass's
+    dataclass-generated `__init__` is wrapped on first instantiation, so user-defined
+    subclasses get the alias without needing an explicit `install_deprecated_kwarg_alias`
+    call.
+    """
+    from dataclasses import dataclass
+
+    from pydantic_ai.profiles import ModelProfile
+
+    @dataclass(kw_only=True)
+    class _UserProfile(ModelProfile):
+        pass
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`_UserProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile = _UserProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
+    assert WebSearchTool in profile.supported_native_tools
+
+
+def test_agent_from_spec_with_builtin_tool_capability_key_deprecated():
+    """`Agent.from_spec({'capabilities': [{'BuiltinTool': ...}]})` warns and resolves to `NativeTool`.
+
+    Lock-in for the spec-loader legacy alias map: the renamed capability still works in
+    YAML/JSON specs, with a `PydanticAIDeprecationWarning` pointing users to `NativeTool`.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r"capability name 'BuiltinTool' is deprecated, use 'NativeTool'",
+    ):
+        agent = Agent.from_spec(
+            {'name': 'a', 'model': 'test', 'capabilities': [{'BuiltinTool': {'kind': 'web_search'}}]}
+        )
+
+    native_tools = list(agent._cap_native_tools)  # pyright: ignore[reportPrivateUsage]
+    assert len(native_tools) == 1
+    assert isinstance(native_tools[0], WebSearchTool)
+
+
+def test_agent_from_spec_with_builtin_or_local_tool_capability_key_deprecated():
+    """`Agent.from_spec({'capabilities': [{'BuiltinOrLocalTool': ...}]})` warns about the rename.
+
+    `NativeOrLocalTool` is a base class not registered in `CAPABILITY_TYPES`, so resolution
+    still fails with the usual "valid choices" error — but the deprecation warning fires
+    first so the user knows the name was renamed.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r"capability name 'BuiltinOrLocalTool' is deprecated, use 'NativeOrLocalTool'",
+    ):
+        with pytest.raises(ValueError, match=r"'NativeOrLocalTool' is not in the provided"):
+            Agent.from_spec(
+                {
+                    'name': 'a',
+                    'model': 'test',
+                    'capabilities': [{'BuiltinOrLocalTool': {'native': {'kind': 'web_search'}}}],
+                }
+            )

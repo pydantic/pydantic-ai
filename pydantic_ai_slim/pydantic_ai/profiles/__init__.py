@@ -4,7 +4,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
-from typing import Any
+from typing import Any, ClassVar
 
 from typing_extensions import Self
 
@@ -25,16 +25,43 @@ __all__ = [
 
 # Maps deprecated kwarg/attribute names to their renamed targets for `ModelProfile`.
 # Used by `ModelProfile.__getattr__` for read access. Constructor aliasing is installed
-# per-subclass with `install_deprecated_kwarg_alias` (see `__init_subclass__` below), since
+# lazily on first instantiation of each subclass via `ModelProfile.__new__`, since
 # `@dataclass` regenerates `__init__` on each subclass and overwrites a single base wrap.
+# Subclasses extend this map by declaring their own `_deprecated_kwarg_aliases` class
+# attribute; `__new__` walks the MRO to collect entries from every level.
 _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES: dict[str, str] = {
     'supported_builtin_tools': 'supported_native_tools',
 }
+
+# Tracks which subclasses have already had their deprecated-kwarg aliases installed,
+# so the `__new__` lazy-install runs exactly once per class.
+_DEPRECATED_KWARG_ALIASES_INSTALLED: set[type] = set()
 
 
 @dataclass(kw_only=True)
 class ModelProfile:
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
+
+    # Maps deprecated `__init__` kwarg names to their renamed targets. Subclasses can extend
+    # this by declaring their own `_deprecated_kwarg_aliases = {...}`; `__new__` walks the
+    # MRO at first instantiation to collect every level's entries.
+    _deprecated_kwarg_aliases: ClassVar[dict[str, str]] = {
+        'supported_builtin_tools': 'supported_native_tools',
+    }
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # Lazy install of deprecated-kwarg aliases on first instantiation of each subclass.
+        # `@dataclass` regenerates `__init__` on each subclass, so a base-level wrap is lost.
+        # `__new__` runs before `__init__` (via `type.__call__`), so we can wrap the
+        # subclass's `__init__` exactly once before the constructor receives the legacy kwarg.
+        if cls not in _DEPRECATED_KWARG_ALIASES_INSTALLED:
+            _DEPRECATED_KWARG_ALIASES_INSTALLED.add(cls)
+            collected: dict[str, str] = {}
+            for klass in reversed(cls.__mro__):
+                collected.update(getattr(klass, '_deprecated_kwarg_aliases', None) or {})
+            for old, new in collected.items():
+                install_deprecated_kwarg_alias(cls, old=old, new=new)
+        return super().__new__(cls)
 
     supports_tools: bool = True
     """Whether the model supports tools."""
@@ -139,12 +166,6 @@ class ModelProfile:
             )
             return getattr(self, new_name)
         raise AttributeError(name)
-
-
-# The dataclass-generated `__init__` is regenerated per subclass, so each subclass needs
-# its own deprecated-kwarg wrap. Built-in subclasses register themselves via an
-# `__init_subclass__` hook that defers the wrap until the dataclass decoration completes.
-install_deprecated_kwarg_alias(ModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]

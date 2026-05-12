@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
-from .._utils import install_deprecated_kwarg_alias
 from . import (
     _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES as _PROFILE_FIELD_ALIASES,  # pyright: ignore[reportPrivateUsage]
     ModelProfile,
@@ -33,6 +33,12 @@ class GoogleModelProfile(ModelProfile):
     ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
+    # Extends `ModelProfile._deprecated_kwarg_aliases` with the Google-specific rename.
+    # `ModelProfile.__new__` walks the MRO at first instantiation to collect every level.
+    _deprecated_kwarg_aliases: ClassVar[dict[str, str]] = {
+        'google_supports_native_output_with_builtin_tools': 'google_supports_native_output_with_native_tools',
+    }
+
     google_supports_native_output_with_native_tools: bool = False
     """Whether the model supports native output with builtin tools.
     See https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools"""
@@ -46,14 +52,6 @@ class GoogleModelProfile(ModelProfile):
 
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
-
-
-install_deprecated_kwarg_alias(GoogleModelProfile, old='supported_builtin_tools', new='supported_native_tools')
-install_deprecated_kwarg_alias(
-    GoogleModelProfile,
-    old='google_supports_native_output_with_builtin_tools',
-    new='google_supports_native_output_with_native_tools',
-)
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:

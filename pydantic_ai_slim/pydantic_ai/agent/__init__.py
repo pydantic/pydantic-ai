@@ -2963,6 +2963,7 @@ def _capabilities_from_spec(
                 label='capability',
                 custom_types_param='custom_capability_types',
                 instantiate=_instantiate_cap,
+                legacy_aliases=_agent_spec.LEGACY_CAPABILITY_NAMES,
             )
             capabilities.append(capability)
         return capabilities

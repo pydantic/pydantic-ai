@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
-from .._utils import install_deprecated_kwarg_alias
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
 
@@ -19,9 +18,6 @@ class GrokModelProfile(ModelProfile):
 
     grok_supports_tool_choice_required: bool = True
     """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
-
-
-install_deprecated_kwarg_alias(GrokModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:

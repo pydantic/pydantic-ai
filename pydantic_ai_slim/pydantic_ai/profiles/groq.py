@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
-from .._utils import install_deprecated_kwarg_alias
 from . import ModelProfile
 
 
@@ -15,9 +14,6 @@ class GroqModelProfile(ModelProfile):
 
     groq_always_has_web_search_builtin_tool: bool = False
     """Whether the model always has the web search built-in tool available."""
-
-
-install_deprecated_kwarg_alias(GroqModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 def groq_model_profile(model_name: str) -> ModelProfile:
