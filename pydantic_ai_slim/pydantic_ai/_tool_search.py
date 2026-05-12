@@ -112,6 +112,10 @@ class ToolSearchReturnContent(TypedDict):
     """
 
 
+# When PR #5338 lands and BuiltinToolCallPart/BuiltinToolReturnPart rename to
+# NativeToolCallPart/NativeToolReturnPart, these classes rename to
+# NativeToolSearchCallPart/NativeToolSearchReturnPart. Grep for "BuiltinToolSearch"
+# during the rebase to find affected sites.
 @dataclass(repr=False)
 class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     """Typed view of a [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] for tool search.
@@ -120,6 +124,10 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     Responses) where the provider executes the search and emits a builtin result.
     The local-fallback path uses
     [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] instead.
+
+    To detect a tool-search part regardless of execution path (native server-side
+    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
+    across both call/return and both server/local variants.
 
     Shadows `args` with a narrower type. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -164,6 +172,8 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
         return []
 
 
+# See the rename note above BuiltinToolSearchCallPart — this class renames alongside
+# it when PR #5338 lands (NativeToolSearchReturnPart).
 @dataclass(repr=False)
 class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     """Typed view of a [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] for tool search.
@@ -172,6 +182,10 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     Responses) where the provider executes the search and emits a builtin result.
     The local-fallback path uses
     [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] instead.
+
+    To detect a tool-search part regardless of execution path (native server-side
+    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
+    across both call/return and both server/local variants.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
@@ -219,6 +233,10 @@ class ToolSearchCallPart(ToolCallPart):
     path uses
     [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart]
     instead.
+
+    To detect a tool-search part regardless of execution path (native server-side
+    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
+    across both call/return and both server/local variants.
 
     Shadows `args` with the canonical typed shape. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -272,6 +290,10 @@ class ToolSearchReturnPart(ToolReturnPart):
     path uses
     [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
     instead.
+
+    To detect a tool-search part regardless of execution path (native server-side
+    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
+    across both call/return and both server/local variants.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
