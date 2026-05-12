@@ -14,6 +14,7 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
+from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..builtin_tools import (
     AbstractBuiltinTool,
@@ -1189,7 +1190,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             # rejects an empty `tool_result.content` list, so we send the
                             # `message` text from the typed return (set by the toolset's
                             # `_empty_return`) as a single text block instead.
-                            empty_message = custom_empty_message or 'No matching tools found.'
+                            empty_message = custom_empty_message or _NO_MATCHES_MESSAGE
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',

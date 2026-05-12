@@ -34,6 +34,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
+from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..builtin_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
@@ -423,10 +424,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             return self._empty_return()
         return self._build_return(matches)
 
-    _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
-
-    @classmethod
-    def _empty_return(cls) -> ToolSearchReturnContent:
+    @staticmethod
+    def _empty_return() -> ToolSearchReturnContent:
         """Shaped "no matches" return: empty discovered_tools list with a user-visible message.
 
         Sending only the typed
@@ -437,7 +436,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         """
         return {
             'discovered_tools': [],
-            'message': cls._NO_MATCHES_MESSAGE,
+            'message': _NO_MATCHES_MESSAGE,
         }
 
     @staticmethod

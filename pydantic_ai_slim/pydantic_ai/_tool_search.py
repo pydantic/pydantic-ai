@@ -49,6 +49,15 @@ if TYPE_CHECKING:
     from .messages import ModelMessage, ModelRequestPart, ModelResponse, ModelResponsePart
 
 
+_NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
+"""Canonical model-facing message used when a tool-search call returned zero matches.
+
+Shared by the local-fallback toolset's `_empty_return` and the Anthropic adapter's
+custom-callable empty-results path (where wire-time filtering left
+`tool_result.content=[]`, which Anthropic rejects, so we send a single text block instead).
+"""
+
+
 class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 
