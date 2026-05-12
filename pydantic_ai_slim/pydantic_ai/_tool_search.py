@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
+import pydantic_core
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from . import messages as _messages
@@ -148,27 +149,42 @@ class NativeToolSearchCallPart(NativeToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
-    def typed_args(self) -> ToolSearchArgs:
-        """Typed accessor for the validated tool-search arguments.
+    @property
+    def typed_args(self) -> ToolSearchArgs | None:
+        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        Streaming-partial parts may still have `args: str` (unparsed JSON);
-        once finalized, returns the validated
-        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]. For raw access
-        that handles unparsed JSON gracefully, use the inherited `args_as_dict()`.
+        In non-streaming code (a typed call part on a finalized
+        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+        populated — once a part is narrowed to this typed subclass, its `args`
+        have been parsed and validated.
+
+        Returns `None` only in streaming-partial state, where `args` is still an
+        in-progress JSON string the model hasn't finished emitting. For raw
+        string-tolerant access, use the inherited `args_as_dict()`.
         """
-        return cast('ToolSearchArgs', self.args_as_dict())
+        if self.args is None:
+            return None
+        if isinstance(self.args, dict):
+            return cast('ToolSearchArgs', self.args)
+        try:
+            parsed = pydantic_core.from_json(self.args)
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return cast('ToolSearchArgs', parsed)
 
     @property
     def queries(self) -> list[str]:
-        """Subfield accessor for `typed_args()['queries']`.
+        """Subfield accessor for `typed_args['queries']`.
 
-        Returns an empty list if args haven't been parsed yet (streaming-partial).
+        Returns an empty list if args haven't been parsed yet (streaming-partial,
+        i.e. `typed_args` is `None`).
         """
-        raw = self.args_as_dict()
-        queries = raw.get('queries')
-        if isinstance(queries, list):
-            return [q for q in cast('list[Any]', queries) if isinstance(q, str)]
-        return []
+        typed = self.typed_args
+        if typed is None:
+            return []
+        return list(typed.get('queries', []))
 
 
 @dataclass(repr=False)
@@ -255,27 +271,42 @@ class ToolSearchCallPart(ToolCallPart):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
-    def typed_args(self) -> ToolSearchArgs:
-        """Typed accessor for the validated tool-search arguments.
+    @property
+    def typed_args(self) -> ToolSearchArgs | None:
+        """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
 
-        Streaming-partial parts may still have `args: str` (unparsed JSON);
-        once finalized, returns the validated
-        [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]. For raw access
-        that handles unparsed JSON gracefully, use the inherited `args_as_dict()`.
+        In non-streaming code (a typed call part on a finalized
+        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
+        populated — once a part is narrowed to this typed subclass, its `args`
+        have been parsed and validated.
+
+        Returns `None` only in streaming-partial state, where `args` is still an
+        in-progress JSON string the model hasn't finished emitting. For raw
+        string-tolerant access, use the inherited `args_as_dict()`.
         """
-        return cast('ToolSearchArgs', self.args_as_dict())
+        if self.args is None:
+            return None
+        if isinstance(self.args, dict):
+            return cast('ToolSearchArgs', self.args)
+        try:
+            parsed = pydantic_core.from_json(self.args)
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return cast('ToolSearchArgs', parsed)
 
     @property
     def queries(self) -> list[str]:
-        """Subfield accessor for `typed_args()['queries']`.
+        """Subfield accessor for `typed_args['queries']`.
 
-        Returns an empty list if args haven't been parsed yet (streaming-partial).
+        Returns an empty list if args haven't been parsed yet (streaming-partial,
+        i.e. `typed_args` is `None`).
         """
-        raw = self.args_as_dict()
-        queries = raw.get('queries')
-        if isinstance(queries, list):
-            return [q for q in cast('list[Any]', queries) if isinstance(q, str)]
-        return []
+        typed = self.typed_args
+        if typed is None:
+            return []
+        return list(typed.get('queries', []))
 
 
 @dataclass(repr=False)

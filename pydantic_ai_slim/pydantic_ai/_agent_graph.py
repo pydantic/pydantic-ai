@@ -929,14 +929,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 1. The translation depends on `self.profile`, which is per-model state.
         # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
         #    each candidate runs `prepare_messages` itself with its own profile when chosen.
-        messages = model.prepare_messages(messages)
+        prepared = model.prepare_messages(messages)
 
-        # Run again because `prepare_messages` can introduce new consecutive same-role messages
-        # — e.g. tool-search synthesis splitting a `ModelResponse(call+return)` into
-        # `ModelResponse(call) + ModelRequest(return)` adjacent to an existing `ModelRequest`.
-        # Cleanup is idempotent and cheap, so the symmetric pre/post pass keeps the adapter's
-        # view of history normalized regardless of which hook ran.
-        messages = _clean_message_history(messages)
+        # If `prepare_messages` produced a new list (e.g. tool-search synthesis split a
+        # `ModelResponse(call+return)` into `ModelResponse(call) + ModelRequest(return)`
+        # adjacent to an existing `ModelRequest`), re-run cleanup so consecutive same-role
+        # messages are merged. The default `prepare_messages` returns the input list
+        # unchanged, so the identity check skips the redundant second pass.
+        if prepared is not messages:
+            messages = _clean_message_history(prepared)
+        else:
+            messages = prepared
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters

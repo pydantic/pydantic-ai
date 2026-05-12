@@ -3801,32 +3801,39 @@ def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
 
 
 def test_typed_call_part_accessors_return_typed_shapes() -> None:
-    """`typed_args()` and `queries` on typed call parts read the parsed args.
+    """`typed_args` and `queries` on typed call parts read the parsed args.
 
     Covers both the local-fallback (`ToolSearchCallPart`) and native server-side
     (`NativeToolSearchCallPart`) variants — they're symmetric.
     """
 
     local_call = ToolSearchCallPart(args={'queries': ['weather', 'github']}, tool_call_id='c1')
-    assert local_call.typed_args() == {'queries': ['weather', 'github']}
+    assert local_call.typed_args == {'queries': ['weather', 'github']}
     assert local_call.queries == ['weather', 'github']
 
     builtin_call = NativeToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='c2', provider_name='anthropic')
-    assert builtin_call.typed_args() == {'queries': ['weather']}
+    assert builtin_call.typed_args == {'queries': ['weather']}
     assert builtin_call.queries == ['weather']
 
 
-def test_typed_call_part_queries_returns_empty_for_unparsed_args() -> None:
-    """`queries` returns `[]` when args haven't parsed to a dict-with-queries yet.
+def test_typed_call_part_typed_args_returns_none_for_unparsed_args() -> None:
+    """`typed_args` returns `None` when args haven't been finalized yet.
 
-    Covers the streaming-partial path where `args` is still a partial JSON string
-    (or None) and `args_as_dict()` falls back to `{}` or `{INVALID_JSON: ...}`.
+    Covers the streaming-partial path: `args=None` and partial JSON strings both
+    yield `None` (the contract for streaming-not-yet-ready). Once finalized into
+    a dict, `typed_args` is the validated `ToolSearchArgs`.
     """
 
     none_part = ToolSearchCallPart(args=None, tool_call_id='c1')
+    assert none_part.typed_args is None
     assert none_part.queries == []
 
+    partial_part = ToolSearchCallPart(args='{"queries": ["wea', tool_call_id='c1')
+    assert partial_part.typed_args is None
+    assert partial_part.queries == []
+
     builtin_none = NativeToolSearchCallPart(args=None, tool_call_id='c2', provider_name='anthropic')
+    assert builtin_none.typed_args is None
     assert builtin_none.queries == []
 
 
