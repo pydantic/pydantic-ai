@@ -121,18 +121,18 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         if name is True:
-            local = self._build_local()
-            if local is None:
+            try:
+                return self._build_local()
+            except ImportError as e:
                 raise UserError(
                     'MCP(local=True) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
-                )  # pragma: no cover
-            return local
+                ) from e
         raise UserError(
             f'MCP(local={name!r}) is not a known strategy. '
             'Pass `local=True` for the default local MCP transport, or a Tool/callable directly.'
         )
 
-    def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+    def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Merge authorization_token into headers for local connection
         local_headers = dict(self.headers or {})
         if self.authorization_token:
