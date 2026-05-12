@@ -3731,7 +3731,7 @@ async def test_temporal_model_request_stream_outside_workflow():
             pass
 
         # Get the final response
-        response = stream.get()
+        response = stream.response
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
