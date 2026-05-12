@@ -674,12 +674,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
-        # Extract the legacy `builtin_tools=` kwarg from `**kwargs` before passing the rest to
-        # `from_request`, so subclasses receive only their own adapter-specific extras.
-        legacy_builtin_tools_kwargs: dict[str, Any] = {}
-        if 'builtin_tools' in kwargs:
-            legacy_builtin_tools_kwargs['builtin_tools'] = kwargs.pop('builtin_tools')
-
         try:
             from starlette.responses import Response
         except ImportError as e:  # pragma: no cover
@@ -724,6 +718,5 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 toolsets=toolsets,
                 capabilities=capabilities,
                 on_complete=on_complete,
-                **legacy_builtin_tools_kwargs,
             ),
         )
