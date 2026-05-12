@@ -99,18 +99,6 @@ route to for provider-side "client-executed" custom callable modes (Anthropic to
 blocks; OpenAI `execution='client'`)."""
 
 
-_ToolSearchToolStrategy = Literal['bm25', 'regex', 'custom']
-"""Strategy literal carried on `ToolSearchTool.strategy`.
-
-Extends [`ToolSearchNativeStrategy`][pydantic_ai.capabilities.ToolSearchNativeStrategy]
-with `'custom'`, which marks an instance whose discovery is performed by a callable on our
-side. The user-facing [`ToolSearchStrategy`][pydantic_ai.capabilities.ToolSearchStrategy]
-union (in the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) does not
-include `'custom'` — users pass the callable directly and the capability sets
-`strategy='custom'` on the builtin internally.
-"""
-
-
 @dataclass(kw_only=True)
 class ToolSearchTool(AbstractBuiltinTool):
     """Framework-internal: users access tool search via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability — do not construct directly.
@@ -143,8 +131,15 @@ class ToolSearchTool(AbstractBuiltinTool):
       (named strategies `'bm25'`/`'regex'` are not supported).
     """
 
-    strategy: _ToolSearchToolStrategy | None = None
+    strategy: Literal['bm25', 'regex', 'custom'] | None = None
     """The search strategy to use.
+
+    Extends [`ToolSearchNativeStrategy`][pydantic_ai.capabilities.ToolSearchNativeStrategy]
+    with `'custom'`, which marks an instance whose discovery is performed by a callable on
+    our side. The user-facing [`ToolSearchStrategy`][pydantic_ai.capabilities.ToolSearchStrategy]
+    union (in the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) does not
+    include `'custom'` — users pass the callable directly and the capability sets
+    `strategy='custom'` on the builtin internally.
 
     * `None` (default): use the provider's default native search. On Anthropic this is
       `bm25`; on OpenAI it is the server-executed `tool_search` tool.

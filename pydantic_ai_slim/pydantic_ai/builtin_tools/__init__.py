@@ -57,15 +57,11 @@ class AbstractBuiltinTool(ABC):
     """Whether this instance is a best-effort upgrade rather than a hard requirement.
 
     When `True`, the instance is silently dropped from the request on a model that doesn't
-    support it natively, instead of raising when no local fallback is provided. Defaults
-    to `False` (the user explicitly asked for this builtin; fail loudly if we can't honor it).
-
-    Set to `True` for capabilities that should opportunistically use a native surface but
-    don't *require* it — e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s default
-    auto-injected mode falls back to the local `search_tools` function tool when native
-    isn't supported. Named native strategies (`'bm25'` / `'regex'` for tool search) keep
-    `optional=False` because silently substituting a different algorithm would ignore the
-    user's explicit choice.
+    support it natively, instead of raising when no local fallback is provided. Use for
+    builtins where a fallback path exists (e.g. a local function tool that takes over when
+    the native one isn't available). When `False` (the default), the request errors on
+    models that can't honor the builtin — the user explicitly asked for it, so fail loudly
+    rather than silently substituting different behavior.
     """
 
     @property
