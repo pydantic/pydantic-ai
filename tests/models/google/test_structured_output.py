@@ -2,8 +2,8 @@
 
 Tests the three restriction lifts for Gemini 3+:
 1. NativeOutput + function tools (response_schema + function_declarations)
-2. Function tools + builtin tools (function_declarations + builtin_tools)
-3. Output tools + builtin tools (ToolOutput function_declarations + builtin_tools)
+2. Function tools + native tools (function_declarations + native_tools)
+3. Output tools + native tools (ToolOutput function_declarations + native_tools)
 
 Also verifies that older models still raise appropriate errors.
 """
@@ -18,18 +18,19 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
@@ -47,10 +48,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -89,7 +90,7 @@ async def test_function_tools_with_builtin_tools_unsupported(
     allow_model_requests: None, google_model: GoogleModelFactory
 ):
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -104,7 +105,7 @@ async def test_function_tools_with_builtin_tools_unsupported(
 
 async def test_tool_output_with_builtin_tools_unsupported(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
 
     with pytest.raises(
         UserError,
@@ -288,7 +289,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
 
 async def test_native_output_with_builtin_tools_stream(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=NativeOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
 
     async with agent.run_stream('What is the largest city in Mexico?') as result:
         output = await result.get_output()
@@ -304,14 +305,14 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
                         tool_call_id='d6vd9r5q',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
@@ -351,7 +352,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
 
 async def test_function_tools_with_builtin_tools(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     @agent.tool_plain
     async def calculator(expression: str) -> str:
@@ -383,14 +384,14 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Tokyo']},
                         tool_call_id='93z4z1x3',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': """\
@@ -549,13 +550,13 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['', 'current weather in Tokyo']},
                         tool_call_id=(web_search_id := IsStr()),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -601,7 +602,7 @@ async def test_native_output_with_function_and_builtin_tools(
     allow_model_requests: None, google_model: GoogleModelFactory
 ):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=NativeOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -658,14 +659,14 @@ async def test_native_output_with_function_and_builtin_tools(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico by population']},
                         tool_call_id='ccnih13d',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
@@ -707,7 +708,7 @@ async def test_native_output_with_function_and_builtin_tools(
 
 async def test_native_output_with_builtin_tools(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=NativeOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert isinstance(result.output, CityLocation)
@@ -722,14 +723,14 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
                         tool_call_id='0yzlft9k',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
@@ -769,7 +770,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
 
 async def test_tool_output_with_builtin_tools(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert isinstance(result.output, CityLocation)
@@ -784,14 +785,14 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico by population']},
                         tool_call_id='jtmvhz2z',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
@@ -841,7 +842,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
 
 async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=CityLocation, capabilities=[NativeTool(WebSearchTool())])
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -893,14 +894,14 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico by population']},
                         tool_call_id='4f244mfi',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
@@ -960,7 +961,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
 ):
     """Gemini 2.5 with auto output mode + builtin tools silently converts to prompted output."""
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, output_type=CityLocation, capabilities=[NativeTool(WebSearchTool())])
     result = await agent.run('What is the largest city in Mexico?')
     assert isinstance(result.output, CityLocation)
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
@@ -974,13 +975,13 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),

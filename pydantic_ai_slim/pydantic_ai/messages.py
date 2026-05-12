@@ -25,6 +25,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -1100,13 +1101,13 @@ class BaseToolReturnPart:
     """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
 
     `None` for any part without a typed subclass — including all user-defined tools and all
-    builtins without a dedicated typed call/return shape. Subclasses that pin this to a
+    native tools without a dedicated typed call/return shape. Subclasses that pin this to a
     [`ToolPartKind`][pydantic_ai.messages.ToolPartKind] literal:
 
     * [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
       [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool-search'`
-    * [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart] /
-      [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart] — `'tool-search'`
+    * [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] /
+      [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart] — `'tool-search'`
     """
 
     metadata: Any = None
@@ -1327,13 +1328,13 @@ class ToolReturnPart(BaseToolReturnPart):
 
 
 @dataclass(repr=False)
-class BuiltinToolReturnPart(BaseToolReturnPart):
-    """A tool return message from a built-in tool.
+class NativeToolReturnPart(BaseToolReturnPart):
+    """A tool return message from a native tool.
 
-    For builtins with a stable cross-provider shape (currently `tool_search`), a
-    `BuiltinToolReturnPart` may be promoted to a typed subclass like
-    [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
-    with a narrowed `content` `TypedDict`. See `BuiltinToolCallPart` for the pattern.
+    For native tools with a stable cross-provider shape (currently `tool_search`), a
+    `NativeToolReturnPart` may be promoted to a typed subclass like
+    [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
+    with a narrowed `content` `TypedDict`. See `NativeToolCallPart` for the pattern.
     """
 
     _: KW_ONLY
@@ -1354,8 +1355,8 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @staticmethod
-    def narrow_type(part: BuiltinToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> BuiltinToolReturnPart:
-        """Promote a base `BuiltinToolReturnPart` to its typed subclass when its `tool_kind` is registered.
+    def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
+        """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
         Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
         to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
@@ -1366,7 +1367,7 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
         kind = tool_kind if tool_kind is not None else part.tool_kind
         if kind is None:
             return part
-        narrower = _BUILTIN_RETURN_NARROWERS.get(kind)
+        narrower = _NATIVE_RETURN_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 
@@ -1775,7 +1776,7 @@ class BaseToolCallPart:
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
-    Builtin tool calls are only sent back to the same provider.
+    Native tool calls are only sent back to the same provider.
     Required to be set when `provider_details` or `id` is set.
     """
 
@@ -1865,23 +1866,23 @@ class ToolCallPart(BaseToolCallPart):
 
 
 @dataclass(repr=False)
-class BuiltinToolCallPart(BaseToolCallPart):
-    """A tool call to a built-in tool.
+class NativeToolCallPart(BaseToolCallPart):
+    """A tool call to a native tool.
 
-    For builtins with a stable cross-provider shape (currently `tool_search`), this base
+    For native tools with a stable cross-provider shape (currently `tool_search`), this base
     class can be promoted to a typed subclass with a narrowed `args` `TypedDict`. See
-    [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart] for the
+    [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] for the
     canonical example.
 
-    Adding a typed subclass for a future builtin (see `pydantic_ai._tool_search` for
+    Adding a typed subclass for a future native tool (see `pydantic_ai._tool_search` for
     a worked example):
 
     1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
-       `TypedDict`s, the `BuiltinToolCallPart` / `BuiltinToolReturnPart` subclasses,
-       and registers their narrowers into `_BUILTIN_CALL_NARROWERS` /
-       `_BUILTIN_RETURN_NARROWERS` keyed by `tool_kind`. Subclass overrides
+       `TypedDict`s, the `NativeToolCallPart` / `NativeToolReturnPart` subclasses,
+       and registers their narrowers into `_NATIVE_CALL_NARROWERS` /
+       `_NATIVE_RETURN_NARROWERS` keyed by `tool_kind`. Subclass overrides
        `tool_kind: Literal['<emitter>']` to match the emitting
-       [`AbstractBuiltinTool.kind`][pydantic_ai.builtin_tools.AbstractBuiltinTool.kind],
+       [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind],
        and shadows `args` / `content` with a narrower type.
     2. Late-import the new module from this file (alongside the existing tool-search
        import) so registration runs whenever `pydantic_ai.messages` is imported.
@@ -1909,8 +1910,8 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @staticmethod
-    def narrow_type(part: BuiltinToolCallPart, *, tool_kind: ToolPartKind | None = None) -> BuiltinToolCallPart:
-        """Promote a base `BuiltinToolCallPart` to its typed subclass when its `tool_kind` is registered.
+    def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
+        """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
         Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
         to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
@@ -1921,14 +1922,14 @@ class BuiltinToolCallPart(BaseToolCallPart):
         kind = tool_kind if tool_kind is not None else part.tool_kind
         if kind is None:
             return part
-        narrower = _BUILTIN_CALL_NARROWERS.get(kind)
+        narrower = _NATIVE_CALL_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 
-# Registry of typed promoters for `BuiltinToolCallPart` / `BuiltinToolReturnPart`.
+# Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
 # Populated at import time by typed-subclass modules (see `pydantic_ai._tool_search`).
-_BUILTIN_CALL_NARROWERS: dict[str, Callable[[BuiltinToolCallPart], BuiltinToolCallPart]] = {}
-_BUILTIN_RETURN_NARROWERS: dict[str, Callable[[BuiltinToolReturnPart], BuiltinToolReturnPart]] = {}
+_NATIVE_CALL_NARROWERS: dict[str, Callable[[NativeToolCallPart], NativeToolCallPart]] = {}
+_NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolReturnPart]] = {}
 
 
 # Registry of typed promoters for the local-execution `ToolCallPart` / `ToolReturnPart`
@@ -1959,8 +1960,8 @@ deserialized). Same population pattern.
 # discriminator unions below can reference them and so import-time registration of
 # narrowers happens whenever `pydantic_ai.messages` is imported.
 from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
-    BuiltinToolSearchCallPart as BuiltinToolSearchCallPart,
-    BuiltinToolSearchReturnPart as BuiltinToolSearchReturnPart,
+    NativeToolSearchCallPart as NativeToolSearchCallPart,
+    NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     ToolSearchArgs as ToolSearchArgs,
     ToolSearchCallPart as ToolSearchCallPart,
     ToolSearchMatch as ToolSearchMatch,
@@ -2038,10 +2039,10 @@ ModelResponsePart = Annotated[
     Annotated[TextPart, pydantic.Tag('text')]
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
     | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
-    | Annotated[BuiltinToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
-    | Annotated[BuiltinToolCallPart, pydantic.Tag('builtin-tool-call')]
-    | Annotated[BuiltinToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
-    | Annotated[BuiltinToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
+    | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
+    | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
+    | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
     | Annotated[FilePart, pydantic.Tag('file')],
@@ -2160,17 +2161,27 @@ class ModelResponse:
         return [part for part in self.parts if isinstance(part, ToolCallPart)]
 
     @property
-    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
-        """Get the builtin tool calls and results in the response."""
-        calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
+    def native_tool_calls(self) -> list[tuple[NativeToolCallPart, NativeToolReturnPart]]:
+        """Get the native tool calls and results in the response."""
+        calls = [part for part in self.parts if isinstance(part, NativeToolCallPart)]
         if not calls:
             return []
-        returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, BuiltinToolReturnPart)}
+        returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, NativeToolReturnPart)}
         return [
             (call_part, returns_by_id[call_part.tool_call_id])
             for call_part in calls
             if call_part.tool_call_id in returns_by_id
         ]
+
+    @property
+    def builtin_tool_calls(self) -> list[tuple[NativeToolCallPart, NativeToolReturnPart]]:
+        """Deprecated: use [`native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls] instead."""
+        warnings.warn(
+            '`ModelResponse.builtin_tool_calls` is deprecated, use `ModelResponse.native_tool_calls` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.native_tool_calls
 
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
@@ -2276,7 +2287,7 @@ class ModelResponse:
                 )
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
-                if isinstance(part, BuiltinToolCallPart):
+                if isinstance(part, NativeToolCallPart):
                     call_part['builtin'] = True
                 if part.otel_metadata:
                     if code_arg_name := part.otel_metadata.get('code_arg_name'):
@@ -2290,7 +2301,7 @@ class ModelResponse:
                         call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
 
                 parts.append(call_part)
-            elif isinstance(part, BuiltinToolReturnPart):
+            elif isinstance(part, NativeToolReturnPart):
                 return_part = _otel_messages.ToolCallResponsePart(
                     type='tool_call_response',
                     id=part.tool_call_id,
@@ -2547,39 +2558,39 @@ class ToolCallPartDelta:
         )
 
     @overload
-    def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
+    def apply(self, part: ModelResponsePart) -> ToolCallPart | NativeToolCallPart: ...
 
     @overload
     def apply(
         self, part: ModelResponsePart | ToolCallPartDelta
-    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta: ...
+    ) -> ToolCallPart | NativeToolCallPart | ToolCallPartDelta: ...
 
     def apply(
         self, part: ModelResponsePart | ToolCallPartDelta
-    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
+    ) -> ToolCallPart | NativeToolCallPart | ToolCallPartDelta:
         """Apply this delta to a part or delta, returning a new part or delta with the changes applied.
 
         Args:
             part: The existing model response part or delta to update.
 
         Returns:
-            Either a new `ToolCallPart` or `BuiltinToolCallPart`, or an updated `ToolCallPartDelta`.
+            Either a new `ToolCallPart` or `NativeToolCallPart`, or an updated `ToolCallPartDelta`.
 
         Raises:
-            ValueError: If `part` is neither a `ToolCallPart`, `BuiltinToolCallPart`, nor a `ToolCallPartDelta`.
+            ValueError: If `part` is neither a `ToolCallPart`, `NativeToolCallPart`, nor a `ToolCallPartDelta`.
             UnexpectedModelBehavior: If applying JSON deltas to dict arguments or vice versa.
         """
-        if isinstance(part, ToolCallPart | BuiltinToolCallPart):
+        if isinstance(part, ToolCallPart | NativeToolCallPart):
             return self._apply_to_part(part)
 
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
         raise ValueError(  # pragma: no cover
-            f'Can only apply ToolCallPartDeltas to ToolCallParts, BuiltinToolCallParts, or ToolCallPartDeltas, not {part}'
+            f'Can only apply ToolCallPartDeltas to ToolCallParts, NativeToolCallParts, or ToolCallPartDeltas, not {part}'
         )
 
-    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
+    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | NativeToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name_delta
@@ -2623,8 +2634,8 @@ class ToolCallPartDelta:
 
         return delta
 
-    def _apply_to_part(self, part: ToolCallPart | BuiltinToolCallPart) -> ToolCallPart | BuiltinToolCallPart:
-        """Internal helper to apply this delta directly to a `ToolCallPart` or `BuiltinToolCallPart`."""
+    def _apply_to_part(self, part: ToolCallPart | NativeToolCallPart) -> ToolCallPart | NativeToolCallPart:
+        """Internal helper to apply this delta directly to a `ToolCallPart` or `NativeToolCallPart`."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name
             tool_name = part.tool_name + self.tool_name_delta
@@ -2870,13 +2881,13 @@ class OutputToolResultEvent(ToolResultEvent):
 
 
 @deprecated(
-    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.'
+    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.'
 )
 @dataclass(repr=False)
 class BuiltinToolCallEvent:
     """An event indicating the start to a call to a built-in tool."""
 
-    part: BuiltinToolCallPart
+    part: NativeToolCallPart
     """The built-in tool call to make."""
 
     _: KW_ONLY
@@ -2886,13 +2897,13 @@ class BuiltinToolCallEvent:
 
 
 @deprecated(
-    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.'
+    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.'
 )
 @dataclass(repr=False)
 class BuiltinToolResultEvent:
     """An event indicating the result of a built-in tool call."""
 
-    result: BuiltinToolReturnPart
+    result: NativeToolReturnPart
     """The result of the call to the built-in tool."""
 
     _: KW_ONLY
@@ -2914,3 +2925,21 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
+
+
+_RENAMED_PART_CLASSES: dict[str, str] = {
+    'BuiltinToolCallPart': 'NativeToolCallPart',
+    'BuiltinToolReturnPart': 'NativeToolReturnPart',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _RENAMED_PART_CLASSES:
+        new_name = _RENAMED_PART_CLASSES[name]
+        warnings.warn(
+            f'`pydantic_ai.messages.{name}` is deprecated, use `pydantic_ai.messages.{new_name}` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new_name]
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

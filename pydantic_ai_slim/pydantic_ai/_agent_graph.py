@@ -19,10 +19,10 @@ from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.builtin_tools._tool_search import ToolSearchTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
@@ -34,7 +34,7 @@ from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
-    AgentBuiltinTool,
+    AgentNativeTool,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -195,7 +195,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     root_capability: AbstractCapability[DepsT]
 
-    builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
+    native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -489,36 +489,36 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
-    # resolve dynamic builtin tools
-    builtin_tools: list[AbstractBuiltinTool] = []
-    if ctx.deps.builtin_tools:
-        for tool in ctx.deps.builtin_tools:
-            if isinstance(tool, AbstractBuiltinTool):
-                builtin_tools.append(tool)
+    # resolve dynamic native tools
+    native_tools: list[AbstractNativeTool] = []
+    if ctx.deps.native_tools:
+        for tool in ctx.deps.native_tools:
+            if isinstance(tool, AbstractNativeTool):
+                native_tools.append(tool)
             else:
                 t = tool(run_context)
                 if inspect.isawaitable(t):
                     t = await t
                 if t is not None:
-                    builtin_tools.append(t)
+                    native_tools.append(t)
 
-    # Drop the auto-injected `ToolSearchTool` builtin when the search corpus is empty —
-    # the toolset has nothing to manage, so emitting the builtin would waste a tool slot
-    # and surface an inert builtin in `ModelRequestParameters` snapshots. Filtering
+    # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. Filtering
     # here (at MRP-construction time) keeps the request shape honest before
     # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
     # preserved so the request still fails loudly on unsupported models.
     has_tool_search_corpus = any(t.with_builtin == ToolSearchTool.kind for t in function_tools)
     if not has_tool_search_corpus:
-        # Confine the corpus-empty drop to `ToolSearchTool`: other optional builtins
+        # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
         # (e.g. a hypothetical `WebSearchTool(optional=True)`) don't have a corpus and
         # shouldn't be dropped here — they only get dropped on the unsupported-on-this-model
         # path in `Model.prepare_request`.
-        builtin_tools = [t for t in builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
+        native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
     return models.ModelRequestParameters(
         function_tools=function_tools,
-        builtin_tools=builtin_tools,
+        native_tools=native_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -922,7 +922,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = _clean_message_history(messages)
 
         # Hand off to the model class for any history shapes the active provider can't
-        # ship on the wire — currently typed `BuiltinToolSearch*Part` instances translated
+        # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
         # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
         #
         # Lives on `Model.prepare_messages` rather than inline here for two reasons:
@@ -1180,12 +1180,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                    elif isinstance(part, _messages.NativeToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
@@ -1304,7 +1304,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text.
                         text = ''  # pragma: no cover

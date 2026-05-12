@@ -25,8 +25,6 @@ except ImportError as _import_error:
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -39,6 +37,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -53,7 +53,6 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
@@ -63,6 +62,7 @@ from pydantic_ai.models import (
     download_item,
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -456,7 +456,7 @@ class BedrockConverseModel(Model[BaseClient]):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
@@ -579,7 +579,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
-                            call_part = BuiltinToolCallPart(
+                            call_part = NativeToolCallPart(
                                 provider_name=self.system,
                                 tool_name=CodeExecutionTool.kind,
                                 args=tool_use['input'],
@@ -598,7 +598,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
                         items.append(
-                            BuiltinToolReturnPart(
+                            NativeToolReturnPart(
                                 provider_name=self.system,
                                 tool_name=CodeExecutionTool.kind,
                                 content=tool_result['content'][0].get('json') if tool_result['content'] else None,
@@ -797,12 +797,12 @@ class BedrockConverseModel(Model[BaseClient]):
             assert_never(resolved_tool_choice)
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
-        for tool in model_request_parameters.builtin_tools:
+        for tool in model_request_parameters.native_tools:
             if tool.kind == CodeExecutionTool.kind:
                 tools.append({'systemTool': {'name': 'nova_code_interpreter'}})
             else:
                 raise NotImplementedError(
-                    f"Builtin tool '{tool.kind}' is not supported yet. If it should be, please file an issue."
+                    f"Native tool '{tool.kind}' is not supported yet. If it should be, please file an issue."
                 )
 
         if not tools:
@@ -956,7 +956,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
-                    elif isinstance(item, BuiltinToolCallPart):
+                    elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
                                 server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
@@ -966,7 +966,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                     'type': 'server_tool_use',
                                 }
                                 content.append({'toolUse': server_tool_use_block_param})
-                    elif isinstance(item, BuiltinToolReturnPart):
+                    elif isinstance(item, NativeToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
                                 result_content: list[ToolResultContentBlockOutputTypeDef] = [
@@ -1292,7 +1292,7 @@ class BedrockStreamedResponse(StreamedResponse):
 
             # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
             # We accumulate the deltas here and yield the complete return part once the content block ends
-            builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
+            builtin_tool_returns: dict[int, NativeToolReturnPart] = {}
 
             async for chunk in _AsyncIteratorWrapper(self._event_stream):
                 match chunk:
@@ -1315,7 +1315,7 @@ class BedrockStreamedResponse(StreamedResponse):
                             tool_name = tool_use_start['name']
                             if tool_use_start.get('type') == 'server_tool_use':
                                 if tool_name == 'nova_code_interpreter':  # pragma: no branch
-                                    part = BuiltinToolCallPart(
+                                    part = NativeToolCallPart(
                                         tool_name=CodeExecutionTool.kind,
                                         tool_call_id=tool_id,
                                         provider_name=self.provider_name,
@@ -1334,7 +1334,7 @@ class BedrockStreamedResponse(StreamedResponse):
                             tool_id = tool_result_start['toolUseId']
 
                             if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
-                                return_part = BuiltinToolReturnPart(
+                                return_part = NativeToolReturnPart(
                                     provider_name=self.provider_name,
                                     tool_name=CodeExecutionTool.kind,
                                     content=None,

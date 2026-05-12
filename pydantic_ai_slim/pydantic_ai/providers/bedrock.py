@@ -7,8 +7,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -65,7 +65,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
         ).update(profile)
 
     if 'nova-2' in model_name:
-        profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+        profile.supported_native_tools = frozenset({CodeExecutionTool})
 
     return profile
 
@@ -99,7 +99,7 @@ def remove_bedrock_geo_prefix(model_name: str) -> str:
 
 
 def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
+    return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
 
 
 class BedrockProvider(Provider[BaseClient]):

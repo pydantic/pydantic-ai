@@ -15,9 +15,7 @@ from ..messages import (
     AgentStreamEvent,
     BinaryContent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     FileUrl,
@@ -25,6 +23,8 @@ from ..messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -346,8 +346,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_start()`][pydantic_ai.ui.UIEventStream.handle_text_start]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_start()`][pydantic_ai.ui.UIEventStream.handle_thinking_start]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_tool_call_start]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
-        - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
+        - [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
         - [`CompactionPart`][pydantic_ai.messages.CompactionPart] -> [`handle_compaction()`][pydantic_ai.ui.UIEventStream.handle_compaction]
 
@@ -369,10 +369,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_start(part):
                     yield e
-            case BuiltinToolReturnPart():
+            case NativeToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
             case FilePart():
@@ -417,7 +417,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_end()`][pydantic_ai.ui.UIEventStream.handle_text_end]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_end()`][pydantic_ai.ui.UIEventStream.handle_thinking_end]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_tool_call_end]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
 
         Subclasses are encouraged to override the individual `handle_*_end` methods rather than this one.
         If you need specific behavior for all part end events, make sure you call the super method.
@@ -437,10 +437,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+            case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -590,8 +590,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolCallPart` at start.
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolCallPart` at start.
 
         Args:
             part: The builtin tool call part.
@@ -599,8 +599,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle the end of a `BuiltinToolCallPart`.
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle the end of a `NativeToolCallPart`.
 
         Args:
             part: The builtin tool call part.
@@ -608,8 +608,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolReturnPart`.
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolReturnPart`.
 
         Args:
             part: The builtin tool return part.

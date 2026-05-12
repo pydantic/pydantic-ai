@@ -14,17 +14,16 @@ from typing_extensions import assert_never, overload
 from .. import _utils, usage
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
-from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -35,6 +34,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -214,11 +214,11 @@ class FunctionModel(Model):
         return self._system
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """FunctionModel supports all builtin tools for testing flexibility."""
-        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+        from ..native_tools import SUPPORTED_NATIVE_TOOLS
 
-        return SUPPORTED_BUILTIN_TOOLS
+        return SUPPORTED_NATIVE_TOOLS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -284,7 +284,7 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
-BuiltinToolCallsReturns: TypeAlias = dict[int, BuiltinToolCallPart | BuiltinToolReturnPart]
+BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolReturnPart]
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
@@ -344,12 +344,12 @@ class FunctionStreamedResponse(StreamedResponse):
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
-                    elif isinstance(delta, BuiltinToolCallPart):
+                    elif isinstance(delta, NativeToolCallPart):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
-                    elif isinstance(delta, BuiltinToolReturnPart):
+                    elif isinstance(delta, NativeToolReturnPart):
                         if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
@@ -407,9 +407,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
                     response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
+                elif isinstance(part, ToolCallPart | NativeToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):
+                elif isinstance(part, NativeToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])

@@ -20,8 +20,6 @@ from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     ImageUrl,
@@ -30,6 +28,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -484,7 +484,7 @@ class OutlinesModel(Model):
                     elif isinstance(part, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet.
                         pass
-                    elif isinstance(part, ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart):
+                    elif isinstance(part, ToolCallPart | NativeToolCallPart | NativeToolReturnPart):
                         raise UserError('Tool calls are not supported for Outlines models yet.')
                     elif isinstance(part, FilePart):
                         if isinstance(part.content, BinaryContent) and part.content.is_image:

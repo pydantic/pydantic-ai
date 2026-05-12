@@ -4,8 +4,8 @@ Tool search has two execution paths that produce typed message parts:
 
 * **Native server-side** (Anthropic BM25/regex, OpenAI Responses): the provider runs
   the search and emits typed
-  [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart] /
-  [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart].
+  [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] /
+  [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart].
 * **Local fallback** (any provider): the model calls the regular `search_tools`
   function tool; the toolset emits typed
   [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
@@ -14,7 +14,7 @@ Tool search has two execution paths that produce typed message parts:
 User code can match these typed subclasses via `isinstance` (e.g. for UI rendering)
 and synthesize them directly to inject discoveries mid-run.
 
-`synthesize_local_tool_search_messages` translates `BuiltinToolSearch*Part` history
+`synthesize_local_tool_search_messages` translates `NativeToolSearch*Part` history
 into the local-shape typed parts when the next turn runs against a provider
 without native tool-search support, so previously discovered tools remain
 accessible across provider boundaries.
@@ -35,14 +35,14 @@ from ._utils import copy_dataclass_fields
 # types are defined; bind the parts we need at class-definition time directly here, and access
 # the message-level types via `_messages.ModelResponse` etc. at function-call time.
 from .messages import (
-    _BUILTIN_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _BUILTIN_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
+    _NATIVE_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
+    _NATIVE_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -75,7 +75,7 @@ class ToolSearchArgs(TypedDict):
     """Typed arguments for a tool-search call.
 
     Carried on
-    [`BuiltinToolSearchCallPart.args`][pydantic_ai.messages.BuiltinToolSearchCallPart.args]
+    [`NativeToolSearchCallPart.args`][pydantic_ai.messages.NativeToolSearchCallPart.args]
     (native server-side path) and
     [`ToolSearchCallPart.args`][pydantic_ai.messages.ToolSearchCallPart.args]
     (local-fallback path) as the canonical cross-provider shape. Each adapter
@@ -97,7 +97,7 @@ class ToolSearchReturnContent(TypedDict):
     """Typed return value of the framework-managed tool-search builtin.
 
     Carried on
-    [`BuiltinToolSearchReturnPart.content`][pydantic_ai.messages.BuiltinToolSearchReturnPart.content]
+    [`NativeToolSearchReturnPart.content`][pydantic_ai.messages.NativeToolSearchReturnPart.content]
     (native server-side path) and
     [`ToolSearchReturnPart.content`][pydantic_ai.messages.ToolSearchReturnPart.content]
     (local-fallback path) as the canonical cross-provider shape.
@@ -115,16 +115,12 @@ class ToolSearchReturnContent(TypedDict):
     """
 
 
-# When PR #5338 lands and BuiltinToolCallPart/BuiltinToolReturnPart rename to
-# NativeToolCallPart/NativeToolReturnPart, these classes rename to
-# NativeToolSearchCallPart/NativeToolSearchReturnPart. Grep for "BuiltinToolSearch"
-# during the rebase to find affected sites.
 @dataclass(repr=False)
-class BuiltinToolSearchCallPart(BuiltinToolCallPart):
-    """Typed view of a [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] for tool search.
+class NativeToolSearchCallPart(NativeToolCallPart):
+    """Typed view of a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
-    Responses) where the provider executes the search and emits a builtin result.
+    Responses) where the provider executes the search and emits a native result.
     The local-fallback path uses
     [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] instead.
 
@@ -175,14 +171,12 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
         return []
 
 
-# See the rename note above BuiltinToolSearchCallPart — this class renames alongside
-# it when PR #5338 lands (NativeToolSearchReturnPart).
 @dataclass(repr=False)
-class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
-    """Typed view of a [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] for tool search.
+class NativeToolSearchReturnPart(NativeToolReturnPart):
+    """Typed view of a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
-    Responses) where the provider executes the search and emits a builtin result.
+    Responses) where the provider executes the search and emits a native result.
     The local-fallback path uses
     [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] instead.
 
@@ -234,7 +228,7 @@ class ToolSearchCallPart(ToolCallPart):
     Used on the local-fallback path (and as the synthetic-injection target on
     non-native providers receiving cross-provider history). The native server-side
     path uses
-    [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart]
+    [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart]
     instead.
 
     To detect a tool-search part regardless of execution path (native server-side
@@ -291,7 +285,7 @@ class ToolSearchReturnPart(ToolReturnPart):
     Used on the local-fallback path (and as the synthetic-injection target on
     non-native providers receiving cross-provider history). The native server-side
     path uses
-    [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
+    [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
     instead.
 
     To detect a tool-search part regardless of execution path (native server-side
@@ -343,18 +337,18 @@ _TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = 
 )
 
 
-def _narrow_builtin_tool_search_call(part: BuiltinToolCallPart) -> BuiltinToolSearchCallPart:
-    if isinstance(part, BuiltinToolSearchCallPart):
+def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
+    if isinstance(part, NativeToolSearchCallPart):
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool-search')
+    return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
-def _narrow_builtin_tool_search_return(part: BuiltinToolReturnPart) -> BuiltinToolSearchReturnPart:
-    if isinstance(part, BuiltinToolSearchReturnPart):
+def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolSearchReturnPart:
+    if isinstance(part, NativeToolSearchReturnPart):
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
+    return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
 def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
@@ -374,8 +368,8 @@ def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
 # Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
 # so user-defined tools that happen to share `tool_name` with a typed subclass are not
 # accidentally promoted.
-_BUILTIN_CALL_NARROWERS['tool-search'] = _narrow_builtin_tool_search_call
-_BUILTIN_RETURN_NARROWERS['tool-search'] = _narrow_builtin_tool_search_return
+_NATIVE_CALL_NARROWERS['tool-search'] = _narrow_native_tool_search_call
+_NATIVE_RETURN_NARROWERS['tool-search'] = _narrow_native_tool_search_return
 _TOOL_CALL_NARROWERS['tool-search'] = _narrow_tool_search_call
 _TOOL_RETURN_NARROWERS['tool-search'] = _narrow_tool_search_return
 
@@ -387,8 +381,8 @@ _TYPED_PART_TAGS[('builtin-tool-return', 'tool-search')] = 'builtin-tool-search-
 _TYPED_PART_TAGS[('tool-call', 'tool-search')] = 'tool-search-call'
 _TYPED_PART_TAGS[('tool-return', 'tool-search')] = 'tool-search-return'
 
-_TYPED_PART_TAGS_BY_TYPE[BuiltinToolSearchCallPart] = 'builtin-tool-search-call'
-_TYPED_PART_TAGS_BY_TYPE[BuiltinToolSearchReturnPart] = 'builtin-tool-search-return'
+_TYPED_PART_TAGS_BY_TYPE[NativeToolSearchCallPart] = 'builtin-tool-search-call'
+_TYPED_PART_TAGS_BY_TYPE[NativeToolSearchReturnPart] = 'builtin-tool-search-return'
 _TYPED_PART_TAGS_BY_TYPE[ToolSearchCallPart] = 'tool-search-call'
 _TYPED_PART_TAGS_BY_TYPE[ToolSearchReturnPart] = 'tool-search-return'
 
@@ -412,7 +406,7 @@ def _split_response(original: ModelResponse, parts: list[ModelResponsePart], *, 
     )
 
 
-def synthesize_local_from_builtin_call(part: BuiltinToolSearchCallPart) -> ToolSearchCallPart:
+def synthesize_local_from_native_call(part: NativeToolSearchCallPart) -> ToolSearchCallPart:
     """Translate a server-side tool-search call to a local function-tool call.
 
     Preserves `tool_call_id` so the matching return part links up; drops
@@ -424,7 +418,7 @@ def synthesize_local_from_builtin_call(part: BuiltinToolSearchCallPart) -> ToolS
     )
 
 
-def synthesize_local_from_builtin_return(part: BuiltinToolSearchReturnPart) -> ToolSearchReturnPart:
+def synthesize_local_from_native_return(part: NativeToolSearchReturnPart) -> ToolSearchReturnPart:
     """Translate a server-side tool-search return to a local function-tool return.
 
     Preserves `tool_call_id`, `content` (the typed
@@ -442,22 +436,22 @@ def synthesize_local_from_builtin_return(part: BuiltinToolSearchReturnPart) -> T
 
 
 def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Translate any `BuiltinToolSearch*Part` instances in the message history into local equivalents.
+    """Translate any `NativeToolSearch*Part` instances in the message history into local equivalents.
 
     Returns a new list with translated copies of any messages that contain
-    `BuiltinToolSearch*Part`s; messages without such parts are returned
+    `NativeToolSearch*Part`s; messages without such parts are returned
     unchanged (no copy). Suitable for non-native adapters that don't support
     native tool search but need to honor discovered-tool state from prior turns
     on different providers.
 
     A native server-side tool-search exchange is a single `ModelResponse` carrying both
-    `BuiltinToolSearchCallPart` (the call) and `BuiltinToolSearchReturnPart` (the inline
+    `NativeToolSearchCallPart` (the call) and `NativeToolSearchReturnPart` (the inline
     server-side result). Local function-tool execution shapes the same exchange as a pair
     of messages — `ModelResponse(parts=[ToolSearchCallPart(...)])` followed by
     `ModelRequest(parts=[ToolSearchReturnPart(...)])` — because the model produces the
     call and the framework produces the return in a separate request turn.
 
-    Each `BuiltinToolSearchReturnPart` acts as a flush boundary when splitting: parts
+    Each `NativeToolSearchReturnPart` acts as a flush boundary when splitting: parts
     before it (text, the search call itself) become a `ModelResponse`, the return becomes
     a `ModelRequest`, and any parts after it (downstream tool calls, more text) become a
     fresh `ModelResponse`. This preserves the natural turn order — e.g. a native turn
@@ -477,10 +471,10 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
             split_emitted = False  # Tracks whether we've emitted a response from this msg already.
             changed = False
             for part in msg.parts:
-                if isinstance(part, BuiltinToolSearchCallPart):
-                    buffer.append(synthesize_local_from_builtin_call(part))
+                if isinstance(part, NativeToolSearchCallPart):
+                    buffer.append(synthesize_local_from_native_call(part))
                     changed = True
-                elif isinstance(part, BuiltinToolSearchReturnPart):
+                elif isinstance(part, NativeToolSearchReturnPart):
                     # Flush the buffered parts as a `ModelResponse` (skip if empty), then
                     # emit the search return as its own `ModelRequest`. Subsequent parts
                     # start a fresh buffer that becomes the next `ModelResponse`.
@@ -489,7 +483,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                         split_emitted = True
                     out.append(
                         _messages.ModelRequest(
-                            parts=[synthesize_local_from_builtin_return(part)],
+                            parts=[synthesize_local_from_native_return(part)],
                         ),
                     )
                     buffer = []

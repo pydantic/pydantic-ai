@@ -3,14 +3,14 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from ..builtin_tools import (
+from ..native_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
     WebSearchTool,
 )
-from ..builtin_tools._tool_search import ToolSearchTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
 
@@ -147,7 +147,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-4-5',
         )
     )
-    supported_builtin_tools = (
+    supported_native_tools = (
         _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
     )
 
@@ -164,7 +164,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
-        supported_builtin_tools=supported_builtin_tools,
+        supported_native_tools=supported_native_tools,
     )
 
 

@@ -1,7 +1,9 @@
+import warnings
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
-from pydantic_ai.builtin_tools._tool_search import (
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
     ToolSearchLocalStrategy as ToolSearchLocalStrategy,
     ToolSearchNativeStrategy as ToolSearchNativeStrategy,
@@ -29,14 +31,14 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .builtin_or_local import BuiltinOrLocalTool
-from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
+from .native_or_local import NativeOrLocalTool
+from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
@@ -64,7 +66,7 @@ Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.Dynami
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        BuiltinTool,
+        NativeTool,
         ImageGeneration,
         IncludeToolReturnSchemas,
         MCP,
@@ -105,8 +107,8 @@ __all__ = [
     'RawOutput',
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
-    'BuiltinTool',
-    'BuiltinOrLocalTool',
+    'NativeTool',
+    'NativeOrLocalTool',
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'HistoryProcessor',
@@ -137,3 +139,21 @@ __all__ = [
     'Hooks',
     'OutputContext',
 ]
+
+
+_RENAMED_CAPABILITIES: dict[str, str] = {
+    'BuiltinTool': 'NativeTool',
+    'BuiltinOrLocalTool': 'NativeOrLocalTool',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _RENAMED_CAPABILITIES:
+        new_name = _RENAMED_CAPABILITIES[name]
+        warnings.warn(
+            f'`pydantic_ai.capabilities.{name}` is deprecated, use `pydantic_ai.capabilities.{new_name}` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new_name]
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

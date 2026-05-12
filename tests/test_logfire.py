@@ -527,7 +527,7 @@ def test_logfire(
                                 'include_return_schema': None,
                             }
                         ],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1007,7 +1007,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                 snapshot(
                     {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1199,7 +1199,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

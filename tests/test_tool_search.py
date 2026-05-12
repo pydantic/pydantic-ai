@@ -26,25 +26,23 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
-    synthesize_local_from_builtin_call,
+    synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.builtin_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.capabilities import CAPABILITY_TYPES
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
-    BuiltinToolSearchCallPart,
-    BuiltinToolSearchReturnPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     PartStartEvent,
     TextPart,
     ToolPartKind,
@@ -59,6 +57,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
@@ -425,10 +425,10 @@ _CASES = [
 @pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed')
 @pytest.mark.vcr
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
 @pytest.mark.parametrize(
     'case',
@@ -1212,14 +1212,14 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
 @pytest.mark.vcr
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
 async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end against live Anthropic: native BM25 server-side tool search
-    populates `BuiltinToolCallPart` / `BuiltinToolReturnPart`, the model invokes
+    populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes
     the discovered deferred tool by its plain name, and the wire request carries
     `defer_loading: true` on the corpus tools and the `tool_search_tool_bm25`
     builtin.
@@ -1242,11 +1242,11 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     result = await agent.run('What is the current USD to EUR exchange rate?')
 
     # Native server-side tool search auto-promotes to the typed
-    # `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart` subclasses
-    # (which still `isinstance`-match the base `BuiltinToolCallPart` /
-    # `BuiltinToolReturnPart`).
-    builtin_call_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    builtin_return_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    # `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` subclasses
+    # (which still `isinstance`-match the base `NativeToolCallPart` /
+    # `NativeToolReturnPart`).
+    builtin_call_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
+    builtin_return_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
     assert builtin_call_parts and builtin_return_parts
 
     # The model's follow-up tool call for the discovered tool dispatches by its plain
@@ -1452,7 +1452,7 @@ async def test_anthropic_promotes_local_search_history_round_trip(
 
     # No fresh native tool_search exchange after the synthetic history.
     fresh_native_search_calls = [
-        part for msg in result.all_messages() for part in msg.parts if isinstance(part, BuiltinToolSearchCallPart)
+        part for msg in result.all_messages() for part in msg.parts if isinstance(part, NativeToolSearchCallPart)
     ]
     assert fresh_native_search_calls == []
 
@@ -1620,7 +1620,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
         caller=BetaDirectCaller(type='direct'),
     )
     call_part = _map_server_tool_use_block(regex_block, 'anthropic')
-    assert isinstance(call_part, BuiltinToolCallPart)
+    assert isinstance(call_part, NativeToolCallPart)
     assert call_part.provider_details == {'strategy': 'regex'}
     # Cross-provider canonical shape collects the regex into the `queries` slot.
     assert call_part.args == snapshot({'queries': ['weather.*']})
@@ -1643,7 +1643,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
         ModelResponse(
             parts=[
                 call_part,
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     provider_name='anthropic',
                     tool_call_id='srv_r',
                     content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
@@ -1670,7 +1670,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
 
 
 def test_collect_orphan_tool_search_call_ids_pairs_across_responses() -> None:
-    """An orphan is a `BuiltinToolSearchCallPart` with no matching `BuiltinToolSearchReturnPart`
+    """An orphan is a `NativeToolSearchCallPart` with no matching `NativeToolSearchReturnPart`
     *anywhere* in history. Anthropic sometimes delivers the return in a *later* `ModelResponse`
     (deferred-result behavior on the direct API), so the pairing check must span turns."""
     pytest.importorskip('anthropic')
@@ -1680,7 +1680,7 @@ def test_collect_orphan_tool_search_call_ids_pairs_across_responses() -> None:
         # Turn 1: orphan call (paired with a client `ToolCallPart` that ate the turn)
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(args={'queries': ['pay.*']}, tool_call_id='srv_orphan'),
+                NativeToolSearchCallPart(args={'queries': ['pay.*']}, tool_call_id='srv_orphan'),
                 ToolCallPart(tool_name='send_status', args={'message': 'ok'}, tool_call_id='cl_1'),
             ],
         ),
@@ -1689,10 +1689,10 @@ def test_collect_orphan_tool_search_call_ids_pairs_across_responses() -> None:
         ModelResponse(
             parts=[
                 # Anthropic delivers the previous turn's missing search result here.
-                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired'),
                 # ...along with a fresh search round.
-                BuiltinToolSearchCallPart(args={'queries': ['weather.*']}, tool_call_id='srv_paired_2'),
-                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired_2'),
+                NativeToolSearchCallPart(args={'queries': ['weather.*']}, tool_call_id='srv_paired_2'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='srv_paired_2'),
             ],
         ),
     ]
@@ -1732,7 +1732,7 @@ async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_r
         ModelResponse(
             parts=[
                 # Orphan: server tool search emitted in parallel with a client tool, no result delivered.
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     provider_name='anthropic',
                     args={'queries': ['pay.*']},
                     tool_call_id='srv_orphan',
@@ -1885,14 +1885,14 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
         ModelRequest.user_text_prompt('weather please'),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_a',
                     args={'query': 'weather'},
                     provider_details={'strategy': 'bm25'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_a',
@@ -1942,7 +1942,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
 
 def test_anthropic_tool_search_result_error_block_mapping():
     """An error result block (no `tool_references`) produces a
-    `BuiltinToolReturnPart` without discovered tools in its metadata."""
+    `NativeToolReturnPart` without discovered tools in its metadata."""
     pytest.importorskip('anthropic')
 
     error_block = BetaToolSearchToolResultBlock(
@@ -1986,7 +1986,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
     """
     pytest.importorskip('anthropic')
 
-    return_part = BuiltinToolSearchReturnPart(
+    return_part = NativeToolSearchReturnPart(
         provider_name='anthropic',
         tool_call_id='srv_err',
         content={'discovered_tools': []},
@@ -2029,12 +2029,12 @@ def test_openai_map_tool_search_call_unit():
         type='tool_search_output',
     )
     call_part, return_part = _map_tool_search_call(call, output, 'openai')
-    assert isinstance(call_part, BuiltinToolSearchCallPart)
+    assert isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'tool_search'
     # OpenAI server-executed `tool_search.arguments` carries `paths`; the adapter
     # normalizes that into the cross-provider `queries` slot.
     assert call_part.args == {'queries': ['get_exchange_rate']}
-    assert isinstance(return_part, BuiltinToolSearchReturnPart)
+    assert isinstance(return_part, NativeToolSearchReturnPart)
     assert return_part.content == {'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}]}
     assert return_part.provider_details == {'status': 'completed'}
 
@@ -2063,14 +2063,14 @@ def test_openai_map_tool_search_call_unit():
 
 @pytest.mark.vcr
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
 async def test_openai_native_tool_search_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI Responses: native server-executed `tool_search`
-    populates `BuiltinToolCallPart` / `BuiltinToolReturnPart`, the model invokes the
+    populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes the
     discovered deferred tool by its plain name, and the second-turn replay carries
     `defer_loading: true` on the corpus function tool plus a `tool_search_call` item.
     """
@@ -2091,12 +2091,12 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
     result = await agent.run('What is the current USD to EUR exchange rate?')
 
     assert any(
-        isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search'
+        isinstance(p, NativeToolCallPart) and p.tool_name == 'tool_search'
         for m in result.all_messages()
         for p in m.parts
     )
     assert any(
-        isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'tool_search'
+        isinstance(p, NativeToolReturnPart) and p.tool_name == 'tool_search'
         for m in result.all_messages()
         for p in m.parts
     )
@@ -2231,14 +2231,14 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
 
 @pytest.mark.vcr
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
 async def test_anthropic_native_tool_search_streaming(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end streaming against live Anthropic: native BM25 server-side tool search
-    streams `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart` through the part
+    streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` through the part
     manager during ``agent.iter`` + ``node.stream``, the model invokes the discovered
     deferred tool by its plain name, and the agent loop runs to a final text response."""
     pytest.importorskip('anthropic')
@@ -2270,10 +2270,10 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
     # round-trip — the part manager promotes them through the discriminator at
     # `content_block_start` time, not just on final response assembly.
     builtin_call_parts = [
-        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchCallPart)
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, NativeToolSearchCallPart)
     ]
     builtin_return_parts = [
-        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchReturnPart)
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, NativeToolSearchReturnPart)
     ]
     assert builtin_call_parts and builtin_return_parts
 
@@ -2296,14 +2296,14 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
 
 @pytest.mark.vcr
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
 async def test_openai_native_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end streaming against live OpenAI Responses: native server-executed
-    `tool_search` streams `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart`
+    `tool_search` streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart`
     through the part manager during ``agent.iter`` + ``node.stream``, the model invokes
     the discovered deferred tool by its plain name, and the agent loop runs to a final
     text response."""
@@ -2332,10 +2332,10 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
     assert agent_run.result is not None
 
     builtin_call_parts = [
-        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchCallPart)
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, NativeToolSearchCallPart)
     ]
     builtin_return_parts = [
-        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchReturnPart)
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, NativeToolSearchReturnPart)
     ]
     assert builtin_call_parts and builtin_return_parts
 
@@ -2444,7 +2444,7 @@ async def test_openai_client_tool_search_streaming(allow_model_requests: None, o
 
 
 async def test_agent_graph_without_builtin_tools(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Covers `_agent_graph`'s empty `ctx.deps.builtin_tools` branch.
+    """Covers `_agent_graph`'s empty `ctx.deps.native_tools` branch.
 
     Auto-inject always adds `ToolSearchTool`, so the only way to exercise the empty
     branch is to disable auto-inject in the test.
@@ -2457,7 +2457,7 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
 
 
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
-    """Discovery metadata on a `BuiltinToolSearchReturnPart` from a native provider search
+    """Discovery metadata on a `NativeToolSearchReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
 
     toolset = _create_function_toolset()
@@ -2466,7 +2466,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 )
             ]
@@ -2529,7 +2529,7 @@ async def test_tool_search_capability_strategy_callable_registers_custom_builtin
         return []
 
     cap = ToolSearch(strategy=noop)
-    builtins = list(cap.get_builtin_tools())
+    builtins = list(cap.get_native_tools())
     assert len(builtins) == 1
     tool = builtins[0]
     assert isinstance(tool, ToolSearchTool)
@@ -2541,7 +2541,7 @@ async def test_tool_search_capability_strategy_named_registers_builtin():
     must error on models that can't honor the choice rather than silently substituting
     a local algorithm for bm25/regex."""
     cap = ToolSearch(strategy='regex')
-    builtins = list(cap.get_builtin_tools())
+    builtins = list(cap.get_native_tools())
     assert len(builtins) == 1
     tool = builtins[0]
     assert isinstance(tool, ToolSearchTool)
@@ -2553,7 +2553,7 @@ async def test_tool_search_capability_strategy_none_optional_builtin():
     """The default (``None``) strategy registers an optional builtin so the local
     token-matching fallback takes over on models without native support."""
     cap = ToolSearch()
-    builtins = list(cap.get_builtin_tools())
+    builtins = list(cap.get_native_tools())
     assert len(builtins) == 1
     tool = builtins[0]
     assert isinstance(tool, ToolSearchTool)
@@ -2593,7 +2593,7 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
     with pytest.raises(UserError, match='not supported by this model'):
         m.prepare_request(
             None,
-            ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool(strategy='bm25')]),
+            ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(strategy='bm25')]),
         )
 
 
@@ -2663,16 +2663,16 @@ async def test_tool_search_keywords_ignores_builtin_support():
 
     class ToolSearchTestModel(TestModel):
         @classmethod
-        def supported_builtin_tools(cls):
+        def supported_native_tools(cls):
             return frozenset({ToolSearchTool})
 
     m = ToolSearchTestModel()
     search_tool = ToolDefinition(name=_SEARCH_TOOLS_NAME, description='local', parameters_json_schema={})
     _, prepared = m.prepare_request(
         None,
-        ModelRequestParameters(function_tools=[search_tool], builtin_tools=[]),
+        ModelRequestParameters(function_tools=[search_tool], native_tools=[]),
     )
-    assert prepared.builtin_tools == []
+    assert prepared.native_tools == []
     assert [t.name for t in prepared.function_tools] == [_SEARCH_TOOLS_NAME]
 
 
@@ -2692,10 +2692,10 @@ def test_with_builtin_undiscovered_drops_on_unsupported_model():
         None,
         ModelRequestParameters(
             function_tools=[corpus_tool],
-            builtin_tools=[search_builtin],
+            native_tools=[search_builtin],
         ),
     )
-    assert prepared.builtin_tools == []
+    assert prepared.native_tools == []
     assert prepared.function_tools == []
 
 
@@ -2710,10 +2710,10 @@ def test_with_builtin_discovered_kept_on_unsupported_model():
         None,
         ModelRequestParameters(
             function_tools=[corpus_tool],
-            builtin_tools=[ToolSearchTool(optional=True)],
+            native_tools=[ToolSearchTool(optional=True)],
         ),
     )
-    assert prepared.builtin_tools == []
+    assert prepared.native_tools == []
     assert [t.name for t in prepared.function_tools] == ['deferred_tool']
 
 
@@ -2723,7 +2723,7 @@ def test_with_builtin_kept_on_supporting_model():
 
     class ToolSearchTestModel(TestModel):
         @classmethod
-        def supported_builtin_tools(cls):
+        def supported_native_tools(cls):
             return frozenset({ToolSearchTool})
 
     m = ToolSearchTestModel()
@@ -2732,11 +2732,11 @@ def test_with_builtin_kept_on_supporting_model():
         None,
         ModelRequestParameters(
             function_tools=[corpus_tool],
-            builtin_tools=[ToolSearchTool()],
+            native_tools=[ToolSearchTool()],
         ),
     )
     assert [t.name for t in prepared.function_tools] == ['deferred_tool']
-    assert any(isinstance(t, ToolSearchTool) for t in prepared.builtin_tools)
+    assert any(isinstance(t, ToolSearchTool) for t in prepared.native_tools)
 
 
 def test_optional_builtin_dropped_with_empty_corpus():
@@ -2744,21 +2744,21 @@ def test_optional_builtin_dropped_with_empty_corpus():
 
     class ToolSearchTestModel(TestModel):
         @classmethod
-        def supported_builtin_tools(cls):
+        def supported_native_tools(cls):
             return frozenset({ToolSearchTool})
 
     m = ToolSearchTestModel()
     _, prepared = m.prepare_request(
         None,
-        ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool(optional=True)]),
+        ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(optional=True)]),
     )
-    assert prepared.builtin_tools == []
+    assert prepared.native_tools == []
 
 
 def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolCallPart` with `tool_kind='tool-search'`
-    promotes to `BuiltinToolSearchCallPart` via the narrowing registry."""
-    base = BuiltinToolCallPart(
+    """Direct construction of `NativeToolCallPart` with `tool_kind='tool-search'`
+    promotes to `NativeToolSearchCallPart` via the narrowing registry."""
+    base = NativeToolCallPart(
         tool_name='tool_search',
         args={'queries': ['mortgage']},
         tool_call_id='c1',
@@ -2766,44 +2766,44 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
         provider_name='anthropic',
         provider_details={'strategy': 'bm25'},
     )
-    narrowed = BuiltinToolCallPart.narrow_type(base)
-    assert isinstance(narrowed, BuiltinToolSearchCallPart)
+    narrowed = NativeToolCallPart.narrow_type(base)
+    assert isinstance(narrowed, NativeToolSearchCallPart)
     assert narrowed.args == {'queries': ['mortgage']}
     assert narrowed.tool_call_id == 'c1'
     assert narrowed.provider_name == 'anthropic'
     assert narrowed.provider_details == {'strategy': 'bm25'}
 
-    already_narrowed = BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
-    assert BuiltinToolCallPart.narrow_type(already_narrowed) is already_narrowed
+    already_narrowed = NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
+    assert NativeToolCallPart.narrow_type(already_narrowed) is already_narrowed
 
 
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolReturnPart` with `tool_kind='tool-search'`
-    promotes to `BuiltinToolSearchReturnPart` via the narrowing registry."""
-    base = BuiltinToolReturnPart(
+    """Direct construction of `NativeToolReturnPart` with `tool_kind='tool-search'`
+    promotes to `NativeToolSearchReturnPart` via the narrowing registry."""
+    base = NativeToolReturnPart(
         tool_name='tool_search',
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
         tool_kind='tool-search',
         provider_name='anthropic',
     )
-    narrowed = BuiltinToolReturnPart.narrow_type(base)
-    assert isinstance(narrowed, BuiltinToolSearchReturnPart)
+    narrowed = NativeToolReturnPart.narrow_type(base)
+    assert isinstance(narrowed, NativeToolSearchReturnPart)
     assert narrowed.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
 
-    already_narrowed = BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c2')
-    assert BuiltinToolReturnPart.narrow_type(already_narrowed) is already_narrowed
+    already_narrowed = NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c2')
+    assert NativeToolReturnPart.narrow_type(already_narrowed) is already_narrowed
 
 
 def test_narrow_type_unknown_tool_kind_returns_input_unchanged() -> None:
     """Unknown `tool_kind` values aren't promoted (future builtins not yet typed)."""
-    base = BuiltinToolCallPart(
+    base = NativeToolCallPart(
         tool_name='something_unregistered',
         args={},
         tool_call_id='c1',
         tool_kind=cast('ToolPartKind', 'custom_kind'),  # forward-compat: discriminator unknown to the current registry
     )
-    assert BuiltinToolCallPart.narrow_type(base) is base
+    assert NativeToolCallPart.narrow_type(base) is base
 
 
 def test_narrow_type_no_tool_kind_returns_input_unchanged() -> None:
@@ -2813,9 +2813,9 @@ def test_narrow_type_no_tool_kind_returns_input_unchanged() -> None:
     having their parts promoted to typed subclasses that would fail shape validation against
     the typed `args` `TypedDict`.
     """
-    builtin_collision = BuiltinToolCallPart(tool_name='tool_search', args={'foo': 'bar'}, tool_call_id='c1')
+    builtin_collision = NativeToolCallPart(tool_name='tool_search', args={'foo': 'bar'}, tool_call_id='c1')
     assert builtin_collision.tool_kind is None
-    assert BuiltinToolCallPart.narrow_type(builtin_collision) is builtin_collision
+    assert NativeToolCallPart.narrow_type(builtin_collision) is builtin_collision
 
     local_collision = ToolCallPart(tool_name='search_tools', args={'query': 'x'}, tool_call_id='c2')
     assert local_collision.tool_kind is None
@@ -2863,13 +2863,13 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
     }
     [resp] = ModelMessagesTypeAdapter.validate_python([raw])
     assert isinstance(resp, ModelResponse)
-    assert isinstance(resp.parts[0], BuiltinToolSearchCallPart)
-    assert isinstance(resp.parts[1], BuiltinToolSearchReturnPart)
+    assert isinstance(resp.parts[0], NativeToolSearchCallPart)
+    assert isinstance(resp.parts[1], NativeToolSearchReturnPart)
     # Unrecognized `tool_name` (and unset `tool_kind`) falls through to the base class.
-    assert isinstance(resp.parts[2], BuiltinToolCallPart)
-    assert not isinstance(resp.parts[2], BuiltinToolSearchCallPart)
+    assert isinstance(resp.parts[2], NativeToolCallPart)
+    assert not isinstance(resp.parts[2], NativeToolSearchCallPart)
     # User-defined collision on `tool_name='tool_search'` without `tool_kind` stays base.
-    assert type(resp.parts[3]) is BuiltinToolCallPart
+    assert type(resp.parts[3]) is NativeToolCallPart
     assert resp.parts[3].args == {'foo': 'bar'}
 
 
@@ -2878,25 +2878,25 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
 
     resp = ModelResponse(
         parts=[
-            BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1'),
-            BuiltinToolSearchReturnPart(
+            NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1'),
+            NativeToolSearchReturnPart(
                 content={'discovered_tools': [{'name': 'foo', 'description': None}]},
                 tool_call_id='c1',
             ),
-            BuiltinToolCallPart(tool_name='web_search', args={}, tool_call_id='c2'),
+            NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='c2'),
         ]
     )
     [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
     assert isinstance(revalidated, ModelResponse)
-    assert isinstance(revalidated.parts[0], BuiltinToolSearchCallPart)
-    assert isinstance(revalidated.parts[1], BuiltinToolSearchReturnPart)
-    assert isinstance(revalidated.parts[2], BuiltinToolCallPart)
+    assert isinstance(revalidated.parts[0], NativeToolSearchCallPart)
+    assert isinstance(revalidated.parts[1], NativeToolSearchReturnPart)
+    assert isinstance(revalidated.parts[2], NativeToolCallPart)
 
 
 async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name() -> None:
-    """A user-emitted `BuiltinToolReturnPart` with `tool_name='tool_search'` (no typed
+    """A user-emitted `NativeToolReturnPart` with `tool_name='tool_search'` (no typed
     subclass, no `tool_kind`) is left alone — discoveries are only surfaced from typed
-    `BuiltinToolSearchReturnPart` instances. This is the typed-trust contract: the
+    `NativeToolSearchReturnPart` instances. This is the typed-trust contract: the
     framework constructs typed subclasses; user collisions on names alone don't get
     treated as our search payload."""
     base_toolset = FunctionToolset[None]()
@@ -2905,13 +2905,13 @@ async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name(
         ModelResponse(
             parts=[
                 # Framework-emitted: typed subclass surfaces discoveries.
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
                 ),
                 # User collision on the name with a base part — `tool_kind=None`, not a typed
                 # subclass: NOT surfaced.
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='tool_search',
                     content={'discovered_tools': [{'name': 'should_not_surface', 'description': None}]},
                     tool_call_id='c2',
@@ -2947,8 +2947,8 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
         native wire shape."""
 
         @classmethod
-        def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-            return frozenset(super().supported_builtin_tools()) - {ToolSearchTool}
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
 
     toolset: FunctionToolset[None] = FunctionToolset()
 
@@ -3083,7 +3083,7 @@ async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
 
 
 def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> None:
-    """Cross-provider replay end-to-end: a `BuiltinToolSearch*Part` carried over from
+    """Cross-provider replay end-to-end: a `NativeToolSearch*Part` carried over from
     a prior native turn is translated into the local-shape typed parts so a non-native
     adapter can replay it as a normal `search_tools` function-call exchange. The
     toolset's `_parse_discovered_tools` then surfaces the discoveries via the
@@ -3092,13 +3092,13 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args={'queries': ['mortgage']},
                     tool_call_id='c1',
                     provider_name='anthropic',
                     provider_details={'strategy': 'bm25'},
                 ),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
                     provider_name='anthropic',
@@ -3119,9 +3119,9 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     assert len(response.parts) == 1
     call_part = response.parts[0]
     assert isinstance(call_part, ToolSearchCallPart)
-    # Subclass of `ToolCallPart`, NOT `BuiltinToolSearchCallPart`.
+    # Subclass of `ToolCallPart`, NOT `NativeToolSearchCallPart`.
     assert isinstance(call_part, ToolCallPart)
-    assert not isinstance(call_part, BuiltinToolSearchCallPart)
+    assert not isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'search_tools'
     assert call_part.args == {'queries': ['mortgage']}
 
@@ -3130,7 +3130,7 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     return_part = return_request.parts[0]
     assert isinstance(return_part, ToolSearchReturnPart)
     assert isinstance(return_part, ToolReturnPart)
-    assert not isinstance(return_part, BuiltinToolSearchReturnPart)
+    assert not isinstance(return_part, NativeToolSearchReturnPart)
     assert return_part.tool_name == 'search_tools'
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
 
@@ -3190,26 +3190,26 @@ async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
 def test_prepare_messages_translates_on_non_native_model() -> None:
     """`Model.prepare_messages` is the centralized hook that runs before the adapter's
     message-prep on every request. On a model whose profile doesn't include
-    ``ToolSearchTool`` in ``supported_builtin_tools``, the hook translates any prior
+    ``ToolSearchTool`` in ``supported_native_tools``, the hook translates any prior
     server-side tool-search exchange into the local-shape typed parts so the adapter
     sees a normal ``search_tools`` function-call exchange.
 
     The single ``ModelResponse(call+return)`` carrying the inline server-side result
     splits into ``ModelResponse(call) + ModelRequest(return)``."""
-    # Default `TestModel` excludes `ToolSearchTool` from `supported_builtin_tools`.
+    # Default `TestModel` excludes `ToolSearchTool` from `supported_native_tools`.
     model = TestModel()
-    assert ToolSearchTool not in model.profile.supported_builtin_tools
+    assert ToolSearchTool not in model.profile.supported_native_tools
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args={'queries': ['mortgage']},
                     tool_call_id='c1',
                     provider_name='anthropic',
                 ),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
                     provider_name='anthropic',
@@ -3230,41 +3230,41 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     assert len(response.parts) == 1
     call_part = response.parts[0]
     assert isinstance(call_part, ToolSearchCallPart)
-    assert not isinstance(call_part, BuiltinToolSearchCallPart)
+    assert not isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'search_tools'
 
     return_request = prepared[2]
     assert isinstance(return_request, ModelRequest)
     [return_part] = return_request.parts
     assert isinstance(return_part, ToolSearchReturnPart)
-    assert not isinstance(return_part, BuiltinToolSearchReturnPart)
+    assert not isinstance(return_part, NativeToolSearchReturnPart)
     assert return_part.tool_name == 'search_tools'
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
 
 
 def test_prepare_messages_passes_through_on_native_model() -> None:
     """A model whose profile *does* include ``ToolSearchTool`` in
-    ``supported_builtin_tools`` keeps the prior exchange as-is — the native adapter
+    ``supported_native_tools`` keeps the prior exchange as-is — the native adapter
     knows how to ship the typed builtin parts back on the wire."""
 
     class NativeToolSearchTestModel(TestModel):
         @classmethod
-        def supported_builtin_tools(cls):
+        def supported_native_tools(cls):
             return frozenset({ToolSearchTool})
 
     model = NativeToolSearchTestModel()
-    assert ToolSearchTool in model.profile.supported_builtin_tools
+    assert ToolSearchTool in model.profile.supported_native_tools
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args={'queries': ['mortgage']},
                     tool_call_id='c1',
                     provider_name='anthropic',
                 ),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
                     provider_name='anthropic',
@@ -3386,29 +3386,29 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
     assert part.content == 'hello world'
 
 
-def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
+def test_synthesize_local_from_native_call_str_args_passthrough() -> None:
     """Streaming partial-args (`str`) are passed through unchanged when translating."""
 
-    part = BuiltinToolSearchCallPart(args='{"queries":', tool_call_id='c1')
-    result = synthesize_local_from_builtin_call(part)
+    part = NativeToolSearchCallPart(args='{"queries":', tool_call_id='c1')
+    result = synthesize_local_from_native_call(part)
     assert result.args == '{"queries":'
     assert result.tool_call_id == 'c1'
 
 
-def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
+def test_synthesize_local_from_native_call_none_args_falls_through() -> None:
     """`None` args remain `None` after translation."""
 
-    part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1')
-    result = synthesize_local_from_builtin_call(part)
+    part = NativeToolSearchCallPart(args=None, tool_call_id='c1')
+    result = synthesize_local_from_native_call(part)
     assert result.args is None
 
 
 def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
-    """A response with only a `BuiltinToolSearchCallPart` (no return — streaming case)
+    """A response with only a `NativeToolSearchCallPart` (no return — streaming case)
     translates the call but doesn't synthesize a trailing `ModelRequest`."""
 
     history: list[ModelMessage] = [
-        ModelResponse(parts=[BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')]),
+        ModelResponse(parts=[NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')]),
     ]
     result = synthesize_local_tool_search_messages(history)
     assert len(result) == 1
@@ -3419,13 +3419,13 @@ def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
 
 
 def test_synthesize_messages_response_with_only_return_part_no_response_kept() -> None:
-    """A response with only a `BuiltinToolSearchReturnPart` (no remaining parts) — the
+    """A response with only a `NativeToolSearchReturnPart` (no remaining parts) — the
     response is dropped since it'd be empty, and the return is lifted onto a fresh request."""
 
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'foo', 'description': None}]},
                     tool_call_id='c1',
                 ),
@@ -3459,7 +3459,7 @@ def test_synthesize_messages_response_with_search_then_downstream_tool_call_spli
     Currently we keep the downstream `ToolCall(weather)` on the same response as the
     `ToolSearchCall`, which is incoherent (model "called weather before seeing search
     results") and produces consecutive `ModelRequest`s after the lifted return —
-    Devin's observation. Splitting at every `BuiltinToolSearchReturn` boundary fixes
+    Devin's observation. Splitting at every `NativeToolSearchReturn` boundary fixes
     both: the timeline reads correctly and the lifted return doesn't collide with the
     next request.
     """
@@ -3468,12 +3468,12 @@ def test_synthesize_messages_response_with_search_then_downstream_tool_call_spli
         ModelResponse(
             parts=[
                 TextPart(content='Searching first.'),
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args={'queries': ['weather']},
                     tool_call_id='search1',
                     provider_name='anthropic',
                 ),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
                     tool_call_id='search1',
                     provider_name='anthropic',
@@ -3533,8 +3533,8 @@ def test_synthesize_messages_devins_consecutive_request_repro() -> None:
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
-                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+                NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
                 ToolCallPart(tool_name='get_weather', args={}, tool_call_id='w1'),
             ],
         ),
@@ -3556,13 +3556,13 @@ def test_synthesize_messages_multiple_search_rounds_in_one_response() -> None:
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(args={'queries': ['a']}, tool_call_id='s1'),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchCallPart(args={'queries': ['a']}, tool_call_id='s1'),
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'tool_a', 'description': None}]},
                     tool_call_id='s1',
                 ),
-                BuiltinToolSearchCallPart(args={'queries': ['b']}, tool_call_id='s2'),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchCallPart(args={'queries': ['b']}, tool_call_id='s2'),
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'tool_b', 'description': None}]},
                     tool_call_id='s2',
                 ),
@@ -3601,8 +3601,8 @@ def test_synthesize_messages_metadata_kept_on_first_split_only() -> None:
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
-                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+                NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
                 ToolCallPart(tool_name='get_weather', args={}, tool_call_id='w1'),
             ],
             usage=RequestUsage(input_tokens=100, output_tokens=50),
@@ -3641,8 +3641,8 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
-                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+                NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                NativeToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
             ],
         ),
         ModelRequest(parts=[UserPromptPart(content='follow-up')]),
@@ -3689,12 +3689,12 @@ def test_narrow_type_local_return_promotes_with_tool_kind_set() -> None:
 
 def test_narrow_type_no_tool_kind_returns_input_unchanged_for_local_and_builtin_returns() -> None:
     """`narrow_type` is a no-op when `tool_kind` is `None` — the user-tool default —
-    on both `ToolReturnPart` and `BuiltinToolReturnPart`. This is the early-exit
+    on both `ToolReturnPart` and `NativeToolReturnPart`. This is the early-exit
     branch that keeps user tools untouched without consulting the registry."""
     local = ToolReturnPart(tool_name='foo', content='bar', tool_call_id='c1')
     assert ToolReturnPart.narrow_type(local) is local
-    builtin = BuiltinToolReturnPart(tool_name='foo', content='bar', tool_call_id='c1')
-    assert BuiltinToolReturnPart.narrow_type(builtin) is builtin
+    builtin = NativeToolReturnPart(tool_name='foo', content='bar', tool_call_id='c1')
+    assert NativeToolReturnPart.narrow_type(builtin) is builtin
 
 
 def test_model_request_part_discriminator_recognizes_tool_search_return_instance() -> None:
@@ -3754,10 +3754,10 @@ def test_model_response_part_discriminator_recognizes_typed_instances() -> None:
     that changes its short-circuit behavior).
     """
 
-    builtin_call = BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1', provider_name='anthropic')
+    builtin_call = NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1', provider_name='anthropic')
     assert _model_response_part_discriminator(builtin_call) == 'builtin-tool-search-call'
 
-    builtin_return = BuiltinToolSearchReturnPart(
+    builtin_return = NativeToolSearchReturnPart(
         content={'discovered_tools': []},
         tool_call_id='c1',
         provider_name='anthropic',
@@ -3804,16 +3804,14 @@ def test_typed_call_part_accessors_return_typed_shapes() -> None:
     """`typed_args()` and `queries` on typed call parts read the parsed args.
 
     Covers both the local-fallback (`ToolSearchCallPart`) and native server-side
-    (`BuiltinToolSearchCallPart`) variants — they're symmetric.
+    (`NativeToolSearchCallPart`) variants — they're symmetric.
     """
 
     local_call = ToolSearchCallPart(args={'queries': ['weather', 'github']}, tool_call_id='c1')
     assert local_call.typed_args() == {'queries': ['weather', 'github']}
     assert local_call.queries == ['weather', 'github']
 
-    builtin_call = BuiltinToolSearchCallPart(
-        args={'queries': ['weather']}, tool_call_id='c2', provider_name='anthropic'
-    )
+    builtin_call = NativeToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='c2', provider_name='anthropic')
     assert builtin_call.typed_args() == {'queries': ['weather']}
     assert builtin_call.queries == ['weather']
 
@@ -3828,26 +3826,26 @@ def test_typed_call_part_queries_returns_empty_for_unparsed_args() -> None:
     none_part = ToolSearchCallPart(args=None, tool_call_id='c1')
     assert none_part.queries == []
 
-    builtin_none = BuiltinToolSearchCallPart(args=None, tool_call_id='c2', provider_name='anthropic')
+    builtin_none = NativeToolSearchCallPart(args=None, tool_call_id='c2', provider_name='anthropic')
     assert builtin_none.queries == []
 
 
 def test_builtin_tool_search_return_part_message_accessor() -> None:
-    """`message` on `BuiltinToolSearchReturnPart` reads `content.get('message')`.
+    """`message` on `NativeToolSearchReturnPart` reads `content.get('message')`.
 
     The native server-side path doesn't currently populate `message` (Anthropic emits
     its own error/result blocks), so this accessor exists for symmetry with the local
     return part. Exercise it directly to lock in the contract.
     """
 
-    with_message = BuiltinToolSearchReturnPart(
+    with_message = NativeToolSearchReturnPart(
         content={'discovered_tools': [], 'message': 'no matches'},
         tool_call_id='c1',
         provider_name='anthropic',
     )
     assert with_message.message == 'no matches'
 
-    without_message = BuiltinToolSearchReturnPart(
+    without_message = NativeToolSearchReturnPart(
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c2',
         provider_name='anthropic',
@@ -3927,7 +3925,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
     )
     assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
 
-    native_part = BuiltinToolSearchReturnPart(
+    native_part = NativeToolSearchReturnPart(
         provider_name='anthropic',
         tool_call_id='srv_ok',
         content=content,
@@ -3948,7 +3946,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_a
     contract guarantees `queries`, so re-running normalization would corrupt the data."""
     pytest.importorskip('anthropic')
 
-    part = BuiltinToolSearchCallPart(
+    part = NativeToolSearchCallPart(
         args={'queries': ['mortgage']},
         tool_call_id='c1',
         provider_name='anthropic',
@@ -3962,7 +3960,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_none_args() -> N
     """`args=None` finalizes to a normalized empty `queries` list."""
     pytest.importorskip('anthropic')
 
-    part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
+    part = NativeToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
     result = _finalize_streamed_tool_search_call_part(part)
     assert isinstance(result.args, dict) and 'queries' in result.args
 
@@ -3996,7 +3994,7 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
     ]
     params = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[ToolSearchTool(strategy='custom')],
+        native_tools=[ToolSearchTool(strategy='custom')],
         allow_text_output=True,
     )
     _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
@@ -4015,7 +4013,7 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
 
 
 async def test_anthropic_map_message_replays_tool_search_call_without_queries():
-    """A `BuiltinToolSearchCallPart` with `args=None` (streaming partial state, or a
+    """A `NativeToolSearchCallPart` with `args=None` (streaming partial state, or a
     history fragment that never carried args) falls through to forwarding the empty
     `args_as_dict()` to the wire `input`. Covers the `else: wire_input = args_dict`
     branch where the cross-provider `queries` slot isn't populated."""
@@ -4028,7 +4026,7 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args=None,
                     tool_call_id='srv_1',
                     provider_name='anthropic',
@@ -4036,7 +4034,7 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
                 ),
                 # Pair the call with a return so the orphan-drop pass keeps the call on the wire —
                 # this test only exercises the `args=None` code path, not orphan handling.
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': []},
                     tool_call_id='srv_1',
                     provider_name='anthropic',
@@ -4046,7 +4044,7 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
     ]
     params = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[ToolSearchTool(strategy='bm25')],
+        native_tools=[ToolSearchTool(strategy='bm25')],
         allow_text_output=True,
     )
     _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
@@ -4146,7 +4144,7 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
     # reference unlocks its schema server-side.
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
-        builtin_tools=[ToolSearchTool()],
+        native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
 
@@ -4196,7 +4194,7 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='calculate', defer_loading=True)],
-        builtin_tools=[ToolSearchTool(strategy='bm25')],
+        native_tools=[ToolSearchTool(strategy='bm25')],
         allow_text_output=True,
     )
 
@@ -4267,7 +4265,7 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
     # `tool_search_output.tools[]` schema by name.
     params = ModelRequestParameters(
         function_tools=[discovered_tool],
-        builtin_tools=[ToolSearchTool()],
+        native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
 
@@ -4334,12 +4332,12 @@ def test_tool_search_strategy_keywords_registers_builtin_for_client_execution() 
     """`ToolSearch(strategy='keywords')` must register `ToolSearchTool(strategy='custom',
     optional=True)` so the client-executed native path engages on supporting providers.
 
-    Currently fails because `get_builtin_tools` returns `[]` for `'keywords'`,
+    Currently fails because `get_native_tools` returns `[]` for `'keywords'`,
     forcing the local-fallback path on every provider — losing the cache benefit
     that the client-executed native path provides on Anthropic and OpenAI.
     """
     cap: ToolSearch[None] = ToolSearch(strategy='keywords')
-    builtins = cap.get_builtin_tools()
+    builtins = cap.get_native_tools()
     assert len(builtins) == 1
     [builtin] = builtins
     assert isinstance(builtin, ToolSearchTool)
@@ -4354,7 +4352,7 @@ def test_tool_search_strategy_keywords_registers_builtin_for_client_execution() 
 async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> None:
     """Multi-hop chain: Anthropic-native turn 1 → local turn 2 (Google etc.) → OpenAI turn 3.
 
-    The persisted history at turn 3 carries BOTH a `BuiltinToolSearch*Part` from the
+    The persisted history at turn 3 carries BOTH a `NativeToolSearch*Part` from the
     Anthropic turn AND a `ToolSearch*Part` from the local turn. OpenAI's adapter must
     promote both into native `tool_search_call`+`tool_search_output` items so the
     discovered tools' schemas stay unlocked across the entire chain — the model
@@ -4383,16 +4381,16 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     # Turn 3 on OpenAI: should promote BOTH discoveries to native wire.
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
-        # Anthropic-native (turn 1) — `BuiltinToolSearch*Part`.
+        # Anthropic-native (turn 1) — `NativeToolSearch*Part`.
         ModelResponse(
             parts=[
-                BuiltinToolSearchCallPart(
+                NativeToolSearchCallPart(
                     args={'queries': ['weather']},
                     tool_call_id='ant_1',
                     provider_name='anthropic',
                     provider_details={'strategy': 'bm25'},
                 ),
-                BuiltinToolSearchReturnPart(
+                NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
                     tool_call_id='ant_1',
                     provider_name='anthropic',
@@ -4416,7 +4414,7 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
 
     params = ModelRequestParameters(
         function_tools=[weather, calc],
-        builtin_tools=[ToolSearchTool()],
+        native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
 

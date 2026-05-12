@@ -20,7 +20,7 @@ specific model's support for the framework-managed tool-search builtin:
 and is dropped by the adapter when the builtin is supported. When the capability commits
 to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
 constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
-way `_resolve_builtin_tool_swap` raises on providers that can't honor the builtin, and
+way `_resolve_native_tool_swap` raises on providers that can't honor the builtin, and
 the wire stays clean (just the native tool) on those that can.
 """
 
@@ -39,19 +39,19 @@ from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
-from ..builtin_tools._tool_search import (
+from ..exceptions import ModelRetry, UserError
+from ..messages import (
+    ModelRequest,
+    NativeToolSearchReturnPart,
+    ToolReturnPart,
+    ToolSearchReturnPart,
+)
+from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
     ToolSearchMatch,
     ToolSearchReturnContent,
     ToolSearchTool,
-)
-from ..exceptions import ModelRetry, UserError
-from ..messages import (
-    BuiltinToolSearchReturnPart,
-    ModelRequest,
-    ToolReturnPart,
-    ToolSearchReturnPart,
 )
 from ..tools import Tool, ToolDefinition
 from .abstract import ToolsetTool
@@ -225,7 +225,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
     capability commits to a named-native strategy that has no local equivalent (e.g.
-    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_builtin_tool_swap` raises
+    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_native_tool_swap` raises
     on providers that can't honor the builtin, instead of silently substituting the local
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
@@ -258,7 +258,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # current discovery state); `defer_loading` reflects current visibility — flipped
         # to `False` once the tool is discovered. `Model.prepare_request` reads both
         # flags together to decide what reaches the wire (see the four-rule filter in
-        # `_resolve_builtin_tool_swap`).
+        # `_resolve_native_tool_swap`).
         for name, tool in deferred.items():
             managed_def = replace(
                 tool.tool_def,
@@ -327,7 +327,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         """Scan message history for previously-discovered tool names.
 
         Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
-        [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
+        [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
         in the history has a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]:
         Pydantic's discriminator dispatch promotes from base parts on deserialization,
         and direct construction goes through the typed-class `__init__` (which Pydantic
@@ -351,7 +351,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         self._collect_legacy(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
-                    if isinstance(part, BuiltinToolSearchReturnPart):
+                    if isinstance(part, NativeToolSearchReturnPart):
                         self._collect_typed(part.content, discovered)
         return discovered
 

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .._run_context import AgentDepsT
-from ..builtin_tools._tool_search import (
+from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
     ToolSearchStrategy,
@@ -14,12 +14,12 @@ from ..builtin_tools._tool_search import (
 )
 
 # `ToolDefinition` is referenced via forward-string from `ToolSearchFunc`
-# (defined in `builtin_tools/_tool_search.py`, where it can't be eagerly imported because
-# of the `tools.py` ↔ `builtin_tools` circular). Import it eagerly here so dataclass-spec
+# (defined in `native_tools/_tool_search.py`, where it can't be eagerly imported because
+# of the `tools.py` ↔ `native_tools` circular). Import it eagerly here so dataclass-spec
 # generation (`get_type_hints` on `ToolSearch.__init__`) can resolve the forward reference
 # against this module's globals.
 from ..tools import (
-    AgentBuiltinTool,
+    AgentNativeTool,
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
@@ -143,7 +143,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         # `'keywords'` and a callable strategy both register the `'custom'` builtin so
         # the provider's "client-executed" native mode engages where supported (cache
         # benefit on Anthropic and OpenAI), and silently fall back to the local
@@ -170,7 +170,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # For explicit named native strategies (`'bm25'` / `'regex'`) the
         # `ToolSearchTool` builtin is registered with `optional=False` (see
-        # `get_builtin_tools` above), so `prepare_request` will raise on a model
+        # `get_native_tools` above), so `prepare_request` will raise on a model
         # without native support. To make that raise actually fire — and to avoid
         # emitting a redundant `search_tools` function tool alongside the native
         # builtin on supported providers — the toolset must NOT emit the local

@@ -1,4 +1,4 @@
-"""Internals for the tool-search builtin.
+"""Internals for the tool-search native tool.
 
 Tool search lets the model discover tools marked with `defer_loading=True` rather
 than carrying every deferred tool's full schema in the prompt. The
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Literal, Union
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import ToolSearchArgs, ToolSearchMatch, ToolSearchReturnContent
-from . import AbstractBuiltinTool
+from . import AbstractNativeTool
 
 if TYPE_CHECKING:
     from ..tools import ToolDefinition
@@ -100,10 +100,10 @@ blocks; OpenAI `execution='client'`)."""
 
 
 @dataclass(kw_only=True)
-class ToolSearchTool(AbstractBuiltinTool):
+class ToolSearchTool(AbstractNativeTool):
     """Framework-internal: users access tool search via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability — do not construct directly.
 
-    A builtin tool that enables native provider tool search.
+    A native tool that enables provider-side tool search.
 
     Tools marked as part of the search corpus (via `with_builtin='tool_search'`
     on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
@@ -139,7 +139,7 @@ class ToolSearchTool(AbstractBuiltinTool):
     our side. The user-facing [`ToolSearchStrategy`][pydantic_ai.capabilities.ToolSearchStrategy]
     union (in the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) does not
     include `'custom'` — users pass the callable directly and the capability sets
-    `strategy='custom'` on the builtin internally.
+    `strategy='custom'` on the native tool internally.
 
     * `None` (default): use the provider's default native search. On Anthropic this is
       `bm25`; on OpenAI it is the server-executed `tool_search` tool.
