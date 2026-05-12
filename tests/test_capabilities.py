@@ -1119,6 +1119,11 @@ All types must be serializable using Pydantic.\
                             'default': None,
                             'title': 'Max Content Tokens',
                         },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'UrlContextTool',
                     'type': 'object',
@@ -1146,6 +1151,11 @@ All types must be serializable using Pydantic.\
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Max Content Tokens',
+                        },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
                         },
                     },
                     'title': 'WebFetchTool',
@@ -1178,6 +1188,11 @@ All types must be serializable using Pydantic.\
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Max Uses',
+                        },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
                         },
                     },
                     'title': 'WebSearchTool',
@@ -1528,6 +1543,10 @@ Supported by:
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'spec_params_WebFetch',
                     'type': 'object',
@@ -1557,6 +1576,10 @@ Supported by:
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
@@ -6315,6 +6338,7 @@ def test_web_fetch_with_constraints():
         max_uses=5,
         enable_citations=True,
         max_content_tokens=1000,
+        dynamic_filtering=True,
     )
     builtin_tools = cap.get_builtin_tools()
     assert len(builtin_tools) == 1
@@ -6325,7 +6349,8 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Only max_uses requires builtin (domains are handled locally)
+    assert tool.dynamic_filtering is True
+    # `max_uses` and `dynamic_filtering` require builtin; domains are handled locally.
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -6352,6 +6377,7 @@ def test_web_search_with_constraints():
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
+        dynamic_filtering=True,
     )
     builtin_tools = cap.get_builtin_tools()
     assert len(builtin_tools) == 1
@@ -6362,7 +6388,17 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
+    assert tool.dynamic_filtering is True
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_tool_dynamic_filtering_requires_builtin():
+    """Dynamic filtering is builtin-only and must not be silently dropped by local fallback."""
+    with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+        WebSearch(builtin=False, dynamic_filtering=True)
+
+    with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+        WebFetch(builtin=False, dynamic_filtering=True)
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):

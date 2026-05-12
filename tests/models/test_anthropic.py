@@ -10911,6 +10911,86 @@ Fix the errors and try again.\
     )
 
 
+def _anthropic_vcr_request_body(vcr: Any) -> dict[str, Any]:
+    assert len(vcr.requests) == 1
+    return json.loads(vcr.requests[0].body)
+
+
+def _anthropic_vcr_beta_header(vcr: Any) -> str:
+    headers = cast(dict[str, str | list[str]], {key.lower(): value for key, value in vcr.requests[0].headers.items()})
+    header_value = headers.get('anthropic-beta', '')
+    if isinstance(header_value, list):
+        return ','.join(header_value)
+    return str(header_value)
+
+
+@pytest.mark.vcr()
+async def test_anthropic_dynamic_filtering_auto_detection(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool(), WebFetchTool(), CodeExecutionTool()])
+
+    result = await agent.run('Reply with exactly: ok')
+
+    assert result.output
+    request_body = _anthropic_vcr_request_body(vcr)
+    tool_types = {tool['type'] for tool in request_body['tools']}
+    assert 'web_search_20260209' in tool_types
+    assert 'web_fetch_20260209' in tool_types
+    assert 'web-fetch-2025-09-10' not in _anthropic_vcr_beta_header(vcr)
+
+
+@pytest.mark.vcr()
+async def test_anthropic_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            WebSearchTool(dynamic_filtering=True),
+            WebFetchTool(dynamic_filtering=True),
+            CodeExecutionTool(),
+        ],
+    )
+
+    result = await agent.run('Reply with exactly: ok')
+
+    assert result.output
+    request_body = _anthropic_vcr_request_body(vcr)
+    tool_types = {tool['type'] for tool in request_body['tools']}
+    assert 'web_search_20260209' in tool_types
+    assert 'web_fetch_20260209' in tool_types
+    assert 'web-fetch-2025-09-10' not in _anthropic_vcr_beta_header(vcr)
+
+
+@pytest.mark.vcr()
+async def test_anthropic_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            WebSearchTool(dynamic_filtering=False),
+            WebFetchTool(dynamic_filtering=False),
+            CodeExecutionTool(),
+        ],
+    )
+
+    result = await agent.run('Reply with exactly: ok')
+
+    assert result.output
+    request_body = _anthropic_vcr_request_body(vcr)
+    tool_types = {tool['type'] for tool in request_body['tools']}
+    assert 'web_search_20250305' in tool_types
+    assert 'web_fetch_20250910' in tool_types
+    assert 'web-fetch-2025-09-10' in _anthropic_vcr_beta_header(vcr)
+
+
+async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_requests: None):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-api-key'))
+    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=True)])
+
+    with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
+        await agent.run('hello')
+
+
 async def test_stream_cancel(allow_model_requests: None):
     stream = [
         BetaRawMessageStartEvent(

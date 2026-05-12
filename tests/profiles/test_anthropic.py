@@ -26,7 +26,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
 pytestmark = [
@@ -293,3 +293,9 @@ def test_model_profile_opus():
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
     assert profile.supports_json_schema_output is True
+
+
+def test_model_profile_opus_47_supports_dynamic_filtering():
+    profile = anthropic_model_profile('claude-opus-4-7')
+    assert isinstance(profile, AnthropicModelProfile)
+    assert profile.anthropic_supports_dynamic_filtering is True
