@@ -132,7 +132,10 @@ pytestmark = pytest.mark.anyio
 MOCK_API_KEYS: dict[str, str] = {
     'OPENAI_API_KEY': 'mock-api-key',
     'ANTHROPIC_API_KEY': 'mock-api-key',
-    'GOOGLE_API_KEY': 'mock-api-key',
+    # google-gla checks GEMINI_API_KEY only. Mocking GOOGLE_API_KEY would shadow a real
+    # GEMINI_API_KEY in .env because the google-genai SDK prefers GOOGLE_API_KEY when both
+    # are present, so re-recording against real credentials would silently use the mock.
+    'GEMINI_API_KEY': 'mock-api-key',
 }
 
 
@@ -209,28 +212,33 @@ if evals_available():
 
 
 def _extract_tool_calls(result: AgentRunResult[str]) -> list[str]:
+    """Extract tool-call names across both local and native tool-search paths.
+
+    Normalizes native tool-search calls (`NativeToolSearchCallPart`, `tool_name='tool_search'`)
+    to `'search_tools'` so the evaluator sees the same name regardless of which path the
+    active provider took.
+    """
     tool_calls: list[str] = []
     for msg in result.all_messages():
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    tool_calls.append(part.tool_name)
+                if isinstance(part, (ToolCallPart, NativeToolCallPart)):
+                    name = 'search_tools' if part.tool_kind == 'tool-search' else part.tool_name
+                    tool_calls.append(name)
     return tool_calls
 
 
 def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
-    """Extract parsed keyword args dicts from search_tools calls.
-
-    Matches on `tool_name == 'search_tools'` rather than `isinstance(ToolSearchCallPart)`
-    because tooling that builds the part from the wire (e.g. legacy cassettes) may not
-    set `tool_kind` and so won't promote to the typed subclass; the local function-tool
-    name is the durable contract here.
-    """
+    """Extract parsed args dicts from tool-search calls across local and native paths."""
     args_list: list[dict[str, str]] = []
     for msg in result.all_messages():
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
-                if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools' and part.args is not None:
+                if (
+                    isinstance(part, (ToolCallPart, NativeToolCallPart))
+                    and part.tool_kind == 'tool-search'
+                    and part.args is not None
+                ):
                     parsed = json.loads(part.args) if isinstance(part.args, str) else part.args
                     args_list.append({k: str(v) for k, v in parsed.items()})
     return args_list
@@ -370,12 +378,13 @@ _CASES = [
         model_name='anthropic:claude-sonnet-4-5',
         marks=[
             pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
-            # TODO(re-record before merge): claude-sonnet-4-5 currently declines to use
-            # native `tool_search_tool_bm25` for the exchange-rate / stock-price prompts
-            # on this corpus, so the cassette captures empty tool_calls. The cassette
-            # needs re-recording (likely with a slightly stronger prompt or once
-            # Anthropic's native tool-search prompting is more compelling).
-            pytest.mark.xfail(reason='cassette needs re-recording; model declining native tool_search'),
+            # Sonnet 4.5 declines to call `tool_search_tool_bm25` for the vague
+            # `exchange_rate` prompt — answers from training rather than searching.
+            # Model behavior, not credentials (cassette records successfully). Removing
+            # this xfail requires either prompt-engineering the eval cases or having the
+            # ToolSearch capability auto-inject a search-first system instruction — both
+            # out of scope for this PR.
+            pytest.mark.xfail(reason='Sonnet 4.5 declines native tool_search without explicit guidance'),
         ],
         scenario_summary=snapshot(
             {
@@ -396,26 +405,22 @@ _CASES = [
         model_name='google-gla:gemini-3-flash-preview',
         marks=[
             pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
-            # TODO(re-record before merge): cassette needs re-recording against a Google
-            # API key valid for the `google-gla` provider (the dev-env key in
-            # `GEMINI_API_KEY` is project-scoped to the wrong project for google-gla).
-            # This is the highest-value eval case after the OpenAI/Anthropic native-mode
-            # shift -- it's the only provider that still exercises the *local* search
-            # path end-to-end.
-            pytest.mark.xfail(reason='cassette needs re-recording with valid GOOGLE_API_KEY for google-gla'),
         ],
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': 'USD to EUR exchange rate current',
+                    'keywords': "['currency exchange rate', 'USD to EUR', 'forex rates']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': 'stock price finance market',
+                    'keywords': "['stock price', 'finance data', 'AAPL stock']",
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {'keywords': None, 'tool_calls': []},
-                'no_matching_tool': {'keywords': 'flight booking search reservation', 'tool_calls': ['search_tools']},
+                'no_matching_tool': {
+                    'keywords': "['flight booking', 'search flights', 'book flight']",
+                    'tool_calls': ['search_tools', 'search_tools'],
+                },
             }
         ),
     ),
@@ -3819,22 +3824,34 @@ def test_typed_call_part_accessors_return_typed_shapes() -> None:
 def test_typed_call_part_typed_args_returns_none_for_unparsed_args() -> None:
     """`typed_args` returns `None` when args haven't been finalized yet.
 
-    Covers the streaming-partial path: `args=None` and partial JSON strings both
-    yield `None` (the contract for streaming-not-yet-ready). Once finalized into
-    a dict, `typed_args` is the validated `ToolSearchArgs`.
+    Covers the streaming-partial path: `args=None`, partial JSON strings, and
+    non-dict JSON values all yield `None` (the contract for streaming-not-yet-ready
+    or unexpected shapes). Exercises both typed call part subclasses.
     """
 
-    none_part = ToolSearchCallPart(args=None, tool_call_id='c1')
-    assert none_part.typed_args is None
-    assert none_part.queries == []
+    for cls in (ToolSearchCallPart, NativeToolSearchCallPart):
+        kwargs: dict[str, Any] = {'tool_call_id': 'c1'}
+        if cls is NativeToolSearchCallPart:
+            kwargs['provider_name'] = 'anthropic'
 
-    partial_part = ToolSearchCallPart(args='{"queries": ["wea', tool_call_id='c1')
-    assert partial_part.typed_args is None
-    assert partial_part.queries == []
+        none_part = cls(args=None, **kwargs)
+        assert none_part.typed_args is None
+        assert none_part.queries == []
 
-    builtin_none = NativeToolSearchCallPart(args=None, tool_call_id='c2', provider_name='anthropic')
-    assert builtin_none.typed_args is None
-    assert builtin_none.queries == []
+        # Partial JSON string raises during parsing → None.
+        partial_part = cls(args='{"queries": ["wea', **kwargs)
+        assert partial_part.typed_args is None
+        assert partial_part.queries == []
+
+        # Valid JSON that parses to a non-dict (e.g. a bare string) → None.
+        scalar_part = cls(args='"just a string"', **kwargs)
+        assert scalar_part.typed_args is None
+        assert scalar_part.queries == []
+
+        # Valid JSON dict → typed_args populated.
+        complete_part = cls(args='{"queries": ["x"]}', **kwargs)
+        assert complete_part.typed_args == {'queries': ['x']}
+        assert complete_part.queries == ['x']
 
 
 def test_builtin_tool_search_return_part_message_accessor() -> None:

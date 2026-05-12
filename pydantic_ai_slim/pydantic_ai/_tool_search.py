@@ -23,7 +23,7 @@ accessible across provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, Union, cast
 
 import pydantic
 import pydantic_core
@@ -165,7 +165,7 @@ class NativeToolSearchCallPart(NativeToolCallPart):
         if self.args is None:
             return None
         if isinstance(self.args, dict):
-            return cast('ToolSearchArgs', self.args)
+            return self.args
         try:
             parsed = pydantic_core.from_json(self.args)
         except ValueError:
@@ -287,7 +287,7 @@ class ToolSearchCallPart(ToolCallPart):
         if self.args is None:
             return None
         if isinstance(self.args, dict):
-            return cast('ToolSearchArgs', self.args)
+            return self.args
         try:
             parsed = pydantic_core.from_json(self.args)
         except ValueError:
