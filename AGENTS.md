@@ -99,6 +99,10 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+# v2 work in progress
+
+The repo is currently driving toward a v2 release with breaking changes. If you're opening a PR that contributes to v2, read [V2-RULES.md](V2-RULES.md) end-to-end before drafting — it covers PR shapes (`v2:prep` vs `v2:exec`), branch naming, the card system, and the cross-cutting rules from pair reviews (no repo-wide `filterwarnings`, change-log-ready titles, `provider.name` message-history compat, capability over hook, `changelog.md` anchoring, etc.).
+
 # Coding Guidelines
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.

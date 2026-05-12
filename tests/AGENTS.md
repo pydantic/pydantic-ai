@@ -2,6 +2,12 @@
 
 # tests/ Guidelines
 
+## v2 deprecation tests
+
+Tests for new v2 `DeprecationWarning`s (and the symbols / prefixes / kwargs they steer users toward) live in **`tests/v2/test_<theme>.py`**, not at the top level. The folder is pruned together when v2 is cut.
+
+Existing tests that exercise the now-deprecated path stay where they are. Migrate them to the new API when possible. When the test's job is to cover the deprecated path, use a **per-test** `@pytest.mark.filterwarnings('ignore::DeprecationWarning')` (or wrap with `pytest.warns(DeprecationWarning, match=...)` when asserting the warning fires). Do **not** add the warning to `pyproject.toml`'s repo-wide `filterwarnings` list — see [V2-RULES.md](../V2-RULES.md) rule 1 for the full reasoning.
+
 ## Testing
 
 <!-- rule:177 -->
