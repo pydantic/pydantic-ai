@@ -495,7 +495,8 @@ def test_agent_from_spec_builtin_tools_kwarg_deprecated():
             builtin_tools=[WebSearchTool()],
         )
 
-    web_search: list[WebSearchTool] = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    all_native: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    web_search = [t for t in all_native if isinstance(t, WebSearchTool)]
     assert len(web_search) == 1
 
 
@@ -514,7 +515,8 @@ def test_agent_from_file_builtin_tools_kwarg_deprecated(tmp_path: Any):
             builtin_tools=[WebSearchTool()],
         )
 
-    web_search: list[WebSearchTool] = [t for t in agent._cap_native_tools if isinstance(t, WebSearchTool)]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    all_native: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    web_search = [t for t in all_native if isinstance(t, WebSearchTool)]
     assert len(web_search) == 1
 
 

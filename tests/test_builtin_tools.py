@@ -178,7 +178,7 @@ def test_unless_builtin_model_does_not_support():
     from pydantic_ai.profiles import ModelProfile
     from pydantic_ai.tools import ToolDefinition
 
-    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
     fallback_tool = ToolDefinition(name='my_search', description='Search', unless_builtin='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
