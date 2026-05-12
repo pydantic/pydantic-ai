@@ -58,8 +58,9 @@ class Instrumentation(AbstractCapability[Any]):
     or implicitly via `Agent(instrument=True)`), this capability creates OpenTelemetry
     spans for the agent run, model requests, and tool executions.
 
-    Other capabilities can add attributes to these spans using the standard OpenTelemetry
-    API: `opentelemetry.trace.get_current_span().set_attribute(key, value)`.
+    Other capabilities can add attributes to these spans using either the OpenTelemetry API
+    (`opentelemetry.trace.get_current_span().set_attribute(key, value)`) or the Logfire SDK
+    (`logfire.current_span().set_attribute(key, value)`).
     """
 
     settings: InstrumentationSettings
@@ -73,9 +74,14 @@ class Instrumentation(AbstractCapability[Any]):
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
+    # Resolved once from `self.settings.version` in `__post_init__` and preserved across
+    # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
     )
+
+    def __post_init__(self) -> None:
+        self._instrumentation_names = InstrumentationNames.for_version(self.settings.version)
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
@@ -91,7 +97,6 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
-        inst._instrumentation_names = InstrumentationNames.for_version(self.settings.version)
         return inst
 
     # ------------------------------------------------------------------
@@ -273,7 +278,11 @@ class Instrumentation(AbstractCapability[Any]):
         record_metrics: Callable[[], None] | None = None
         try:
             with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
-
+                # `finish` is a closure rather than inline so we can (a) set result attributes
+                # inside the `with span:` block — they attach to the span — and (b) call the
+                # captured `record_metrics` in the outer `finally` AFTER the span closes,
+                # so observability backends that aggregate metrics from span attributes
+                # don't double-count.
                 def finish(response: ModelResponse) -> None:
                     nonlocal record_metrics
 
