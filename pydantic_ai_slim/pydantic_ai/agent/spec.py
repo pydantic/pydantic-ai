@@ -63,7 +63,13 @@ class AgentSpec(BaseModel):
     output_retries: int | None = None
     end_strategy: EndStrategy = 'early'
     tool_timeout: float | None = None
-    instrument: bool | None = None
+    instrument: bool | None = Field(
+        default=None,
+        deprecated=(
+            '`instrument` is deprecated. Add an `Instrumentation` entry to `capabilities` instead. '
+            'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.'
+        ),
+    )
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
 

@@ -246,7 +246,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -278,7 +277,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -308,7 +306,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -369,13 +366,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
-            instrument: Set to True to automatically instrument with OpenTelemetry,
-                which will use Logfire if it's configured.
-                Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
-                If this isn't set, then the last value set by
-                [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
-                will be used, which defaults to False.
-                See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
             metadata: Optional metadata to store with each run.
                 Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
@@ -433,7 +423,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self.instrument = instrument
+        self.instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -572,7 +562,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -605,7 +594,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -637,7 +625,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -676,7 +663,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: Toolsets to register with the agent.
             defer_model_check: Defer model evaluation until first run.
             end_strategy: Strategy for tool calls alongside a final result, overrides spec `end_strategy` if provided.
-            instrument: Instrumentation settings, overrides spec `instrument` if provided.
             metadata: Metadata to store with each run, overrides spec `metadata` if provided.
             history_processors: Processors for message history.
             event_stream_handler: Handler for streaming events.
@@ -691,6 +677,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
         )
+        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
@@ -721,7 +708,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
             )
 
-        return Agent(
+        agent = Agent(
             model=effective_model,
             output_type=effective_output_type,
             instructions=merged_instructions or None,
@@ -745,7 +732,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy if end_strategy is not None else validated_spec.end_strategy,
-            instrument=instrument if instrument is not None else validated_spec.instrument,
             metadata=metadata if metadata is not None else validated_spec.metadata,
             history_processors=history_processors,
             event_stream_handler=event_stream_handler,
@@ -753,6 +739,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
+        # `instrument` is deprecated as a top-level field on both `Agent` and `AgentSpec` in favor of an
+        # `Instrumentation` capability entry; still respect any legacy value by writing through to the
+        # attribute, which keeps the existing resolution flow in `iter()` working unchanged. Read the
+        # spec field only when set so we don't trigger Pydantic's deprecation warning for users who
+        # didn't opt in.
+        if instrument is not None:
+            agent.instrument = instrument
+        elif 'instrument' in validated_spec.model_fields_set:
+            agent.instrument = validated_spec.instrument
+        return agent
 
     @overload
     @classmethod
@@ -778,7 +774,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -812,7 +807,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -845,7 +839,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
         metadata: AgentMetadata[Any] | None = None,
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
@@ -867,6 +860,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
         )
+        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: Sequence[AgentCapability[Any]] | None
         if extra_capabilities:
@@ -875,7 +869,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             merged_capabilities = capabilities
 
         spec = AgentSpec.from_file(path, fmt=fmt)
-        return cls.from_spec(
+        agent = cls.from_spec(
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
@@ -895,7 +889,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy,
-            instrument=instrument,
             metadata=metadata,
             history_processors=history_processors,
             event_stream_handler=event_stream_handler,
@@ -903,6 +896,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities,
         )
+        # Apply the (deprecated) `Agent.from_file(instrument=...)` kwarg after construction so the
+        # warning fires exactly once here; the spec's `instrument` field has already been honored
+        # inside `from_spec` (with its own Pydantic deprecation warning if it was set).
+        if instrument is not None:
+            agent.instrument = instrument
+        return agent
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:

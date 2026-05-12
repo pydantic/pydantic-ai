@@ -51,12 +51,13 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Instrumentation, NativeTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -3327,8 +3328,7 @@ web_search_builtin_override_model = _WebSearchOnlyModel(
 # Agent initialized with model that doesn't support builtins, but has builtin tools configured
 builtins_in_workflow_agent = Agent(
     no_builtin_support_model,
-    capabilities=[NativeTool(WebSearchTool())],
-    instrument=True,
+    capabilities=[NativeTool(WebSearchTool()), Instrumentation(settings=InstrumentationSettings())],
     name='builtins_in_workflow',
 )
 

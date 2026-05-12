@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -117,10 +118,19 @@ def test_logfire(
     if instrument:
         toolset = InstrumentedToolset(toolset)
 
+    capabilities = (
+        [
+            Instrumentation(
+                settings=instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()
+            )
+        ]
+        if instrument
+        else []
+    )
     my_agent = Agent(
         model=TestModel(),
         toolsets=[toolset],
-        instrument=instrument,
+        capabilities=capabilities,
         metadata={'env': 'test'},
     )
 
@@ -568,7 +578,11 @@ def test_logfire_metadata_values(
     metadata: dict[str, Any] | Callable[[RunContext[Any]], dict[str, Any]],
     expected: dict[str, Any],
 ) -> None:
-    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata=metadata)
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        metadata=metadata,
+    )
     agent.run_sync('Hello')
 
     summary = get_logfire_summary()
@@ -577,7 +591,11 @@ def test_logfire_metadata_values(
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata={'env': 'base'})
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        metadata={'env': 'base'},
+    )
     with agent.override(metadata={'env': 'override'}):
         agent.run_sync('Hello')
 
@@ -597,7 +615,11 @@ def test_instructions_with_structured_output(
     class MyOutput:
         content: str
 
-    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=instrument)
+    my_agent = Agent(
+        model=TestModel(),
+        instructions='Here are some instructions',
+        capabilities=[Instrumentation(settings=instrument)],
+    )
 
     result = my_agent.run_sync('Hello', output_type=MyOutput)
     assert result.output == MyOutput(content='a')
@@ -815,7 +837,9 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
 
     settings: InstrumentationSettings = InstrumentationSettings(include_content=False)
 
-    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=settings)
+    my_agent = Agent(
+        model=TestModel(), instructions='Here are some instructions', capabilities=[Instrumentation(settings=settings)]
+    )
 
     result = my_agent.run_sync('Hello', output_type=MyOutput)
     assert result.output == snapshot(MyOutput(content='a'))
@@ -911,7 +935,9 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
 
     settings: InstrumentationSettings = InstrumentationSettings(include_content=False, version=version)
 
-    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=settings)
+    my_agent = Agent(
+        model=TestModel(), instructions='Here are some instructions', capabilities=[Instrumentation(settings=settings)]
+    )
 
     result = my_agent.run_sync('Hello', output_type=MyOutput)
     assert result.output == MyOutput(content='a')
@@ -1118,7 +1144,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
         )
 
     settings = InstrumentationSettings(use_aggregated_usage_attribute_names=True)
-    agent = Agent(model=FunctionModel(model_function), instrument=settings)
+    agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation(settings=settings)])
 
     await agent.run('Hello')
 
@@ -1163,7 +1189,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
 async def test_feedback(capfire: CaptureLogfire) -> None:
     from logfire.experimental.annotations import record_feedback
 
-    my_agent = Agent(model=TestModel(), instrument=True)
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
 
     async with my_agent.iter('Hello') as agent_run:
         async for _ in agent_run:
@@ -1311,7 +1337,7 @@ def test_include_tool_args_span_attributes(
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
     test_model = TestModel(seed=42)
-    my_agent = Agent(model=test_model, instrument=instrumentation_settings)
+    my_agent = Agent(model=test_model, capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     @my_agent.tool_plain
     async def add_numbers(x: int, y: int) -> int:
@@ -1475,7 +1501,16 @@ def test_logfire_output_function_v2_v3(
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrument)
+    capabilities = (
+        [
+            Instrumentation(
+                settings=instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()
+            )
+        ]
+        if instrument
+        else []
+    )
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=capabilities)
     result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
 
@@ -1601,7 +1636,7 @@ def test_output_type_function_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -1676,7 +1711,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=get_weather_with_ctx)
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -1759,7 +1794,7 @@ def test_output_type_function_with_retry_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('New York City', output_type=get_weather_with_retry)
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -1848,7 +1883,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     from pydantic_ai.output import ToolOutput
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=ToolOutput(get_weather_info, name='get_weather'))
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -1930,7 +1965,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=weather.get_weather)
     assert result.output == Weather(temperature=28.7, description='sunny')
@@ -2013,7 +2048,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=weather.get_weather)
     assert result.output == Weather(temperature=28.7, description='sunny')
@@ -2091,7 +2126,7 @@ def test_output_type_async_function_logfire_attributes(
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('Mexico City', output_type=get_weather_async)
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -2172,7 +2207,9 @@ def test_text_output_function_logfire_attributes(
         return ModelResponse(parts=[TextPart(content='hello world')])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_text_response), instrument=instrumentation_settings)
+    my_agent = Agent(
+        model=FunctionModel(call_text_response), capabilities=[Instrumentation(settings=instrumentation_settings)]
+    )
 
     result = my_agent.run_sync('Say hello', output_type=TextOutput(upcase_text))
     assert result.output == 'HELLO WORLD'
@@ -2248,7 +2285,9 @@ def test_prompted_output_function_logfire_attributes(
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
     agent = Agent(
-        model=FunctionModel(call_tool), instrument=instrumentation_settings, output_type=PromptedOutput(upcase_text)
+        model=FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=instrumentation_settings)],
+        output_type=PromptedOutput(upcase_text),
     )
 
     result = agent.run_sync('test')
@@ -2332,7 +2371,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
         return ModelResponse(parts=[TextPart(content=city)])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_tool), capabilities=[Instrumentation(settings=instrumentation_settings)])
 
     result = my_agent.run_sync('New York City', output_type=TextOutput(get_weather_with_retry))
     assert result.output == WeatherInfo(temperature=28.7, description='sunny')
@@ -2414,7 +2453,7 @@ def test_static_function_instructions_in_agent_run_span(
     class MyOutput:
         content: str
 
-    my_agent = Agent(model=TestModel(), instrument=instrument)
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=instrument)])
 
     @my_agent.instructions
     def instructions():
@@ -2640,7 +2679,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
     class MyOutput:
         content: str
 
-    my_agent = Agent(model=TestModel(), instrument=instrument)
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=instrument)])
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
@@ -2922,7 +2961,7 @@ def test_function_instructions_with_history_in_agent_run_span(
     class MyOutput:
         content: str
 
-    my_agent = Agent(model=TestModel(), instrument=instrument)
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=instrument)])
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
@@ -3191,7 +3230,7 @@ def test_function_instructions_with_history_in_agent_run_span(
 async def test_run_stream(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
 ) -> None:
-    my_agent = Agent(model=TestModel(), instrument=instrument)
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=instrument)])
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
@@ -3370,7 +3409,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=2),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
     )
 
     @agent.tool_plain
@@ -3431,7 +3470,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=2),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
     )
 
     @agent.tool_plain
@@ -3492,7 +3531,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=5),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
     )
 
     @agent.tool_plain
@@ -3540,7 +3579,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=5),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
     )
 
     @agent.tool_plain
@@ -3588,7 +3627,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=5),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
     )
 
     @agent.tool_plain
@@ -3642,7 +3681,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        instrument=InstrumentationSettings(version=5),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
     )
 
     @agent.tool_plain
@@ -3693,7 +3732,7 @@ async def test_agent_description(capfire: CaptureLogfire) -> None:
         model=TestModel(),
         name='my_agent',
         description='An agent that greets users',
-        instrument=True,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
     )
     assert agent.description == 'An agent that greets users'
 
@@ -3710,7 +3749,9 @@ async def test_agent_description(capfire: CaptureLogfire) -> None:
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> None:
-    agent = Agent(model=TestModel(), name='my_agent', instrument=True)
+    agent = Agent(
+        model=TestModel(), name='my_agent', capabilities=[Instrumentation(settings=InstrumentationSettings())]
+    )
     assert agent.description is None
 
     await agent.run('Hello')
@@ -3728,7 +3769,7 @@ def test_instrumentation_capability_with_model_settings(
     agent = Agent(
         model=TestModel(),
         model_settings={'temperature': 0.5, 'max_tokens': 100},
-        instrument=True,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
     )
     agent.run_sync('Hello')
 
@@ -3841,10 +3882,14 @@ async def test_instrumentation_capability_with_noop_tracer() -> None:
 
     agent = Agent(
         model=TestModel(),
-        instrument=InstrumentationSettings(
-            tracer_provider=NoOpTracerProvider(),
-            logger_provider=NoOpLoggerProvider(),
-        ),
+        capabilities=[
+            Instrumentation(
+                settings=InstrumentationSettings(
+                    tracer_provider=NoOpTracerProvider(),
+                    logger_provider=NoOpLoggerProvider(),
+                )
+            )
+        ],
     )
     result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
@@ -3874,8 +3919,7 @@ async def test_instrument_combines_with_outermost_and_innermost_capabilities() -
 
     agent = Agent(
         model=TestModel(),
-        instrument=True,
-        capabilities=[OutermostCap(), InnermostCap()],
+        capabilities=[OutermostCap(), InnermostCap(), Instrumentation(settings=InstrumentationSettings())],
     )
     result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
@@ -3899,7 +3943,9 @@ def test_output_function_call_deferred_recorded_as_error(
 
     from pydantic_ai.exceptions import CallDeferred
 
-    my_agent = Agent(model=FunctionModel(call_text_response), instrument=True)
+    my_agent = Agent(
+        model=FunctionModel(call_text_response), capabilities=[Instrumentation(settings=InstrumentationSettings())]
+    )
     with pytest.raises(CallDeferred):
         my_agent.run_sync('anything', output_type=TextOutput(defer_text))
 
