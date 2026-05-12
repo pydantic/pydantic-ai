@@ -22,13 +22,14 @@ accessible across provider boundaries.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from . import messages as _messages
+from ._utils import copy_dataclass_fields
 
 # `messages.py` imports this module before its `ModelMessage` / `ModelRequest` / `ModelResponse`
 # types are defined; bind the parts we need at class-definition time directly here, and access
@@ -38,6 +39,8 @@ from .messages import (
     _BUILTIN_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
+    _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
+    _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     ToolCallPart,
@@ -340,44 +343,32 @@ _TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = 
 )
 
 
-def _copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
-    """Construct a new dataclass instance from `src`'s fields, overriding selected ones.
-
-    Lets typed-part narrowers stay maintainable when fields are added to the base
-    class — `BaseToolCallPart` / `BaseToolReturnPart` field changes flow through automatically
-    instead of needing every narrower to be updated by hand.
-    """
-    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
-    field_values.update(overrides)
-    return dst_cls(**field_values)
-
-
 def _narrow_builtin_tool_search_call(part: BuiltinToolCallPart) -> BuiltinToolSearchCallPart:
     if isinstance(part, BuiltinToolSearchCallPart):
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return _copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool-search')
+    return copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
 def _narrow_builtin_tool_search_return(part: BuiltinToolReturnPart) -> BuiltinToolSearchReturnPart:
     if isinstance(part, BuiltinToolSearchReturnPart):
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return _copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
+    return copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
 def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
     if isinstance(part, ToolSearchCallPart):
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return _copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
+    return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
 def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
     if isinstance(part, ToolSearchReturnPart):
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return _copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
+    return copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
 # Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
@@ -387,6 +378,19 @@ _BUILTIN_CALL_NARROWERS['tool-search'] = _narrow_builtin_tool_search_call
 _BUILTIN_RETURN_NARROWERS['tool-search'] = _narrow_builtin_tool_search_return
 _TOOL_CALL_NARROWERS['tool-search'] = _narrow_tool_search_call
 _TOOL_RETURN_NARROWERS['tool-search'] = _narrow_tool_search_return
+
+# Register typed-part discriminator tags so `messages._model_request_part_discriminator` /
+# `_model_response_part_discriminator` can route serialized dicts and Python instances to
+# the right typed subclass without hard-coded if/elif chains.
+_TYPED_PART_TAGS[('builtin-tool-call', 'tool-search')] = 'builtin-tool-search-call'
+_TYPED_PART_TAGS[('builtin-tool-return', 'tool-search')] = 'builtin-tool-search-return'
+_TYPED_PART_TAGS[('tool-call', 'tool-search')] = 'tool-search-call'
+_TYPED_PART_TAGS[('tool-return', 'tool-search')] = 'tool-search-return'
+
+_TYPED_PART_TAGS_BY_TYPE[BuiltinToolSearchCallPart] = 'builtin-tool-search-call'
+_TYPED_PART_TAGS_BY_TYPE[BuiltinToolSearchReturnPart] = 'builtin-tool-search-return'
+_TYPED_PART_TAGS_BY_TYPE[ToolSearchCallPart] = 'tool-search-call'
+_TYPED_PART_TAGS_BY_TYPE[ToolSearchReturnPart] = 'tool-search-return'
 
 
 def _split_response(original: ModelResponse, parts: list[ModelResponsePart], *, first: bool) -> ModelResponse:

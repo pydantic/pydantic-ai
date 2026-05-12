@@ -802,10 +802,10 @@ class ToolDefinition:
     # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
     # the typed subclass + narrower under pydantic_ai/<your_builtin>.py and registering
     # in _TOOL_CALL_NARROWERS / _BUILTIN_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
-    # _BUILTIN_RETURN_NARROWERS, (3) wiring up the typed subclass in the
-    # _model_request_part_discriminator / _model_response_part_discriminator functions
-    # in messages.py, and (4) extending the ModelResponsePart / ModelRequestPart
-    # Annotated unions with the new typed subclasses.
+    # _BUILTIN_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
+    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
+    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
+    # the new typed subclasses.
     tool_kind: ToolPartKind | None = None
     """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
 

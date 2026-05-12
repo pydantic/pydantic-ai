@@ -1938,6 +1938,22 @@ _TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
 _TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
 
 
+_TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
+"""Registry: (part_kind, tool_kind) → Tag string for the typed subclass.
+
+Populated by each typed-builtin module (e.g. `pydantic_ai._tool_search`) alongside its
+narrower registrations. The discriminator functions look up this dict to dispatch typed
+parts during deserialization without hard-coded if/elif chains.
+"""
+
+_TYPED_PART_TAGS_BY_TYPE: dict[type, str] = {}
+"""Registry: typed subclass → Tag string.
+
+Mirror of `_TYPED_PART_TAGS` for already-constructed Python instances (vs. dicts being
+deserialized). Same population pattern.
+"""
+
+
 # Typed subclasses + narrowers + cross-provider history translation live in their own
 # module to keep this file focused on the base part shapes. Imported here so the
 # discriminator unions below can reference them and so import-time registration of
@@ -1956,23 +1972,28 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
 
-    `ToolReturnPart` and its typed subclass
-    [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] (the local
-    `search_tools` function return) share `part_kind='tool-return'`. Pick the narrower
-    subclass when the framework-emitter discriminator
-    [`tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] is set, so user-defined
-    tools that happen to share the framework's `tool_name` aren't accidentally promoted.
+    Typed subclasses register their `(part_kind, tool_kind) → Tag` entries in
+    `_TYPED_PART_TAGS` (for dict-deserialization) and `_TYPED_PART_TAGS_BY_TYPE`
+    (for already-constructed instances). Falls through to the base `part_kind`
+    when no typed-subclass tag is registered.
+
+    Dispatching by `tool_kind` rather than `tool_name` means a user's regular tool
+    that happens to share a `tool_name` with a framework-emitted one deserializes
+    safely as a base part (no accidental promotion / shape-validation failure).
     """
     if isinstance(v, dict):
-        kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'tool-return' and tool_kind == 'tool-search':
-            return 'tool-search-return'
+        v_dict = cast(dict[str, Any], v)
+        kind = v_dict.get('part_kind')
+        tool_kind = v_dict.get('tool_kind')
+        if isinstance(kind, str) and isinstance(tool_kind, str):
+            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
+            if tag is not None:
+                return tag
         return kind if isinstance(kind, str) else None
-    elif isinstance(v, ToolSearchReturnPart):
-        return 'tool-search-return'
-    else:
-        return getattr(v, 'part_kind', None)
+    for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
+        if isinstance(v, cls):
+            return tag
+    return getattr(v, 'part_kind', None)
 
 
 ModelRequestPart = Annotated[
@@ -1989,38 +2010,28 @@ ModelRequestPart = Annotated[
 def _model_response_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
 
-    Three pairs of part kinds share their `part_kind` with a typed subclass:
+    Typed subclasses register their `(part_kind, tool_kind) → Tag` entries in
+    `_TYPED_PART_TAGS` (for dict-deserialization) and `_TYPED_PART_TAGS_BY_TYPE`
+    (for already-constructed instances). Falls through to the base `part_kind`
+    when no typed-subclass tag is registered.
 
-    * `'tool-call'` → `ToolCallPart` *or* `ToolSearchCallPart` (framework-emitted local
-      `search_tools` call)
-    * `'builtin-tool-call'` → `BuiltinToolCallPart` *or* `BuiltinToolSearchCallPart`
-    * `'builtin-tool-return'` → `BuiltinToolReturnPart` *or* `BuiltinToolSearchReturnPart`
-
-    Pick the narrower subclass when the framework-emitter discriminator
-    [`tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind] is set; otherwise fall
-    through to the base class. Dispatching by `tool_kind` rather than `tool_name` means a
-    user's regular tool that happens to be called e.g. `search_tools` deserializes safely
-    as a base `ToolCallPart` (no accidental promotion / shape-validation failure).
+    Dispatching by `tool_kind` rather than `tool_name` means a user's regular tool
+    that happens to share a `tool_name` with a framework-emitted one deserializes
+    safely as a base part (no accidental promotion / shape-validation failure).
     """
     if isinstance(v, dict):
-        kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'builtin-tool-call' and tool_kind == 'tool-search':
-            return 'builtin-tool-search-call'
-        elif kind == 'builtin-tool-return' and tool_kind == 'tool-search':
-            return 'builtin-tool-search-return'
-        elif kind == 'tool-call' and tool_kind == 'tool-search':
-            return 'tool-search-call'
-        else:
-            return kind if isinstance(kind, str) else None
-    elif isinstance(v, BuiltinToolSearchCallPart):
-        return 'builtin-tool-search-call'
-    elif isinstance(v, BuiltinToolSearchReturnPart):
-        return 'builtin-tool-search-return'
-    elif isinstance(v, ToolSearchCallPart):
-        return 'tool-search-call'
-    else:
-        return getattr(v, 'part_kind', None)
+        v_dict = cast(dict[str, Any], v)
+        kind = v_dict.get('part_kind')
+        tool_kind = v_dict.get('tool_kind')
+        if isinstance(kind, str) and isinstance(tool_kind, str):
+            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
+            if tag is not None:
+                return tag
+        return kind if isinstance(kind, str) else None
+    for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
+        if isinstance(v, cls):
+            return tag
+    return getattr(v, 'part_kind', None)
 
 
 ModelResponsePart = Annotated[
