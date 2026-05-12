@@ -994,30 +994,20 @@ def test_model_supported_builtin_tools_classmethod_deprecated_on_base():
 
 
 def test_google_profile_supports_native_output_with_builtin_tools_constructor_deprecated():
-    """`GoogleModelProfile(google_supports_native_output_with_builtin_tools=...)` warns and routes to the renamed field."""
+    """`GoogleModelProfile(google_supports_native_output_with_builtin_tools=...)` warns and routes to the replacement flag.
+
+    `google_supports_native_output_with_builtin_tools` was replaced by the broader
+    `google_supports_tool_combination` flag — see `GoogleModelProfile.__post_init__`.
+    """
     from pydantic_ai.profiles.google import GoogleModelProfile
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`GoogleModelProfile\(google_supports_native_output_with_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `google_supports_native_output_with_native_tools=`',
+        match=r'`google_supports_native_output_with_builtin_tools` is deprecated, '
+        r'use `google_supports_tool_combination` instead',
     ):
-        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)  # pyright: ignore[reportCallIssue]
-    assert profile.google_supports_native_output_with_native_tools is True
-
-
-def test_google_profile_supports_native_output_with_builtin_tools_attribute_deprecated():
-    """Reading `GoogleModelProfile.google_supports_native_output_with_builtin_tools` warns and returns the renamed field."""
-    from pydantic_ai.profiles.google import GoogleModelProfile
-
-    profile = GoogleModelProfile(google_supports_native_output_with_native_tools=True)
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`GoogleModelProfile\.google_supports_native_output_with_builtin_tools` is deprecated, '
-        r'use `\.google_supports_native_output_with_native_tools`',
-    ):
-        result = profile.google_supports_native_output_with_builtin_tools
-    assert result is profile.google_supports_native_output_with_native_tools is True
+        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
+    assert profile.google_supports_tool_combination is True
 
 
 def test_openai_responses_settings_openai_builtin_tools_key_deprecated():
@@ -1307,22 +1297,6 @@ def test_model_profile_replace_with_supported_builtin_tools_routes_to_supported_
     ):
         profile2 = replace(profile, supported_builtin_tools=frozenset())
     assert profile2.supported_native_tools == frozenset()
-
-
-def test_google_profile_replace_with_supports_native_output_with_builtin_tools_routes_to_native():
-    """`replace(profile, google_supports_native_output_with_builtin_tools=...)` round-trips through the renamed field."""
-    from dataclasses import replace
-
-    from pydantic_ai.profiles.google import GoogleModelProfile
-
-    profile = GoogleModelProfile(google_supports_native_output_with_native_tools=False)
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`GoogleModelProfile\(google_supports_native_output_with_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `google_supports_native_output_with_native_tools=`',
-    ):
-        profile2 = replace(profile, google_supports_native_output_with_builtin_tools=True)
-    assert profile2.google_supports_native_output_with_native_tools is True
 
 
 def test_native_or_local_tool_replace_with_builtin_routes_to_native():

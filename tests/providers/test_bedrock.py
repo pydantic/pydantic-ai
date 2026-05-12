@@ -39,6 +39,20 @@ def test_bedrock_provider(env: TestEnv):
     assert provider.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
 
 
+def test_bedrock_provider_client_setter(env: TestEnv):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+    original_client = provider.client
+
+    env.set('AWS_DEFAULT_REGION', 'us-west-2')
+    new_client = BedrockProvider().client
+    provider.client = new_client
+
+    assert provider.client is new_client
+    assert provider.client is not original_client
+    assert provider.base_url == 'https://bedrock-runtime.us-west-2.amazonaws.com'
+
+
 def test_bedrock_provider_bearer_token_env_var(env: TestEnv, mocker: MockerFixture):
     """Test that AWS_BEARER_TOKEN_BEDROCK env var is used for bearer token auth."""
     env.set('AWS_DEFAULT_REGION', 'us-east-1')

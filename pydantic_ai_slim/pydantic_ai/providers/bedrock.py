@@ -117,6 +117,16 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BaseClient:
         return self._client
 
+    @client.setter
+    def client(self, client: BaseClient) -> None:
+        """Replace the underlying boto3 client.
+
+        Useful for rotating short-lived credentials (e.g. temporary STS credentials) in a long-running service:
+        construct a fresh `bedrock-runtime` client and assign it here, and every [`BedrockConverseModel`]
+        [pydantic_ai.models.bedrock.BedrockConverseModel] using this provider will pick it up.
+        """
+        self._client = client
+
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
