@@ -39,6 +39,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
@@ -1596,7 +1597,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         '    @app.post("/")\n'
         '    async def run_agent(request):\n'
         '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
-        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.'
+        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.',
+        category=PydanticAIDeprecationWarning,
     )
     def to_ag_ui(
         self,
@@ -1688,7 +1690,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
         # one warning from `to_ag_ui()` itself, not a second one from internal construction.
         with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=DeprecationWarning)
+            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=PydanticAIDeprecationWarning)
             return AGUIApp(  # pyright: ignore[reportDeprecated]
                 agent=self,
                 # Agent.iter parameters

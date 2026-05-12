@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal
 
 from . import DeferredToolResults
+from ._warnings import PydanticAIDeprecationWarning
 from .agent import AbstractAgent
 from .agent.abstract import AgentMetadata
 from .messages import ModelMessage
@@ -46,7 +47,7 @@ warnings.warn(
     '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
     '(`handle_ag_ui_request` and `run_ag_ui` are removed in 2.0 — call `AGUIAdapter.dispatch_request()` directly.) '
     'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.',
-    DeprecationWarning,
+    PydanticAIDeprecationWarning,
     stacklevel=2,
 )
 

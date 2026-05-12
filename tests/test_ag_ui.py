@@ -55,6 +55,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
@@ -114,7 +115,7 @@ with try_import() as imports_successful:
     # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
     with warnings.catch_warnings():
         warnings.filterwarnings(
-            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=DeprecationWarning
+            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
         )
         from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
 
@@ -2357,7 +2358,9 @@ async def test_concurrent_runs() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.filterwarnings('ignore:`Agent.to_ag_ui\\(\\)` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings(
+    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_to_ag_ui() -> None:
     """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
 

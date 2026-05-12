@@ -9,6 +9,7 @@ from typing import Any, Generic
 from typing_extensions import Self, deprecated
 
 from pydantic_ai import DeferredToolResults
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
@@ -50,7 +51,8 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         '    async def run_agent(request):\n'
         '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
         '    app = Starlette(routes=[Route("/", run_agent, methods=["POST"])])\n'
-        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.'
+        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.',
+        category=PydanticAIDeprecationWarning,
     )
     def __init__(
         self,
