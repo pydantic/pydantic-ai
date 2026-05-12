@@ -119,6 +119,20 @@ def test_init():
     assert m.model_name == 'gpt-4o'
 
 
+async def test_openai_chat_max_tokens_defaults_to_max_completion_tokens(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=123))
+
+    result = await agent.run('hello')
+
+    assert result.output == 'world'
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request_kwargs['max_completion_tokens'] == 123
+    assert 'max_tokens' not in request_kwargs
+
+
 @pytest.mark.parametrize(
     'aspect_ratio,size,expected',
     [

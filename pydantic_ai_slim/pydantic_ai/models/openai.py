@@ -929,7 +929,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stream=stream,
                     stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                     stop=model_settings.get('stop_sequences', OMIT),
-                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    max_tokens=(
+                        model_settings.get('max_tokens', OMIT)
+                        if profile.openai_chat_max_tokens_parameter == 'max_tokens'
+                        else OMIT
+                    ),
+                    max_completion_tokens=(
+                        model_settings.get('max_tokens', OMIT)
+                        if profile.openai_chat_max_tokens_parameter == 'max_completion_tokens'
+                        else OMIT
+                    ),
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
