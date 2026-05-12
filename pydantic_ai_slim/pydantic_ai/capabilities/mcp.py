@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import cached_property
@@ -7,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
@@ -67,10 +70,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # relying on the default — passing only `local=False` today gives native-only behavior,
         # but in v2 that combo will raise "both can't be False" without an explicit `native=True`.
         if native is None:
-            import warnings
-
-            from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
             warnings.warn(
                 'MCP() defaults will change in v2: it will run the MCP server locally instead of '
                 "preferring the model's native MCP support. To keep the current native-preferred "
@@ -121,8 +120,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return self._build_local()
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        from pydantic_ai.exceptions import UserError
-
         if name is True:
             local = self._build_local()
             if local is None:

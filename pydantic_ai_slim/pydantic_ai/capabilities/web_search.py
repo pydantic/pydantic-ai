@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -87,8 +88,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             # behavior to warn about. If the model also doesn't support the native tool, the
             # user will hit a clear UserError at request time with `local=…` migration hints.
             return None
-
-        import warnings
 
         warnings.warn(
             'WebSearch will stop auto-selecting DuckDuckGo based on package availability in v2. '

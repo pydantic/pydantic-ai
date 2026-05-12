@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
@@ -87,10 +90,6 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             # user will hit a clear UserError at request time with `local=…` migration hints.
             return None
 
-        import warnings
-
-        from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
         warnings.warn(
             'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
             'availability in v2. To keep this fallback, pass `local=True`. '
@@ -104,8 +103,6 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        from pydantic_ai.exceptions import UserError
-
         if name is True:
             try:
                 from pydantic_ai.common_tools.web_fetch import web_fetch_tool
