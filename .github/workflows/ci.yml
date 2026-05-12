@@ -16,6 +16,13 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  # PRs: one group per ref so newer pushes cancel superseded in-flight runs.
+  # push/tag: one group per run_id so main and tag runs never share a group
+  # (avoids GitHub's pending-run cancellation between distinct main commits).
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: lint
@@ -79,7 +86,7 @@ jobs:
 
       - run: tree -sh site
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
+      - run: npm ci
         working-directory: docs-site
       - run: npm run typecheck
         working-directory: docs-site
@@ -141,6 +148,7 @@ jobs:
       - run: uv sync --only-dev
 
       - name: cache HuggingFace models
+        if: matrix.python-version != '3.14' && (matrix.install.name == 'standard' || matrix.install.name == 'all-extras')
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/huggingface
@@ -197,6 +205,7 @@ jobs:
       - run: uv sync --group dev
 
       - name: cache HuggingFace models
+        if: matrix.python-version != '3.14'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/huggingface
@@ -238,14 +247,6 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - name: cache HuggingFace models
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            hf-${{ runner.os }}-
-
       - run: uv run --all-extras --no-extra outlines-vllm-offline python tests/import_examples.py
 
   coverage:
@@ -254,8 +255,6 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          # needed for diff-cover
-          fetch-depth: 0
           persist-credentials: false
 
       - name: get coverage files
@@ -344,7 +343,7 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
+      - run: npm ci
         working-directory: docs-site
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5

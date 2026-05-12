@@ -199,7 +199,7 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
-        ui=True,
+        ui=False,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
     ) as env:
         yield env
@@ -2224,12 +2224,12 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
             id=HitlAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
+        sent_deferred_tool_results = False
         while True:
-            await asyncio.sleep(1)
             status = await workflow.query(HitlAgentWorkflow.get_status)
             if status == 'done':
                 break
-            elif status == 'waiting_for_results':  # pragma: no branch
+            elif status == 'waiting_for_results' and not sent_deferred_tool_results:  # pragma: no branch
                 deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)
                 assert deferred_tool_requests is not None
 
@@ -2242,6 +2242,9 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     results.calls[tool_call.tool_call_id] = 'Success'
 
                 await workflow.signal(HitlAgentWorkflow.set_deferred_tool_results, results)
+                sent_deferred_tool_results = True
+            else:
+                await asyncio.sleep(0.05)
 
         result = await workflow.result()
         assert result.output == snapshot(

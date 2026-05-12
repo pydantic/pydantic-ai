@@ -1152,13 +1152,17 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
 
     wf_handle = await DBOS.start_workflow_async(hitl_main_loop, 'Delete the file `.env` and create `test.txt`')
 
+    sent_deferred_tool_results = False
     while True:
-        await asyncio.sleep(1)
         status = await wf_handle.get_status()
         if status.status == 'SUCCESS':
             break
 
         assert status.status == 'PENDING'
+        if sent_deferred_tool_results:
+            await asyncio.sleep(0.05)
+            continue
+
         # Wait and check if the workflow has set a deferred tool request event.
         deferred_tool_requests = await DBOS.get_event_async(
             wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1
@@ -1174,6 +1178,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
 
             # Signal the workflow with the results.
             await DBOS.send_async(wf_handle.workflow_id, results, topic='deferred_tool_results')
+            sent_deferred_tool_results = True
 
     result = await wf_handle.get_result()
     assert result.output == snapshot('The file `.env` has been deleted and `test.txt` has been created successfully.')
@@ -1300,11 +1305,15 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
 
     wf_handle = DBOS.start_workflow(hitl_main_loop_sync, 'Delete the file `.env` and create `test.txt`')
 
+    sent_deferred_tool_results = False
     while True:
-        time.sleep(1)
         status = wf_handle.get_status()
         if status.status == 'SUCCESS':
             break
+
+        if sent_deferred_tool_results:
+            time.sleep(0.05)
+            continue
 
         # Wait and check if the workflow has set a deferred tool request event.
         deferred_tool_requests = DBOS.get_event(wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1)
@@ -1319,6 +1328,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
 
             # Signal the workflow with the results.
             DBOS.send(wf_handle.workflow_id, results, topic='deferred_tool_results')
+            sent_deferred_tool_results = True
 
     result = wf_handle.get_result()
     assert result.output == snapshot('The file `.env` has been deleted and `test.txt` has been created successfully.')
