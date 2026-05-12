@@ -1,7 +1,7 @@
 """Card 01: result-class method-to-property migration.
 
 In 1.x, accessing `result.usage`/`result.timestamp` and `stream.get` as a method
-(with parentheses) emits a `DeprecationWarning`. Attribute-style access (no
+(with parentheses) emits a `PydanticAIDeprecationWarning`. Attribute-style access (no
 parentheses) is the new contract and does not warn. The 12 affected sites span
 `run.py`, `result.py`, and `direct.py`.
 """
@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, ModelRequest, UserPromptPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request_stream_sync
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.test import TestModel
@@ -25,7 +26,7 @@ pytestmark = pytest.mark.anyio
 
 def _assert_no_deprecation(getter: Any) -> Any:
     with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
         return getter()
 
 
@@ -41,7 +42,7 @@ async def test_agent_run_usage_property_then_call():
         usage_attr = _assert_no_deprecation(lambda: run.usage)
         assert isinstance(usage_attr, RunUsage)
 
-        with pytest.warns(DeprecationWarning, match=r'`AgentRun\.usage` is no longer a method'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentRun\.usage` is no longer a method'):
             usage_call = run.usage()
         assert isinstance(usage_call, RunUsage)
         assert usage_attr == usage_call
@@ -57,7 +58,7 @@ async def test_agent_run_result_usage_property_then_call():
     usage_attr = _assert_no_deprecation(lambda: result.usage)
     assert isinstance(usage_attr, RunUsage)
 
-    with pytest.warns(DeprecationWarning, match=r'`AgentRunResult\.usage` is no longer a method'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentRunResult\.usage` is no longer a method'):
         usage_call = result.usage()
     assert isinstance(usage_call, RunUsage)
     assert usage_attr == usage_call
@@ -73,7 +74,7 @@ async def test_agent_run_result_timestamp_property_then_call():
     ts_attr = _assert_no_deprecation(lambda: result.timestamp)
     assert isinstance(ts_attr, datetime)
 
-    with pytest.warns(DeprecationWarning, match=r'`AgentRunResult\.timestamp` is no longer a method'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentRunResult\.timestamp` is no longer a method'):
         ts_call = result.timestamp()
     assert isinstance(ts_call, datetime)
     assert ts_attr == ts_call
@@ -97,7 +98,7 @@ async def test_agent_stream_get_response_warns_and_response_property_silent():
                     response_attr = _assert_no_deprecation(lambda: stream.response)
                     assert isinstance(response_attr, ModelResponse)
 
-                    with pytest.warns(DeprecationWarning, match=r'`AgentStream\.get` is deprecated'):
+                    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentStream\.get` is deprecated'):
                         response_call = stream.get()
                     assert isinstance(response_call, ModelResponse)
 
@@ -113,12 +114,16 @@ async def test_agent_stream_usage_and_timestamp_property_then_call():
                         pass
                     usage_attr = _assert_no_deprecation(lambda: stream.usage)
                     assert isinstance(usage_attr, RunUsage)
-                    with pytest.warns(DeprecationWarning, match=r'`AgentStream\.usage` is no longer a method'):
+                    with pytest.warns(
+                        PydanticAIDeprecationWarning, match=r'`AgentStream\.usage` is no longer a method'
+                    ):
                         stream.usage()
 
                     ts_attr = _assert_no_deprecation(lambda: stream.timestamp)
                     assert isinstance(ts_attr, datetime)
-                    with pytest.warns(DeprecationWarning, match=r'`AgentStream\.timestamp` is no longer a method'):
+                    with pytest.warns(
+                        PydanticAIDeprecationWarning, match=r'`AgentStream\.timestamp` is no longer a method'
+                    ):
                         stream.timestamp()
 
 
@@ -133,12 +138,12 @@ async def test_streamed_run_result_usage_and_timestamp_property_then_call():
             pass
         usage_attr = _assert_no_deprecation(lambda: result.usage)
         assert isinstance(usage_attr, RunUsage)
-        with pytest.warns(DeprecationWarning, match=r'`StreamedRunResult\.usage` is no longer a method'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedRunResult\.usage` is no longer a method'):
             result.usage()
 
         ts_attr = _assert_no_deprecation(lambda: result.timestamp)
         assert isinstance(ts_attr, datetime)
-        with pytest.warns(DeprecationWarning, match=r'`StreamedRunResult\.timestamp` is no longer a method'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedRunResult\.timestamp` is no longer a method'):
             result.timestamp()
 
 
@@ -153,12 +158,12 @@ def test_streamed_run_result_sync_usage_and_timestamp_property_then_call():
         pass
     usage_attr = _assert_no_deprecation(lambda: result.usage)
     assert isinstance(usage_attr, RunUsage)
-    with pytest.warns(DeprecationWarning, match=r'`StreamedRunResultSync\.usage` is no longer a method'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedRunResultSync\.usage` is no longer a method'):
         result.usage()
 
     ts_attr = _assert_no_deprecation(lambda: result.timestamp)
     assert isinstance(ts_attr, datetime)
-    with pytest.warns(DeprecationWarning, match=r'`StreamedRunResultSync\.timestamp` is no longer a method'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedRunResultSync\.timestamp` is no longer a method'):
         result.timestamp()
 
 
@@ -173,7 +178,7 @@ def test_streamed_response_sync_get_and_usage_property_then_call():
             pass
         response_attr = _assert_no_deprecation(lambda: stream.response)
         assert isinstance(response_attr, ModelResponse)
-        with pytest.warns(DeprecationWarning, match=r'`StreamedResponseSync\.get` is deprecated'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedResponseSync\.get` is deprecated'):
             response_call = stream.get()
         # `__eq__` and `__repr__` make the wrapper indistinguishable from the underlying type.
         assert response_call == response_attr
@@ -181,7 +186,7 @@ def test_streamed_response_sync_get_and_usage_property_then_call():
 
         usage_attr = _assert_no_deprecation(lambda: stream.usage)
         assert isinstance(usage_attr, RequestUsage)
-        with pytest.warns(DeprecationWarning, match=r'`StreamedResponseSync\.usage` is no longer a method'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`StreamedResponseSync\.usage` is no longer a method'):
             usage_call = stream.usage()
         assert usage_call == usage_attr
         assert repr(usage_call).startswith('RequestUsage(')
@@ -203,7 +208,7 @@ def test_deprecated_callable_response_round_trips_through_typeadapter():
     with model_request_stream_sync(TestModel(), messages) as stream:
         for _ in stream:
             pass
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(PydanticAIDeprecationWarning):
             wrapped = stream.get()
 
     serialized = ModelMessagesTypeAdapter.dump_json([wrapped])
@@ -222,7 +227,7 @@ async def test_deprecated_callable_run_usage_serializes_via_pydantic():
 
     agent = Agent(TestModel())
     result = await agent.run('hello')
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(PydanticAIDeprecationWarning):
         wrapped_usage = result.usage()
     assert isinstance(wrapped_usage, RunUsage)
 

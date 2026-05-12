@@ -3,7 +3,7 @@
 In 1.x, methods like `AgentRunResult.usage()` are converted to properties via
 `@deprecated_callable_property`. The property returns a wrapper that *is* an
 instance of the underlying type (so `isinstance` is preserved), but is also
-callable: calling it (parentheses) emits a `DeprecationWarning` and returns
+callable: calling it (parentheses) emits a `PydanticAIDeprecationWarning` and returns
 the same value.
 
 In v2, the decorator is replaced with `@property` (or the method is removed
@@ -18,12 +18,13 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from ._warnings import PydanticAIDeprecationWarning
 from .messages import ModelResponse
 from .usage import RequestUsage, RunUsage
 
 
 class _DeprecatedCallableRunUsage(RunUsage):
-    """A `RunUsage` whose `()` call emits `DeprecationWarning` and returns itself."""
+    """A `RunUsage` whose `()` call emits `PydanticAIDeprecationWarning` and returns itself."""
 
     _deprecation_message: str
 
@@ -33,7 +34,7 @@ class _DeprecatedCallableRunUsage(RunUsage):
         object.__setattr__(self, '_deprecation_message', message)
 
     def __call__(self) -> RunUsage:
-        warnings.warn(self._deprecation_message, DeprecationWarning, stacklevel=2)
+        warnings.warn(self._deprecation_message, PydanticAIDeprecationWarning, stacklevel=2)
         return self
 
     def __eq__(self, other: object) -> bool:
@@ -47,7 +48,7 @@ class _DeprecatedCallableRunUsage(RunUsage):
 
 
 class _DeprecatedCallableRequestUsage(RequestUsage):
-    """A `RequestUsage` whose `()` call emits `DeprecationWarning` and returns itself."""
+    """A `RequestUsage` whose `()` call emits `PydanticAIDeprecationWarning` and returns itself."""
 
     _deprecation_message: str
 
@@ -57,7 +58,7 @@ class _DeprecatedCallableRequestUsage(RequestUsage):
         object.__setattr__(self, '_deprecation_message', message)
 
     def __call__(self) -> RequestUsage:
-        warnings.warn(self._deprecation_message, DeprecationWarning, stacklevel=2)
+        warnings.warn(self._deprecation_message, PydanticAIDeprecationWarning, stacklevel=2)
         return self
 
     def __eq__(self, other: object) -> bool:
@@ -71,7 +72,7 @@ class _DeprecatedCallableRequestUsage(RequestUsage):
 
 
 class _DeprecatedCallableDatetime(datetime):
-    """A `datetime` whose `()` call emits `DeprecationWarning` and returns itself."""
+    """A `datetime` whose `()` call emits `PydanticAIDeprecationWarning` and returns itself."""
 
     _deprecation_message: str
 
@@ -92,7 +93,7 @@ class _DeprecatedCallableDatetime(datetime):
         return instance
 
     def __call__(self) -> datetime:
-        warnings.warn(self._deprecation_message, DeprecationWarning, stacklevel=2)
+        warnings.warn(self._deprecation_message, PydanticAIDeprecationWarning, stacklevel=2)
         return self
 
     def __repr__(self) -> str:
@@ -110,7 +111,7 @@ class _DeprecatedCallableDatetime(datetime):
 
 
 class _DeprecatedCallableResponse(ModelResponse):
-    """A `ModelResponse` whose `()` call emits `DeprecationWarning` and returns itself."""
+    """A `ModelResponse` whose `()` call emits `PydanticAIDeprecationWarning` and returns itself."""
 
     _deprecation_message: str
 
@@ -120,7 +121,7 @@ class _DeprecatedCallableResponse(ModelResponse):
         object.__setattr__(self, '_deprecation_message', message)
 
     def __call__(self) -> ModelResponse:
-        warnings.warn(self._deprecation_message, DeprecationWarning, stacklevel=2)
+        warnings.warn(self._deprecation_message, PydanticAIDeprecationWarning, stacklevel=2)
         return self
 
     def __eq__(self, other: object) -> bool:
@@ -153,7 +154,7 @@ class _DeprecatedCallableProperty:
     """Descriptor presenting a method-style accessor as a property.
 
     The accessor returns a wrapper that is `isinstance`-compatible with the
-    underlying value type, but calling it emits `DeprecationWarning`.
+    underlying value type, but calling it emits `PydanticAIDeprecationWarning`.
     """
 
     def __init__(self, fget: Callable[[Any], Any], message: str) -> None:
