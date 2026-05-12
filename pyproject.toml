@@ -241,10 +241,6 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
-    # v2 prep (card 23): bare `'openai:'` prefix warns that v2 will flip its default routing from
-    # the OpenAI Chat Completions API to the OpenAI Responses API. Existing tests still use
-    # `'openai:'` model strings; the dedicated test opts in via `pytest.warns`.
-    "ignore:.*will resolve to the OpenAI Responses API.*:DeprecationWarning",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3

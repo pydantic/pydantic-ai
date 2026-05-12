@@ -3883,7 +3883,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
 async def test_valid_response(env: TestEnv, allow_model_requests: None):
     """VCR recording is of a valid response."""
     env.set('OPENAI_API_KEY', 'foobar')
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai-chat:gpt-4o')
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
