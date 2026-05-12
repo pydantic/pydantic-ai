@@ -2350,7 +2350,7 @@ def _build_custom_tool_search_replay_blocks(
     """
     if not tool_search_active:
         return None, None
-    if not isinstance(request_part, ToolSearchReturnPart) or request_part.content is None:
+    if not isinstance(request_part, ToolSearchReturnPart):
         return None, None
     refs = [
         BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')

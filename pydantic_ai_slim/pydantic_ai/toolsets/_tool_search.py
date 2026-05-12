@@ -333,10 +333,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return discovered
 
     @staticmethod
-    def _collect_typed(content: ToolSearchReturnContent | None, discovered: set[str]) -> None:
+    def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
         """Add discovered tool names from a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
-        if content is None:
-            return
         discovered.update(match['name'] for match in content['discovered_tools'])
 
     @staticmethod

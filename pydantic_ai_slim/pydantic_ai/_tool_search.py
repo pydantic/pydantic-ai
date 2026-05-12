@@ -22,7 +22,7 @@ accessible across provider boundaries.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
@@ -147,15 +147,18 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     `TypedDict`.
     """
 
-    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
-
-    content: ToolSearchReturnContent | None = None
+    # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
+    # `tool_name` override: removing `content`'s default would otherwise place a non-default
+    # field after a default one in the synthesized `__init__`.
+    content: ToolSearchReturnContent = field(kw_only=True)  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discovered-tools payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
     """
+
+    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
@@ -207,15 +210,18 @@ class ToolSearchReturnPart(ToolReturnPart):
     `TypedDict`.
     """
 
-    tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
-
-    content: ToolSearchReturnContent | None = None
+    # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
+    # `tool_name` override: removing `content`'s default would otherwise place a non-default
+    # field after a default one in the synthesized `__init__`.
+    content: ToolSearchReturnContent = field(kw_only=True)  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discovered-tools payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
     """
+
+    tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
@@ -224,8 +230,8 @@ class ToolSearchReturnPart(ToolReturnPart):
 _TOOL_SEARCH_CALL_ARGS_TA: pydantic.TypeAdapter[str | ToolSearchArgs | None] = pydantic.TypeAdapter(
     Union[str, ToolSearchArgs, None]  # noqa: UP007
 )
-_TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent | None] = pydantic.TypeAdapter(
-    Union[ToolSearchReturnContent, None]  # noqa: UP007
+_TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = pydantic.TypeAdapter(
+    ToolSearchReturnContent
 )
 
 

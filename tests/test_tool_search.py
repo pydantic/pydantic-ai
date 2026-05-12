@@ -27,7 +27,6 @@ from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[r
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_builtin_call,
-    synthesize_local_from_builtin_return,
     synthesize_local_tool_search_messages,
 )
 from pydantic_ai.builtin_tools.tool_search import ToolSearchMatch, ToolSearchTool
@@ -2997,7 +2996,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     assert isinstance(search_returns[0], ToolSearchReturnPart)
     assert search_returns[0].tool_kind == 'tool-search'
     # And the typed content carries the discovery.
-    content = cast(ToolSearchReturnContent, search_returns[0].content)
+    content = search_returns[0].content
     assert {m['name'] for m in content['discovered_tools']} == {'calculate_mortgage'}
 
 
@@ -3123,30 +3122,6 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     [part] = request.parts
     assert isinstance(part, ToolSearchReturnPart)
     assert part.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
-
-
-def test_tool_search_toolset_parses_discovery_with_none_content() -> None:
-    """A `BuiltinToolSearchReturnPart` with `content=None` (recoverable provider error
-    path) leaves the discovered set empty without raising — `_collect_typed`
-    short-circuits on missing content rather than dereferencing a `None` `discovered_tools`."""
-
-    history: list[ModelMessage] = [
-        ModelResponse(
-            parts=[
-                BuiltinToolSearchReturnPart(
-                    provider_name='anthropic',
-                    tool_call_id='srv_err',
-                    content=None,
-                ),
-            ],
-        ),
-    ]
-    base_toolset = FunctionToolset[None]()
-    ts = ToolSearchToolset(wrapped=base_toolset)
-    discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
-        cast(Any, type('_Ctx', (), {'messages': history})()),
-    )
-    assert discovered == set()
 
 
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
@@ -3378,16 +3353,6 @@ def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
     part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1')
     result = synthesize_local_from_builtin_call(part)
     assert result.args is None
-
-
-def test_synthesize_local_from_builtin_return_preserves_none_content() -> None:
-    """A return part with `content=None` (legal per the typed signature, e.g. a recoverable
-    provider error path) passes through to the local-shape return unchanged. The synthesizer
-    trusts the typed contract — `None` means "no result content", not "empty discoveries"."""
-
-    part = BuiltinToolSearchReturnPart(content=None, tool_call_id='c1')
-    result = synthesize_local_from_builtin_return(part)
-    assert result.content is None
 
 
 def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
