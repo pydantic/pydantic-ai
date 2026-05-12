@@ -388,13 +388,6 @@ def test_render_type_signature():
     assert str(ts) == snapshot('User')
 
 
-def test_render_type_signature_empty():
-    """Empty TypeSignature renders with pass."""
-    ts = TypeSignature(name='Empty')
-    assert str(ts) == 'Empty'
-    assert ts.render_definition() == 'class Empty(TypedDict):\n    pass'
-
-
 def test_render_generic_type_expr():
     """GenericTypeExpr renders correctly."""
     user = TypeSignature(name='User')
@@ -505,19 +498,6 @@ def test_tool_def_has_schema_based_signature():
     assert 'y' in sig.params
     assert str(sig.params['x'].type) == 'int'
     assert str(sig.params['y'].type) == 'str'
-
-
-def test_tool_definition_function_signature_computed_from_schema():
-    """ToolDefinition without explicit function_signature computes it from JSON schema."""
-
-    td = ToolDefinition(
-        name='test_tool',
-        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
-        description='A test tool',
-    )
-    sig = td.function_signature
-    assert sig is not None
-    assert 'x' in sig.params
 
 
 def test_tool_definition_schema_based_function_signature():

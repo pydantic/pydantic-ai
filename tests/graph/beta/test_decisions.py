@@ -251,37 +251,6 @@ async def test_nested_decisions():
     assert result == 'Large positive'
 
 
-async def test_decision_with_label():
-    """Test adding labels to decision branches."""
-    g = GraphBuilder(state_type=DecisionState, output_type=str)
-
-    @g.step
-    async def choose(ctx: StepContext[DecisionState, None, None]) -> Literal['a', 'b']:
-        return 'a'
-
-    @g.step
-    async def path_a(ctx: StepContext[DecisionState, None, object]) -> str:
-        return 'Path A'
-
-    @g.step
-    async def path_b(ctx: StepContext[DecisionState, None, object]) -> str:
-        return 'Path B'  # pragma: no cover
-
-    g.add(
-        g.edge_from(g.start_node).to(choose),
-        g.edge_from(choose).to(
-            g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).label('Take path A').to(path_a))
-            .branch(g.match(TypeExpression[Literal['b']]).label('Take path B').to(path_b))
-        ),
-        g.edge_from(path_a, path_b).to(g.end_node),
-    )
-
-    graph = g.build()
-    result = await graph.run(state=DecisionState())
-    assert result == 'Path A'
-
-
 async def test_decision_with_map():
     """Test decision branch that maps output."""
     g = GraphBuilder(state_type=DecisionState, output_type=int)

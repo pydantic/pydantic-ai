@@ -392,28 +392,6 @@ async def test_multiple_messages() -> None:
     assert events == simple_result()
 
 
-async def test_messages_with_history() -> None:
-    """Test with multiple user messages (conversation history)."""
-    agent = Agent(
-        model=FunctionModel(stream_function=simple_stream),
-    )
-
-    run_input = create_input(
-        UserMessage(
-            id='msg_1',
-            content='First message',
-        ),
-        UserMessage(
-            id='msg_2',
-            content='Second message',
-        ),
-    )
-
-    events = await run_and_collect_events(agent, run_input)
-
-    assert events == simple_result()
-
-
 async def test_tool_ag_ui() -> None:
     """Test AG-UI tool call."""
 

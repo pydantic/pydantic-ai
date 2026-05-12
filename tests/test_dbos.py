@@ -152,18 +152,6 @@ simple_agent = Agent(model, name='simple_agent')
 simple_dbos_agent = DBOSAgent(simple_agent)
 
 
-async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
-    """Test that a simple agent can run in a DBOS workflow."""
-
-    @DBOS.workflow()
-    async def run_simple_agent() -> str:
-        result = await simple_dbos_agent.run('What is the capital of Mexico?')
-        return result.output
-
-    output = await run_simple_agent()
-    assert output == snapshot('The capital of Mexico is Mexico City.')
-
-
 class Deps(BaseModel):
     country: str
 

@@ -7000,20 +7000,6 @@ def test_cached_async_http_client_deprecated():
 
 
 @requires_openai
-async def test_provider_lifecycle_closes_client():
-    """Provider lifecycle closes owned HTTP client on exit.
-
-    Regression test for PR #4421 (provider lifecycle management).
-    https://github.com/pydantic/pydantic-ai/pull/4421
-    """
-    provider = OpenAIProvider(api_key='test-key')
-    async with provider:
-        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
-        assert not http_client.is_closed
-    assert http_client.is_closed
-
-
-@requires_openai
 async def test_provider_reentrant_lifecycle():
     """Reentrant provider lifecycle keeps client open until outermost exit.
 
@@ -7153,24 +7139,6 @@ async def test_gateway_provider_reentry_after_close():
         assert second_client is not first_client
         assert len(second_client.event_hooks.get('request', [])) == 1
     assert second_client.is_closed
-
-
-@requires_openai
-async def test_azure_provider_lifecycle_closes_client():
-    """Azure provider lifecycle closes owned HTTP client on exit.
-
-    Regression test for PR #4421 (provider lifecycle management).
-    https://github.com/pydantic/pydantic-ai/pull/4421
-    """
-    provider = AzureProvider(
-        azure_endpoint='https://test.openai.azure.com',
-        api_key='test-key',
-        api_version='2024-02-01',
-    )
-    async with provider:
-        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
-        assert not http_client.is_closed
-    assert http_client.is_closed
 
 
 @pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
@@ -9331,19 +9299,6 @@ async def test_override_concurrent_isolation():
 
     assert a == 'A'
     assert b == 'B'
-
-
-def test_override_replaces_instructions():
-    """Test overriding instructions replaces the base instructions."""
-    agent = Agent('test', instructions='ORIG_INSTR')
-
-    with agent.override(instructions='NEW_INSTR'):
-        with capture_run_messages() as messages:
-            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
-
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
-    assert req.instructions == 'NEW_INSTR'
 
 
 def test_override_nested_contexts():

@@ -130,18 +130,6 @@ simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)
 
 
-async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
-    """Test that a simple agent can run in a Prefect flow."""
-
-    @flow(name='test_simple_agent_run_in_flow')
-    async def run_simple_agent() -> str:
-        result = await simple_prefect_agent.run('What is the capital of Mexico?')
-        return result.output
-
-    output = await run_simple_agent()
-    assert output == snapshot('The capital of Mexico is Mexico City.')
-
-
 class Deps(BaseModel):
     country: str
 

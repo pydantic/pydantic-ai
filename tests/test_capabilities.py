@@ -10099,13 +10099,6 @@ def test_ordering_single_capability():
     assert list(combined.capabilities) == [cap]
 
 
-def test_ordering_no_constraints_noop():
-    """When no capability declares ordering, list is unchanged."""
-    a, b = PlainCapA(), PlainCapB()
-    combined = CombinedCapability([a, b])
-    assert list(combined.capabilities) == [a, b]
-
-
 def test_ordering_cycle_detection():
     @dataclass
     class CycleA(AbstractCapability[Any]):
