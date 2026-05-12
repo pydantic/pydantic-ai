@@ -730,7 +730,7 @@ def test_ag_ui_app_builtin_tools_kwarg_routed_to_capabilities(monkeypatch: pytes
         PydanticAIDeprecationWarning,
         match=r'`AGUIApp\(builtin_tools=\.\.\.\)` is deprecated, use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
-        app = AGUIApp(agent, builtin_tools=[WebSearchTool()])
+        app = AGUIApp(agent, builtin_tools=[WebSearchTool()])  # pyright: ignore[reportDeprecated]
 
     # Find the registered POST handler and invoke it so dispatch_request runs.
     from starlette.routing import Route
