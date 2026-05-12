@@ -310,7 +310,6 @@ class FunctionStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
-        super().__post_init__()
         self._usage += _estimate_usage([])
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901

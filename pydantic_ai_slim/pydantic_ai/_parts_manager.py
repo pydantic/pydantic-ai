@@ -61,25 +61,27 @@ class ModelResponsePartsManager:
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
     """
 
-    model_request_parameters: ModelRequestParameters | None = None
-    """Active request context. When set, the manager promotes streamed tool call parts to
-    their typed subclasses based on `ToolDefinition.tool_kind` from `function_tools` —
-    so `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent`
-    rather than only after a post-stream pass.
+    model_request_parameters: ModelRequestParameters
+    """Active request context. The manager promotes streamed tool call parts to their typed
+    subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
+    `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
+    than only after a post-stream pass.
     """
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
+    _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
+    """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+
+    def __post_init__(self) -> None:
+        self._tool_kind_by_name = {
+            td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
+        }
 
     def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
-        if self.model_request_parameters is None:
-            return None
-        for td in self.model_request_parameters.function_tools:
-            if td.name == tool_name and td.tool_kind:
-                return td.tool_kind
-        return None
+        return self._tool_kind_by_name.get(tool_name)
 
     def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
         """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
