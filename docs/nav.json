@@ -67,7 +67,7 @@
       "tools-advanced",
       "toolsets",
       "deferred-tools",
-      "builtin-tools",
+      "native-tools",
       "common-tools",
       "third-party-tools"
     ]
@@ -393,7 +393,7 @@
         "items": [
           "api/ag_ui",
           "api/agent",
-          "api/builtin_tools",
+          "api/native_tools",
           "api/capabilities",
           "api/common_tools",
           "api/concurrency",

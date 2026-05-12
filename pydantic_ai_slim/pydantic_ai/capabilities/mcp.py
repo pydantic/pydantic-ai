@@ -6,11 +6,13 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from pydantic_ai.builtin_tools import MCPServerTool
+from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 try:
     from pydantic_ai.mcp import MCPServer
@@ -22,13 +24,13 @@ except ImportError:  # pragma: lax no cover
 
 
 @dataclass(init=False)
-class MCP(BuiltinOrLocalTool[AgentDepsT]):
+class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
     Runs the MCP server locally by default — keeps credentials, hooks, and tracing under
-    your control. Pass `builtin=True` to also advertise the model provider's built-in MCP
-    support (with local as a fallback for unsupported models), or `builtin=True, local=False`
-    for strict builtin-only.
+    your control. Pass `native=True` to also advertise the model provider's native MCP
+    support (with local as a fallback for unsupported models), or `native=True, local=False`
+    for strict native-only.
     """
 
     url: str
@@ -38,22 +40,22 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
 
     authorization_token: str | None
-    """Authorization header value for MCP server requests. Passed to both builtin and local."""
+    """Authorization header value for MCP server requests. Passed to both native and local."""
 
     headers: dict[str, str] | None
-    """HTTP headers for MCP server requests. Passed to both builtin and local."""
+    """HTTP headers for MCP server requests. Passed to both native and local."""
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Applied to both builtin and local."""
+    """Filter to only these tools. Applied to both native and local."""
 
     description: str | None
-    """Description of the MCP server. Builtin-only; ignored by local tools."""
+    """Description of the MCP server. Native-only; ignored by local tools."""
 
     def __init__(
         self,
         url: str,
         *,
-        builtin: MCPServerTool
+        native: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
         | bool = False,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | bool | None = None,
@@ -64,7 +66,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         description: str | None = None,
     ) -> None:
         self.url = url
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.id = id
         self.authorization_token = authorization_token
@@ -84,7 +86,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         host = parsed.hostname or ''
         return f'{host}-{slug}' if slug else host or self.url
 
-    def _default_builtin(self) -> MCPServerTool:
+    def _default_native(self) -> MCPServerTool:
         return MCPServerTool(
             id=self._resolved_id,
             url=self.url,
@@ -94,15 +96,13 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             description=self.description,
         )
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         return self._build_local()
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        from pydantic_ai.exceptions import UserError
-
         if name is True:
             return self._build_local()
         raise UserError(
@@ -111,8 +111,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         )
 
     def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        from pydantic_ai.exceptions import UserError
-
         # Merge authorization_token into headers for local connection
         local_headers = dict(self.headers or {})
         if self.authorization_token:
@@ -133,8 +131,8 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
                 'MCP runs the server locally by default in v2, but the MCP extra is not installed.\n\n'
                 'Either install the MCP extras:\n'
                 '    pip install "pydantic-ai-slim[mcp]"\n'
-                "or use only the model's built-in MCP support (no local needed):\n"
-                "    MCP(url='…', builtin=True, local=False)"
+                "or use only the model's native MCP support (no local needed):\n"
+                "    MCP(url='…', native=True, local=False)"
             ) from e
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -143,3 +141,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             allowed = set(self.allowed_tools)
             return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
         return toolset
+
+
+install_deprecated_kwarg_alias(MCP, old='builtin', new='native')

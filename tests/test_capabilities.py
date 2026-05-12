@@ -20,22 +20,14 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    WebFetchTool,
-    WebSearchTool,
-    XSearchTool,
-)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
-    BuiltinTool,
     CapabilityOrdering,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
+    NativeTool,
     PrefixTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
@@ -48,9 +40,9 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -79,6 +71,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
@@ -103,7 +103,7 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
-            'BuiltinTool': BuiltinTool,
+            'NativeTool': NativeTool,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
@@ -371,21 +371,72 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_retries_override():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_output_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
     assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_no_retries_does_not_warn():
+    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
+
+    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
+    user-set value; only an explicit value is forwarded to the deprecated
+    `Agent(retries=...)` kwarg.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test'})
+
+    assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_explicit_retries_warns():
+    """An explicit `retries` in the spec still triggers the deprecation warning."""
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_tool_retries():
+    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
+
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_spec_retries_deprecated_getter():
+    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+    spec = AgentSpec(model='test', retries=5)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        assert spec.retries == 5
+
+
+def test_agent_spec_tool_retries_field():
+    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
+    spec = AgentSpec(model='test', tool_retries=5)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        assert spec.tool_retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -456,7 +507,9 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
@@ -472,6 +525,12 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'action': {
+                            'default': 'auto',
+                            'enum': ['generate', 'edit', 'auto'],
+                            'title': 'Action',
+                            'type': 'string',
+                        },
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -488,6 +547,18 @@ def test_model_json_schema_with_capabilities():
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
+                        },
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -622,6 +693,8 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
+                        'deepseek:deepseek-v4-flash',
+                        'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-3-haiku-20240307',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
                         'gateway/anthropic:claude-mythos-preview',
@@ -962,8 +1035,10 @@ def test_model_json_schema_with_capabilities():
                     'description': """\
 Settings to configure an LLM.
 
-Here we include only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.\
+Includes only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.
+
+All types must be serializable using Pydantic.\
 """,
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
@@ -971,6 +1046,15 @@ though not all of these settings are supported by all models.\
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'tool_choice': {
+                            'anyOf': [
+                                {'enum': ['none', 'required', 'auto'], 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'$ref': '#/$defs/ToolOrOutput'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tool Choice',
+                        },
                         'seed': {'title': 'Seed', 'type': 'integer'},
                         'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
                         'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
@@ -1000,6 +1084,14 @@ though not all of these settings are supported by all models.\
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'ToolOrOutput': {
+                    'properties': {
+                        'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
+                    },
+                    'required': ['function_tools'],
+                    'title': 'ToolOrOutput',
                     'type': 'object',
                 },
                 'UrlContextTool': {
@@ -1152,10 +1244,10 @@ Supported by:
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
-                'short_spec_BuiltinTool': {
+                'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
-                        'BuiltinTool': {
+                        'NativeTool': {
                             'anyOf': [
                                 {
                                     'oneOf': [
@@ -1172,10 +1264,10 @@ Supported by:
                                 },
                                 {'type': 'null'},
                             ],
-                            'title': 'Builtintool',
+                            'title': 'Nativetool',
                         }
                     },
-                    'title': 'short_spec_BuiltinTool',
+                    'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
                 'short_spec_IncludeToolReturnSchemas': {
@@ -1273,17 +1365,18 @@ Supported by:
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/ImageGenerationTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'action': {
+                            'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Action',
                         },
                         'background': {
                             'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
@@ -1296,6 +1389,17 @@ Supported by:
                         'moderation': {
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
+                        },
+                        'image_model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Image Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -1337,9 +1441,9 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
-                        'builtin': {
+                        'native': {
                             'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
-                            'title': 'Builtin',
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
@@ -1367,8 +1471,8 @@ Supported by:
                         'prefix': {'title': 'Prefix', 'type': 'string'},
                         'capability': {
                             'anyOf': [
-                                {'const': 'BuiltinTool', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'NativeTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -1396,12 +1500,9 @@ Supported by:
                 'spec_params_WebFetch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebFetchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {
                             'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
@@ -1431,12 +1532,9 @@ Supported by:
                 'spec_params_WebSearch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebSearchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {
                             'anyOf': [
@@ -1490,7 +1588,17 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'tool_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Retries',
+                },
+                'retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'deprecated': True,
+                    'title': 'Retries',
+                },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
@@ -1521,8 +1629,8 @@ Supported by:
                     'default': [],
                     'items': {
                         'anyOf': [
-                            {'const': 'BuiltinTool', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'NativeTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -1618,46 +1726,46 @@ def test_agent_spec_schema_field_parity():
     assert schema_fields == spec_fields
 
 
-def test_builtin_tools_param_wrapped_as_capabilities():
-    """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
-    agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+def test_native_tools_param_wrapped_as_capabilities():
+    """`Agent(capabilities=[NativeTool(...)])` produces NativeTool capabilities."""
+    agent = Agent('test', capabilities=[NativeTool(WebSearchTool()), NativeTool(CodeExecutionTool())])
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
-    # Also available via _cap_builtin_tools
-    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+    # Also available via _cap_native_tools
+    assert len(agent._cap_native_tools) == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_builtin_tool():
-    """BuiltinTool capability can be constructed from spec."""
+    """NativeTool capability can be constructed from spec."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search'}},
+                {'NativeTool': {'kind': 'web_search'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
 
 
 def test_agent_from_spec_builtin_tool_with_options():
-    """BuiltinTool spec supports builtin tool configuration options."""
+    """NativeTool spec supports builtin tool configuration options."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search', 'search_context_size': 'high'}},
+                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     tool = builtin_caps[0].tool
     assert isinstance(tool, WebSearchTool)
@@ -1665,17 +1773,17 @@ def test_agent_from_spec_builtin_tool_with_options():
 
 
 def test_agent_from_spec_builtin_tool_explicit_form():
-    """BuiltinTool spec supports the explicit {tool: ...} form."""
+    """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'tool': {'kind': 'code_execution'}}},
+                {'NativeTool': {'tool': {'kind': 'code_execution'}}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
 
@@ -1746,7 +1854,8 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -1809,14 +1918,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.retries == 3
+    assert loaded.tool_retries == 3
 
 
 @dataclass
@@ -2300,6 +2409,36 @@ async def test_for_run_with_different_instructions():
     )
 
 
+async def test_for_run_receives_populated_run_context():
+    """`for_run` hooks receive a `RunContext` with run_id, conversation_id, and resolved metadata."""
+
+    captured: dict[str, Any] = {}
+
+    class CapturingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            captured['run_id'] = ctx.run_id
+            captured['conversation_id'] = ctx.conversation_id
+            captured['metadata'] = ctx.metadata
+            captured['instrumentation_version'] = ctx.instrumentation_version
+            return self
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def metadata_factory(ctx: RunContext[None]) -> dict[str, Any]:
+        # Factory should be able to read run_id/conversation_id from the early ctx.
+        return {'run_id_seen': ctx.run_id, 'conversation_id_seen': ctx.conversation_id}
+
+    agent = Agent(FunctionModel(respond), capabilities=[CapturingCap()])
+
+    await agent.run('Hello', conversation_id='conv-123', metadata=metadata_factory)
+
+    assert captured['run_id'] is not None
+    assert captured['conversation_id'] == 'conv-123'
+    assert captured['metadata'] == {'run_id_seen': captured['run_id'], 'conversation_id_seen': 'conv-123'}
+    assert captured['instrumentation_version'] is not None
+
+
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
@@ -2328,6 +2467,55 @@ async def test_concurrent_runs_capability_isolation():
     results = await asyncio.gather(agent.run('A'), agent.run('B'))
     assert results[0].output == 'Done'
     assert results[1].output == 'Done'
+
+
+@pytest.mark.parametrize(
+    'forced_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice: Any):
+    """A capability returning a callable from get_model_settings() may inject `tool_choice='required'`
+    or `list[str]` per step without tripping the agent.run baseline validator.
+
+    Forces the tool on step 1, then steps aside so the agent can produce a final response.
+    """
+
+    class ForceFirstStep(AbstractCapability[None]):
+        def get_model_settings(self) -> Any:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                tool_called = any(
+                    isinstance(part, ToolReturnPart) and part.tool_name == 'get_weather'
+                    for message in ctx.messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                )
+                if tool_called:
+                    return _ModelSettings()
+                return _ModelSettings(tool_choice=forced_choice)
+
+            return settings
+
+    seen_tool_choices: list[Any] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_choices.append((info.model_settings or {}).get('tool_choice'))
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='sunny')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'})])
+
+    agent = Agent(FunctionModel(respond), capabilities=[ForceFirstStep()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run('Weather in Paris?')
+
+    assert result.output == 'sunny'
+    assert seen_tool_choices == [forced_choice, None]
 
 
 # --- Hooks test helpers ---
@@ -4085,7 +4273,13 @@ class TestPrepareOutputToolsHook:
                 parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 7}', tool_call_id='c1')]
             )
 
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, retries=4, capabilities=[CaptureCtxCap()])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            tool_retries=4,
+            output_retries=4,
+            capabilities=[CaptureCtxCap()],
+        )
         await agent.run('hello')
         assert seen == [(0, 4)]
 
@@ -4253,14 +4447,14 @@ class TestWrapNodeRunHook:
         assert log[3] == 'outer:after:ModelRequestNode'
 
 
-# --- BuiltinOrLocalTool tests ---
+# --- NativeOrLocalTool tests ---
 
 
 class TestWebSearchCapability:
     def test_websearch_default_no_local(self):
         """WebSearch() defaults to builtin-only — no local fallback unless explicitly requested."""
         cap = WebSearch()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
@@ -4269,7 +4463,7 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -4290,7 +4484,7 @@ class TestWebSearchCapability:
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
         result = agent.run_sync('search for something')
         assert 'Tool result' in result.output
@@ -4300,35 +4494,42 @@ class TestWebSearchCapability:
         with pytest.raises(UserError, match='not a known strategy'):
             WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
 
-    def test_websearch_builtin_false_without_local_raises(self):
-        """WebSearch(builtin=False) without an explicit local → UserError at construction."""
-        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
-            WebSearch(builtin=False)
+    def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebSearch(local=False) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch(local=False)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
 
-    def test_websearch_builtin_false_with_local_string(self):
-        """WebSearch(builtin=False, local='duckduckgo') → only local, no builtin registered."""
-        cap = WebSearch(builtin=False, local='duckduckgo')
-        assert cap.get_builtin_tools() == []
+    def test_websearch_native_false_without_local_raises(self):
+        """WebSearch(native=False) without an explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebSearch(native=False)
+
+    def test_websearch_native_false_with_local_string(self):
+        """WebSearch(native=False, local='duckduckgo') → only local, no native registered."""
+        cap = WebSearch(native=False, local='duckduckgo')
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
-        # Plain toolset (no PreparedToolset wrapping since builtin is disabled)
+        # Plain toolset (no PreparedToolset wrapping since native is disabled)
         assert toolset is not None
 
-    def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
+    def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
     def test_websearch_both_false_raises(self):
-        """WebSearch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            WebSearch(builtin=False, local=False)
+        """WebSearch(native=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            WebSearch(native=False, local=False)
 
-    def test_websearch_builtin_false_with_constraints_raises(self):
-        """WebSearch(builtin=False, local='duckduckgo', allowed_domains=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebSearch(builtin=False, local='duckduckgo', allowed_domains=['example.com'])
+    def test_websearch_native_false_with_constraints_raises(self):
+        """WebSearch(native=False, local='duckduckgo', allowed_domains=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            WebSearch(native=False, local='duckduckgo', allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4346,7 +4547,7 @@ class TestXSearchCapability:
     def test_xsearch_default(self):
         """XSearch() with defaults → builtin XSearchTool, no local."""
         cap = XSearch()
-        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
         assert cap.get_toolset() is None
 
     def test_xsearch_with_all_constraints(self):
@@ -4359,7 +4560,7 @@ class TestXSearchCapability:
             enable_video_understanding=True,
             include_output=True,
         )
-        assert cap.get_builtin_tools() == snapshot(
+        assert cap.get_native_tools() == snapshot(
             [
                 XSearchTool(
                     allowed_x_handles=['handle1'],
@@ -4372,29 +4573,27 @@ class TestXSearchCapability:
             ]
         )
 
-    def test_xsearch_requires_builtin_with_handles(self):
+    def test_xsearch_requires_native_with_handles(self):
         """XSearch with handle constraints requires builtin."""
-        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
-        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
-            [XSearchTool(excluded_x_handles=['h'])]
-        )
+        assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
 
-    def test_xsearch_builtin_false_local_false_raises(self):
-        """XSearch(builtin=False, local=False) → UserError."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            XSearch(builtin=False, local=False)
+    def test_xsearch_native_false_local_false_raises(self):
+        """XSearch(native=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            XSearch(native=False, local=False)
 
-    def test_xsearch_builtin_false_raises(self):
-        """XSearch(builtin=False) → UserError (no local fallback for X search)."""
-        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
-            XSearch(builtin=False, allowed_x_handles=['handle1'])
+    def test_xsearch_native_false_raises(self):
+        """XSearch(native=False) → UserError (no local fallback for X search)."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False, allowed_x_handles=['handle1'])
 
 
 class TestWebFetchCapability:
     def test_webfetch_default_no_local(self):
         """WebFetch() defaults to builtin-only — no local fallback unless explicitly requested."""
         cap = WebFetch()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
         # No local fallback by default in v2
@@ -4403,7 +4602,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
         """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch()])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -4438,7 +4637,7 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebFetch(local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
@@ -4461,26 +4660,26 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_builtin_false_without_local_raises(self):
-        """WebFetch(builtin=False) without explicit local → UserError at construction."""
-        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
-            WebFetch(builtin=False)
+    def test_webfetch_native_false_without_local_raises(self):
+        """WebFetch(native=False) without explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebFetch(native=False)
 
-    def test_webfetch_builtin_false_with_local_string(self):
-        """WebFetch(builtin=False, local=True) → only local, no builtin registered."""
-        cap = WebFetch(builtin=False, local=True)
-        assert cap.get_builtin_tools() == []
+    def test_webfetch_native_false_with_local_string(self):
+        """WebFetch(native=False, local=True) → only local, no native registered."""
+        cap = WebFetch(native=False, local=True)
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         assert toolset is not None
 
-    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+    def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -4515,7 +4714,7 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'], local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
@@ -4532,14 +4731,14 @@ class TestWebFetchCapability:
         assert tool_calls[0].tool_name == 'web_fetch'
 
     def test_webfetch_both_false_raises(self):
-        """WebFetch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            WebFetch(builtin=False, local=False)
+        """WebFetch(native=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            WebFetch(native=False, local=False)
 
-    def test_webfetch_builtin_false_with_max_uses_raises(self):
-        """WebFetch(builtin=False, local=True, max_uses=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebFetch(builtin=False, local=True, max_uses=5)
+    def test_webfetch_native_false_with_max_uses_raises(self):
+        """WebFetch(native=False, local=True, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            WebFetch(native=False, local=True, max_uses=5)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -4562,9 +4761,11 @@ class TestImageGenerationCapability:
         builtin_fields = {
             f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
         }
+        builtin_fields.remove('model')
+        builtin_fields.add('image_model')
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
-            'builtin',
+            'native',
             'local',
             'fallback_model',
         }
@@ -4573,7 +4774,7 @@ class TestImageGenerationCapability:
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
         # No default local
@@ -4598,42 +4799,46 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
 
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
         cap = ImageGeneration(
+            action='generate',
             background='opaque',
             input_fidelity='high',
             moderation='low',
+            image_model='gpt-image-2',
             output_compression=80,
             output_format='jpeg',
             quality='high',
             size='1024x1024',
             aspect_ratio='16:9',
         )
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
+        assert tool.action == 'generate'
         assert tool.background == 'opaque'
         assert tool.input_fidelity == 'high'
         assert tool.moderation == 'low'
+        assert tool.model == 'gpt-image-2'
         assert tool.output_compression == 80
         assert tool.output_format == 'jpeg'
         assert tool.quality == 'high'
         assert tool.size == '1024x1024'
         assert tool.aspect_ratio == '16:9'
 
-    def test_image_generation_fallback_merges_custom_builtin_with_overrides(self):
-        """Custom builtin settings are merged with capability-level overrides for the fallback."""
+    def test_image_generation_fallback_merges_custom_native_with_overrides(self):
+        """Custom native tool settings are merged with capability-level overrides for the fallback."""
         from pydantic_ai.tools import Tool
 
-        custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
+        custom_native = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
-            builtin=custom_builtin,
+            native=custom_native,
             fallback_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
@@ -4641,15 +4846,15 @@ class TestImageGenerationCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
-    def test_image_generation_callable_builtin_with_fallback(self):
-        """When builtin is a callable, the fallback local tool still gets created."""
+    def test_image_generation_callable_native_with_fallback(self):
+        """When native is a callable, the fallback local tool still gets created."""
         from pydantic_ai.tools import Tool
 
         cap = ImageGeneration(
-            builtin=lambda ctx: ImageGenerationTool(quality='high'),
+            native=lambda ctx: ImageGenerationTool(quality='high'),
             fallback_model='openai-responses:gpt-5.4',
         )
-        # Callable builtin can't be resolved at init time, but local fallback is still created
+        # Callable native can't be resolved at init time, but local fallback is still created
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
@@ -4667,6 +4872,9 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
 
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
         from pydantic_ai.messages import BinaryImage, FilePart
@@ -4686,7 +4894,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[TextPart(content='done')])
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'done'
@@ -4745,11 +4953,14 @@ class TestImageGenerationCapability:
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
 
@@ -4768,7 +4979,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
             return ModelResponse(parts=[TextPart(content='gave up')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
@@ -4797,7 +5008,7 @@ class TestImageGenerationCapability:
                 ModelRequest(
                     parts=[
                         RetryPromptPart(
-                            content='Exceeded maximum retries (1) for output validation',
+                            content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -4809,7 +5020,7 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    usage=RequestUsage(input_tokens=66, output_tokens=7),
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4818,14 +5029,18 @@ class TestImageGenerationCapability:
             ]
         )
 
-    def test_image_generation_rejects_image_only_model(self):
-        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
+    def test_image_generation_rejects_image_only_model(self, model_name: str):
+        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
+        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
+            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -4848,7 +5063,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
             capabilities=[
@@ -4908,6 +5123,9 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
@@ -4923,7 +5141,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
@@ -4988,40 +5206,40 @@ except ImportError:
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
     def test_mcp_default_local_only(self):
-        """MCP(url=...) defaults to local-only via FastMCP — no builtin advertised."""
+        """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
         cap = MCP(url='https://mcp.example.com/api')
-        assert cap.get_builtin_tools() == []
+        assert cap.get_native_tools() == []
         assert cap.get_toolset() is not None
 
-    def test_mcp_builtin_true_advertises_both(self):
-        """MCP(url=..., builtin=True) advertises builtin + keeps local as fallback."""
-        cap = MCP(url='https://mcp.example.com/api', builtin=True)
-        builtins = cap.get_builtin_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], MCPServerTool)
-        assert builtins[0].url == 'https://mcp.example.com/api'
+    def test_mcp_native_true_advertises_both(self):
+        """MCP(url=..., native=True) advertises native + keeps local as fallback."""
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
+        assert native_tools[0].url == 'https://mcp.example.com/api'
         assert cap.get_toolset() is not None
 
-    def test_mcp_builtin_only(self):
-        """MCP(url=..., builtin=True, local=False) advertises only the builtin."""
-        cap = MCP(url='https://mcp.example.com/api', builtin=True, local=False)
-        builtins = cap.get_builtin_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], MCPServerTool)
+    def test_mcp_native_only(self):
+        """MCP(url=..., native=True, local=False) advertises only the native tool."""
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=False)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
         assert cap.get_toolset() is None
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
-        cap = MCP(url='https://mcp.example.com/api', builtin=True)
-        builtin = cap.get_builtin_tools()[0]
-        assert isinstance(builtin, MCPServerTool)
-        assert builtin.id == 'mcp.example.com-api'
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        native = cap.get_native_tools()[0]
+        assert isinstance(native, MCPServerTool)
+        assert native.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
-        cap_sse = MCP(url='https://server1.example.com/sse', builtin=True)
-        builtin_sse = cap_sse.get_builtin_tools()[0]
-        assert isinstance(builtin_sse, MCPServerTool)
-        assert builtin_sse.id == 'server1.example.com-sse'
+        cap_sse = MCP(url='https://server1.example.com/sse', native=True)
+        native_sse = cap_sse.get_native_tools()[0]
+        assert isinstance(native_sse, MCPServerTool)
+        assert native_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL uses MCPServerSSE for local."""
@@ -6152,7 +6370,7 @@ def test_web_fetch_with_constraints():
         enable_citations=True,
         max_content_tokens=1000,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebFetchTool)
@@ -6162,25 +6380,25 @@ def test_web_fetch_with_constraints():
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
     # Only max_uses requires builtin (domains are handled locally)
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
-    assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+    assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()
-    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
+    assert cap._native_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
     """WebSearch capability populates builtin tool with all constraint kwargs."""
-    from pydantic_ai.builtin_tools import WebSearchUserLocation
+    from pydantic_ai.native_tools import WebSearchUserLocation
 
     cap = WebSearch(
         search_context_size='high',
@@ -6189,7 +6407,7 @@ def test_web_search_with_constraints():
         allowed_domains=['good.com'],
         max_uses=3,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebSearchTool)
@@ -6198,7 +6416,7 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_unknown_strategy_with_extras_missing(monkeypatch: pytest.MonkeyPatch):
@@ -6234,82 +6452,78 @@ def test_web_fetch_unknown_strategy_with_extras_missing(monkeypatch: pytest.Monk
 
 
 def test_mcp_default_local_only():
-    """MCP(url=...) defaults to local-only via FastMCP — no builtin advertised."""
+    """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp')
-    assert cap.get_builtin_tools() == []
+    assert cap.get_native_tools() == []
     assert cap.get_toolset() is not None
 
 
-def test_mcp_builtin_true_default_construction():
-    """MCP(url=..., builtin=True) constructs MCPServerTool with id from url."""
+def test_mcp_native_true_default_construction():
+    """MCP(url=..., native=True) constructs MCPServerTool with id from url."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    cap = MCP(url='http://example.com/mcp', id='my-mcp', builtin=True)
-    builtin_tools = cap.get_builtin_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_base_no_default_builtin():
-    """BuiltinOrLocalTool base class with builtin=True raises (no _default_builtin)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_base_no_default_native():
+    """NativeOrLocalTool base class with native=True raises (no _default_native)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    with pytest.raises(UserError, match='builtin=True requires a subclass'):
-        BuiltinOrLocalTool()
+    with pytest.raises(UserError, match='native=True requires a subclass'):
+        NativeOrLocalTool()
 
 
-def test_builtin_tool_from_spec_no_args():
-    """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
+def test_native_tool_from_spec_no_args():
+    """NativeTool.from_spec() with no arguments raises TypeError."""
+    from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
-        BuiltinToolCapDirect.from_spec()
+        NativeToolCapDirect.from_spec()
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_no_default_local():
-    """BuiltinOrLocalTool base class _default_local() returns None."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_no_default_local():
+    """NativeOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    cap = NativeOrLocalTool(native=WebSearchTool())
     # Base class _default_local() returns None — no local fallback
     assert cap.local is None
     assert cap.get_toolset() is None
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_with_explicit_builtin():
-    """BuiltinOrLocalTool used directly with an explicit builtin and local tool."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_with_explicit_native():
+    """NativeOrLocalTool used directly with an explicit native and local tool."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     def my_local_tool() -> str:
         """A local fallback tool."""
         return 'local result'  # pragma: no cover
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
-    # get_builtin_tools returns the explicit builtin
-    assert len(cap.get_builtin_tools()) == 1
-    assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
-    # get_toolset wraps local with prefer_builtin from _builtin_unique_id()
+    cap = NativeOrLocalTool(native=WebSearchTool(), local=my_local_tool)
+    # get_native_tools returns the explicit native tool
+    assert len(cap.get_native_tools()) == 1
+    assert isinstance(cap.get_native_tools()[0], WebSearchTool)
+    # get_toolset wraps local with prefer_native from _native_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_builtin_unique_id_non_abstract():
-    """_builtin_unique_id() raises when builtin is callable (not AbstractBuiltinTool)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_native_unique_id_non_abstract():
+    """_native_unique_id() raises when native is callable (not AbstractNativeTool)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool.__new__(BuiltinOrLocalTool)
-    cap.builtin = lambda ctx: WebSearchTool()
+    cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
+    cap.native = lambda ctx: WebSearchTool()
     cap.local = False
 
-    with pytest.raises(UserError, match='cannot derive builtin_unique_id'):
-        cap._builtin_unique_id()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='cannot derive native unique_id'):
+        cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_capability_not_dataclass():
@@ -7733,7 +7947,7 @@ async def test_prefix_tools_from_spec():
                 {
                     'PrefixTools': {
                         'prefix': 'search',
-                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
+                        'capability': {'NativeTool': {'kind': 'web_search'}},
                     }
                 },
             ],
@@ -8340,7 +8554,7 @@ class TestModelRetryFromHooks:
         )
 
     async def test_after_model_request_model_retry_max_retries(self):
-        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+        """after_model_request raises ModelRetry repeatedly — hits output_retries."""
 
         @dataclass
         class AlwaysRetryCap(AbstractCapability[Any]):
@@ -8358,7 +8572,7 @@ class TestModelRetryFromHooks:
             capabilities=[AlwaysRetryCap()],
             output_retries=2,
         )
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
 
     async def test_after_model_request_model_retry_streaming(self):
@@ -8685,7 +8899,7 @@ class TestModelRetryFromHooks:
                 raise error
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
 
@@ -8884,7 +9098,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9211,7 +9425,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9287,7 +9501,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9361,7 +9575,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9435,7 +9649,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:

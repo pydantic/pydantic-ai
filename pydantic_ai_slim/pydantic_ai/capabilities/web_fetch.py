@@ -4,18 +4,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.builtin_tools import WebFetchTool
+from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
-class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
+class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching by default and raises `UserError` on models
+    Uses the model's native URL fetching by default and raises `UserError` on models
     that don't support it natively. Pass `local=True` to opt into a local fallback
     (requires the `web-fetch` optional group)::
 
@@ -23,24 +24,24 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Only fetch from these domains. Enforced locally when native is unavailable."""
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Never fetch from these domains. Enforced locally when native is unavailable."""
 
     max_uses: int | None
-    """Maximum number of fetches per run. Requires builtin support."""
+    """Maximum number of fetches per run. Requires native support."""
 
     enable_citations: bool | None
-    """Enable citations for fetched content. Builtin-only; ignored by local tools."""
+    """Enable citations for fetched content. Native-only; ignored by local tools."""
 
     max_content_tokens: int | None
-    """Maximum content length in tokens. Builtin-only; ignored by local tools."""
+    """Maximum content length in tokens. Native-only; ignored by local tools."""
 
     def __init__(
         self,
         *,
-        builtin: WebFetchTool
+        native: WebFetchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | bool | None = None,
@@ -50,7 +51,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
     ) -> None:
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.allowed_domains = allowed_domains
         self.blocked_domains = blocked_domains
@@ -59,7 +60,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_content_tokens = max_content_tokens
         self.__post_init__()
 
-    def _default_builtin(self) -> WebFetchTool:
+    def _default_native(self) -> WebFetchTool:
         kwargs: dict[str, Any] = {}
         if self.allowed_domains is not None:
             kwargs['allowed_domains'] = self.allowed_domains
@@ -73,7 +74,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['max_content_tokens'] = self.max_content_tokens
         return WebFetchTool(**kwargs)
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return WebFetchTool.kind
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
@@ -96,5 +97,8 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             'Pass `local=True` for the default markdownify-based tool, or a Tool/callable directly.'
         )
 
-    def _requires_builtin(self) -> bool:
+    def _requires_native(self) -> bool:
         return self.max_uses is not None
+
+
+install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')
