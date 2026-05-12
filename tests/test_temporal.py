@@ -1375,13 +1375,6 @@ class MCPToolsetDynamicToolsetAgentWorkflow:
         return result.output
 
 
-@pytest.mark.skip(
-    reason='`MCPToolset` (fastmcp Client) currently fails `Failed to initialize server session` '
-    'inside a Temporal activity — the background `asyncio.create_task(_session_runner)` in '
-    'fastmcp interacts poorly with the activity task lifecycle. The legacy `MCPServerStreamableHTTP` '
-    'parallel test passes because it uses the bare `mcp` SDK transports instead. Needs further '
-    'investigation — likely fixable in `TemporalMCPToolset.__aenter__` / `connect_session` setup.'
-)
 async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
     """`@agent.toolset` returning an `MCPToolset` works in a Temporal workflow.
 
@@ -3038,6 +3031,46 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
         assert output == snapshot(
             'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
         )
+
+
+# Parallel to `fastmcp_agent` / `test_fastmcp_toolset` above, but using the new `MCPToolset`
+# instead of the legacy `FastMCPToolset`. Both are fastmcp-Client-backed, so the wrapper paths
+# (`TemporalFastMCPToolset` vs `TemporalMCPToolset`) should behave the same way.
+mcptoolset_agent = Agent(
+    model,
+    name='mcptoolset_agent',
+    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+mcptoolset_temporal_agent = TemporalAgent(
+    mcptoolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, client: Client):
+    """`MCPToolset` works in a Temporal workflow — parallel to `test_fastmcp_toolset`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetAgentWorkflow.run,
+            args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
+            id=MCPToolsetAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 # ============================================================================
