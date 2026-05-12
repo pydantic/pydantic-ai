@@ -52,6 +52,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -1559,7 +1560,7 @@ def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
 
 
 agent_with_sync_history_processor = Agent(
-    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+    model, name='agent_with_sync_history_processor', capabilities=[ProcessHistory(drop_first_message)]
 )
 temporal_agent_with_sync_history_processor = TemporalAgent(
     agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG

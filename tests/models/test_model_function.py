@@ -516,7 +516,7 @@ async def test_stream_text():
                 ),
             ]
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
 
 
 class Foo(BaseModel):
@@ -538,7 +538,7 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_output() == snapshot(Foo(x=1))
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=1,
                 input_tokens=50,

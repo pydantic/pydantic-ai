@@ -515,7 +515,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Venus')
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
     )
 
@@ -523,7 +523,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Mars', model_settings=settings)
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=17,
             output_tokens=2177,

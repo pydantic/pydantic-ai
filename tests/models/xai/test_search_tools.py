@@ -731,7 +731,7 @@ async def test_xai_x_search_usage_mapping(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Search X')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=50,
             output_tokens=30,
@@ -992,7 +992,7 @@ async def test_xai_file_search_usage_mapping(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Search collections')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=50,
             output_tokens=30,

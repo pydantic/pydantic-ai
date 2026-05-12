@@ -302,7 +302,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -315,7 +315,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -383,7 +383,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=13,
@@ -1745,7 +1745,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=3,
@@ -2312,7 +2312,7 @@ async def test_stream_structured(allow_model_requests: None):
         # the block starts and once when it ends.
         assert chunks == snapshot(['FINAL_PAYLOAD', 'FINAL_PAYLOAD'])
         assert result.is_complete
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=20,
@@ -10288,7 +10288,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -10304,7 +10304,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=1532,
             cache_read_tokens=1111,
@@ -10341,7 +10341,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
         'Please explain what Python is and its main use cases. ' * 100,
         usage_limits=UsageLimits(input_tokens_limit=5000, count_tokens_before_request=True),
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -10393,7 +10393,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
         'including major PEPs, typing improvements, performance enhancements, and ecosystem growth. '
     ) * 250
     result1 = await agent.run(long_prompt)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=9514,
             cache_read_tokens=9511,
@@ -10409,7 +10409,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=11470,
             cache_write_tokens=1956,
@@ -11257,7 +11257,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=55376,
             cache_write_tokens=55096,
@@ -11296,7 +11296,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
     async with agent.run_stream(f'Remember this context: {padding}\n\nNow say hello.') as result:
         async for _ in result.stream_text():
             pass
-        usage = result.usage()
+        usage = result.usage
     assert usage == snapshot(
         RunUsage(
             input_tokens=55368,
