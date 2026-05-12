@@ -3959,17 +3959,32 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
     assert server_tool_use['input'] == {}
 
 
-def test_openai_normalize_tool_search_args_handles_non_dict_input() -> None:
-    """OpenAI's `_normalize_tool_search_args` falls through to an empty `queries` list
-    for any non-dict input (e.g. raw `None` from an empty server tool-search call)."""
+def test_openai_normalize_tool_search_args_empty_dict_returns_empty_queries() -> None:
+    """An empty `arguments={}` payload (the streaming-mid first-event case) normalizes
+    to `{'queries': []}` — that's "not yet populated", not "unrecognized"."""
     pytest.importorskip('openai')
 
-    assert _normalize_tool_search_args(None) == {'queries': []}
-    assert _normalize_tool_search_args('') == {'queries': []}
-    # Dict without `paths` key — also empty.
-    assert _normalize_tool_search_args({'something_else': 'x'}) == {'queries': []}
-    # Dict with non-list `paths` — also empty.
-    assert _normalize_tool_search_args({'paths': 'not a list'}) == {'queries': []}
+    assert _normalize_tool_search_args({}) == {'queries': []}
+
+
+def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> None:
+    """Any non-empty payload that matches neither the `queries: list` nor `paths: list`
+    shape raises `UnexpectedModelBehavior` so OpenAI SDK schema drift surfaces loudly
+    at the parse boundary rather than silently degrading to an empty result."""
+    pytest.importorskip('openai')
+
+    # Non-dict input shouldn't happen given the SDK types arguments as a dict, but if it
+    # ever does we want a loud failure rather than a silent fallback.
+    with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
+        _normalize_tool_search_args(None)
+    with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
+        _normalize_tool_search_args('')
+    # Dict missing both recognized keys.
+    with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
+        _normalize_tool_search_args({'something_else': 'x'})
+    # Dict with `paths` present but of a non-list type.
+    with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
+        _normalize_tool_search_args({'paths': 'not a list'})
 
 
 # --- Cross-provider local→native promotion ---

@@ -4145,18 +4145,20 @@ def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
       schema we registered for the local `search_tools` function tool — already
       `{"queries": list[str]}` — so pass through unchanged.
 
-    Empty or unrecognized shapes produce `{'queries': []}` so adapters never have to
-    guess. (Streaming-mid events carry `arguments={}` on the first item-added event;
-    that path lands here cleanly.)
+    Empty `arguments={}` (the streaming-mid first-event case) returns `{'queries': []}`.
+    Any other shape we don't recognize raises `UnexpectedModelBehavior` — schema drift
+    in the OpenAI SDK should surface loudly at the parse boundary, not silently degrade.
     """
     if isinstance(raw, dict):
+        if not raw:
+            return {'queries': []}
         queries = raw.get('queries')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if isinstance(queries, list):
             return {'queries': [q for q in queries if isinstance(q, str)]}  # pyright: ignore[reportUnknownVariableType]
         paths = raw.get('paths')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if isinstance(paths, list):
             return {'queries': [p for p in paths if isinstance(p, str)]}  # pyright: ignore[reportUnknownVariableType]
-    return {'queries': []}
+    raise UnexpectedModelBehavior(f'Unrecognized tool_search arguments shape: {raw!r}')
 
 
 def _map_tool_search_call(
