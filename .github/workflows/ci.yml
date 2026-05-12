@@ -350,18 +350,13 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.sha }}
 
-  # TODO(Marcelo): We need to split this into two jobs: `build` and `release`.
-  release:
+  build-release:
     needs: [check]
     if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
 
-    environment:
-      name: release
-      url: https://pypi.org/project/pydantic-ai/${{ steps.inspect_package.outputs.version }}
-
     permissions:
-      id-token: write
+      contents: read
 
     outputs:
       package-version: ${{ steps.inspect_package.outputs.version }}
@@ -369,9 +364,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No cache — release builds must be hermetic
       - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
 
       - run: uv build --all-packages
 
@@ -382,6 +376,32 @@ jobs:
           version=$(uvx hatchling version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+  publish-release:
+    needs: [build-release]
+    if: success() && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    environment:
+      name: release
+      url: https://pypi.org/project/pydantic-ai/${{ needs.build-release.outputs.package-version }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -389,8 +409,8 @@ jobs:
 
   send-tweet:
     name: Send tweet
-    needs: [release]
-    if: needs.release.result == 'success'
+    needs: [publish-release, build-release]
+    if: needs.publish-release.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -415,7 +435,7 @@ jobs:
           tweet = os.getenv("TWEET").format(version=version)
           client.create_tweet(text=tweet)
         env:
-          VERSION: ${{ needs.release.outputs.package-version }}
+          VERSION: ${{ needs.build-release.outputs.package-version }}
           TWEET: |
             Pydantic AI version {version} is out! 🎉
 
