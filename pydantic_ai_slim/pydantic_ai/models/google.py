@@ -15,19 +15,9 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import (
-    AbstractBuiltinTool,
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageGenerationTool,
-    WebFetchTool,
-    WebSearchTool,
-)
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -38,6 +28,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -48,6 +40,14 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+)
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    WebFetchTool,
+    WebSearchTool,
 )
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
@@ -120,14 +120,13 @@ except ImportError as _import_error:
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
-_TOOL_TYPE_TO_BUILTIN_TOOL_NAME: dict[ToolType, str] = {
+_TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
     ToolType.URL_CONTEXT: WebFetchTool.kind,
     ToolType.FILE_SEARCH: FileSearchTool.kind,
 }
 
-_BUILTIN_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.items()}
-
+_NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
 LatestGoogleModelNames = Literal[
     'gemini-flash-latest',
@@ -455,26 +454,31 @@ class GoogleModel(Model[Client]):
             return self._GEMINI_API_SYSTEMS
         return frozenset({self.system})  # pragma: no cover
 
+    @property
+    def _resolved_profile(self) -> GoogleModelProfile:
+        return GoogleModelProfile.from_profile(self.profile)
+
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model can handle."""
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        supports_native_output_with_builtin_tools = GoogleModelProfile.from_profile(
-            self.profile
-        ).google_supports_native_output_with_builtin_tools
-        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
-            if model_request_parameters.output_mode not in ('native', 'prompted'):
-                suggested_output_type = (
-                    'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
-                )
+        if (
+            model_request_parameters.native_tools
+            and model_request_parameters.output_tools
+            and not self._resolved_profile.google_supports_tool_combination
+        ):
+            # Pre-Gemini-3 models reject `output_tools + native_tools` together. Force prompted
+            # output (the only mode that doesn't add a tool to the request); raise if the caller
+            # explicitly asked for tool/native output.
+            model_request_parameters = model_request_parameters.with_default_output_mode('prompted')
+            if model_request_parameters.output_mode != 'prompted':
                 raise UserError(
-                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
+                    'This model does not support output tools and built-in tools at the same time. '
+                    'Use `output_type=PromptedOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -614,21 +618,21 @@ class GoogleModel(Model[Client]):
 
         return image_config
 
-    def _get_builtin_tools(
+    def _get_native_tools(
         self, model_request_parameters: ModelRequestParameters
     ) -> tuple[list[ToolDict], ImageConfigDict | None]:
-        """Get Google-specific builtin tools (web search, code execution, etc.).
+        """Get Google-specific native tools (web search, code execution, etc.).
 
         Returns:
-            A tuple of (builtin_tools, image_config).
+            A tuple of (native_tools, image_config).
         """
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
-        if model_request_parameters.builtin_tools:
-            if model_request_parameters.function_tools:
-                raise UserError('Google does not support function tools and built-in tools at the same time.')
+        if model_request_parameters.native_tools:
+            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+                raise UserError('This model does not support function tools and built-in tools at the same time.')
 
-            for tool in model_request_parameters.builtin_tools:
+            for tool in model_request_parameters.native_tools:
                 if isinstance(tool, WebSearchTool):
                     tools.append(ToolDict(google_search=GoogleSearchDict()))
                 elif isinstance(tool, WebFetchTool):
@@ -648,6 +652,7 @@ class GoogleModel(Model[Client]):
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
                     )
+
         return tools, image_config
 
     def _get_tool_config(
@@ -660,7 +665,7 @@ class GoogleModel(Model[Client]):
         Returns:
             A tuple of (filtered_tools, tool_config, image_config).
         """
-        builtin_tools, image_config = self._get_builtin_tools(model_request_parameters)
+        native_tools, image_config = self._get_native_tools(model_request_parameters)
 
         tool_defs = model_request_parameters.tool_defs
 
@@ -689,11 +694,21 @@ class GoogleModel(Model[Client]):
             function_calling_config['allowed_function_names'] = allowed_function_names
         tool_config = ToolConfigDict(function_calling_config=function_calling_config)
 
+        # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
+        # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
+        # ('Tool call context circulation is not enabled'); CodeExecutionTool uses its own
+        # `executable_code`/`code_execution_result` parts; ImageGenerationTool runs through `image_config`.
+        emits_tool_call_invocations = any(
+            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
+        )
+        if emits_tool_call_invocations and self._resolved_profile.google_supports_server_side_tool_invocations:
+            tool_config['include_server_side_tool_invocations'] = True
+
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
         ]
 
-        tools.extend(builtin_tools)
+        tools.extend(native_tools)
 
         if not tools:
             return None, None, image_config
@@ -753,6 +768,8 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
+        # Don't use `self._resolved_profile`: `tests/test_thinking.py` invokes this as an
+        # unbound method with a `FunctionModel` carrying a `GoogleModelProfile`.
         profile = GoogleModelProfile.from_profile(self.profile)
         if thinking is False:
             if profile.google_supports_thinking_level:
@@ -794,9 +811,9 @@ class GoogleModel(Model[Client]):
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools:
+            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
                 raise UserError(
-                    'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
@@ -953,8 +970,11 @@ class GoogleModel(Model[Client]):
         )
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+        supports_tool_combination = self._resolved_profile.google_supports_tool_combination
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1008,7 +1028,9 @@ class GoogleModel(Model[Client]):
 
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
-                maybe_content = _content_model_response(m, self._matching_provider_names)
+                maybe_content = _content_model_response(
+                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
+                )
                 if maybe_content:
                     contents.append(maybe_content)
             else:
@@ -1034,7 +1056,7 @@ class GoogleModel(Model[Client]):
         parts after the function_response (fallback strategy).
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
-        supported_mime_types = GoogleModelProfile.from_profile(self.profile).google_supported_mime_types_in_tool_returns
+        supported_mime_types = self._resolved_profile.google_supported_mime_types_in_tool_returns
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []
@@ -1191,6 +1213,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
+    _has_tool_invocations: bool = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         try:
@@ -1275,13 +1298,22 @@ class GeminiStreamedResponse(StreamedResponse):
                 #     )
 
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
-                # so we can safely yield it here
-                web_fetch_call, web_fetch_return = _map_url_context_metadata(
-                    candidate.url_context_metadata, self.provider_name
-                )
-                if web_fetch_call and web_fetch_return:
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+                # so we can safely yield it here.
+                #
+                # `_has_tool_invocations` reflects parts seen in *prior* chunks because we can't peek
+                # ahead in a stream. The non-streaming path (`_has_native_tool_invocations(parts)` in
+                # `_process_response_from_parts`) inspects all parts upfront and is safer. The
+                # streaming assumption — confirmed by Gemini 3 cassettes — is that
+                # `url_context_metadata` and native `tool_call`/`tool_response` parts are mutually
+                # exclusive: when `include_server_side_tool_invocations=True` the API returns
+                # tool_call/tool_response parts *instead of* the metadata, never both.
+                if not self._has_tool_invocations:
+                    web_fetch_call, web_fetch_return = _map_url_context_metadata(
+                        candidate.url_context_metadata, self.provider_name
+                    )
+                    if web_fetch_call and web_fetch_return:
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
                 if candidate.content is None or candidate.content.parts is None:
                     continue
@@ -1289,6 +1321,9 @@ class GeminiStreamedResponse(StreamedResponse):
                 parts = candidate.content.parts
                 if not parts:
                     continue  # pragma: no cover
+
+                if not self._has_tool_invocations:
+                    self._has_tool_invocations = _has_native_tool_invocations(parts)
 
                 for part in parts:
                     provider_details: dict[str, Any] | None = None
@@ -1348,6 +1383,14 @@ class GeminiStreamedResponse(StreamedResponse):
                                 provider_details=provider_details,
                             ),
                         )
+                    elif part.tool_call:
+                        tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
+                        tool_call_part.provider_details = provider_details
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                    elif part.tool_response:
+                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
+                        tool_response_part.provider_details = provider_details
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1360,11 +1403,14 @@ class GeminiStreamedResponse(StreamedResponse):
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
                 # Grounding metadata is attached to the final text chunk, so
-                # we emit the `BuiltinToolReturnPart` after the text delta so
+                # we emit the `NativeToolReturnPart` after the text delta so
                 # that the delta is properly added to the same `TextPart` as earlier chunks
-                file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
-                if file_search_part is not None:
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+                if not self._has_tool_invocations:
+                    file_search_part = self._handle_file_search_grounding_metadata_streaming(
+                        candidate.grounding_metadata
+                    )
+                    if file_search_part is not None:
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1376,10 +1422,10 @@ class GeminiStreamedResponse(StreamedResponse):
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
-    ) -> BuiltinToolReturnPart | None:
+    ) -> NativeToolReturnPart | None:
         """Handle file search grounding metadata for streaming responses.
 
-        Returns a BuiltinToolReturnPart if file search results are available in the grounding metadata.
+        Returns a NativeToolReturnPart if file search results are available in the grounding metadata.
         """
         if not self._file_search_tool_call_id or not grounding_metadata:
             return None
@@ -1387,7 +1433,7 @@ class GeminiStreamedResponse(StreamedResponse):
         grounding_chunks = grounding_metadata.grounding_chunks
         retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
         if retrieved_contexts:  # pragma: no branch
-            part = BuiltinToolReturnPart(
+            part = NativeToolReturnPart(
                 provider_name=self.provider_name,
                 tool_name=FileSearchTool.kind,
                 tool_call_id=self._file_search_tool_call_id,
@@ -1397,25 +1443,25 @@ class GeminiStreamedResponse(StreamedResponse):
             return part
         return None  # pragma: no cover
 
-    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> BuiltinToolReturnPart:
-        """Map code execution result to a BuiltinToolReturnPart using instance state."""
+    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> NativeToolReturnPart:
+        """Map code execution result to a NativeToolReturnPart using instance state."""
         assert self._code_execution_tool_call_id is not None
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
     def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
         """Handle executable code for streaming responses.
 
-        Returns a BuiltinToolCallPart for file search or code execution.
+        Returns a NativeToolCallPart for file search or code execution.
         Sets self._code_execution_tool_call_id or self._file_search_tool_call_id as appropriate.
         """
         code = executable_code.code
         has_file_search_tool = any(
-            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
+            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.native_tools
         )
 
         if code and has_file_search_tool and (file_search_query := self._extract_file_search_query(code)):
             self._file_search_tool_call_id = _utils.generate_tool_call_id()
-            return BuiltinToolCallPart(
+            return NativeToolCallPart(
                 provider_name=self.provider_name,
                 tool_name=FileSearchTool.kind,
                 tool_call_id=self._file_search_tool_call_id,
@@ -1466,7 +1512,7 @@ def _content_model_response(
 ) -> ContentDict | None:
     # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
     # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
-    # routes its thinking signatures and built-in tool parts back to this provider.
+    # routes its thinking signatures and native tool parts back to this provider.
     parts: list[PartDict] = []
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
     pending_thinking_signature: str | None = None
@@ -1495,12 +1541,12 @@ def _content_model_response(
                 part = _attach_signature({'text': item.content, 'thought': True}, item_signature)
             else:
                 part = None
-        elif isinstance(item, BuiltinToolCallPart):
-            part = _builtin_tool_call_part_dict(
+        elif isinstance(item, NativeToolCallPart):
+            part = _native_tool_call_part_dict(
                 item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
             )
-        elif isinstance(item, BuiltinToolReturnPart):
-            part = _builtin_tool_return_part_dict(
+        elif isinstance(item, NativeToolReturnPart):
+            part = _native_tool_return_part_dict(
                 item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, FilePart):
@@ -1557,8 +1603,8 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
     return part
 
 
-def _builtin_tool_call_part_dict(
-    item: BuiltinToolCallPart,
+def _native_tool_call_part_dict(
+    item: NativeToolCallPart,
     accepted_provider_names: frozenset[str],
     signature: bytes | None,
     *,
@@ -1568,9 +1614,9 @@ def _builtin_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
-    tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
+    tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
+        raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     part: PartDict = {
@@ -1579,8 +1625,8 @@ def _builtin_tool_call_part_dict(
     return _attach_signature(part, signature)
 
 
-def _builtin_tool_return_part_dict(
-    item: BuiltinToolReturnPart,
+def _native_tool_return_part_dict(
+    item: NativeToolReturnPart,
     accepted_provider_names: frozenset[str],
     signature: bytes | None,
     *,
@@ -1593,9 +1639,9 @@ def _builtin_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
-    tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
+    tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
+        raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
@@ -1606,7 +1652,7 @@ def _builtin_tool_return_part_dict(
 
 
 def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combination: bool) -> bool:
-    """Whether a server-side builtin-tool part can be echoed back to Gemini as `tool_call` / `tool_response`.
+    """Whether a server-side native-tool part can be echoed back to Gemini as `tool_call` / `tool_response`.
 
     Two reasons to skip:
 
@@ -1659,6 +1705,10 @@ def _process_part(
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id
+    elif part.tool_call:
+        item = _map_tool_call(part.tool_call, provider_name)
+    elif part.tool_response:
+        item = _map_tool_response(part.tool_response, provider_name)
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1689,19 +1739,20 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
 
-    web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
-    if web_search_call and web_search_return:
-        items.append(web_search_call)
-        items.append(web_search_return)
+    if not _has_native_tool_invocations(parts):
+        web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
+        if web_search_call and web_search_return:
+            items.append(web_search_call)
+            items.append(web_search_return)
 
-    file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
-    if file_search_call and file_search_return:
-        items.append(file_search_call)
-        items.append(file_search_return)
-    web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
-    if web_fetch_call and web_fetch_return:
-        items.append(web_fetch_call)
-        items.append(web_fetch_return)
+        file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+        if file_search_call and file_search_return:
+            items.append(file_search_call)
+            items.append(file_search_return)
+        web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
+        if web_fetch_call and web_fetch_return:
+            items.append(web_fetch_call)
+            items.append(web_fetch_return)
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
@@ -1720,6 +1771,18 @@ def _process_response_from_parts(
         provider_url=provider_url,
         finish_reason=finish_reason,
     )
+
+
+def _has_native_tool_invocations(parts: list[Part]) -> bool:
+    """Whether the response carries explicit `tool_call`/`tool_response` parts.
+
+    When the API returned these (because `include_server_side_tool_invocations` was set),
+    metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
+    `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
+    `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
+    See https://ai.google.dev/api/caching#ToolConfig.
+    """
+    return any(p.tool_call or p.tool_response for p in parts)
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -1771,8 +1834,8 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
     )
 
 
-def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> BuiltinToolCallPart:
-    part = BuiltinToolCallPart(
+def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> NativeToolCallPart:
+    part = NativeToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         args=executable_code.model_dump(mode='json', exclude_none=True),
@@ -1784,8 +1847,8 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
 
 def _map_code_execution_result(
     code_execution_result: CodeExecutionResult, provider_name: str, tool_call_id: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_result.model_dump(mode='json', exclude_none=True),
@@ -1793,19 +1856,46 @@ def _map_code_execution_result(
     )
 
 
+def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
+    if tool_type is None:  # pragma: no cover
+        raise UnexpectedModelBehavior('Missing tool_type on native tool part')
+    tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
+    if tool_name is None:  # pragma: no cover
+        raise UnexpectedModelBehavior(f'Unknown tool type on native tool part: {tool_type!r}')
+    return tool_name
+
+
+def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
+    return NativeToolCallPart(
+        provider_name=provider_name,
+        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
+        args=tool_call.args,
+    )
+
+
+def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
+        provider_name=provider_name,
+        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
+        content=tool_response.response,
+    )
+
+
 def _map_grounding_metadata(
     grounding_metadata: GroundingMetadata | None, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
     if grounding_metadata and (web_search_queries := grounding_metadata.web_search_queries):
         tool_call_id = _utils.generate_tool_call_id()
         return (
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
                 args={'queries': web_search_queries},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
@@ -1850,7 +1940,7 @@ def _extract_file_search_retrieved_contexts(
 
 def _map_file_search_grounding_metadata(
     grounding_metadata: GroundingMetadata | None, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
     if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
         return None, None
 
@@ -1861,13 +1951,13 @@ def _map_file_search_grounding_metadata(
 
     tool_call_id = _utils.generate_tool_call_id()
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             provider_name=provider_name,
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
             args={},
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             provider_name=provider_name,
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
@@ -1878,19 +1968,19 @@ def _map_file_search_grounding_metadata(
 
 def _map_url_context_metadata(
     url_context_metadata: UrlContextMetadata | None, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
     if url_context_metadata and (url_metadata := url_context_metadata.url_metadata):
         tool_call_id = _utils.generate_tool_call_id()
         # Extract URLs from the metadata
         urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
         return (
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 provider_name=provider_name,
                 tool_name=WebFetchTool.kind,
                 tool_call_id=tool_call_id,
                 args={'urls': urls} if urls else None,
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 provider_name=provider_name,
                 tool_name=WebFetchTool.kind,
                 tool_call_id=tool_call_id,

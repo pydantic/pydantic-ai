@@ -31,6 +31,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelSettings,
     MultiModalContent,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -49,13 +51,14 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -512,7 +515,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -539,7 +542,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -620,7 +623,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -771,6 +774,34 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
@@ -909,7 +940,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
@@ -917,7 +948,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 )
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_product_name',
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
@@ -959,7 +990,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
@@ -1137,6 +1168,22 @@ async def test_complex_agent_run(allow_model_requests: None):
                     args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
                 ),
+            ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                    timestamp=IsDatetime(),
+                )
             ),
         ]
     )
@@ -1877,7 +1924,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 class SimpleAgentWorkflowWithOverrideBuiltinTools:
     @workflow.run
     async def run(self, prompt: str) -> None:
-        with simple_temporal_agent.override(builtin_tools=[WebSearchTool()]):
+        with simple_temporal_agent.override(native_tools=[WebSearchTool()]):
             pass
 
 
@@ -1891,7 +1938,7 @@ async def test_temporal_agent_override_builtin_tools_in_workflow(allow_model_req
         with workflow_raises(
             UserError,
             snapshot(
-                'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                'Native tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
             await client.execute_workflow(
@@ -2675,7 +2722,7 @@ web_search_model = OpenAIResponsesModel(
 web_search_agent = Agent(
     web_search_model,
     name='web_search_agent',
-    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+    capabilities=[NativeTool(WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX')))],
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -3213,10 +3260,10 @@ class MultiModelWorkflow:
 
 
 class _BuiltinToolModel(TestModel):
-    SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
+    SUPPORTED_TOOLS: frozenset[type[AbstractNativeTool]] = frozenset()
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return cls.SUPPORTED_TOOLS
 
     def _request(
@@ -3237,8 +3284,8 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
     SUPPORTED_TOOLS = frozenset({CodeExecutionTool})
 
 
-def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
-    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
+    if WebSearchTool in ctx.model.profile.supported_native_tools:
         return WebSearchTool()
     return CodeExecutionTool()
 
@@ -3249,7 +3296,7 @@ code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code 
 builtin_tool_agent = Agent(
     web_search_builtin_model,
     name='builtin_tool_dynamic_agent',
-    builtin_tools=[_select_builtin_tool],
+    capabilities=[NativeTool(_select_builtin_tool)],
 )
 
 builtin_tool_temporal_agent = TemporalAgent(
@@ -3280,7 +3327,7 @@ web_search_builtin_override_model = _WebSearchOnlyModel(
 # Agent initialized with model that doesn't support builtins, but has builtin tools configured
 builtins_in_workflow_agent = Agent(
     no_builtin_support_model,
-    builtin_tools=[WebSearchTool()],
+    capabilities=[NativeTool(WebSearchTool())],
     instrument=True,
     name='builtins_in_workflow',
 )
@@ -3376,8 +3423,8 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'search model'
         assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
-        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+        assert web_search_builtin_model.last_model_request_parameters.native_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.native_tools[0], WebSearchTool)
 
         output = await client.execute_workflow(
             BuiltinToolWorkflow.run,
@@ -3387,9 +3434,9 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'code model'
         assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert code_execution_builtin_model.last_model_request_parameters.native_tools
         assert isinstance(
-            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            code_execution_builtin_model.last_model_request_parameters.native_tools[0],
             CodeExecutionTool,
         )
 
@@ -3414,9 +3461,9 @@ async def test_builtins_in_workflow_with_runtime_model_override(allow_model_requ
 
     # Verify the web search model received the WebSearchTool in its request parameters
     assert isinstance(web_search_builtin_override_model.last_model_request_parameters, ModelRequestParameters)
-    assert web_search_builtin_override_model.last_model_request_parameters.builtin_tools
+    assert web_search_builtin_override_model.last_model_request_parameters.native_tools
     assert isinstance(
-        web_search_builtin_override_model.last_model_request_parameters.builtin_tools[0],
+        web_search_builtin_override_model.last_model_request_parameters.native_tools[0],
         WebSearchTool,
     )
 
@@ -3638,7 +3685,7 @@ async def test_temporal_model_request_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3672,7 +3719,7 @@ async def test_temporal_model_request_stream_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3863,7 +3910,7 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
 
     model_request_params = ModelRequestParameters(
         function_tools=[tool_def],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],

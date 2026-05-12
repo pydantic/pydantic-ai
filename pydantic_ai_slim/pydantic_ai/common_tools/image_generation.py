@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import ImageGenerationTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
+from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.tools import RunContext, Tool
 
 ImageGenerationFallbackModelFunc = Callable[
@@ -65,7 +69,7 @@ class ImageGenerationSubagentTool:
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    builtin_tool: ImageGenerationTool
+    native_tool: ImageGenerationTool
     """The image generation tool configuration to pass to the subagent."""
 
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
@@ -93,7 +97,7 @@ class ImageGenerationSubagentTool:
         agent = Agent(
             model,
             output_type=BinaryImage,
-            builtin_tools=[self.builtin_tool],
+            capabilities=[NativeTool(self.native_tool)],
             instructions=self.instructions,
         )
         try:
@@ -102,25 +106,54 @@ class ImageGenerationSubagentTool:
             raise ModelRetry(str(e)) from e
         return result.output
 
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated alias for read access to the renamed `builtin_tool` field.
+        if name == 'builtin_tool':
+            warnings.warn(
+                '`ImageGenerationSubagentTool.builtin_tool` is deprecated, use `.native_tool` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return self.native_tool
+        raise AttributeError(name)
+
+
+install_deprecated_kwarg_alias(ImageGenerationSubagentTool, old='builtin_tool', new='native_tool')
+
 
 def image_generation_tool(
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
-    builtin_tool: ImageGenerationTool,
+    native_tool: ImageGenerationTool | None = None,
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
+    **_deprecated_kwargs: Any,
 ) -> Tool[Any]:
     """Creates an image generation tool backed by a subagent.
 
     Args:
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
-        builtin_tool: The image generation tool configuration to pass to the subagent.
+        native_tool: The image generation tool configuration to pass to the subagent.
         instructions: Instructions for the subagent that generates the image.
     """
+    if 'builtin_tool' in _deprecated_kwargs:
+        warnings.warn(
+            '`image_generation_tool(builtin_tool=...)` is deprecated, use `native_tool=` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        legacy_native_tool = _deprecated_kwargs.pop('builtin_tool')
+        if native_tool is None:
+            native_tool = legacy_native_tool
+    if _deprecated_kwargs:
+        unknown = ', '.join(f'`{k}`' for k in _deprecated_kwargs)
+        raise TypeError(f'image_generation_tool() got unexpected keyword arguments: {unknown}')
+    if native_tool is None:
+        raise TypeError("image_generation_tool() missing required argument: 'native_tool'")
     if isinstance(model, str):
         _check_image_only_model(model)
     return Tool[Any](
-        ImageGenerationSubagentTool(model=model, builtin_tool=builtin_tool, instructions=instructions).__call__,
+        ImageGenerationSubagentTool(model=model, native_tool=native_tool, instructions=instructions).__call__,
         name='generate_image',
         description='Generate an image based on the given prompt.',
     )

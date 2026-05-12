@@ -16,8 +16,8 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai import BuiltinToolCallPart, BuiltinToolReturnPart, ModelResponse, TextPart, ThinkingPart
-    from pydantic_ai.builtin_tools import CodeExecutionTool
+    from pydantic_ai import NativeToolCallPart, NativeToolReturnPart, ModelResponse, TextPart, ThinkingPart
+    from pydantic_ai.native_tools import CodeExecutionTool
     from pydantic_ai.models.google import GoogleModel, _content_model_response  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -83,18 +83,18 @@ def test_history_with_legacy_provider_name_still_routes_thinking_signature(
 def test_history_with_legacy_provider_name_still_replays_builtin_tool_parts(
     model_factory: type, historical_provider_name: str, current_provider_name: str
 ) -> None:
-    """A `BuiltinToolCallPart` / `BuiltinToolReturnPart` carrying the old name still round-trips."""
+    """A `NativeToolCallPart` / `NativeToolReturnPart` carrying the old name still round-trips."""
     model = model_factory()
     assert model.system == current_provider_name
 
     response = ModelResponse(
         parts=[
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=CodeExecutionTool.kind,
                 args={'code': "print('hi')"},
                 provider_name=historical_provider_name,
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=CodeExecutionTool.kind,
                 content={'output': 'hi\n', 'outcome': 'OUTCOME_OK'},
                 provider_name=historical_provider_name,
