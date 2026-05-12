@@ -26,23 +26,12 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..builtin_tools import (
-    AbstractBuiltinTool,
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageAspectRatio,
-    ImageGenerationTool,
-    MCPServerTool,
-    WebSearchTool,
-)
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -54,6 +43,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -67,6 +58,15 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     is_multi_modal_content,
+)
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageAspectRatio,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -84,6 +84,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -107,6 +108,7 @@ try:
         ChatCompletionMessageFunctionToolCallParam,
     )
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
@@ -119,7 +121,7 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
-    from openai.types.responses.response_create_params import ContextManagement
+    from openai.types.responses.response_create_params import ContextManagement, ToolChoice as ResponsesToolChoice
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -129,6 +131,8 @@ try:
         Summary as ReasoningSummary,
     )
     from openai.types.responses.response_status import ResponseStatus
+    from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
+    from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -315,6 +319,26 @@ def _resolve_openai_image_generation_size(
     return mapped_size
 
 
+def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.tool_param.ImageGeneration:
+    size = _resolve_openai_image_generation_size(tool)
+    output_compression = tool.output_compression if tool.output_compression is not None else 100
+    image_generation_tool = responses.tool_param.ImageGeneration(
+        type='image_generation',
+        action=tool.action,
+        background=tool.background,
+        input_fidelity=tool.input_fidelity,
+        moderation=tool.moderation,
+        output_compression=output_compression,
+        output_format=tool.output_format or 'png',
+        partial_images=tool.partial_images,
+        quality=tool.quality,
+        size=size,
+    )
+    if tool.model is not None:
+        image_generation_tool['model'] = tool.model
+    return image_generation_tool
+
+
 def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
@@ -343,6 +367,34 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
         except ValidationError:
             pass
     return None
+
+
+def _merge_leading_system_messages(
+    openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
+) -> list[chat.ChatCompletionMessageParam]:
+    """Merge consecutive messages with `system_prompt_role` at the start of the list into a single message.
+
+    Required by strict OpenAI-compatible backends (some LiteLLM/vLLM deployments) that reject more than one
+    initial system message with `System message must be at the beginning.`
+
+    Only applies when system prompts are sent as `'system'` or `'developer'` role; with `'user'` role we
+    can't distinguish a system prompt cast as user from an actual user turn.
+    """
+    if system_prompt_role not in ('system', 'developer'):
+        return openai_messages
+
+    leading_count = next(
+        (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role),
+        len(openai_messages),
+    )
+    if leading_count < 2:
+        return openai_messages
+
+    # Content is always `str` here: it originates from `SystemPromptPart.content` or instruction
+    # `TextPart.content`, both of which are typed as `str`.
+    merged_content = '\n\n'.join(m['content'] for m in openai_messages[:leading_count])  # type: ignore[misc]
+    merged: chat.ChatCompletionMessageParam = {**openai_messages[0], 'content': merged_content}  # type: ignore[typeddict-item]
+    return [merged, *openai_messages[leading_count:]]
 
 
 def _drop_sampling_params_for_reasoning(
@@ -476,7 +528,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
+    openai_native_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
@@ -603,6 +655,32 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
+def _resolve_openai_native_tools_setting(
+    model_settings: OpenAIResponsesModelSettings,
+) -> Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]:
+    """Resolve `openai_native_tools` from settings, falling back to the deprecated `openai_builtin_tools` key.
+
+    The legacy `openai_builtin_tools` key was silently dropped after the rename, so this
+    helper preserves backward compatibility while emitting a deprecation warning.
+    """
+    if native := model_settings.get('openai_native_tools'):
+        return native
+    # `OpenAIResponsesModelSettings` is a `TypedDict`, but at runtime it's a plain dict —
+    # legacy callers may still pass `openai_builtin_tools` via `cast()` or a dict literal.
+    legacy = cast('dict[str, Any]', model_settings).get('openai_builtin_tools')
+    if legacy:
+        from .._warnings import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`OpenAIResponsesModelSettings({"openai_builtin_tools": [...]})` is deprecated, '
+            'use `openai_native_tools` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        return cast('Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]', legacy)
+    return ()
+
+
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
 ) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
@@ -722,7 +800,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
@@ -735,8 +813,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         _profile = super().profile
         openai_profile = OpenAIModelProfile.from_profile(_profile)
         if not openai_profile.openai_chat_supports_web_search:
-            new_tools = _profile.supported_builtin_tools - {WebSearchTool}
-            _profile = replace(_profile, supported_builtin_tools=new_tools)
+            new_tools = _profile.supported_native_tools - {WebSearchTool}
+            _profile = replace(_profile, supported_native_tools=new_tools)
         return _profile
 
     @property
@@ -751,9 +829,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         # Check for WebSearchTool before base validation to provide a helpful error message
         if (
-            any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
+            any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.native_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
-            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
+            and not any(t.prefer_native == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -839,16 +917,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
-        tools = self._get_tools(model_request_parameters)
-        web_search_options = self._get_web_search_options(model_request_parameters)
+        tool_choice: ChatCompletionToolChoiceOptionParam | None
 
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -1052,7 +1125,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
+            _utils.PeekableAsyncStream(response)
+        )
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -1086,6 +1161,51 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
+    def _get_tool_choice(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: ChatCompletionToolChoiceOptionParam
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+                else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = 'auto'
+            else:
+                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+        else:
+            assert_never(resolved_tool_choice)
+
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
+        if not tools:
+            return tools, None
+
+        return tools, tool_choice
+
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
 
@@ -1096,11 +1216,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             options['continuous_usage_stats'] = True
         return cast(chat.ChatCompletionStreamOptionsParam, options)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
-        for tool in model_request_parameters.builtin_tools:
+        for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
                 if tool.user_location:
                     return WebSearchOptions(
@@ -1138,7 +1255,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_thinking_part(item)
                 elif isinstance(item, ToolCallPart):
                     self._map_response_tool_call_part(item)
-                elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
@@ -1230,7 +1347,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             """
             self.tool_calls.append(self._model._map_tool_call(item))
 
-        def _map_response_builtin_part(self, item: BuiltinToolCallPart | BuiltinToolReturnPart) -> None:
+        def _map_response_builtin_part(self, item: NativeToolCallPart | NativeToolReturnPart) -> None:
             """Maps a built-in tool call or return part to the response context.
 
             This method serves as a hook that can be overridden by subclasses
@@ -1280,8 +1397,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
@@ -1300,6 +1418,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if not profile.openai_chat_supports_multiple_system_messages:
+            openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
 
     @staticmethod
@@ -1616,7 +1736,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
@@ -1909,7 +2029,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
@@ -1953,18 +2075,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        tools = (
-            self._get_builtin_tools(model_request_parameters)
-            + list(model_settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        extra_native_tools = _resolve_openai_native_tools_setting(model_settings)
+        tools: list[responses.ToolParam] = (
+            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
         )
-        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+            tool_choice = None
+        profile = OpenAIModelProfile.from_profile(self.profile)
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
@@ -2094,13 +2212,54 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_responses_tool_choice(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
+        """Determine which tools to send and the API tool_choice value.
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+        Returns:
+            A tuple of (filtered_function_tools, tool_choice).
+            Note: builtin tools are handled separately and should be added to this list.
+        """
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+
+        tool_choice: ResponsesToolChoice | None
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
+            else:
+                # `allowed_tools` filters via the API rather than the tools list,
+                # so caching is preserved. Used for the multi-tool case and as the
+                # cache-preserving fallback when forcing isn't supported.
+                effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode=effective_mode,
+                    tools=[{'type': 'function', 'name': n} for n in tool_names],
+                )
+        else:
+            assert_never(resolved_tool_choice)
+
+        tools: list[responses.FunctionToolParam] = [
+            self._map_tool_definition(t) for t in model_request_parameters.tool_defs.values()
+        ]
+        return tools, tool_choice
+
+    def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
-        for tool in model_request_parameters.builtin_tools:
+        for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 web_search_tool = responses.WebSearchToolParam(
                     type='web_search', search_context_size=tool.search_context_size
@@ -2151,21 +2310,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
-                size = _resolve_openai_image_generation_size(tool)
-                output_compression = tool.output_compression if tool.output_compression is not None else 100
-                tools.append(
-                    responses.tool_param.ImageGeneration(
-                        type='image_generation',
-                        background=tool.background,
-                        input_fidelity=tool.input_fidelity,
-                        moderation=tool.moderation,
-                        output_compression=output_compression,
-                        output_format=tool.output_format or 'png',
-                        partial_images=tool.partial_images,
-                        quality=tool.quality,
-                        size=size,
-                    )
-                )
+                tools.append(_map_openai_image_generation_tool(tool))
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -2421,7 +2566,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if id and should_send_item_id:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
-                    elif isinstance(item, BuiltinToolCallPart):
+                    elif isinstance(item, NativeToolCallPart):
                         if should_send_item_id:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
@@ -2495,7 +2640,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 elif (  # pragma: no branch
                                     action == 'call_tool'
                                     and (tool_name := args.get('tool_name'))
-                                    and (tool_args := args.get('tool_args'))
+                                    and (tool_args := args.get('tool_args')) is not None
                                 ):
                                     mcp_call_item = responses.response_input_item_param.McpCall(
                                         id=item.tool_call_id,
@@ -2508,7 +2653,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     )
                                     openai_messages.append(mcp_call_item)
 
-                    elif isinstance(item, BuiltinToolReturnPart):
+                    elif isinstance(item, NativeToolReturnPart):
                         if should_send_item_id:  # pragma: no branch
                             status = item.content.get('status') if _is_str_dict(item.content) else None
                             kind_to_item = {
@@ -2519,15 +2664,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             if status and (builtin_item := kind_to_item.get(item.tool_name)) is not None:
                                 builtin_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
-                                # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
+                                # Image generation result does not need to be sent back, just the `id` off of `NativeToolCallPart`.
                                 pass
                             elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
-                                # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
+                                # MCP call result does not need to be sent back, just the fields off of `NativeToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
                         # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
-                        # and does not need to be sent back separately from the corresponding `BuiltinToolReturnPart`.
-                        # If `send_item_ids` is false, we won't send the `BuiltinToolReturnPart`, but OpenAI does not have a type for files from the assistant.
+                        # and does not need to be sent back separately from the corresponding `NativeToolReturnPart`.
+                        # If `send_item_ids` is false, we won't send the `NativeToolReturnPart`, but OpenAI does not have a type for files from the assistant.
                         pass
                     elif isinstance(item, ThinkingPart):
                         # Get raw CoT content from provider_details if present and from this provider
@@ -2731,7 +2876,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionChunk]
+    _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2739,6 +2884,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
@@ -2929,13 +3077,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: AsyncIterable[responses.ResponseStreamEvent]
+    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
@@ -3629,6 +3780,25 @@ def _map_logprobs(
     ]
 
 
+def _support_tool_forcing(
+    model_name: str,
+    openai_profile: OpenAIModelProfile,
+    model_settings: ModelSettings | None,
+) -> bool:
+    """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
+    if not openai_profile.openai_supports_tool_choice_required:
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
+                f'This model does not support forcing tool use.'
+            )
+        else:
+            return False
+    else:
+        return True
+
+
 def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
     """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
     return CompactionPart(
@@ -3706,7 +3876,7 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
 
 def _map_code_interpreter_tool_call(
     item: responses.ResponseCodeInterpreterToolCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, list[FilePart]]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart, list[FilePart]]:
     result: dict[str, Any] = {
         'status': item.status,
     }
@@ -3730,7 +3900,7 @@ def _map_code_interpreter_tool_call(
     if logs:
         result['logs'] = logs
 
-    call_part = BuiltinToolCallPart(
+    call_part = NativeToolCallPart(
         tool_name=CodeExecutionTool.kind,
         tool_call_id=item.id,
         args={
@@ -3743,7 +3913,7 @@ def _map_code_interpreter_tool_call(
 
     return (
         call_part,
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -3755,7 +3925,7 @@ def _map_code_interpreter_tool_call(
 
 def _map_web_search_tool_call(
     item: responses.ResponseFunctionWebSearch, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
     args: dict[str, Any] | None = None
 
     result = {
@@ -3771,14 +3941,14 @@ def _map_web_search_tool_call(
             result['sources'] = sources
 
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
             id=item.id,
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -3790,7 +3960,7 @@ def _map_web_search_tool_call(
 def _map_file_search_tool_call(
     item: responses.ResponseFileSearchToolCall,
     provider_name: str,
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
     args = {'queries': item.queries}
 
     result: dict[str, Any] = {
@@ -3800,14 +3970,14 @@ def _map_file_search_tool_call(
         result['results'] = [r.model_dump(mode='json') for r in item.results]
 
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
             id=item.id,
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -3818,7 +3988,7 @@ def _map_file_search_tool_call(
 
 def _map_image_generation_tool_call(
     item: responses.response_output_item.ImageGenerationCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, FilePart | None]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart, FilePart | None]:
     result = {
         'status': item.status,
     }
@@ -3849,12 +4019,12 @@ def _map_image_generation_tool_call(
         result['status'] = 'completed'
 
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             content=result,
@@ -3866,16 +4036,16 @@ def _map_image_generation_tool_call(
 
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
     tool_name = ':'.join([MCPServerTool.kind, item.server_label])
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             tool_name=tool_name,
             tool_call_id=item.id,
             provider_name=provider_name,
             args={'action': 'list_tools'},
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=tool_name,
             tool_call_id=item.id,
             content=item.model_dump(mode='json', include={'tools', 'error'}),
@@ -3886,10 +4056,10 @@ def _map_mcp_list_tools(
 
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
     tool_name = ':'.join([MCPServerTool.kind, item.server_label])
     return (
-        BuiltinToolCallPart(
+        NativeToolCallPart(
             tool_name=tool_name,
             tool_call_id=item.id,
             args={
@@ -3899,7 +4069,7 @@ def _map_mcp_call(
             },
             provider_name=provider_name,
         ),
-        BuiltinToolReturnPart(
+        NativeToolReturnPart(
             tool_name=tool_name,
             tool_call_id=item.id,
             content={

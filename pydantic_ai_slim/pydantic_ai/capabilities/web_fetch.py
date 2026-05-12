@@ -4,18 +4,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.builtin_tools import WebFetchTool
+from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
-class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
+class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available, falling back to a local
+    Uses the model's native URL fetching when available, falling back to a local
     function tool (markdownify-based fetch by default) when it isn't.
 
     The local fallback requires the `web-fetch` optional group::
@@ -24,24 +25,24 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Only fetch from these domains. Enforced locally when native is unavailable."""
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Enforced locally when builtin is unavailable."""
+    """Never fetch from these domains. Enforced locally when native is unavailable."""
 
     max_uses: int | None
-    """Maximum number of fetches per run. Requires builtin support."""
+    """Maximum number of fetches per run. Requires native support."""
 
     enable_citations: bool | None
-    """Enable citations for fetched content. Builtin-only; ignored by local tools."""
+    """Enable citations for fetched content. Native-only; ignored by local tools."""
 
     max_content_tokens: int | None
-    """Maximum content length in tokens. Builtin-only; ignored by local tools."""
+    """Maximum content length in tokens. Native-only; ignored by local tools."""
 
     def __init__(
         self,
         *,
-        builtin: WebFetchTool
+        native: WebFetchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | bool | None = None,
@@ -51,7 +52,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
     ) -> None:
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.allowed_domains = allowed_domains
         self.blocked_domains = blocked_domains
@@ -60,7 +61,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_content_tokens = max_content_tokens
         self.__post_init__()
 
-    def _default_builtin(self) -> WebFetchTool:
+    def _default_native(self) -> WebFetchTool:
         kwargs: dict[str, Any] = {}
         if self.allowed_domains is not None:
             kwargs['allowed_domains'] = self.allowed_domains
@@ -74,7 +75,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['max_content_tokens'] = self.max_content_tokens
         return WebFetchTool(**kwargs)
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return WebFetchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
@@ -82,18 +83,20 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             from pydantic_ai.common_tools.web_fetch import web_fetch_tool
         except ImportError:
             # No [web-fetch] extra → the auto-fallback path can't run, so there's no deprecated
-            # behavior to warn about. If the model also doesn't support the builtin, the user
-            # will hit a clear UserError at request time with `local=…` migration hints.
+            # behavior to warn about. If the model also doesn't support the native tool, the
+            # user will hit a clear UserError at request time with `local=…` migration hints.
             return None
 
         import warnings
+
+        from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
         warnings.warn(
             'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
             'availability in v2. To keep this fallback, pass `local=True`. '
             'To disable the fallback, pass `local=False`.',
-            DeprecationWarning,
-            stacklevel=4,
+            PydanticAIDeprecationWarning,
+            stacklevel=5,
         )
         return web_fetch_tool(
             allowed_domains=self.allowed_domains,
@@ -120,5 +123,8 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             'Pass `local=True` for the default markdownify-based tool, or a Tool/callable directly.'
         )
 
-    def _requires_builtin(self) -> bool:
+    def _requires_native(self) -> bool:
         return self.max_uses is not None
+
+
+install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')
