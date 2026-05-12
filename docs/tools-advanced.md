@@ -664,10 +664,10 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def fuzzy_search(
-    ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+    ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
 ) -> list[str]:
     """Match tools whose name or description contains any query word."""
-    needles = query.lower().split()
+    needles = [n for q in queries for n in q.lower().split()]
     return [
         t.name
         for t in tools
