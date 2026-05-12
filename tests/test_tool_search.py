@@ -2597,6 +2597,40 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
         )
 
 
+@pytest.mark.parametrize('strategy', ['bm25', 'regex'])
+async def test_tool_search_named_strategy_agent_run_raises_on_unsupported_model(strategy: str):
+    """End-to-end: ``ToolSearch(strategy='bm25'|'regex')`` on a model without native
+    tool-search support must raise ``UserError`` rather than silently substituting the
+    local keyword-overlap algorithm. The capability promises that named-native strategies
+    error on adapters that can't honor the choice; previously the toolset always
+    registered the local ``search_tools`` function as a fallback, which masked the
+    error by letting ``_resolve_builtin_tool_swap`` drop the optional-False builtin."""
+    agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy=cast(Any, strategy))])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}'
+
+    with pytest.raises(UserError, match='ToolSearchTool.*not supported by this model'):
+        await agent.run('what should I wear?')
+
+
+async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
+    """Inverse of the named-strategy test: ``strategy='keywords'`` has a local
+    implementation, so the request must fall back silently on a model without native
+    tool-search support — running the agent should not raise."""
+    agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy='keywords')])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}'
+
+    # `TestModel` doesn't support `ToolSearchTool`; with a local fallback available
+    # this should run without error.
+    result = await agent.run('hello')
+    assert result.output
+
+
 async def test_tool_search_keywords_ignores_builtin_support():
     """``strategy='keywords'`` never tries to use a native builtin — the swap is a
     no-op even on models that support ``ToolSearchTool``."""

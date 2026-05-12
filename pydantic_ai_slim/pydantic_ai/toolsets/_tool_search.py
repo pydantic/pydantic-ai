@@ -218,6 +218,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `keywords` parameter shown to the model."""
 
+    enable_fallback: bool = True
+    """When False, the local `search_tools` function tool is not registered as a fallback
+    for the builtin `ToolSearchTool` — used when the capability commits to a named-native
+    strategy that has no local equivalent (e.g. `'bm25'`, `'regex'`). The wire-side request
+    will error on providers that can't honor the builtin, instead of silently substituting
+    the local keyword algorithm."""
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -283,12 +290,20 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # path on both Anthropic (regular function tool with tool_reference result
         # formatting) and OpenAI (`execution='client'`) still needs the local function
         # tool to execute the search, so we leave `unless_builtin` unset in that case.
+        #
+        # `enable_fallback=False` suppresses `unless_builtin` entirely: when the capability
+        # commits to a named-native strategy with no local equivalent (`'bm25'`, `'regex'`),
+        # the function tool must not be treated as a fallback — otherwise an unsupported
+        # model would silently swap the optional builtin for the local algorithm. With no
+        # fallback registered, `_resolve_builtin_tool_swap` raises on unsupported providers
+        # as the capability's docstring promises.
+        unless_builtin = _TOOL_SEARCH_BUILTIN_ID if self.search_fn is None and self.enable_fallback else None
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
             tool_kind='tool-search',
-            unless_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
+            unless_builtin=unless_builtin,
         )
 
         return _SearchTool(
