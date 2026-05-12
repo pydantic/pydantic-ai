@@ -16,10 +16,9 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
@@ -27,7 +26,6 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -505,12 +503,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    native_tools: Annotated[
-        list[AbstractNativeTool],
-        # Accept the pre-rename `builtin_tools` key when validating from a dict (e.g. through
-        # `pydantic.TypeAdapter`). The dump uses the new name only.
-        pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
-    ] = field(default_factory=list[AbstractNativeTool])
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -542,16 +535,6 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
-    @property
-    def builtin_tools(self) -> list[AbstractNativeTool]:
-        """Deprecated: use [`native_tools`][pydantic_ai.models.ModelRequestParameters.native_tools] instead."""
-        warnings.warn(
-            '`ModelRequestParameters.builtin_tools` is deprecated, use `ModelRequestParameters.native_tools` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.native_tools
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -570,12 +553,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-# Wrap the dataclass-generated `__init__` so direct construction still accepts a
-# deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
-# `validation_alias` on the `native_tools` field above.)
-_utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
 @dataclass(kw_only=True)
@@ -862,61 +839,6 @@ class Model(ABC, Generic[InterfaceClient]):
         Default is empty set - subclasses must explicitly declare support.
         """
         return frozenset()
-
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """Deprecated: use [`supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] instead."""
-        warnings.warn(
-            '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.supported_native_tools()
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # If a subclass overrides only the deprecated `supported_builtin_tools` classmethod
-        # (and not the new `supported_native_tools`), wire the legacy override through so
-        # the framework still picks up the user's declared tools — with a warning.
-        own = cls.__dict__
-        if 'supported_builtin_tools' in own and 'supported_native_tools' not in own:
-            legacy: Any = own['supported_builtin_tools']
-            warnings.warn(
-                f'{cls.__name__} overrides `supported_builtin_tools()`, which is deprecated — '
-                'override `supported_native_tools()` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-
-            # Promote the legacy override to be this class's `supported_native_tools`, and
-            # replace its `supported_builtin_tools` with a stub that warns and delegates to
-            # the modern method. This way a further subclass overriding only the modern
-            # method still wins when callers reach for the legacy name (mixed-generation
-            # MRO case): `Sub.supported_builtin_tools()` → modern stub → `cls.supported_native_tools()`
-            # → modern override on `Sub`.
-            if isinstance(legacy, classmethod):
-                legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
-            else:
-                legacy_func = legacy
-
-            def _supported_native_tools_via_legacy(
-                _cls: type[Model[Any]],
-                _legacy_func: Any = legacy_func,
-            ) -> frozenset[type[AbstractNativeTool]]:
-                return _legacy_func(_cls)
-
-            def _supported_builtin_tools_delegating(
-                _cls: type[Model[Any]],
-            ) -> frozenset[type[AbstractNativeTool]]:
-                warnings.warn(
-                    '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-                return _cls.supported_native_tools()
-
-            setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
-            setattr(cls, 'supported_builtin_tools', classmethod(_supported_builtin_tools_delegating))
 
     @cached_property
     def profile(self) -> ModelProfile:

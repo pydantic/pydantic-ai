@@ -655,32 +655,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
-def _resolve_openai_native_tools_setting(
-    model_settings: OpenAIResponsesModelSettings,
-) -> Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]:
-    """Resolve `openai_native_tools` from settings, falling back to the deprecated `openai_builtin_tools` key.
-
-    The legacy `openai_builtin_tools` key was silently dropped after the rename, so this
-    helper preserves backward compatibility while emitting a deprecation warning.
-    """
-    if native := model_settings.get('openai_native_tools'):
-        return native
-    # `OpenAIResponsesModelSettings` is a `TypedDict`, but at runtime it's a plain dict —
-    # legacy callers may still pass `openai_builtin_tools` via `cast()` or a dict literal.
-    legacy = cast('dict[str, Any]', model_settings).get('openai_builtin_tools')
-    if legacy:
-        from .._warnings import PydanticAIDeprecationWarning
-
-        warnings.warn(
-            '`OpenAIResponsesModelSettings({"openai_builtin_tools": [...]})` is deprecated, '
-            'use `openai_native_tools` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=3,
-        )
-        return cast('Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]', legacy)
-    return ()
-
-
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
 ) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
@@ -2076,7 +2050,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
-        extra_native_tools = _resolve_openai_native_tools_setting(model_settings)
+        extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
         )
