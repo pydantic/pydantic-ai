@@ -886,8 +886,93 @@ def test_model_subclass_supported_builtin_tools_override_still_used():
 
     # Framework lookup via the new name reaches the user's legacy override.
     assert _LegacyModel.supported_native_tools() == frozenset({WebSearchTool})
-    # And the legacy classmethod direct call still works.
-    assert _LegacyModel.supported_builtin_tools() == frozenset({WebSearchTool})
+    # And the legacy classmethod direct call still works (with a use-site deprecation warning).
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Model\.supported_builtin_tools\(\)` is deprecated',
+    ):
+        legacy_result = _LegacyModel.supported_builtin_tools()
+    assert legacy_result == frozenset({WebSearchTool})
+
+
+def test_model_subclass_mixed_legacy_and_modern_overrides_modern_wins_on_legacy_call():
+    """A child overriding only `supported_native_tools()` wins even when the parent overrode the legacy classmethod.
+
+    Lock-in for the mixed-generation MRO bug: `Child.supported_builtin_tools()` must
+    delegate to `Child.supported_native_tools()` instead of resolving to the parent's
+    legacy-name override via MRO.
+    """
+    from pydantic_ai.models import Model
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'overrides `supported_builtin_tools\(\)`, which is deprecated',
+    ):
+
+        class _LegacyParent(Model[Any]):
+            @classmethod
+            def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+                return frozenset({WebSearchTool})
+
+            @property
+            def system(self) -> str:
+                return 'test'  # pragma: no cover
+
+            @property
+            def model_name(self) -> str:
+                return 'test'  # pragma: no cover
+
+            async def request(self, *args: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError  # pragma: no cover
+
+    class _ModernChild(_LegacyParent):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({CodeExecutionTool})
+
+    # Framework lookup uses the modern method on the child.
+    assert _ModernChild.supported_native_tools() == frozenset({CodeExecutionTool})
+    # Legacy-name call must also reach the modern override — not the parent's legacy method.
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Model\.supported_builtin_tools\(\)` is deprecated',
+    ):
+        legacy_result = _ModernChild.supported_builtin_tools()
+    assert legacy_result == frozenset({CodeExecutionTool})
+
+
+def test_abstract_capability_mixed_legacy_and_modern_overrides_modern_wins_on_legacy_call():
+    """A child overriding only `get_native_tools()` wins even when the parent overrode `get_builtin_tools()`.
+
+    Same lock-in as `test_model_subclass_mixed_...` but for `AbstractCapability`'s instance methods.
+    """
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.tools import AgentNativeTool
+
+    parent_tool = WebSearchTool()
+    child_tool = CodeExecutionTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'overrides `get_builtin_tools\(\)`, which is deprecated',
+    ):
+
+        class _LegacyParentCap(AbstractCapability[Any]):
+            def get_builtin_tools(self) -> list[AgentNativeTool[Any]]:
+                return [parent_tool]
+
+    class _ModernChildCap(_LegacyParentCap):
+        def get_native_tools(self) -> list[AgentNativeTool[Any]]:
+            return [child_tool]
+
+    cap = _ModernChildCap()
+    assert list(cap.get_native_tools()) == [child_tool]
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`AbstractCapability\.get_builtin_tools\(\)` is deprecated',
+    ):
+        legacy_result = list(cap.get_builtin_tools())
+    assert legacy_result == [child_tool]
 
 
 def test_model_supported_builtin_tools_classmethod_deprecated_on_base():

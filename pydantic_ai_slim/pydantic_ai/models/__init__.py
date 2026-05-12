@@ -907,8 +907,12 @@ class Model(ABC, Generic[InterfaceClient]):
                 stacklevel=2,
             )
 
-            # Re-route framework lookups (`cls.supported_native_tools()`) to the legacy
-            # override, preserving the legacy `cls.supported_builtin_tools()` call too.
+            # Promote the legacy override to be this class's `supported_native_tools`, and
+            # replace its `supported_builtin_tools` with a stub that warns and delegates to
+            # the modern method. This way a further subclass overriding only the modern
+            # method still wins when callers reach for the legacy name (mixed-generation
+            # MRO case): `Sub.supported_builtin_tools()` → modern stub → `cls.supported_native_tools()`
+            # → modern override on `Sub`.
             if isinstance(legacy, classmethod):
                 legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
             else:
@@ -920,7 +924,18 @@ class Model(ABC, Generic[InterfaceClient]):
             ) -> frozenset[type[AbstractNativeTool]]:
                 return _legacy_func(_cls)
 
+            def _supported_builtin_tools_delegating(
+                _cls: type[Model[Any]],
+            ) -> frozenset[type[AbstractNativeTool]]:
+                warnings.warn(
+                    '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
+                    PydanticAIDeprecationWarning,
+                    stacklevel=2,
+                )
+                return _cls.supported_native_tools()
+
             setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
+            setattr(cls, 'supported_builtin_tools', classmethod(_supported_builtin_tools_delegating))
 
     @cached_property
     def profile(self) -> ModelProfile:

@@ -168,7 +168,25 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
+            # Promote the legacy override to be this class's `get_native_tools`, and replace
+            # its `get_builtin_tools` with a stub that warns and delegates to the modern
+            # method. This keeps the mixed-generation MRO case working: a further subclass
+            # overriding only `get_native_tools()` still wins on a legacy-name call, because
+            # `Sub.get_builtin_tools()` resolves to the delegating stub installed here,
+            # which routes to `self.get_native_tools()` (modern override on `Sub`).
             cls.get_native_tools = own['get_builtin_tools']
+
+            def _get_builtin_tools_delegating(
+                self: AbstractCapability[Any],
+            ) -> Sequence[AgentNativeTool[Any]]:
+                warnings.warn(
+                    '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
+                    PydanticAIDeprecationWarning,
+                    stacklevel=2,
+                )
+                return self.get_native_tools()
+
+            cls.get_builtin_tools = _get_builtin_tools_delegating
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
