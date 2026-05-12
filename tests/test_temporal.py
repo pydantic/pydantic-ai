@@ -199,7 +199,7 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
-        ui=False,
+        ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
     ) as env:
         yield env

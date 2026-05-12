@@ -157,7 +157,7 @@ def my_task(inputs: str) -> str:
 
 dataset = Dataset(
     name='evaluator_concurrency',
-    cases=[Case(inputs=f'test{i}') for i in range(100)],  # 100 cases
+    cases=[Case(inputs=f'test{i}') for i in range(20)],  # 20 cases
     evaluators=[
         LLMJudge(rubric='Quality check'),  # Makes API calls
     ],
