@@ -9,16 +9,17 @@ import pytest
 
 from pydantic_ai import (
     Agent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FileSearchTool,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     TextPart,
     ThinkingPart,
     UserPromptPart,
     XSearchTool,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.usage import RunUsage
@@ -48,10 +49,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -167,7 +168,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool()],
+        capabilities=[NativeTool(XSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_x_search_output=True,
@@ -197,7 +198,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='x_search',
                         args={'query': 'PydanticAI', 'limit': 10, 'mode': 'Latest'},
                         tool_call_id=IsStr(),
@@ -209,7 +210,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='x_search',
                         content={
                             'citations': [
@@ -263,7 +264,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool()],
+        capabilities=[NativeTool(XSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_x_search_output=True,
@@ -302,14 +303,14 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='x_search',
                         args={'query': 'PydanticAI', 'limit': 10, 'mode': 'Latest'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'x_keyword_search'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='x_search',
                         content={
                             'citations': [
@@ -357,7 +358,7 @@ async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(al
     """Regression: streaming x_search citation backfill must not emit a duplicate `PartStartEvent`.
 
     xAI returns x_search results as top-level `response.citations` that only arrive with the
-    final stream chunk, so we backfill them onto the already-emitted `BuiltinToolReturnPart`.
+    final stream chunk, so we backfill them onto the already-emitted `NativeToolReturnPart`.
     The fix mutates the part in place rather than re-calling `_parts_manager.handle_part`,
     which would have emitted a second `PartStartEvent` at the same index. This test exercises
     that path with mocked stream chunks (citation arrives only on the final chunk) and asserts:
@@ -445,7 +446,7 @@ async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(al
 
     mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     events: list[Any] = []
     async with agent.iter(user_prompt='find PydanticAI posts') as agent_run:
@@ -457,7 +458,7 @@ async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(al
 
     assert agent_run.result is not None
     parts = agent_run.result.all_messages()[1].parts
-    return_parts = [p for p in parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == XSearchTool.kind]
+    return_parts = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == XSearchTool.kind]
     assert len(return_parts) == 1
     assert return_parts[0].content == {'citations': citations}
 
@@ -467,7 +468,7 @@ async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(al
     start_events_at_return_index = [
         e
         for e in events
-        if isinstance(e, PartStartEvent) and e.index == return_part_index and isinstance(e.part, BuiltinToolReturnPart)
+        if isinstance(e, PartStartEvent) and e.index == return_part_index and isinstance(e.part, NativeToolReturnPart)
     ]
     assert len(start_events_at_return_index) == 1
 
@@ -488,7 +489,7 @@ async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI'])],
+        capabilities=[NativeTool(XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI']))],
     )
 
     await agent.run('What are OpenAI and Anthropic tweeting about?')
@@ -529,10 +530,12 @@ async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: N
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[
-            XSearchTool(
-                from_date=datetime(2024, 1, 1),
-                to_date=datetime(2024, 12, 31),
+        capabilities=[
+            NativeTool(
+                XSearchTool(
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                )
             )
         ],
     )
@@ -592,7 +595,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='x_search',
                         args={'query': 'test'},
                         tool_call_id=IsStr(),
@@ -615,13 +618,13 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
 
 
 async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: None):
-    """Test that XSearchTool BuiltinToolCallPart in history is properly mapped back to xAI."""
+    """Test that XSearchTool NativeToolCallPart in history is properly mapped back to xAI."""
     response1 = create_x_search_response(query='pydantic updates', assistant_text='Found posts about PydanticAI.')
     response2 = create_response(content='The posts were about PydanticAI releases.')
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     result1 = await agent.run('Search for pydantic updates')
     result2 = await agent.run('What were the posts about?', message_history=result1.new_messages())
@@ -683,12 +686,12 @@ async def test_xai_x_search_function_name_round_trip(allow_model_requests: None)
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     result1 = await agent.run('Search for something')
 
     # Verify provider_details stores the original function name
-    call_parts = [p for p in result1.all_messages()[1].parts if isinstance(p, BuiltinToolCallPart)]
+    call_parts = [p for p in result1.all_messages()[1].parts if isinstance(p, NativeToolCallPart)]
     assert len(call_parts) == 1
     assert call_parts[0].tool_name == 'x_search'
     assert call_parts[0].provider_details == snapshot({'function_name': 'x_keyword_search'})
@@ -820,7 +823,7 @@ async def test_xai_builtin_file_search_tool(
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(
             m,
-            builtin_tools=[FileSearchTool(file_store_ids=[collection.collection_id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[collection.collection_id]))],
             model_settings=XaiModelSettings(xai_include_collections_search_output=True),
         )
 
@@ -843,14 +846,14 @@ async def test_xai_builtin_file_search_tool(
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'query': 'Zorblax Protocol invention year and principal inventors', 'limit': 10},
                             tool_call_id=IsStr(),
                             provider_name='xai',
                             provider_details={'function_name': 'collections_search'},
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content={'search_matches': [], 'info': 'No results found.'},
                             tool_call_id=IsStr(),
@@ -889,7 +892,7 @@ async def test_xai_file_search_sends_collection_ids(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[FileSearchTool(file_store_ids=['col-1', 'col-2'])],
+        capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-1', 'col-2']))],
     )
 
     await agent.run('Search my docs')
@@ -920,13 +923,13 @@ async def test_xai_file_search_include_option(allow_model_requests: None):
 
 
 async def test_xai_file_search_builtin_tool_call_in_history(allow_model_requests: None):
-    """Test that FileSearchTool BuiltinToolCallPart in history is properly mapped back to xAI."""
+    """Test that FileSearchTool NativeToolCallPart in history is properly mapped back to xAI."""
     response1 = create_collections_search_response(query='quarterly report', assistant_text='Found relevant documents.')
     response2 = create_response(content='The report showed 15% revenue increase.')
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[FileSearchTool(file_store_ids=['col-abc'])])
+    agent = Agent(m, capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-abc']))])
 
     result1 = await agent.run('Search my documents for quarterly report')
     result2 = await agent.run('What did it say?', message_history=result1.new_messages())

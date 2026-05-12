@@ -26,8 +26,9 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -640,6 +641,6 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
 
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')

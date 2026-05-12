@@ -14,8 +14,6 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -24,6 +22,8 @@ from pydantic_ai import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -43,7 +43,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -90,10 +91,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -248,7 +249,7 @@ async def test_responses_tool_choice_kept_when_only_builtin_tools(allow_model_re
     mock_client = MockOpenAIResponses.create_mock(c)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    mrp = ModelRequestParameters(builtin_tools=[WebSearchTool()], allow_text_output=False)
+    mrp = ModelRequestParameters(native_tools=[WebSearchTool()], allow_text_output=False)
     await model.request([ModelRequest.user_text_prompt('search the web')], None, mrp)
 
     kwargs = get_mock_responses_kwargs(mock_client)[0]
@@ -309,13 +310,15 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(
         model=model,
-        builtin_tools=[
-            ImageGenerationTool(
-                action='generate',
-                model='gpt-image-2',
-                background='opaque',
-                output_format='jpeg',
-                size='1536x1024',
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    action='generate',
+                    model='gpt-image-2',
+                    background='opaque',
+                    output_format='jpeg',
+                    size='1536x1024',
+                )
             )
         ],
     )
@@ -664,7 +667,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     instructions = 'Use web search and include citations in your answer.'
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
@@ -692,7 +695,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     events2 = [event async for event in agent2.run_stream_events(prompt)]
     assert not any(
         (
@@ -743,7 +746,7 @@ async def test_openai_responses_model_http_error(allow_model_requests: None, ope
 
 async def test_openai_responses_model_builtin_tools_web_search(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIResponsesModelSettings(openai_builtin_tools=[{'type': 'web_search'}])
+    settings = OpenAIResponsesModelSettings(openai_native_tools=[{'type': 'web_search'}])
     agent = Agent(model=model, model_settings=settings)
     result = await agent.run('Give me the top 3 news in the world today')
 
@@ -768,14 +771,14 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrgd0uCWxLjgCiIWj3ei9eYp9sdRdHLVNWOpZvOS6TS_8hF6IEgz5acjqUiaGnXfLl3kn78UERavEItdZ-6PupaB2V7M8btQ2v76ZJCPXR5DGvXe3K2y_zrSLC-qbX4ui3hPfGG01qGiftAM7m04zuCdJ33SVDyOasB8uzV7vSqFzM4CkcAeN0jueQtuGDJ9U5Qq9blCXo6Vxx4BVOVPYnCONMQvwJXlbZ7i_s3VmUFFDf2GlNYtkT07Z1Uc5ESVUVDYfVC2qlOWWp2MLh20tbsUMqHPYzO0R7Y1lmwAqNxaT4HIhhlQ0xVer1qBRgUfLn1fGXX0vBb4rN0N_w7c2w-iwY-4XAvhAr-Y3pejueHfepmv76G67cJVQjzgM37wlQFdl_UmDfkVDIxmAE62QjOjPs8TweVPEXUXAK4itTDQiS7M42dS6QzxivPVvzoMkNOjJ58vUy83DCr-Obw8SMfFGB5sd1hGg9enLYiGxN_Qzs9IGegBU4cH1wpCvARmuVP10-CJe0jzSFy0OI76JUgGMVido_cEgrAF5eEOS-3vkel6L07Q9Sl_f8C-ZW04zF40ZIvCZ4RJfRAKr2bfXH6IVNhu528-ilQTCoCeFy_CG6UYlUY2jws_DRuTsAVb6691hPRI8mG28NCPXNGV5h8sVgypbeqWyBNZEnSgqFcNVplAPTxDNqlcFps5bEND4Q0SLSNTZv9vFbRvfyrf-4s3UWqn-SI4QAmGzKRRuTumEpldsTuZgv69Nu2qA7px1ZNu-hN7S0E7ONGDs2fCaUG4X-Xp3j2fizfaTkZpOC_sdTK5e10lIG019zKGngXSrBy_sOWyTIsjiRGdr0Va-RjDw2ruFr3ewQcH5vZ8LgUwTzijfqLqbkF1zgZopHTnz1Gpt42AbZiyP30S9BQuDODD8RmtZQ5oB1NKmISeGkLCJRd6dZKGibFskFFMFr53YvUfVZx4mRpxSjuadceNKPhTVkbGPYE6XrZbChCxDL9aJJ37ctRxf91r9QAXMqeFZR-4HR13_Pp0AyN_H7gqBR2yVuGbXkhs1QwkEhl-6_keNsJYUaRSSf5QN9gRjsuWchWEsTr8AqTbIApGO24a5Rr4GDnZ_6ICYBr-IhUesv0VJKQF3DcNFaOQCLtLTKCC4G4SqURt60V0zkQKWBdUdUGFkxDUN5gtcKrR0F4J5hvZ6OMV3XaP6kpgx62TL_gd9g_QyV8QDFwXuDDrGyXi6l68veZXOElkZ4lpVAjfeXnysK401DRt3vF0z99wUc-QVMjZG0wVZUr5rYHjKKaB2vG85n_onMrddThz2_a1NG_THQZ3L1rprThcQY7FdPtw1JXWfXWeS7ZuOOZCZvjyCrVhevaxTl5UKNbkguqYhNJQfx5X8IkwJWVRObA3QxFD0ZEgW9OKt-v-g_EAsjtftPbeeqaDfPBwqVguYJUEZqPPwcsG2cv8Xu5sCc6h7J8fvwTK-MY847JS5Q5CSDe4GDFvJn4Tk4aIOeGlr-VlrgwOS_yaKd1GogBIDzjh8pXIXXSDP2UkEOd2T0zSoa0u8oewPf8Pwmd7pmVb10Y9tHPgEo44ZQRiyVCe9S36BVjf1iZgTYetfBfq9JJom1Ksz-WUf74sHYfLkUY96lOlSvziyFFmTXxFgssLFgtBuWNaehKeuJ0QiQm2r4jEvX3n7dvUj09tWw_boLWGUJqL5YkxVadlw8wF1KRFJjGIAvEvO7YNoEoyolmS9616ZBvWNlBg54A5DITXEfIMloXVYNmYomoBloM74USiV7AjQE5hPIIqO97dW4btd2zMx9Nbr8G-nZsLgCqrqzDVz0UorAHTgaThtp9BW6VJZJ9q3Ew_z_494P7GNv9ehuK6m3fT-MXIq-t0Bo28YGgGhiFjoYSSYUd1adlHQdPHZCxZojt4-DxgD3iFoWQGc7BBRU3f9rRVRzbDvlHpaLRUQUFXiaB6rQ=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'top world news September 12, 2025 Reuters', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
                         id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
@@ -788,14 +791,14 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrgnD1AQrb0I2TSTLa6DiSpAwMbkF6gxz_b8tkkns4MZ4Rr6a8ejwmX7aGMoXEgOO2nkuLFeKoQBzQBrfNZIhmCy68QZMQQKZfKBUv1k8OAKzz4A1dO-xNH6xLMS-3cG4ev4zqjQEOBSGoZNKcZMU9L3B0VCvZsBU7S50g7zCcVwEk6H0wx4HO6IuUEOzgqqx8NYHmOkudSv3ikiHn1xhLc1JEzXkupTyRxyw1O81jJEpNzLlEUIFeu0vkAJrlwQzAHeEzxFMMQMoru3pKwnzujgljefGG8RY34jsAc6XcbJSstAa5GnKn24ehA_CQu80ICcibs7LBKsa3oO8wWWHXgDhMCPJn0N322MZcHfH77PhgEr-T1YSIRrSMPXcxoPaptN0O4ceK9BYN4FDRddaR1jXzWdZ3VhYBNbRrQEuO6z0TOWsPmzIlDql1a20jiOteGNQgIX94Af4PB5g_DYWzJW8YVffnhKXJEmU7BmYuctQgyewLj_CoQYfQ9HtGcae6ZElUEP96lo1ID3AW2iMa3iP4C2xULWDVh-8rWf0D2fgS1toexXXCtWbXn8XlYMGWVjq3WX5q16Kq0KyInuCZleABTeFRuzh0MTx1GaYhDTwHxG8BRPYUxz0bHHESz-h_UGmhGu8-a49YdBpLe36_Z1wprXJ82Yg7KvJy68VwKnLeH1Zm56aMHviJl143iZYgiZaVmRBIRExMvnI9LVAT5pv0Y3CdCCSq8Bs2jSbhU0xe26HAqfZZnAsE0LpPAfW1tMCiKzqhtzoKR6yauAYCXP5YtnX6BqFr-J8px6owPJhepjyrSVCObyya7v7_rV81BkYOtLQSwCUUhOjbawgI6XDQ_FK0hye5lFVKckFNM3cVpgRcZymeqx-XoQeoFOR8uLtcXv2DIoo0TfP7RxgBvAvdohv8vZx7xJSXlrYKqLEK1ASQDcc36gIfNQuNXM24WuXForXTO2l_sTeos58eX5FGxWJFDghhrNa_ia1dL7towjcegQzf9LtLjLlnqUGpEte-o23DKKQQEiFfMpLlvGu2cOVwYUuoeOpEBe7QpDbJGdBjq0hOKdakHGl6KwBw6vCkRp_wtW4R7QBuncdYyRT6AJ1_Z_byBP7kH1A2-P6QMVycBVcXlUgc0BzuGlkt51l__O3CM4z-PmI8zR5cL6ZCXoQzG2Yp-OhQ-n-3hgMaCfBGca6J3wP1vgQpR2AF0',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'Nepal protests September 12 2025 Reuters', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
                         id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
@@ -808,7 +811,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrgZN3V5pGaqoIM8EEiFso41O_kxOTWpzAh5Nlj3pqqDjIGrFH2zcmDyURpUmXdExY8L9K6KcwGOAlF6okEgQojeTxysBi4-gDVFNCVfp6c6K4tAtCBrvq5wC2g22Ny1pU2OMyxVU2GCxIIehCZiPQio_7IS8WY_VWkwLOag7bT4FBGn-aVFyoEfDDpIPF-4Zpcal6bAvdjD2hYGl6_-8alwh36ttUkJroo2qG-Mn0LsAWJ7YEzfrHgoPTDF7TB3Mfvvc5M_eP3pzY8O4WhZKMLBSnM92iIt5J3nSJYhRoiwEjaCamIM4vK0cnJR0oX87u_XtGvnNBX93ttrIrXDKK-mh-LIoe_sK1dViFINxk6rJHZvkFK12J6UXMK4me-C3uQ_qGygpw4uYvWhYk7LDR9Zgxfv1OoDg13DCYWWrHX7Oa1ALXPotk1Uw_Tof-Wc_wDqE16Elm1a5TP-ISH45v9W_Xl1IXo7J_jwOlAjkXvrh2a8YNljWQqBFCca-M2hSWvKuX8JuNF_tkI2q2E7jIDNt77jGd2yavqb1W2WoB_s7jqyAWomT91E2gZQtGJa4X2ydeTPQ_oWv2hgdTUynV0nbOKWA6suZixvxVDLLedhYHRnKY6EOtyso9MZav1qhr_DpHExn1_woquJXtS7c3Fe3Rs_YrU6PpRx5_DEVjVKme-3XjLJNclx6NF-rbXYqhXXExqPk-od7n-YMyrYhpfVP8lmLCewwyzVRb1koOEcCqnuhqM9DWyazKAcdvejM7VEM1AEk8ugT02cTiF7CfLefYFsLSYVBM0Ox47Ceh4BOA82jdlf1pZNvGqgHi8kKm9HLVh-yM_DAhD8O5Ub-SCd3bNi8735XPDWVIm6sKMdg1bcgVehz_R4iEBr_pguKfZUJLcckUTI6fitAQ6YSLpLAfRA0nMDBfM6p43jqsSCP8Ovjx58TwAPElgpme4ENBCozS_VaxmqawpfUfvnD60xia57wtSBYr5s1j-FUUjBsFTInjHdKcp0EBd3Pv-mpVE-Yj0MYExbn1upi3RxWN6jwVeYc603HQBjsjqsb-op9Tb0GZxf5Z4DpZ_eeb4IBTWNf3FTLIbsVg18Oyl128Std9CkMGak8iI_dFCvm1ZQQ6u3CyLEwxGsMZnkZl6OhSKDlnHDvRsF0F0OcRtFV5i7j92kMs9_qJ2JLdb5LzdqOBnFfKOcUCXBOflL58PYIav',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={
                             'query': 'UN Security Council condemns attack in Doha September 12 2025 Reuters',
@@ -818,7 +821,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
@@ -831,7 +834,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrghWofTkZCzljg86Akl6ch3bNwR70Wz37t6mBpLah1wZ-7U6isPixPCn0t66fA6xKxGX75bmjRu8Gts4cIaYpm78c8n6R44UULYfQoDC9ZEyGgImbQUKoHFU63nSbsjuPTTFtLdLHhEebDE_t6AfqIWBlyZKRqYlXS_8mTZ_NwM5_JgJun1Xz-I3Pb0X5ZgX8RTP_Kh7Kk79PStvg0-qcVoxMtFsK4ZN3fzQBOSUwvkMhglIweiS3s9CpTbtOs0PYqFCOIjKEYZ2-Rt_7SKhOGaWEMuvuWggMLeO_Wkl8HyIHre5JolVFR9M-43XByZXQxrvBxFzzwHubiyCs-WHFicgMyZcAF8e2KR9KdUJxAwQ3acCi3zBc7e5q1jgc8-Csm-vZQJMTyABDu4yuLena6rF777C8jq-naUe5M-bBpiimK1nbpg5YDiwx7-TbZz5eiTpptHL3P6izhgEOXuEvLhlrhxPBKTezDkiwu-wjs0tHguRYbOIMf-3NZGHuYnOcGfC2wJKkE9DmRvbicnChrLqzHmiXWblYhPwsH9wt-QDvrz3tgCH4B3ri9APreQjBmxtZEVGQAtfdm1qpgiDcWqEijrj05rvr4HxbSReCFszZJDYAufNhJSPhuJXl4e7EHRLyVd2uJA264ONj-MxT2WRr4MGzubSXtPd1QJn7IEkCCuPZxbLf9q27DTSpAvS1oZVs1Ad0J4lbRV5tS_sG54JLvpXf4jtYHD-R2CG0vkL1i0273IJroXScLaPELp0iJMn-WzAkbEjjMsX8gmZlV2X06XuvSjry-dh2sU9Yldqw4NHMLM8rpZIfKbsm6w0ub5Icmu19E856R57JM3K3Pjm3fdO3HR-adVsJTAaIusyUVX3SOiTY53-X6UbqBJh5H3WOORqkwW2nGbNur6B_tyRjlegD3CGJzC-A9rNxMWrecALmCEJBwnXxOuvpsGkSgjP8vjnY9JJNj53hxAirHFIxknDMrKt5qlsRHxGlCdN9H7YuTGdTSgPWH_L9C4BtZrr2Qk41osiDCpacMwBeUDwo1YwYWd1SO0DEzm2qGlXSYeuAQ6Fvyc7sZHCkOsl-bINhCuY1aEBOLzXS7kcu0YAIuEZGVp5wUrr2L6YssdrzpzQ_KENFI7LiB2v5CrF1wZN85H2dkwaGciOXznAa0Su1fWD3BUdpyR0h_mVIcHUxmeoCywWbWO-Do3LFu70MMxKmfSzVfL9hlU2B2jo1aqJ5HesWsWbsbslW5FfREayeUzK7hxkrjliDePhN6gkfy0HOYQijPN6dko4TNEeKFO6Q-aw7c4X5IF3WBCYd_IszlLBK-vTX4EX2J5QtaLRfwFgRwz_K2fkOTT64eknQ6R3fFJpgeyLBZ5ut7j2o7xhEuHeE4KPm2T_AJi8yRScMU-ZsDcUZ8IVYAduy2TGov51AM7K2WojgvqWi62AwSLd16eEnd7SUD8fiCwtRN3zTdmh3MenUogxtKG2YL4hUvSN6Ia1STXpfU4ToLvBnPS5FoY2GuOG-EdEAHdKfYsSUZmSauAlQy7sT43STLkDE42lOKWqtSNHOygkGUodv1GNR0sA6CIg_gVAOyUG-o20rMsfANynNokpoKxJBPJScf1Mbivm-7wJFRipf2-Ay4HzXhXZ4RTkpoq2MMC7cZkHkEprUlLshEhCIHF_6sb1Uhqg4E3UPCCNZ-X0epbQ2GmhtaaIt6BCnWz4SccN5qTks5XpQarlyTW1HubLoLjjXmwJ5DImdUGZkitiJw6ermiOFAFhLfhug-XVKBcTBZOG_CHjrR_2j5TPn6FNLHbYpLYS5hkrUWCJy4U_1xebGl3F6VdQDy3LHZehxuKPowPtdYFenqdJ-naK_A2ygjDUdGBoB2-QFaq8ZPTAti5_Ca6LgiZPvzZdGZ712BED-Opges0mwyAhhsgKRvjjztcsiZ21QpfUaSGLS0vO7J-NcRVvCDyBisMRKfRcWk0PFa4LKcqx9_FNU9nqXH1RXYh_WNAJRVLJDR3WzpNzDv7xMcPOYUUx0wuAYAWcGbc3i5mkVRlzRW_WymBibPF_Y9Yf5yt7plmai5dzlg6aoRdrzSwT9Lphrf79QI3LfYzOV4sXmRGEnN1ud0FyfVB4aLHSsc59_eiPswLL-xg8XT0L27IU_Gja0VuE3zBlErtlQB4uPq778Ojs8hucNTD0rjxs2qqA==',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={
                             'query': 'Israel airstrikes Yemen Sanaa September 10 2025 Reuters death toll',
@@ -841,7 +844,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
@@ -854,14 +857,14 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrgINXOfVTRxYfQpc8ZZGXsBHdv43DhHkpUjfExhAS41ACM9vHyRgDNfC9E62QVMWRCWPuz5QX9ks0NtD76PYS8n5bessBYeBtYgbiMtl0piW1gE5dlw-BeKLiijMhIVwytWhF3JTzoxoA60FjPK_sA8mFk6wDCNKDXlaLWsLaECxUwCtdktN9SQnQFgxKNemRKQTyRTNKsurCZSSt0tHyd4lxO0Ei3F2mO3WB4Oq28BeVG7RKlcZ9BmLRdBhFQX5eoLxTBHwC_qgSIGzoVCiyClW1OzFzXzmaCUCm3oUDQjooYIZtQqK1b8FBArzN9seOJ4vuxu2qqdtF-JC1vAi-_9J61EwELhN5gYvld83zGCSPg_asjeKeoA6qnA5RFtYwh5kmMSFo9VzGp9MlCmb4_-L-iux3JKc7Kz-jvF1sXSH7YfKgBvcn8HcOdXGjU-aBJTmdP3hCZSL9ko-NNsUO31667QwMZsQTlVoTCAfWS_xDEI0QgmV2kFReKhKanzMmOToUECPPQHQfofCGxwxjbGllSyhpSZHIdyjXpHBmwFALBflPAfeM8wUbqQbNyWbWTdx4Uz62Z4j0OGfcMpgMlDb6BON8vvpIjmlV-fOqRlzkP97klPBygPKeRyT-UezEN5Vj5t00nmB-cV2kNj1WYmL8-eBuJPs3LOU_4Q3ysb90AxYxRJGOsl74lEBqfUKb6b4JWff9JFv11EVJ-puIpE7MA3DPM4NcgGfDZYyDvLS589wbTVxSngBqEOIOEcAZF5Tae93Drajy_x8fXm9uWc8daMf5kqUeq_vwr-ZqEz5ZBUvhvGPL7xkYfTfn-RrQXBx2JfyDRakf4X4D1W6jaO_LXfExH922e9hQ1vH8VA_GPdOIqL5BTiIeO3qFjDSRxMi94XWPPRm87yStxEjx8bse00Bzi3grZ1c6M5dEUXNaHrnvEdJZECT6lz365_Qbl73_Ma_2CLYZhLhtqZRZ6Tycfpprg7rWxqTftOKq4twUgCzzv7kg0e1f_JM_om5loPP6r4MOeAL9O1p49tWmj1kQt_nmYcX1WFTQOgRuB_h3t6ZeOsDb3-VYjIjK0pvj_X_VArrT2suBVitTBXumnG2dXg_z2k5t4KTbWVe-aaGhije0VNxgPWCcu1RlIxOaz',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'typhoon September 12 2025', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
                         id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
@@ -874,14 +877,14 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         signature='gAAAAABoxKrgkfoWE9D7tW3LtG9Hb8kBR9vHgjhSKvDrW0_FUU34LIByJhhBiwZOr5RfbqX9mBwahQKrIVAev3WGtBfgtJF0kP67CIXXRjA1-RHuY-4QXL_w-t9gttak5Dje2NU5hNyp-LyW0plO7DZwZDkFUgeW5plxMzcAFNTdflBSC_-zYqBFl9p-11YKOslzKYxkfQrDiodarFGFhDOJr97qwo-l4BhSg8jywQwgFOTSrOjJMlZRSrTkHd8CUaSF5rUaLKpY4AZWtpiR71otchA9N-d0AaVwnnzJbe53PXJpe4fGUkmkcZt-ZOcNTQlIpifirDsXln2Sc3jxSM05fteSPKoUeUFIIqbCaZwBPau45DKq54PvkVQ4Fpv8JtfqKEuQtJ6EVlNJALuDlskdxM2H3Z7XJsXkcNCVAKmpA80yYwh3eApMr_cERl2bLS9jJpGt8QN3z1yRe5oCPCNWj2_NTgtzjknxcFy8HdT-pcTzLDOhLJPYyl66psc0Hn8V_GFIFkRBa8tWb7CTLt77a3pW3Ifnxov5ANAaaJLM9gGiH_DgkkuNZMR3dz2sVnHzAG5TxmSQteu-uYQgIYanBH_D2BN24JfBFxckpT0z-kGHbJnL5q_wBeyy7o2puohaH3MNIluzWARcDWaFa1tGkzeZg59woqrrddAdWLRNULpnX9fzr7aAWXr1U5-XkSjyfWa4nmIFtchwPSC-12wHRNFDzdZiUvQDdJ2ENGoIXeYpob_O4Wa5zx4zZj_qHXoQWXLELyEMJZCVADjAjO8uy2gXDxZKcUxyDgi17hIyFtC9Z_4rxDbV_S_JJ68s1qHBZljuH0mrkLU0KXmYi5ZgB_z1CEaz9KkL32FGBt0YXuFoR0LjnrdpOTa9ifWC82ZhDfjz1E4y9FUoGPVl-QYQ5ihDY0LswB1x_FJfvwRLvLRtMeeGqNYEwnkX-XAcVa72acijnRJVxd5WjV5nolIrtq55l941oeun2ThZJZWujP7eMDuQ8SycBOx_6Bz6wECDbnCrfyxypwpVhKSPGuI1IoP_8fCeFDWzZZhD2bTbH2Uw6nzm9SLODQ47GqYlZ6ZtTIgNBlGpiSUrqXhtj9_1hkGZuGv6AE9UAjFNqAWX25db2I2uH1MXdsYRPLZFhYan9G60cozj6N0ekasNkbaAod39JQ7zL6Np2O_qz85s3bcJSS1_aIxW4YFSEv5IYFlztQrhnlyE_gloA8eRntHAinUaGbL9IKTmuj4w74Al1sN7ELITivL6aZ-EM-F7vvFM6Rt4gL0NvlfTYsafoUL99EfBTh3Rfl7pIwOQWXxg_p-51s13BQ1-HWOQxu1lyxbZdJHmhi-tIzk9iyQh1tbkCZJeh_qF-eGH6voxUlcz07gvTckVKR147UPjIrfSm6EO5zXBgva0Zk3nvGFCZshZSau3tLQrAnB7hQ3AAyQT8_6eFBHtsscuApVGtRYIw3vi9decgXmFdvSEg4Iq6JNObTilSq6a3zmUt8fop_M5qYzq-0ctNsXN5lkqi9iB19lLw9EyHNDgClaTAviXWh6aDdbWP-atkQQ82PXBnKJAiP7luW1qf-YVHtKkwNadbMy82CT-dMNu9c-chRSx3g0tdwTex6tgwKMdBRbPWa8NVZreuTy8x2yarHskXhHM21jrexM0pMbk',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'Nepal protests September 12 2025 BBC', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
                         id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
@@ -965,7 +968,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
 
 async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -990,14 +993,14 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         signature='gAAAAABoycg20IcGnesrSxQLRh2yjCjaCx-O9xA4RVYLpo0E7n_6m0T1IUyes5d6U4gDzUNRWbxasFx_3NEhFIuRx4ymcqI_K-nZ6QNsq3V4CgwBbWBXRcBEDVzXSZZ4IoFASBzHpQGbs80RvZkgqmJkk8UzBw0ikt1q9jlUrwMKf1iGdH-S0fIgZn_uEbli1yGWRDryyS2YQWDKNTYuaER_WHVg8DadL6_ltUTwJ9dMzaXyFEenPfuLdDgmba8DP_-WYFMbggATUfdMNfM0O4YqnTmjR5ZnSA6kAbXvnp9sBoC-t8e2mWiCXzvy8iIJozNPo_NE_O1IcMdj1lsaY3__yWzoyLOFCgkrZEnB-_WQNCSx-sVcWWLZO_Tqxw2Afw9sWAvFR6CvTTKdigzDpbmRlvlAJCiOkFQCMrQeEiyGEu0SSfqmx6ptOukfJn4HtQguvigLDWUctpjmNPutwP880S1YwAcd7A-3xp611erVJtYFf6oxGDXKKb63QAff_nZ57-7LdlzSSUr6VaJa5dneGwCgKl-9J3H0Mo-cOns-8ahZOL8Qlpj8Z2vZLS5_JQrNgtmDaaoze13ONE5R84e6fcgHK8eRhBNTULgSD13F59Xx7ww3chlqWeiYfHFwmOkNZp0iNO7RJ-s7crs79n2l6Ppxx5kd4abA0c58k1AZj7avFrexN_t7snuYqCNPsUHMUK_1fSq1toGa7hTVX5b8A56WFSdMlFD51AuzeIzgaEqBtGvq51murGbghqUmOy9g-6_vHz-WOPZeE1M2p13VB1n5fIh3-V7nd9PAXLX1kLLKiS2ox5tODYvkxf6oqjgR56n5KCuWtF9WzCwikaSMN8pwC3ewW6nkkSCPhTBASEJ7BK9a7lDlV60T6gikDbZGHcAfSKDZ5mBBwSBRpDfH3F0MI0Uo4oQ83J63J8a5r3JKy4KVa-5eNsNZsCgxO-7xx_fan1MH9zT85SLwocpvryGSbIDD9itBHK7Yo7REFRV6_U_cdi5RhDpEc13QETSsFT6CaeoL4GAwvJDCrcKjW5u64StH8l-Z4XDAtChG-znHeme6WlJNElY5unp9L-IolqqypTS6lybk7bfUtGPBDeuZp6CD80qFkyd46M16vP1mudv8rMC_ZEdFvCoHDmUg6_KxBxdVbYi-jaXtXYY9D8G6SlfVkeBcNiDCWjsDXSlhE1ibI2pHHN2E-kJLRaHA_Pse0Gknu6ZecQLaUCKWr_mKh3axV9d-pkvxpCcVVakOF08By0bUe8h5ORELsRe5zzMpfbYGaUVhB360OxwqzizyISXmqhW3Q7FHcgZQOCZQVfpuk6ccAYpZwgZbft2YZWqw7_1MyK6TitpdyIwdLFnt2t81JNoJ8zWLveZGpuKABxW6krhjQ0_qJCnLHm03o_D-9BximrLUCs0PbleK5mu4Le8lCCs4eoVjeDHQs4xMm-VtJk_3KMT6EVe4nrb41ddSKX8hH9rh9l2NlPpmPh5UTledwhbtQYdJdQBNFkGei5gpAQ1oHaLkSOYRqrRmy-VIBobxAVBaQWNKcv8CrGx8RIMxrAiU8JoyRsU7Vsobwt1Jboo=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                         tool_call_id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
                         id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
@@ -1059,14 +1062,14 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         signature='gAAAAABoychCJ5ngp_Es2S-gVyH01AJS0uQK5F4HdAkVFJcXPiZanGRjmEPXNGx45nUyTonk62hht1dZ8siaE7v0SCE-oBFoP3du4UqNqtCmJ_0_EmkXG7sHh3pR_zuS_iEDGae9S_qM-vcVXyqFYbEtEVD9ZimiQGtLEU7WFyQq4UeLuD-U4vRhpFreMCAfen1DkV9txJijEPRL_2cTUGT47rpi2HYyuN1CzYKzRrn2qbHsgDjnPtZ8cY-QGTm5Mm0LHV9GeDh4MmRY5Lgxt0slssKI7vy3OqTWR3OCESp-5VmMR3fbyVNxkeogT9XqPfnl_9maf5jYLv57tVGVRJUEx50QvMJ9V20qbUzIAuMw5d11s8q627IyyFu-bD8QmjGsaBj_wsjdMe6adDF8hzOau3svjuouGf066I73I2euw2NpokdNA8fbI3bAHfqyXpFDADKXg7WL_zYB0eyREbWe3n2mo3KL2sLW2908ScYEvsv9VlAo6q1vByI0wfGmnkqkgBvh04Fe15ljjSkvLy7iRnOFL_CCPakpDcViIOD-yRSDk-MSHpQsK1sP2GgxHHy8jGO2g_ef2bOH4FkcYZK1oJLIUGqhLJI0LurXFnLZ3zcUML01aV0rMFyweQwbdIjpivIGaAg1BUPU1Tc8nCNmZC5aRcbixMzzu21HtW1SWnMziebhKHyN66b5skUXl_RHrCoKhFyJxSJJjxHeuUKHQ5VxvJDJSylZjHvMkX0KQ-Vn78pv-Be5ETRxR2G3Agp-a-iX0zM4HbwVyoF5l5t7g07pTrfEMP0WFJu4_OG_tsy4u53JGMQwQLB_RNYcd2n1yXPCpZYHuq8Vkt6-A7kYHW3wvUmI2cSyZGBNpwt-pL7kqdPaGyqnfhMTDzTS_CTXBBrCjjQg-RsWGu9hYon5iKgHFv-w_qGykzyPtEzZt_VWUrVm0WFOinLqLXTQgiKm0sypDdGRht69Rbfe9WqP3fhFychLwcP22IvDQsh_OenHiF5ytB1XTI90VB4e890QUI2CzsnH-8fFkQT9Bj7ou-MstjIeOQrCwDGAPRnxP8PWoCg3uYk0DuAWuJY0lYq6isqGKc57Lz1bLaGRG3oYpWH0MC6b-D2y7c4cAgOYMhOzYq2ufblZDinvBLrr9TV5jtog21xrBy22o7dbVEgIJ2T2HI2XOmjG-l7qrchcAykaosXQkW3ASIv0OpfG-SSd9UU1_1dOUFzOXGej5UMxZidzQa_dW3XPLCqVqgiDW9HCu_XCmSZo36DY95I2hofXq5mXUHT4qxdZ48y7KGiM6mllFudcdyXu1w8ZGFlU0BfzKDOfbhEJz7MRLuXL6GO0bCHqgFo5WHJrsTNrXuHNNTe2LxPPIpejVl6kvE_1LtHy2jKffOR_BcBCS1c_KLIIbl7U10__OWglq3KpDXuupMa9-fXXSn0Ko8rRybTLQpXIn1D6phbi8hhS93EkaVE-9zZZGBvgcYhPP2fa0XniiexQcX-VDQ==',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: Mexico City, Mexico', 'type': 'search'},
                         tool_call_id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
                         id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
@@ -1112,7 +1115,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'region': 'NL'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Utrecht', 'region': 'NL'}))],
     )
 
     result = await agent.run('What is the weather?')
@@ -1138,14 +1141,14 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                         signature='gAAAAABoxKsLzYlqCMk-hnKu6ctqpIydzdi403okaNJo_-bPYc4bxS_ICvnX_bpkqwPT_LEd0bZq6X-3L2XLY0WNvH_0SrcNCc-tByTcFHNFkQnE_K7tiXA9H5-IA_93M-2CqB2GVOASFmCMBMu5KwzsYIYlAb-swkkEzltsf5JEmn1Fx9Dqh5V0hxkZI6cz35VsK0LEJSYpkJjAMcfoax1mXlnTMo7tDQ_eBtoCa_O2IQqdxwPnzAalvnO_F4tlycUBM5JQkGfocppxsh9CQWpr7bZysWq0zGfuUvtuOi1YJkHVlrqdeWJGDZN7bgBuTAHMiuzx68N-ZrNgQ2fvot0aoVYBnBDxJFbr82VJexB-Kuk_Zf3_FVm-MGcQfiMxvwHgEYsnaJBvMA56__KLlc3G4nL91fibIXbh3AZ24p3j1Dl1V3D03LaEdU3x6RF7fF47y5eyaFWyWkmPl1RwiEaYy9Pi7WHuh-6n69ADGYWbv0m4mgvECbmvbBIIkZWr4y0UK0B8hbC-Oqz776Taww73OmchIzgkg09rIz9CfoKcGMXgvzbpIBa4sME5BQ3mQtfIdPLY7uUIwya4o_g5wVy583MQva75jNsR4A6sRVW9SgVEWusMJPHv6NLzHCdWehp6SBcKuovxZayoM4KQrIvUMNlUkrSR-euoBaa_WNc1HeY8ikKolX6emm2LhRzXH5HssCgH0g8GUvWilYx7U-UFSB0r6yoy44_DzsyH85pXN1ivsSU5dGIBQgG7WiN3bfk6oBGSrz4XkBLiHJiBX9ZUe270TeDNfpgjmKO34_k35zviIUd7-kVY4EsJGGijEhjbkInFwhilyH08EdKvYDzrzpKJIHT235drt3eLTKXKEA-g3iW-qOMqH15KPk-slzPNkE8yahWEkLrYsqGsjwdHVXiKF77-i8rwvDWOf-pOs9d3bBxily3t-22D6RsOL6wFYQS6BsuroKdlO3b_0Ju5E2Kq4P3jxtZ8jnG9D2--XEcEB5x9yX_brfdFuFHrF3C4mYVWTrNN3_S9V8zUp4CdIh3EqAuSs_QJPJuN-RNlorK3bwYqOymgNlcezKIqxhWnqtS1vxuxC7msRlJRmzTN_Lg6XuLRNS1uIp8jmx7TcCnDx62ynYn2oGCOCLSspK_T_LVTG6js4Oiw9ZB5A_I3TfDLrtnLRh7pGJnAv9nVnfYd4Y1czSjhPui5LF-FvLOlzWxSu_1Mo56QA1BIerB9lCQsDjPOkLF_XHOFLWGLQANx5nQ2wlbgBNyMcPacQowRyn3NncjfzlSLyaPijEZ0HROyL_Hff5JXCMu5-6muvxQz1TirmbyjBbLjtv93JpXrVvby14mdXdNs97dMATIiqpwF2r0873_dijDKRxIDMZxqFB2ZBaHJc80khjG_NaA_jxv1GEqVWmllBXBz-wUDbUJKtNtI86YmcZboZIA71V416UW94-TXbtyQpGlB8tj_764sn9fKitg3vCqC42mr5Kj_aTzAN34BXLykkFWYl_AfVL5PRbJXc0Uh0GW0xTH8eD0hvqd2Xsr9eCoP0nGM6TBNMCl4T82wOhRy7jelWMpt8LBxAYkw3nAlVVOi2puCoYRaRFWNQnLcO5iYBF8_rg9oX-cUsBFepGGDmoOfwUmWLlYqNZDho3AJ_SL3azAVJz7lqa3vcFubrRMFiGcee6sHj0HJI_2N2mZqBO77kEbXrJ6SiUV0EXX5vrjZGzpU_wZ9G8AUz9Tdgistq8XLVsMC0uZWlbRdqD6-UjmnsJW7XINzH6MnkQwPvbduRKF4ywViUUbKVs5XRVFUQF5gTdVMTK8mIIppJx6fQRfZBju1NuNrdTDjd-5P9_QNBQj89_Y_N1fow_676bSvYrhlrIXVuLGy0-RuWezuqEwenIZ_U5wSTp9remqWzeuolwKnF7xG_QlcxGOgCivkRvqAyDxWiqlBhUtC-oPEQtychFa_W9uLHyBhm4bcSUz9KvOlUTt9fNYgvDWFciGCE7B5iPz2s-lCS-Onq0ZvUiZY5nB63htK1bIMzB5lc4N7XVh6COcSIArGBnXKARHdIenJ9vYBSmB4XBrKOIU6SmNNM4fq3ZFoWIc4gsS8L5LZyhTX_qlmY2L6znek3XT0Z7kjEHs5qQ87_sw9ho2KaqNSjMalbUEp7L0JlU73szrtdpMkmBk3BK0of4Nl_v_CCbmYWW9z_rsNpTpPQgUHNVn1s38DX3cesMqlzlBOky-rpLAj2-sS-Xj6WZWBs_8n0lLFS7FL3IpKzveOXE9eV4zjJSZ0y74b_g7u5US3dT8EgSEeHa_pGOMn3t3J37oz1pZcSufD8vjyG7wtGxYUGn8L9U3zJHN1VdOR9id5VYOo3OLtMjCrSqPO',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: Utrecht, Netherlands', 'type': 'search'},
                         tool_call_id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
                         id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
@@ -1192,7 +1195,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(allowed_domains=['wikipedia.org'])],
+        capabilities=[NativeTool(WebSearchTool(allowed_domains=['wikipedia.org']))],
     )
 
     result = await agent.run('Search Google for the current population of Tokyo prefecture. Give me just the number.')
@@ -1218,7 +1221,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={
                             'query': 'Tokyo population prefecture current site:wikipedia.org',
@@ -1233,7 +1236,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         id='ws_08e7da464e3f8cf70069780c0760ac819ba9469051f9e5f511',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -1246,7 +1249,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={
                             'query': 'Tokyo Metropolis population 2025 site:wikipedia.org',
@@ -1260,7 +1263,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         id='ws_08e7da464e3f8cf70069780c0d1c34819ba50e2b797aa61283',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -1273,7 +1276,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={
                             'type': 'open_page',
@@ -1283,7 +1286,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         id='ws_08e7da464e3f8cf70069780c102fac819bae37eff938310983',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -1296,14 +1299,14 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'type': 'open_page', 'url': 'https://en.wikipedia.org/wiki/Demographics_of_Tokyo'},
                         tool_call_id=IsStr(),
                         id='ws_08e7da464e3f8cf70069780c1f76ac819ba8a7b5c5262ecb0b',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -1341,7 +1344,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Salvador', 'region': 'BRLO'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Salvador', 'region': 'BRLO'}))],
     )
 
     result = await agent.run('What is the weather?')
@@ -1367,14 +1370,14 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                         signature='gAAAAABoxKsml4Y3hqqolEa8BSvPr6mIoOyAbWRJz9FeLHoqX03v4b6Kni2j9HxfifAm2cHD_m9-b2nOHcwDPOeJA28LQpl_BfOakn7h4saDElA_yz3WgVfy8ZN_oTLQz2ONqptBxdxCaLMGOADqBJ1tJ93B5s8bsFNZUdGXe382lPpCNX0aKPGxd0e-UBAICRmjGVnKd9cVzB8jhtQWBrITvMOLBvi6bE_TqnpXWf8-rhed78mFVMRweh6zAzukkJPMAjD7QfUAiODvD6oynwU6G04UOJoFTItUsAULPfyAw-YZqRwfcfMxoiLAE0rOOj9V7-eyp_J7DYu2uF16jaOopnrehFDJr-0pIGMFRxMSyFp7Ze7z3gWvcCOB4VwpSFao12nozedMeinybf71wo0750TNXXQ9Uye6qsUxxMamqcNiB02LjCM3nyBQ6FpWa59TD5O5UytT5FPOWSflYEhuiTFknt_JRHbKoeqVTfe_CTeSVlYBtiW8ouhkTHAAVI5lXi_mgvUMHINTYw5MEilzBSPunuMRquopRjt_07YMKuwPDQ8o__s1NlyrDAYKLA0gPzse4tWMkKREcfxuvU948pEJwVN9RuKS-NNXI2KiKKOAtPoXLbflAEtpx9N9PpPdwvz_z3yhF6S1_D_9P8OrSdxd8ldqvnqec75Jwt-a0fuQvRTSC3GsYuhk1Cb1aBvZdBtfcwBd2CXRuDUEdtzbLZ5AUNBy3f0mC3ITHG9aSpuD4GUHQDTjF_10-Qr4Rzygnj4-qubY5ibVxGtHlXkI0QzvGMVf7obhHMNxEQNaJ4k2dKddRJEhrSFWmAVYdWbKiZp-Dwx8veUSlpwMu8kLfGUq64MBQOApf-Srtry0eJAr3cTBqzmUIU5OOPg2C8j9SbAuTLbbcR6XeWizp5fbxdcVipVRqqp_PJptIJhaAUpHaaOB9u1nZbtlKWFJhJbrZzdktth5DNim4ayYBbBX1VAefwCugReld4C6QtB5Q-j_Tt3dug3Jh9TJmkhS8pJE4aHURzbCikFohJHAukZYgMY7wCuLWlahQ8snlIj8kbhPP-l-iH-e0xM2vFDF8rZnfYblnDLZYQBezfiZ4GtvO64SB5apQuRXkxExfZyBd6Kv-WhAxhPGoQdmTXfVEXePJLvbzAJcAXYpmmzt1STxoxR9cnaeLL13fFXZ4DGXe4j68-R7xCC52jfoV-l8JZjI0NDRJ3Mx1R26bp-lnvoertQBs1c18QHVShluHtH5c6V3j4yOMgG6cA2aVM25i6sjhUV3iltijuRv3E19ZlzgVTtrypeCVH7ab0PQ3Qki28mFI9s5M1z1TSuFis1qhHwf3r0kkmjLXIUbXAnfJkcv50tlcweXRTLKs0ZX0nxsxiZptBo95wxqBf4VaqfOY4NUNAWVoZ4AS5oSIgjGfUZtfrLisWmX8NjDWiOiENLmn9fCCq9nxDDsaucnwNhsMZo9jJqJS_99kryMXi0yGX4GManClCTe31Fj5zOrtRIezlEILiTla6fZwvD6vcl8GWO2wuyEY9zsEvfjyuvcU6Ernvw9S5HFPnQ-FnDxNtSTe1A8IHTspfEROnuSNVCMs6j02eFZMbXFKMaVi6LNDD2i7SYn3dMbN7aOfubtjeilMpIZ20U-J3uBUsc0rr8s4b-szDB1lkmiMvRDVY8YKNqH3iJFCToE3OibVwHeaUnMmEHJkIvJvBOX4hSwmAMxjZArusTnlYnLE2raAD707H_Q5JhpWXwtgFPj5ra6HFtOjtbPtDWrDn5_M180klxvF-JxfSxSl6U6y2FYeou36ttPRprWJynfcPSPY_sdrB9ZupHDR5zZy01Uby1J7XXOZt5an91kuHr0qU4bQJsq6AigFQ72C_YxpDNmQXcy5awJDBlXv9SoLiXRcTxpoXgii9alV8MeorRbc23O0fP_O6XKUso-lp-e7Q6bOqzV0c9K3imYUDzM9cqlvEyUGMDLlWzEvVGSwpag1CsLCNQ5bPc31W8hc-2WXrlltP6JZ9gYpcueL5AIud6RUTSJWg4Li6Th4ZGNs5cqh6Nk6oSu07P4Ie2JJ5bt1tAJbE4EupK3NVzUpzYzFdPrQkBY-VQ-klCFq4icnvlpD3pajYv9OoCpo0z8GfsdLeJlefIQ1NejuMg3EwbGRA_OEWn7sJzR2RFCYkt3YIuWRJb2UzIzvWhZsLxr4UpihrsieNKggGBh7nDpOXeAZhS8pGrNSlKjfvWtvmWG9NKXSpx79dNLSkumiD3FsQjk-L1Ov-K5WksY0yJTgc3ipgO2UpN9zolpXhXum9Uy8UeKLlB35cCtte15t_HSogTh2HDkc9SuCq4d3adSdstdXodr9jLbST50cHYn-F9qmkKiqV2nBzxW-9A4BB9WB_tWEoazKWYHtIdmjRm6O9NxvOxYuWIwhMmRf-OE6MHOeH0emhuTFaeuZ4zjbM0T9peRh9shiUw6T1NT0doCgfyRAq1NL1rG7iSc4jxrc5ahP0gN',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: Brazil, Bahia, Salvador', 'type': 'search'},
                         tool_call_id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
                         id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={'status': 'completed'},
                         tool_call_id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
@@ -1418,7 +1421,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=OpenAIResponsesModelSettings(openai_include_web_search_sources=True),
     )
 
@@ -1454,14 +1457,14 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         signature='gAAAAABoydMADQ6HaJB8mYQXlwd-4MrCfzmKqMHXUnSAXWV3huK1UrU1h3Do3pbK4bcD4BAvNiHTH-Pn27MGZDP_53IhKj_vB0egVf6Z_Y2uFPtzmyasYtTzrTkGSfAMR0xfI4wJk99aatk3UyLPNE7EO_vWYzN6CSX5ifJNNcmY3ArW1A7XnmsnMSBys05PsWqLMHZOUFuBvM2W37QUW6QOfBXZy0TamoO5UknNUfZb_TwvSnMEDpa-lXyDn4VuzfxreEGVHGdSyz5oLN0nBr3KwHIfxMRZIf9gi9-hKCnxX7i-ZktNIfTgd_WEmNKlaPO-qjKHPlO_XPKbEfpBdMv5b2P9BIC20ZG3m6qnEc4OqafWZa1iC2szi4eKOEa6neh2ltVLsLS3MlurF4sO-EHQT4O9t-zJ-738mZsOgjsI9rTrLm_aTAJrntSSWRLcP6PI6_ILHyeAl_aN4svtnwQJZhv4_Qf62q70SZQ5fSfqoqfO1YHLcXq6Op99iH3CfAhOjH-NcgThFLpT4-VLYABl8wiWBTsWzdndZoPmvMLEOaEGJOcM6_922FC0Q-fUio3psm_pLcElaG-XIkyn4oNuk6OJQonFE-Bm6WS_1I9sMF0ncSD4gH1Ey-5y2Ayxi3Kb3XWjFvs1RKW17KFXj8sthF3vY5WHUeRKA14WtN-cHsi4lXBFYJmn2FiD3CmV-_4ErzXH8sIMJrDDsqfCoiSbHwih25INTTIj7KAPL2QtIpU6A8zbzQIK-GOKqb0n4wGeOIyf7J4C2-5jhmlF2a6HUApFXZsRcD8e3X1WqSjdTdnRu_0GzDuHhPghRQJ3DHfGwDvoZy6UK55zb2MaxpNyMHT149sMwUWkCVg0BruxnOUfziuURWhT-VJWzv5mr3Z765TFB1PfHJhznKPFiZN0MTStVtqKQlOe8nkwLevCgZY4oT1Mysg7YJhcWtkquKILXe-y6luJBHzUy_aFAgFliUbcrOhkoBk5olAbSz8Y4sSz5vWugYA1kwlIofnRm4sPcvoIXgUD_SGGI3QNsQyRWQEhf7G5mNRrxmLhZZLXAcBAzkw10nEjRfew2Fri7bdvyzJ1OS_af9fHmeqCZG5ievKIX6keUkIYQo_qm4FQFkXZSl9lMHsUSF-di4F6ws31vM0zVLMmH52u12Z3SZhvAFzIV5Vtyt_IfrMV3ANMqVF4SmS4k2qUlv1KuPQVgqGCVHvfeE1oSyYgYF6oFX8ThXNB79wxvi4Oo8fWEZLzZMFH9QEr2c7sOWHYWk-wUMP1auXTQNExEVz22pBxueZGZhRyLdpcA12v8o6vJkVuBj-2eR8GRI7P6InJdQAO9TIBhM7NtJU2NUpeP_84js3RTBVktqBT74nWPaHIddGMSfW2aGmFJovvshhxGMLtN_6XMh4wRKW0IE_-Rfbhk8_-xHKI5McYI048N_TMYOS8KqPPAmGVklRGqPZ5xXMNvQEVweThDTYTo3NoAsS0fN2yMmSwrjRYBHsgYMtil4pd6ddp8dvF_XSJUkW0nF8t6ciI_k47sug3gyw4usqspWxY9Hwbzb4OFzzrgtO_7Ll6lFFFUx2oHy8AO9sJ97Y3Fg6luuew7ZRDzA_4XMrT7mNW6YuT-o2DunaZw-jvQezNHjPN2WhaTS7fkisyhFSFTMBYE-H4psfj_sizutv-LjwbumTcX2mnYE9SZhVr8dL0c7sgwHP1831RxTSSl3ql_obE3ICDooyuM8PYE56Jx0HOOGbEeJd3w91SzNHPG_3SQfXszrZlw4BGWrEUHBbtVY2ZEnsyGNAx6vKO8lz9D-6yZ618foDJSH-Ilk56a5rhr0beWjSd9mYMsr3zpVz6HcpTLYGEgHfPxpT2eaYaC1H_znw7y1eMKamwudYmtz_azX5LrOtwc0p-pXH-kdoNe248pSz9qsmHcXA41fuj2weKQNrmBcghwtfM95B060tnmebJ_B_KkLXL4cNF-hZqi0wAHrHYrZ_WM0Dy90AFH-b7iiWuWz5M1EhZXo179iEdybM-1PgccFJ0zvOqODl7FNxSgWVyNS1k9R42aZx2PzFAfAbBtJ-KVMhUayAvGLNmi35EAT0G6FK65VBEe7A6zPFqzrrAiG8dy3Z0I0253WzIblHPNMpmxI_ca5tIx3u8Za6Nu9rx8mi0CY2jsRSKnqb7RZvLuB78Uj32lb_9jbq5_gL9_y7Bt7U7i7FospyqMFzEYQLvdyrtfNrfY0rB4zr4Mo0tDn_4YOD_d_nP5axUh9_ruqXZ_d3eVdNmlITjQZj8ALe1EfidP8a-Dl62t6STVv8d2y8v9-jy3J7wReLJbJ6gDDnygJllY7NrIVXSjR45FXiCDnpaRonu--I_0b_LRJFOoJUJX0S9YMaXAkKyHSEj-UWjiuk8cIBNcXxwlxnqqNMezvvV113MAOEbfHygDnphzjzZQxteAVbSy0ucGDR2FPi30d6z51NxGnXNS_sM7wnjBMNp4Li0hhttOp6PgvDKPSMAcgUtKLFKE8iWQAvERoUVxw5Et20hNTNXf_0sXOyh0bF0URPGDxSYz9uZI6-nlwVlo1aobdEnn7STSq2_tuTDIrQyfBGZzhv8OB0H3cj9mBs=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                         id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'sources': [{'type': 'api', 'name': 'oai-weather'}],
@@ -1528,7 +1531,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1545,7 +1548,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1556,7 +1559,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1776,7 +1779,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1785,7 +1788,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1819,14 +1822,14 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         signature='gAAAAABoydMovnl5STyQJfKyyT-LV6102tn7M3ppFZHklPnA1LWETYbnDdCSLgeh1OqOXicuil2GTd-peiKj033k_NL0ZF5mCymWY-g5qoovU8OauQyb2uR9zmLe-cjghlOuiIJjiZC1_DCbwY1MHObzuME-Hn5WiSlfTTcdKfZqaQpzIKVKgbx6cSDDyS5j29ClLw-M6GQUDVDsjkclLEcc8pdoAwvuWDoARgMYXwcS-7Ajl46_9oA92RP-64VjrO6Wxzz9HjKcnBTcSDUcyJxsdolHq6G0TjZFwECg4RWvzcpijO53OF58a4_SfgUqbupni7o-tMzITyF1lwE5Xq9fluUFHXmbH0QCrk_7lGRjeiFqY9tTv_VKbNeHSVj5obUnA5HyAYb5jEqgy9M-CgdN1DJeODMTq3Ncu1y81_p7sXqxpbh1c-2eHkGj6yMFjO-dF9LpX_GUZZgAoPXN-J0k3_6VFWc6FjwOGbPU_weslCBpBnS0USfiif9y8nzH2xg0VrHCUEliBOkN-QLqq68edZOBAmYgG8iRDx-yG762TzOBri-0EdFHGWnMij_onb0y4f0UOXD-qSqHvBj8WKasOSRkBpJmIkDViKXYab3nhOtUb4Y3jNhSh6KYEW1QETK9oOMc1zd0Osk-z0QBLQdGtMuFiR00Bs1M_E4T0lMYEsFRqQ8TZmM5-hmrAkBVx3u1f9-ccBZE0ANOiNWH-G75LozwgZhYrOwbuDSnG3wq2M0L7F1mkseg5lOGKgyaxkaifO6WyS6JCHMwDZUF4gZKyHItg3x3PACmTdUy_Wda55J5oIFklWtjFGbU-dY7vr8wvyF0Q0jEeMp8tFvMpGOGTVlydMBq6SCWrZAz8uDoMRxuNLecaHj3bSQHbfeC3hs8uKCLOMr0X_ZCQ8ATXSSjjml3onzNvqChlsspKcwtEKKSwHNTMUJbY6cyy45EQdYhbKg75k-ZL7Y6BXMRjCc5CJd-4uuD8_cXHi4ikmkpHmgZLHcQPOdFflXeDlpYVTF9-Hyblg4SsxvLX9Vp5h4T4J_RcalfwPsIAwIEn8RSutJyMAIm0tYsEzq5i4usmLMxyEBbekCgP5DlHbeWvj3B8h0WoPE7C4cA1m29A_7bRDcJiL06D2T13r9zh17W7UYucDtTcJF7dtKHJTFK_C9m6wW-rHhXi1CgTFU8acDLYGK_VhZhQmTD7tM5JX7IEw_yokWzqyZzWFHmN4mgvAn3imeOXliVLY2YxD7I8-6xAgez6tVyX6plXIpE4KL-GLnFXyqORwIhH4F4EvEm6AcurW8pPWBXXVOY8Ml25-3D1tSu6sQ4PFzgvE5FWiwkBUpLSKwBjZqfg3_aG3NQe4exExztofsCD1l12US7OTx76h7utifDiu_FuzSZHOq0sM0kWfsrzoaPW79T7CT0Ew97HqEJTvYvhkdmzgtA-57zYK-8kc2bUTmTNdl_nUovO-xRhvwamIjMTzgqo3FXjLAtj4QZYWIHInkGj8GIxLluow315yWxARpfTehrpgvwYbd-tJ0UFyCZ1J0RwXQ8QmBu7UV-qPxj88d8cuY9sn8xba3kFCLifxlohEOupJcDDNHjta5eunNYoE127ap0Pv5KdJHWaOUcpScrXz3dIEXBlax12ySZNkghKGgGqYzOyQBKvkAgcV2rHaUQjuAkEbV3uQuE7iG3413fqfRVyAOKHKv3ig0jUM2DqBfhK9Tmxdbh-5VI5H5r5dgw3GmTQtSZVd0Q3mIMCeghrfHeCW4Ms1lRjcwEbn1Uyffs7KylhabOdqmiRTUPavLgKZmSrh7q0Vrkmb3s-nZEcfnVL6o2OpuQrdm83K-aI0Pvnsf9V9U_qoW1HWf61ENQUhnMECD2P70EsSmXLnQ_7f3v4Nyw-MCWCPpdzJvCh0TrpcTpY4WcflgbkNxm9xorCEiTlnEaeGSYj0MDcNm8sJYZbWzNQoNmbj58XS4IgnfCIYcoyu6PTceMcE7o_w50MPC3LcMTzZWKSYnGA7xDrvfeD7boqfj-Xd37SDYSTp9OAifiwiTXZyl7FqVTk1Y-1RCYTvIPPpnhXedT4ehYPRL9_fYmTgVISPLK8IQyNHpme86nG1-0FOJoitzwOa94MICeNKJArYvZ4Kj9WlP5-cTjP6zoDlaYxXXuln6DRmOnqL5CDVqf3f-7Dg-n8ARgNFwaAuvLXhCxuuRdcnNN5gx1z5vnvusq2sMCZx-eRqaGQsRoAoWo1VsrW5bwPGHwZN9Ip97KeORMAV8ExDttxjS4DXO-nB5fVZ2KToAsglOjLfvoXi7ArwK4Du3u7N_kzERB8lVT25jOltMdhOISXCGzY-ORQr6WhS_fgM8s8wHJSAtEl2w5VaFku57kEgWmfmasDNz5O1iMlqKOzVGpd9qNUtWaqYDK9DIxaL-O1pQGbzzuCsq332tez68SMNdbjNaf5RS3MHgAKHmI0I2RaGdBcaXjlap3sEMANG7keCNYSrtU-vfoMfb708dt2Ux2dDktmtSMFwZyzbOnGOshGhxsW5O98Uo-I-PZLsHSj4ZJSD5yIayNiuf8bZ0_REJ-9I-5xdfyUDstO7xj4IRjwwnsF9Td8CUycBKxr4gsttwfOoo04LVLOg7mDbK1GtoLEP2e-nXBHsFsOObaW3bOTx7TZwQf5DLggHsEfqdArl1-MqhRllSJNFtBLV3T8bRIvDl-YCV_LYjvWqRvo0RsR3oxrrPGwHM5ROy0WdfHixv2t5voksrS40VJI-KVXqgvF4ixUTMCjpL_pKpBq3pVZEnsJc4yZgK-C-sz72NZNKFHZviJhcdPDuwd4dX7oiI9X2KbnRfoo67xMqTuQCryLeiF7FpFoBHIjH2OhMzk2HbJR5YK9Q8blsWHpAdy',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'weather: Mexico City, Mexico', 'type': 'search'},
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
                         id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'sources': [{'type': 'api', 'name': 'oai-weather'}],
@@ -3956,7 +3959,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
             openai_include_code_execution_outputs=True,
         ),
     )
-    agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=m, capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run(user_prompt='what is 65465-6544 * 65464-6+1.02255')
     assert result.all_messages() == snapshot(
@@ -3980,7 +3983,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         signature='gAAAAABozbpoKwjspVdWvC2skgCFSKx1Fiw9QGDrOxixFaC8O5gPVmC35FfE2jaedsn0zsHctrsl2LvPt7ELnOB3N20bvDGcDHkYzjSOLpf1jl2IAtQrkPWuLPOb6h8mIPL-Z1wNrngsmuoaKP0rrAcGwDwKzq8hxpLQbjvpRib-bbaVQ0SX7KHDpbOuEam3bIEiNSCNsA1Ot54R091vvwInnCCDMWVj-9u2fn7xtNzRGjHorkAt9mOhOBIVgZNZHnWb4RQ-PaYccgi44-gtwOK_2rhI9Qo0JiCBJ9PDdblms0EzBE7vfAWrCvnb_jKiEmKf2x9BBv3GMydsgnTCJdbBf6UVaMUnth1GvnDuJBdV12ecNT2LhOF2JNs3QjlbdDx661cnNoCDpNhXpdH3bL0Gncl7VApVY3iT2vRw4AJCU9U4xVdHeWb5GYz-sgkTgjbgEGg_RiU42taKsdm6B2gvc5_Pqf4g6WTdq-BNCwOjXQ4DatQBiJkgV5kyg4PqUqr35AD05wiSwz6reIsdnxDEqtWv4gBJWfGj4I96YqkL9YEuIBKORJ7ArZnjE5PSv6TIhqW-X9mmQTGkXl8emxpbdsNfow3QEd_l8rQEo4fHiFOGwU-uuPCikx7v6vDsE-w_fiZTFkM0X4iwFb6NXvOxKSdigfUgDfeCySwfmxtMx67QuoRA4xbfSHI9cctr-guZwMIIsMmKnTT-qGp-0F4UiyRQdgz2pF1bRUjkPml2rsleHQISztdSsiOGC2jozXNHwmf1b5z6KxymO8gvlImvLZ4tgseYpnAP8p_QZzMjIU7Y7Z2NQMDASr9hvv3tVjVCphqz1RH-h4gifjZJexwK9BR9O98u63X03f01NqgimS_dZHZUeC9voUb7_khNizA9-dS-fpYUduqvxZt-KZ7Q9gx7kFIH3wJvF-Gef55lwy4JNb8svu1wSna3EaQWTBeZOPHD3qbMXWVT5Yf5yrz7KvSemiWKqofYIInNaRLTtXLAOqq4VXP3dmgyEmAZIUfbh3IZtQ1uYwaV2hQoF-0YgM7JLPNDBwX8cRZtlyzFstnDsL_QLArf0bA8FMFNPuqPfyKFvXcGTgzquaUzngzNaoGo7k6kPHWLoSsWbvY3WvzYg4CO04sphuuSHh9TZRBy6LXCdxaMHIZDY_qVB1Cf-_dmDW6Eqr9_xodcTMBqs6RHlttLwFMMiul4aE_hUgNFlzOX7oVbisIS2Sm36GTuKE4zrbkvsA==',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'container_id': 'cntr_68cdba56addc81918f656db25fd0a6800d6da575ea4fee9b',
@@ -3992,7 +3995,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed', 'logs': ['-428330955.97745']},
                         tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
@@ -4090,7 +4093,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
         provider=provider,
         settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
     )
-    agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=m, capabilities=[NativeTool(CodeExecutionTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt="what's 123456 to the power of 123?") as agent_run:
@@ -4122,39 +4125,39 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed'},
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed'},
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed'},
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
@@ -4311,7 +4314,7 @@ I\
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                     provider_name='openai',
@@ -4417,7 +4420,7 @@ I\
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
@@ -4427,7 +4430,7 @@ I\
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
@@ -4438,7 +4441,7 @@ I\
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                     provider_name='openai',
@@ -4532,7 +4535,7 @@ I\
             ),
             PartEndEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
@@ -4542,7 +4545,7 @@ I\
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
@@ -4553,7 +4556,7 @@ I\
             ),
             PartStartEvent(
                 index=5,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                     provider_name='openai',
@@ -4581,7 +4584,7 @@ I\
             ),
             PartEndEvent(
                 index=5,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
@@ -4591,7 +4594,7 @@ I\
             ),
             PartStartEvent(
                 index=6,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
@@ -5476,7 +5479,7 @@ I\
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
@@ -5484,7 +5487,7 @@ I\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
@@ -5493,7 +5496,7 @@ I\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
@@ -5501,7 +5504,7 @@ I\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
@@ -5510,7 +5513,7 @@ I\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
@@ -5518,7 +5521,7 @@ I\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
@@ -5687,7 +5690,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())], output_type=BinaryImage)
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
     assert result.output == snapshot(IsInstance(BinaryImage))
@@ -5713,7 +5716,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
@@ -5749,7 +5752,7 @@ plt.show()\r
                         content=IsInstance(BinaryImage),
                         id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
                         tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
@@ -5804,7 +5807,7 @@ plt.show()\r
                         signature='gAAAAABozcPV8NxzVAMDdbpqK7_ltYa5_uAVsbnSW9OMWGRwlnwasaLvuaC4XlgGmC2MHbiPrccJ8zYuu0QoQm7jB6KgimG9Ax3vwoFGqMnfVjMAzoy_oJVadn0Odh3sKGifc11yVMmIkvrl0OcPYwJFlxlt2JhPkKotUDHY0P2LziSsMnQB_KaVdyYQxfcVbwrJJnB9wm2QbA3zNZogWepoXGrHXL1mBRR3J7DLdKGfMF_7gQC5fgEtb3G4Xhvk8_XNgCCZel48bqgzWvNUyaVPb4TpbibAuZnKnCNsFll6a9htGu9Ljol004p_aboehEyIp6zAm_1xyTDiJdcmfPfUiNgDLzWSKf-TwGFd-jRoJ3Aiw1_QY-xi1ozFu2oIeXb2oaZJL4h3ENrrMgYod3Wiprr99FfZw9IRN4ApagGJBnWYqW0O75d-e8jUMJS8zFJH0jtCl0jvuuGmM5vBAV4EpRLTcNGOZyoRpfqHwWfZYIi_u_ajs_A6NdqhzYvxYE-FAE1aJ89HxhnQNjRqkQFQnB8sYeoPOLBKIKAWYi3RziNE8klgSPC250QotupFaskTgPVkzbYe9ZtRZ9IHPeWdEHikb2RP-o1LVVO_zFMJdC6l4TwEToqRG8LaZOgSfkxS8eylTw7ROI2p8IBSmMkbkjvEkpmIic0FSx23Ew_Q-Y6DPa9isxGZcMMS0kOPKSPSML2MGoVq5L3-zIVj6ZBcFOMSaV5ytTlH-tKqBP9fejMyujwQFl5iXawuSjVjpnd2VL83o-xKbm6lEgsyXY1vynlS2hT52OYUY3MMvGSCeW5d7xwsVReO0O1EJqKS0lLh8thEMpJvar9dMgg-9ZCgZ1wGkJlpANf2moQlOWXKPXcbBa2kU0OW2WEffr4ecqg1QwPoMFLmR4HDL-KknuWjutF5bo8FW0CAWmxObxiHeDWIJYpS4KIIwp9DoLdJDWlg8FpD6WbBjKQN6xYmewHaTLWbZQw8zMGBcnhAkkyVopjrbM_6rvrH4ew05mPjPRrq9ODdHBqDYEn1kWj9MBDR-nhhLrci_6GImd64HZXYo0OufgcbxNu5mcAOsN3ww13ui8CTQVsPJO20XHc4jfwZ2Yr4iEIYLGdp0Xgv8EjIkJNA1xPeWn9COgCRrRSVLoF6qsgZwt9IRRGGEbH6kvznO_Y7BTTqufsORG6WNKc_8DDlrczoZVy0d6rI1zgqjXSeMuEP9LBG-bJKAvoAGDPXod8ShlqGX3Eb9CmBTZtTOJZYdgAlsZHx9BZ6zHlrJDjSDhc8xvdUAn9G3JvTI3b5JWSNX0eEerZ4c0FVqlpR-mSG201qnFghtoGHTLJhlIf9Ir8Daio_AYxUTRarQbcKnJuyKHPOz1u0PX2zS0xegO-IZhFbzNaB8qwQgeBiHfP-1dP9mkttqIRMt-hMt9NMHXoGIvFxgQ-xUVw7GRWx-ffKY7nPAbZD8kwVP3i4jTVj8phhwQcDy9UmbaPjm4LBgJkfdwNfSpm3g_ePK4aLa_l7iF2WSSfy2wObb7VatDzYDcNRG0ZTMGsiHy8yzZAcec18rG7uE6QCKx32G8NI5YvcN1kbnrZEuoKTBuSb2B_ZAhvED9HxbG8mH4ZEHHioVuH3_-b2TesVUAbORab_-rG9CU6qyy_eAqP54FYiXXSWtBWNo4baVdqCzgSCiNxgpxx64WPw8y2M1bOMoV6KPGwDOjcNwbO9nQwztqTWPW0Ot_Llf0HV0p-RPC1Uy8uBB5flhJ3p5uqxCPV3kDRzXgjh28EaBEkaSw_6SZkJNvwbD_7VihlHGaO89TwlqSIYUT_gc72NZKRrj4f-Y-0NwxjaSVVGuWCoeG-TMjG6uXpSozo2J47_x_a0lr4KCT8NDYlksajyuPUbYhC7jhQ9uJakmAc7ay_VHn_LYlAWRdAA7wYvqw7aYIuSIYg2OfL6NlggCpBnhsUPEXmMRHcfj1Ctc1aeUjBcpLFVmTZ82lB0FdcKRe3bBsKRckbdKalehoK0NJtrWqNQQH7xPrS-r7or_oOWhA4EDIkRUOG9eZhdsvTXBUamxGwutJ97SdDkgppVC4M7DMK2ZGGBzQsE-JMilERvFQ8JqwVWPxExWmE_-H2-bYe-T-CguCin-mTqhLYswHVtXjtruoHBmDs2SdnkD3intwSpqxsltscCfRaoRYWTCTbchCdbctSEIc39ECpc5tL1Gnav0bwSkMYkxyaRVBiYBbmIG9JftkKIYtdZ_Ddjmq8k29QflqrcigahsVLZPye3dxVTuviqbQjRd2SPMv8RxgSebgm5RZZIpP4WposryghYZFvuA1WImRzsImnAJI9J-8dv6IhHpHsWOw9K-Neg8GlnDU1mGHUElMUbqHiLojmXqPGfhBI3iSR0Ugs7ErpeRUrSk3il2o3rysG1Fn7ePuP5qNJUt2NyBUxf3TExMOwG_zqvpIPr2V_ARr3PsfeD0IcY83Bh428S8KPzc7ASOjT9dGQtVVrdjSxHi8o5ANxGx6z3bHC5dJvDCXg8a7FIJHAd5CUqJxrBi-K4p21jf1BNqgO5JAJO1JrvtdTk4GOVe8YEfhxmGWW9oeuRg8crsIWCCCoxr2XJKgPCj2TTPkBDZ1O3Yw3_nuWaBU5sB09uEB5lTKMd0OfSHbPF4c50RWAFgQB-tHjIUss3oEcAUaZHC77r6sIYoAEBlU8Dgly983fFD0HCqtpIpKS_B_K1fTXYpWRM3uUZpPKEgbfw1Kiqp5cweKTeRKNvjlau6VxhPyVi66xPdHUCC_BcX1eeFe-zcxe6fczcJWqGZGtYyVS_S_GlWZcdA6AHvGU6c4KjG0oU_9q-pdHSRtpnrhqFu2L884m64A_HsFU71Dj34AxhmXO1Am-zSL3j9nEPPUe6lJSGyhHU9k8ApDadWagvlODdXYWaWiMCXGXcYtl_iUAm24IJozlLJ1IW9HW6RoTfKrxwQwND3pX9CLNewuPV776pVtRjvUMbLaYg8nzOu1eNT2IW9dUdzc7wqOjiT1gHuVd6RzJyTCWJb9yPwDTkB_NKkjfUPmJ9Id924xtxy6H0eDYRq-SqsSSEklr6KJc88PV35QqvaMUW1dt_tGynHgYy9PXlWXQLKw-Xphku3FS_R4BLUhJbXDsMOQq332yhizP3qQ7vjEmPm8KB4DMIWBNn_D9xFuDuTCMNPAA9AGYWgC39-L4wPbpBHpqWjDwMzijFpm0CEViPD9ghyyV8syT1uLscxJVVDlBx90u_qWLSzMnFrVWmZ60OyWa9EqG44ZU8ELLHlEDRO_yHuTVpSafCLeDe5baOG2mI6tZnDBmm_ysbYdaC2N_zNBK9rhx7g7BNLQPevl0vtZm7GVLYXiVaO5ZinHxeTyJ6dRU5b0HmSw8r7EpdgORfjUuMkUfWPwhXgTU8SbvjTZg1gJowyNDYCvacrgnmnpBG9BgNjsfWlGTwz19AcEP_GjCWRWoE-uE_5fIyq5eFEefCBUKU0Ejs0IB-Re5h8bbdc6bNV3Tnx4UfGDU6FbQrJmPzrw5wp_wCeVYjtNGRbO2MKr_m52km5xMpVMMHtthVbQ9Zsa9F9zB6Dkr-R4F7o0dITMhG3qaREHKc8mXIGoHND-WSGPZLntB43JmRIWwjlJNstv7VlVc-dU89oh6Z1biH9B88SENI1ao2wMQV-BB17E6cmfzm1JsSR-HkzSf3yoUJWwvIu4CaR4jeMZohuoNqfGvQWIJSfyyUNzq5uY5__04QUmNcRVspOTH4EOHAoXLfCV3VI7fodj4FppiIuIXKwS3N03-Qt4sQ__XQWuyDdORvhRJeCvYcK5kkyOQILcABxDItxLmk8AgdT0Hz0BAo_u1U71srS-T8a8O0-fXWsJAHxDg_rJn0LUm6zq2vXNl8zmOKwEayyb0YySbMRxI-LwLyOXGRDyAVvm_7KKJu1HHqMntLyY2G1xowFpwMVLYXlGxDbsSpE-g5kFnHWhj13FiekLxaFgMRNsMA-r5_rWbEjRa6H328FKsUJcYe9qsp2LlzdJmYZDTIMgzxupFwQ-R5F6QjWOudMBsRszb4YqnOPJ8P9YnY2WYd0B7srb5Gh7T6r6mcCl-HAb2z9QDeXOc2Lu7ujuSvGj7_Gk7PkZH-LzoAEaGG9Z-7IVJlV_hOBPif3GlJUSUhTlIwWxn75gOyoOFuMak-rQqkb0SaL5anfXS_NUTVgSh5G5JQIoykLxbVlGiyeq0M_oEvTw2wMZcWT2hhaudcQ6L912pntcD-WF2tfppgp6sN5-cq-D8Y39N5Txvs-wo-H7-vYKPozTNUKCfnzgXfvt5fOi3RBR4MZU3eHT8OZ7d1d3otho_4GVMNIFa6mxjW1BC_J42Hn27-vrNDLZI_BXdF1t2CCq9VeRwxIW1R9vadd04HzAXyhap95BAYacmbULR6BkX97TvY3hv5cMiaQFkzxg-tf-nGC_VCknvwKxu4ocoB14p9w5TPSKcJz4J26XvyQbi6AdaXbOk625ajB_clv3VJvXYz7DgvWZd408tMykYQLMEyv5lnS7qwQokeM4ilIXwM7EugiakhfefTM9ZdxaWVcvQdqGerx98wlhifCSv0FqFRpJdkqgHmV1qzrAjPDEKT5HJOjsvs5hb7gKBqHR-bYlgS94pvDUpPArQXYcGYGum6vFsCAJypefMTF3D7Zhu4hhWQQv-DzSmfcZOxSeVJFrgVeqJnIbZPtd59HCBXNIRXJa42wUYE4szNli8wKWX0rYSIhiX-ig2YYZz3ZoBE1KDOpzheuk9OMYg7tQG2UlmVq27ggaKJ2gEGuVv-GI7uD7vKxPQ97QwCf38gWKU95CjMEBm_EvmLs9eubNpSpz8Yoek8hWWgrCXUSwRsYnF-lGdG0nIkCClvzqqAGOjyPxG4qfrCXJ-4rVc4DQiJUj71_I0EAhOgxb5WYBt4a7C1aUxC__qeOTAecof-UjzNlUPTo91JgOh5xvZkRkgGFNsq1OFqOcRrrKV8U8brizYkIhDjzjwCIzScSYvEfY4S6st-oJBv5fwTqwICSs59hf6WR8GXsPFR4v3UtF0Rkt-Nrek-X6V7BCui1M5HeFRN7lcTYs1Qw2bIwu4Td5PIkZ16oHdCk9u5pEZce-n_MIwj2Yoq_Lq1BBY9f1rpG9IuaycwabFnd2MOj89-xdgC197DAij5WjZjXahooyAl0Mt3p9MrHCit7LYbxqd_dGBOmg9YRfGPhsoZ17oAmHyg_gvpooOsu21T_06ynhvySjOG0yUcphquvtHJWqQdcT6BBX0X-kGE4nA41VdMhepLhDRDXtR4HJ1m_dPFpkHeAAFIefjt5Kb782TDLFE3KuHFWqSU2K2UmlY12P21dpRvyUNz8ss_AA3rl5jFpcnC2IyJNDIZbqdJPd2z0SNlwNyBq7Vl6poenR-j2X3xzIGlCDQ9zRgs50wdWtZ3ZRWLVWMrVkhkddoVKuh1W9rlwsvxmlZbOeRk_Uh0BymAa0-4-n0jI4_-O8jqpL-YzL1Y191brY4ywLUrQXpln41UK76pxc34FojI1Nymw523SNYxAHSlpj01gNmcjPrBTFxQ9SDY7AlrSFwJia_KvWnsZ53qt6fiDHV7p62KzlG_rpz_dQSQoj-z1hZBoUxi4nqzeCIzPcB_3JqeqD6x1O-Vh3uk-6NxN_qCE8cRsizB5vV-Ur-4tqau6LIrdfIB3Db12vpgiCmD_BD4xCxOijDn-97edRZw__xYfhx9_MBEB6gYl1ZBtLJfxDN54N5UION2tiZ2U8THD_h4d8-c26H7NQv44kYppbaseMckhpVOBDh52P5gxWFwp4VGqAIkZ7KU10qAD6M3GTFx7vGth8cT8YS1s2gPDW-WcVQGlAF94gT-FE6vzAjxwRJ4m7B1rJZfYReDvMrAoLroayOVmfB8pOKVQLQEF5dUmlzAIIpeh1NAiTg4n3FXW7OXQhzhU8bmo0e2FuSEOUVimGw9Nk_Wor3kQFp-9kj_iazSC4p5VURnyY_lAirPfyw4nskpZzCjSg_EAU8Au5vvOqrdDEPjrbeT8ks0wi2rsB0AxQxhgf6jUWzp0apeZOIl9dJFH_OnyJfvwrV4YHpee3174WKYhOJIOy2-8FJbMw1MpQtVV49yWmZsIyjRNj2uLbqY7jWBo2UEeOVW5n1tdk5zAVF-RFPKyh9150MnJz_RQtgoNdUD4iLBwlHYHVGLyH4a3GJmOJP6ZC-A-8RiUjvhu5co0yC8M83aVFjLe-yob3sNgJQgdVJnEOfPz4-1DVORoDgIRrRBcZQZqvkZwADFUkyy9jy5oXdEJ5XzthnizbrOZkHk6sQsNXrP4Uadqo9w99uy7TUh62l5AMWBFcaaQhuAuFkUZCavIqoO-2k4oXIDoTeBYzbyo_HH6caMk0D0_zgEg_5i-NhT3EUPdoCBNmjbOKmN2wzf6kqEyc8-nunjfq6HOjC6B6SE6VgOVJgBrhB4cBto4CxO45eqeuCi_WCjRtSS43Bh0QFZi6xK8rRjItyQRIfBpomETElbng3mAmBLPNb_7CzfsBdhBhJQLKu9KZ__uL3YVGtrCaLcOsfwP7BXRNQJH0yN_JWfMZH3y3B8z1O__xGhR63ugExWJZyUn55KAEiODbX35_PcftWXjslq-wzsK4J2fO_HFNU8Pi4egk6ibvCUDFRUelukaAy_YHdb0VTSB6XCymTo96jK0HGjG8FaVwvQaesaUE-e0_JpdMXN3KstKFeTlDUx1o3Ny93-VxLB5rkOSd6cRjEnFRA7Q6HnturEjwPAeJjR2Ll5dsisVrdjqHMbSfSObkpd2dZ0T3LP4-_ug7qRJF60DJTjTPpx7YxeARzuwiu02TlVW0J0PrdXT8EpISHneKc1VWhtRcdD0R0spuAMzJLwELaOemihL1TJSIMBqFikbpulZCZ1k1kA_5D7I5c7pOF1g4uYBW-gJNTenfC9wYmDJAOCcnwk1W4=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
@@ -5889,7 +5892,7 @@ out_path\
                         content=IsInstance(BinaryImage),
                         id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'status': 'completed',
@@ -5944,7 +5947,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())], output_type=BinaryImage)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Create a chart of y=x^2 for x=-5 to 5') as agent_run:
@@ -5977,7 +5980,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
                         tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -5987,7 +5990,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         content=IsInstance(BinaryImage),
                         id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                         tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -6039,7 +6042,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                     provider_name='openai',
@@ -7333,7 +7336,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -7352,7 +7355,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -7414,7 +7417,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -7422,7 +7425,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
                     tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -7463,7 +7466,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         provider_name='openai',
@@ -7472,7 +7475,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         content=IsInstance(BinaryImage),
                         id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -7534,7 +7537,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         provider_name='openai',
@@ -7543,7 +7546,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         content=IsInstance(BinaryImage),
                         id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -7621,7 +7624,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                         provider_name='openai',
@@ -7630,7 +7633,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         content=IsInstance(BinaryImage),
                         id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -7687,7 +7690,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='image_generation',
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     provider_name='openai',
@@ -7696,7 +7699,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='image_generation',
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     provider_name='openai',
@@ -7722,7 +7725,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='image_generation',
                     content={
                         'status': 'completed',
@@ -7738,14 +7741,14 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 previous_part_kind='file',
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='image_generation',
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='image_generation',
                     content={
                         'status': 'completed',
@@ -7768,7 +7771,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
 ):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
 
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum output retries (1)')):
@@ -7795,7 +7798,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         signature='gAAAAABozexg98F3au1443vbazt85gDycVpBeC63gC3bUrFg_jpx3BYCksfaKwRkdFirkKpRHBYG1go0Kbzl_1w7ZqwT-BcPYX1Q7a--X9S-5OvU43ikr2kPbJgGhjWv1W37aLPKfIFOvt0VspdWlN3Diq6u67ktR0R0BXOFuSSv7WQmRAIl2JxiDzquSCb12Uc6i61LxNLpzalYk9lyW4Nm5c4czAsbUNv22AeTsB-nwWzO9NJyPfe6cVybz5gdShl8lKIvBsjHMonyiZqqzuSZakXSlbteA8yvZmOYO9XT1ruXNhCoFnq4pNuMHiZuOyCSIvASPUebLO9Q9uMv-t2aKku_4Xg4VsNUuQQpJfZ_gqYJyZFmANBTAcbMGBVotJS0V0ZkO9kyM9W99udKPuS-IzAkPCiHuBsjMaQzhM9xA2-uNm169O4P6TfqD65iCYAMLvwZbXauC6etI17If_731Oo0k4qcR5G7vruSd_Om-vwAGmb0u3_FNcI73bNw4WkhfGdUucfquaGIBkSm2_H63SOfLHOiLsnLIZT1QkEm2k2LP6O57WHAE3H1Rd1nKkw7GQcY-oQlF9_AGi_okM_nCNf7RXzfEocRYXlkSwoJT67TGV_rp1aSzhxKgzOzntDlcOT4FdyVY_0MMtxnBANZL2mBM8nvmqogWOnrJui-7qmFYP6DJj-GkoqPhi_gXlb9gTHtus_lQtLvJSXFhDlQDT40dPbU6T716Bp1TRQSAtj5s4aIhEupcAyoza4Vzko9WF0lrwyTKeU0Yh2nkrieKNqL9XbhknW9bp8dRMRM5-cG4WZHWgD5nLV4EP-8xcZc0ApwBLebiUhkX3MZ7phpS_ZpwnHxO8GDnvuPNT6pXbvvrUL-Vitwe-qWoodziaUetUcopfpGlBYnZb6_cJOVFUoJDxPxgOkLiUW0WSSe-NsU0XllTG75sVx6cciU7LbDJjkPU3yLOrJcwpE81Khsefm-yyk4BOMzPbhJKg9Lrs9pZmuhXa0-GdMP6fHks4UKYeR5pX7zTU36t4BUYFssq-p8QqSuXah64S50W644yvaJR52PzkjDhNtl_lBbLRsVvlimUz2vGuJfFrATSnw-pkuGEDznc5BfdjqNDxncVWpwu0u2HnfAXbzBBtgNFVvWUegjRhBAwqrlWdjhvTcfzp2xUAoaXcQdRmZUh9Cw1Ib3pvejHk8l56i2Gf5X0VrDVxj2av3LugJ0sDgahri96q_EfYVD6TEF5D1lz-GBFTWJ3CZgdICN1HM2ny8yNg60U7EWFNqN3Rn9wx1LnntWcKxmwLRfTWFr3k3-TTHGam9Nw41T8hSkpGmpDYM2LsOcqdGa6ZYlFEBstzvf8JmPtBxIlD-nFIAVLo0Y4lFmt29x8hi56Ybu3_xdwY63SMj0rydOF0bX1K1QXcIJrSY4joCesFCJ05vB9F39HNByztFA3cBvyZkwzpmif9juYOpM2qfZVtG8oCnaBU90u7lkIvfgRd2H8lH0pnVTLjSq885mjhxRad1pnD-0rIoPY7ppz-quELsMOVqNTZWW8mkCy6uKiWna-3m0THLNz0CNFCnIz5ZTmchoj0x1WewlSamGL6n_SnB0H_lIXq9RUZlwrd1ASQtiOnI94pBRHPXfQ3a4PfNyeZv9GOKHr4pR0uHATkCd-rldmWQ5kG6MbNjNMJChaCMuSwrJiBondTeGIZswsMwOfV5eHgoZwfzkTxD3xo91CLGsE77IDjp05mNYc_KMbEqSmnDWpPJzsHWAX5vahfVXsRFx1Jjw-D4d5PIU_Mx4mwjPLjTrWkd5Hl2uKWvjw0Hb55lHT8D3cGlvIjRnTGM6ndLGndeKjXobs0NBcmgDQNLpHMccHAbb2UVIdvx8cF3zhkc6FdKJ17TZGJQbzWSqkkKwNUCYuRrf6CeHoEZh2ErArmcj57QVdXeDREoSzHhu1XRBfgc-ey4WF2RMzJ47Y0LNxFHpLxEk4Tpg4jcMvfRRKv-8tIu5kZeVSBqZTac90ly9qDeb32mv131YXy9G1A4RCLhjCoxM9M5r8a3AnDIvoMCusPxAM5mHpLEdv8A_5mliza9hztzmDKIQq7sQAow_XafhRJfX0dOeOft6aLkLTaq3KHN1HE0xy9Fupg5ut_AUd8tIvst7Av6vHPiK7gR-rxgWNx2FmKKXhvcWqMeeqFwSyq_18Y4w3ibPc-l-oYXD5gEMAaXGa6WgyaeNBSHNup7HDYlm_WLK3UdH-5IuIMxkhLFgDFED7g9lFl5V0I4bmW8Vqg0AqmNC2hkADsr7mNjuYr3NOzGCTsE2Ed992VG_e3k2PqtHVegZ41jxZTbfqYRM_HYg2rOdnzNN_NV3w0hpKmV-F6UIrb8Sfpscdwa2kz9Zz2huG_QGzI6AyjoepNgOYYZ_Phq4JMtrjge8HcOGRR3z8_hV21N61o5Z9yBfwx5kSnAvPXuAgeuh2MIfB_koOrwbEryE4HJTSA9b2IAs3BS9cvAu36VHVYP7Cj-U3EZxaxRIqusjNHb3WIzswa4AXFfjK65aaCCizHwxTSdn53nlSe_f7y9pMnOV3o467Vtt-oR9dqz92pauT1MxXYdBD8o0q7iOgHsqdcHBDvQmWOlpag9W1sF5uEyzA9bxDGlKLA9xtvfwnC2Y3nv9i-haFaoknx8eQGsM_bzWC54o6VlhJiNeeRUuTNEAsoTXv13usbK6MtSXoGvWPNDkj0CJ4sluSWmOidGG6DW0bEj58HYCedg71EKyNcrxcN7JJFklv1ju6IVY4k6pLMPu6kbYdKzXaxFWkOmB27Qz0dgBbK7hHhHagJWjOKrHWNiOphce9SHf9xQP2U0uJRNKqNnqmKRZLBQ-QcwRUxzaFrDByG7nRV0ybRHpJvrRfCjq-FVF0b8JXudNY3D2gI4p7WJeBqk84bt5a00DzmTZap1cEYi8VYs6zwFRa-LTemxgq8jOaeR33x8I8tDBbnqJdOV_o88Mek2E0mXkKfl_3ZzPzajcjyNHYdfhNHfcB0Oeyk6w_TXnVxOJVHuoYUsXuB4gDDMENk2yubSUFjOUzuZhXXZ4CdE4bymK54tzj9qATV0c7k-YsRlfUk5fX0JRQF6iMMWl0VtVgi3HolN7S5K4Tbs9tB0ByOS5H5N0D2BjlDl-kmd9Yrn6-B7Dxz2rxCtj_TQneCyMzfb6edt8X17c-iLsOV-fZOP3mFTCcnI6HyMxaLQDENgPF12gW3mDZyX2gAd7iRFXCHzmTnVkUEBhlCoIbq5Dc5s0niA3Jq9MHvhtgcXaUusGqCxOtQ22_CWixDntwS3hQx1KxEUzYZxThNSv-f5ji56iiWOB9uVzv6XLPdGYkN5CgdKzqPsim6VWfz52q2TTSZFRuaMGZsJuEpprdcWpHcHiBZsk3Qa-giYazywLHxj3Ph_Kf7kByYuzspVpGX3bct_unkM8jQzg8AWkn0LuFIY8ScyzXAVECJbFiOv4HipzyoyYcpDiPmadV-qAG8ghpw90xwcvgrGnHm5pzHQaqZVPKWXrHnkaJFgQ7OyEpmX-U52R5t4PZCeWJA90zAnvmL7s5MFEDLzSlzXPFjzUo3T8XWz6p6tUksLsGdUUqILT7hYdWwCdDnUJYZvjysEVIkNPNx3lAGW_e82KYUZUjQqiQqsbu1meJkdZdvMPmOlVEGx9oFvTW8cZrZZfJ1EKNOPR_1eyGdh5ZOfxGU2sogpOST3U6dxdeUwpEdhl1dTaZA_chepczFdHI7aMoKSISbpNC7nNhKNfQIpBcwPLtAhlgCOQKuBRMJUPK7VcOpl_nhz3FKexgJ0X_hFqN5qygPtKITZ_Et5ME9k5tzelHVAiosKhWOLngFJzKZkYFavSYUOHemVmUo7licjeUTPAb0d6kKbqqrJ44ZP22gL-Rw0YZa7t0VM7LrD4jD_taPhqmZ28CCchPAfP6Umo6txaiXDusvPG7v-zUGh4XWQlV_5SBSQwvPHUfQHlogHH69jxfJYRD3F-lDIfKR9ta8RuCuCdd2VsBUUAWFaRuulGcLiQ1BFWZ2Fx7W6rXgW8QkufqX9sp0zgTK9fCPN0rPLLU27BUwn0EB3EZe4bDBYrm9xAxYCgoOOE28GMpZsznXXIVaAXvUGVTBnXks9ycNghOw35fsAniH64H8u7Yp45JH8BMb7sk4zHcW_An1TzmUxjq3_JdOo9kkzNEu_qs0Y9btf4M6NajoVWlttXT2RD8XPxIrASjFMv8fxYJG0OsVHJoKTnGFlHqy13dIDMtfOkT658EuGe_pHwp8B1zI1jjpPmMW2MG3TAlumFgy9T0iyw0V3dp6qCZCjavMPIJ2HD9V9TJYueufIptuN1_hZF-xESc1ENH6z_NtMBJmW0hwCU9a6UqZ-K3_ZsJ7EK7q06V53KOSzzaJUY7SgUAFgwfbqFpvqi8emyHMxxIFylw_E1iauYGssBb_tzY1fTWwk9n4h4A9bdKesz_JBNRuKmKyOeYOS2LdJGhp9VOsbTvJtJ3MvwXuiH9rgFTXzXbDgIHxSUnUkMo4mJhnWXiqENnfqc_oOgx6zkicwwX05Bjn_k4nj800fT4RkJTY81dXy54TbvqBgPR--nTkq-WJD0e8_9hjOrtD7c7_p08FhVGWl_d499ylunVccNQ51zfeP0uGt8uYK-S9fNN8ED5PJ5iBycLRU0uvyFdsZFS0DJ4N96xSrdkdPAZ5CjfIn4bawnCs8MrHg47sCgONAqrZ1WZTgyL8j8J0kdfVJTZoLRud4oFmM4t8nQsL1sxH322EWVaXsy9aWAMVWGcc2fesk4jVODZ4mfGtnvm-Q8ifjV7wqRa7s5uXv_-JFUawxNvHqMw2AvG1M0RJTIEnRkCKB_8CXNb4K-GRw12XtZs1KRED6j1yPzLwabcWNl2BpR9JCBmogxFFuPPLdevD2JWptQ3YwTQSIMridFriwY8g31iFMFrNub9Z356Vc9zyMvZ0sRBB4oK6iSy8Y39nU3512YdGpDmMTH-T5Cxy3pi1dphlbYHcar1Yl-n5gSS0_dezGILZbxfvGbxOAIL-AGwSE4JJpUFn6N0xRclaNTPDk9VkKpVktgJeWqkWFI1xdBUp0K9BQdNs6XsJsfMCaIE-ed9SbQpJRdc1S7m6lFKFZFvHujK1zplJemcpOrYIpsuTD8wzWJAxzWwtUoo0DXi0YQOrnFdo9PbcTscUGyNArCcGjOYiL5_oMwhJh5kg5L_OPLH3UhiLI_aHs4gT7nX__HHm_3GVOov7-kK_Rs5lGsZtFQ-yoau74FnzVn8N3YWMqWzCVbwGRBhvAm_fdI53h77CZeJm9yWZkWTzrc0Ua2HqA7KB-eZgCNx9Ox9n0Ilh42hdGLFSwOEF1oEHw63x4ZTENyAP7j7mHWnyVbqRVSZOlP6w8JquYAtS9hUJQb8GZs2MFuFcwTO8SX8gMWWVM3tGtpnz7UwqhcFMZHrJ0ehues8kdtrlqR2BWPYAquFhOQebvqhlYxieuLggwAIxudJr3PFYJrAgAxivKZlhKRSoa1HCFSp_4k_kuVp5AvfBMViLJ39pi_xHX8PnokEmi3_GZiz31hGjj1GgNg8HZCkQtQJcOjMA3YPE3kQHy76YIdxzL59EdWsfuHj9IhJ4J_PoHTg5k683yXkvcXsz_sOYj9j6eMNn3Krp-ZFmWbtmqpWuvKS7vmE2Wtq9RmzvkGPC0jeY6J_ndbyCCljLpFGbvSYC50ejEulcMSUw1ypHhHzoDzO1jFo1xBDfta1H_hAsLkmYKOseTZce6hHIZR5xUwWStmu0y3OoOeVT3cZXEErr7qPLxEzB6nTlSgzLRX-ncRCnnUy0f_pXWwBE9dE6w1Nq4Y9BuS2Ip9oZZvj-gRCxTmmJLL8RYd-G9EeiBSlf09kezq4plUsJwvvPqVlj5CVLk6DkEsTvAM5r8DK3FYnLUgf7hQI_EZ8P9VN_rrPTPa25y19MR1-XIsVGLrVPmyXcj_w6XLBxEc1J8qQ37NZCw_DRfS0_ZUUqSDNlIy-y-DsdLIVtXE-BzpUkgqx5ADmbsiFFj87rS7wE5Yi2-btSpkWdTjaBbsWBgN3sOvcZgFt-AQrCK8BMLENwFrkFicExianGcwm55IlO2iUvCNjz84ogzU0IYhzDbHGCZBzYaLNX4JIVeonOoQuKA6QGueCffX1MKQ8fDKVZQc11Pr9rwjPNR3xxAs0G4ykW0c3809YE60dLbP-AZ8Qm6vxvAmTzd3XlMFaC-KbBxskXtMJRJqxUd5jYx-YQMQiOA8wLytP8INXSHi2_lgMI8QivRHoKx4oAl-qTx_qz0Ut4iw192OVWoJqTjhwIE_NB1Um9GawsbM9gb8VgI69RTPmQi9obao9kkQEUU-NrNtDkumrltR9Q9fXFyRbKn5Hs0PHzC2yiRFa_IqGEqJeqz2CSBkdC5GauukZj2XumrXKKCIYV2vJ-42D6MUqD138clb-prSiOe4dA2-wrKPjaaWdpaMeAbLXbLkHuH4K5h6HOpYIVMu_JWdnzzDnvye0o8A8vrxFZsOSDeiHPcoDyN6-6KYQwOlKpjiswFVdoD_e3Aw9ge6YHDOggsKeyERzv46Hc2GwW_GWrwaWgXSv-lePsj94L1b17WG_y4oEKbNMAmE4A4EBH1aJI6_wEeySONFKhbyOIwUBcRKCoKT40dbGie7kW23rrzSTQHpjdd4NbAbNAGEtbAJbVwZbFC2RMwMWQbz8mmnMSdVw0VN6UVaCdUatYzATx-gk-lg_8ikyOhMwA_lXFI9pfnHIIqGmKHDJdrE4pdDBK5wVLB1H_CYqzUneygueeTUc_rHiMj7QdekTGh4KnA2lurqXemNemePYl621G_FqimReuPlTPmn88h-DvnmcVhTJEMCT2O6huU2_6yOlyulJw-mq6KMS_b3PSB3bgYmJEH7EM7ljv7lu0ZIqZm9xbpVTntP2s9jDBPMb95q8AnllIwH6uZEYdyiIDU9NQj9RIlR4RZ8Oi5b6n2IuKojvP6aK47npwKMvC4IOAMmGaE3_S2X0vFnpT1djiFPAjvklOEA8o0k91YV_z-QbWwVTd5fdRgaqXcqb3dLAuvnFq0bOpJMchlL9lrC02JW07Xi9Lw4EIoDsPBRr5s5DWLG8kLfpEv-YNZatryAbjbwMtJX0O9aNxLzG1bzyXVFwBb_HUgkotdbmlT7cXMMX8D4_xIQcDyjwo925uAVU3va121ddHt2JasKJc1vMyuOKXuDg5F3dYByqEQQH8zywgBi_IRtUx8aXNoNXobUf3LGaLc-3HqVTZby9Xv_Axm-s5jSqcEPL4WJX60rY28qx_lmajcmcVLY7irKovGmfEIlVeHYdMxDxZue2nHHHc7NmF7dGORg870x5iGUcqtmjvOx-NIqVShVQlalGOdIF3_u6r8xlvOL8xWJ6WLXKNaAFVtaoDdObEoR3stpG8iaaaGNcrRqIH7J86ntBUmQ8chIgOOvPz81W0Op5jbSc4d2e_qAAuvt6j_qElh9qsGNMVPoY9DlxqqrlJ3ojG_6yqlX_jP6NGSx31vxc-IgggbyeEm2BVt1v3dJv_Z1Kmt8PGa3--atQsH3cemYMbWcwX2mAdMCHLY7xQJs_X9OgDaPd25bGPHFJQVNM4cypyPSWXEDiR-xIqkB7NzTrSEGf82wSgIPRAo7k-CBpbBVvsuLre4zof8K5u7QH2jYFQA0-9YtDa_Uyc_JcErLU7AroB5ZZr7s_s9qx5w_wJxMNW1NLZJdOKUVryP6DJPqTNmly3PT88GaPUDdrcQa7NplSF1FcqFmzOlZc1Se_fSkgEcFKrX9M7_65bTgLbAvj-8bCTIxZp0-PcmoQO4mrkNkW2Vr1rfSuOH5_vqJCT7s9A-H77RjLseMxJ27YF_dEXOHjsEV0DPM_zfno9_Lb6gL0rqffxhKdM_xRhSsLg47PJlCgoZkL2xVTJfahwydAzbr4ZWbZ84WwprOimGLJBdcQgjHEhxx0_cT9tFpUKkUbpAlUYqm1e23JGUXKrS9kBqM68RjcBAiaAgeKMx_5pNU4RzuJqCARPYgqhsy50LxkN6DgIMiDglLxho4wUYHVVkez3XXPHmO8FJcRuuk85Z-7qDeExR-Dp8vHkAvSGuyuUKHdyaQdhigMm18qFzu5-L_m3-C7xEblO7KJBDtK9mDdaviyLU9bQA4i7lLgUUdkCClPjm7yDt3SgjDZKXpBeD_HEb134vjhc6EVJN0IK0bf-lSswaAPJYcGc9ArU_mch_F1w0X1ISwvFHWKLYBM1bUSCr7vLyX-j-sbwroVSJ53bTedlaUpoVhEjKxcksjSgnndvAeeHAwHV-HCkOH_zqhxp5aTO1vNXeNESG7WoSRLE1_6vF7ZzTGmpG3GIbuBexi0BUe95UwrAJpdtzWMrAiRNQ3LlB8JkPIqX_ZXmHsu1bo84_x1u-VWQZFNTOitRXyLdA9GtDqg2q7RUJLj1Axq6CzjcewoW380K7r95Kimr6RDUUkvi85SjekZuV8NNd328heZWNSdov9lzmJlCokX6N5VDpg-NIPvjJyaQtf6YZfYtOk7pp_koGxatbsxZTSVh_DwXz7K8VfC2mEhr_xdDPe9nKAPrU4r_J9zdtAkkzdJssMWhSCMTj8z3l1bbIzMt05ivwEGLZYqZ5Sy2-duQVd1wA0NfKB2HjfgSyYhX5wN4aDW15copsEtPTrxCLidwc75rLdoi5Ch1Jt74v5UzKh8mxDaGqjdWeHkDrHbVy5hDVk00n1TZ5UAzWCq3lge3717y0ECZX992BrkqjffUYe0dZUUJr_3GWKSS0AZHg5uI-1Tka_DGqF7mWwdz7XpafzU4siolRkGa3QYmB8LWqdbAnpvte-uSwxAiQm2LiFF9h4dOO8U_2gNsniQViwLkD0KTHnuk1_N94P6QsypEL2bcPWCvCw1SgMmgKBaXYpP8FIN1trlpqyk_0abqnq9GoeCI2AjAOkHI0LnNsM8lTwWNqh1b8YVco3or8J4dOPeVQ=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         provider_name='openai',
@@ -7804,7 +7807,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         content=IsInstance(BinaryImage),
                         id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -7857,7 +7860,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         signature='gAAAAABozey1vHMbs_Q2Ou1f-stI__3zJS-qTasRefyc_eyOxqogM8UGbPpL8D6PLFHcypshJpa9SQli-qZRIyG4ioUDLsKpBwFbfjdIhps667-8st03DRTRP0ms2izupS0ae6QqY9qrsPSchrSF2o2PlJOWKZAFJ609S0hGX8VDtrU8nESfp78NQ5HgpgXksXQTxk3_xRmXES2AThlUD0LYykoVKRX-xOyPQsOK7aDEs1CIk3lG1meiXdtJxP1Jm9JQGLWk6kePWUgwnAs818LMVvjcj8GWzFjxKUQlI3S855vYngivkMqYqh4gOcDRGRWej4NRzRmhOK-2yrATl26qnpRwNA1YXkFtn1ojxEkXD99P8RIXNItH4KW19ALs7ZizQmQlKzd96eyPT16OSLqEIfHAXWEKwoB2vTM2ExvHK4il76X9XmgRDy_CI3HAPI-7M3787MJBEY3z9cBe2sIS_GtSk12_GXRBUREhu8wcc4920FxkufYegHd3FzKxBRjyxGpR-jLyI24ahOZRKvoXi4-n1v4umoD5OSMjYpMtr0ykwIBQyyqldi9KqHBpJCzB0wA3JyAn-4JvQsXwIeeAtq3bNSJFaaf9aLJ5OwMO9I6IIWGxoQ1mzqmCs5cVwwjeJLzEc0T5g2qWJdXxdYmjesvMj3pJtgIq3iR2105LydhUiKE-0VLVAQGg-lnjkCtj-muEqlko2_FCHQ7b_hA0VkOUIKOYUDHRtwgtaeNnUpiWk8L7GnBNHtVQ7_kHEGj00UIVC4CKiJqESXS1om73Xt1K1-bglZLfSKfjrAd6E3W51cKQXM7KOfmpRwP-9DThdeOBgjlmMFveru6NYl2ntiu7GF8JJAvjebF3Q6SR4AtFSp8zrZVjlduW3hzQtKaROHLBVgH1KaMST-Nfnkn4AHCbhYNGSZxg4J8M3hh-BLba-lM7o9d0cHsHSORXeuAg40qioVCZNCtIooo6fAdWSAULw-uGdAbRbrJq5nE-w_Lilyeb2mWnMwMbKBHjQO7Kwe92UHvve46vMkiSSX-wZYwthfbO9BM6_ha5BJOtwNggKuBXxqMVizL8WKdvdTVwzP1guDvuVgVoCYKl340jB_EE2V-L-YzbSdaxHi09Gi6E10MgdaSGhNqUJMZWXrezkT6pyRYYRIWhaaImIuQf6JybMUH5hHH8DDEKvofLnQmgPVccU6womuYosIgLOLPOetK6OEFlMsQPBn95hb6jY5vETMyhiVYAVxaeXgk5WA-NdYQ-F2q4kQQS6Ku858AaO9rXMYpkaJ0nIubIbdgQMaXzq6ha5Z0BaxrJhxCDqmHXA5-INBBqWDw0AgJcAlMM_a5ShZA4zVWu4ydzikq8PlnATLbFzOkL8WBhJGRyveKaSyknPfPCBvXu_1l-hwAyvFv2dWWBloD_IIJ3ID_qtjgT7epwC88qmQd5ICPMMdx4DjEu72hU-rTIz30ks970qi_dKVbgpsLAJbHeCCWXBJzJ3UKrC6sc7Kj3rhtelPNEJqFyuB_EJOVX4o7R0AZvkk3wWs3IZ2nE9TeuYckw-hHg35YsC43QSrbIZUbfonaN57ZbwyrnEwnhH3oYXaMiPqqywH0CsZYrO0QLuAeGJTknlpWHgLEVmz39-e3UZFb6WIGIfSFaZHAFpmQBiPjae-qudcbvvfmAgBHqt-Aq4D_06ySnELOtDWlFusZcmHQwG9b0OCDXt6KRTR_-49uuoPCoXlv2nKb2eFhXp1gp6m6WsH21XNaeLU4RF4PR6oRUh-TCLzyBtwCscukF_3gBvcTdwJ4io0Fu6YVtEJux_Ec1vCaQHlUVGtZR7JDVyE5lu1y-aZx0u4s6HheF0bHLYaFgqgOmaNNWwK_jldqp99ZhU7Qat8GcG8YLLEJ04WDIp6_i_Ri7OUf5xgTEkAxS9gOxeJ1EMKR2oB0pf7YJ18XkNqeA7zxXmufJNIbEmXOC3XQKiDY9-2UzTyqjzdZ4V2naUggs7DjAAntcHhVFLGOZgGeQ5FLJ9jfzFlpE8mAg95ZtVvPzYBNFaPoTynqUlukCH4eje_62w_u2TruBMSU3cOV5IqVTLMHu2uwxHWdA1zrVi32LMv8FEYZ8nPyyk_BdapV-SRGQKn1yjGml__I5ksVlqNWVC3BX4hkIxH9K1bO6HjWP2-cdRtTYtRNcOOGOZZv5RtKfpvzjIK5o6d45KDK-jp39_cY9Veyawzc4XwT7jkyL8U0YNsRTEjafcPONK7yWasrOIzNuUppBFdMyER_R8Q1bTMQp1sE-NoAN-0MqupZe1jltzga6i6KLWuOXtMm1_DeHHH3OPNq-kfVs19gbQD13R9kMNjgu8FbAWdoVreG24tKUVSf2nWKReXwxc3WiiODaYTew2ynZ3BUchm3eKebybh4lKoYCw6lLoclnD7smFkP4-72RfaTylVe_npaWU_kWIhxItYosjWGc_ScJhLFdwAOUaNijGNX0TmeMb3uaESw23E3Y0M2pAC_wVkaHvJEYv_nYebwYc6yON5oMFAnOmqaJ14d-LfhuATtTrqD8fGXTPi73rpN5IpA3fVklkyUuu0GWqvsRujNnEcN2nL43LPRwFvwYSeL_tXJoTpTxdgkwjEg4dJr6hImPIwk6Yu_a159LyNKIeZOSZbHi0gao7OeDiSM2_1zb_srjUXgiVPJ26r3GCz07dhcwqUS8lU6nx5q1ncCt9mjTgUG0qmVPzDjfRmeqOU1gPZhh2XQeiXp2AWB-_9M9vu2EiSeOO2gfYKeaFjVhBLbjOeKs9r0xt5JXpdx5IDB1JOfK_MSlKwjl2kOlNo7p3e7RIVB38MQoih95hSz5E6EyOoH2O6KAXLM3qhgcmXe-XJwQKOkA8rPRclgvN-hLSopl6mDGqg7dNKXZB6SQspQPiB4mx91Wwt62aMqWa7Ve-thQ6-oCq9IQTLT34xpCOpHWz4b8kSfr-WDg9cTDdvYIGEDGj_XlE6CK5PuxzezWGYvYggwVJC_65zkGHFBURkBCRHc7otAyxMTKMCTKZnYWUdUEGpTCBonYFPOlh_ApDPnh1h3feF1x8AEIoVkq_ADRKhKbs28y44LQGp9pe49LdsgKN7YT8_azHknz5frvCUQJu8aiP_TaFCAiZhUc0JSATHPv3q6ZsNoUzF8ZfeSWuI3ZpQyoyMq4wxcyH1sFNqtIHd_iS2U9AkEACp6q6FAohK_O7GaDr_T7VfeO3JuRL9icg82WtPOtgJ1o7oqZxa1lfypGkWAgX_KF5aytblSoxlwn-Zk84Mf_YlbJEBO2mUa0Me5uLhM183akeG4y06FR-ANXrsYxrGmhpIWfl90WAKEG4ExdaexgzQOKXedTLOKnIwDW0ZSAu6O-Eiddn2w5GBO93OGEGQwkXDddA9PB9--mdyHgJM1OvXFYIWtziDLZ5qHAUrUFpYUth9B9mV4TXXLeLqx25TO7DL9czT6cGPeYNSOR3HpNdw93Pbro_kDIk-4zrmhlLd-I6w1tSisK7veJE0Y9Svvf6VLky34iV0RlIw-Z976oPP3rVJpSIujNbuFm84V2EvHFkG1oaHoViDxp4QesbToOdhl8GfnHHuwPaT78C1rwucflil_XkLAi0PBv0uGYLWaaAVlhm_lNZc4CYd7qHcdgma8dL27kHwVUJctIzphtV4yAhL-06SY-kwR9snNogfzDSuuNTVHPofu0_B7qA9vjwf3jeE8WJUbq0HxPSIGMSvJ57uh2YzRPWnMJ2PmARWgHAYoWUsZknHyr7DlKqzV1kxrLmr40xk98D9-Qkkq3enbEazhNWXRTIGMuWQbM1FQB3VL8GX3Xa1TjujWQS8_nC9LTId1XzNWsSCNOg8gHXqvt5hAeJVZ9GMTFJREPCBk5ts9odm3N3bjK5KgA3pNahnOS0u_c2auAc1t9C_5xqxEnIRxE6R1lVHz7hDTebYMcpldFI8IEuToExCjUUpoW6FmpeJrv16hwzTqbX69oToXJ2YA4WYCerDob0BAMHKWDC0nqPJTp9wjq2OnC5YKmMKfJ7lKhVprYG14RKnJfOJdChRpWQH2iK1Hc12sCJBJT2Lvm138cQeRApo2uUTs1dpJ-faoPvb6H_Wg-9ys5JsZtrzUXVpj4ttC84M7dZnbdyEh64iOoUINTSG4yryVDfN7PokiuN3DHuuXlWG8hkWAP4uyZg6sXdeSBGfVOjmG7Tc0zNqxZFkCMo9XEaLk_Zz6X7fQPM-MQVkSrb_0-S7tNwcufe3Y0nEnKpM1WohnyojInkRUzPWLUcBukzYpwuXg3MxxayDLwfjfybNb3hO_aNF_5mLz8s40IotW2Oxa1eKfZO5igty32jA5ipXwPjJjBj5yVgmTESDPmYrPkJCdFUtJJpGRTRX30BbLAybWkhJWBGilR-f5wp7yHp1pAcLl8YIKi-Di35kCCG0qtTimMeyb6E9hQww06pdDKAuVuDmC-RhgG9-x6MlmeJgKeNu2VeANq5lIiAKuDEXz4cs-TBrC_PC4j7dnaIbvchVdxx9Regcqfa2XTeXsKJB8uGwHDBQ_qu6zyKJ2ANyqk8x7Vmmz3YNREGNgiiRQK-zDjU2ZRJN0DJnHxdFMYcmywKz0QOab4orE01eqaG_Zy3vr7fDLOMJOl_puAjLnF7xiVmj1UWC2FwoWngvCrGO-2wsHB7fnvJapv-NpIoW146QuSVwhMROuZ-5SmzQz4MlF-ARtdkEvCAO45BZTM-AnTlOiMqMXspKrHGCiwE_S4FStVdHT4D7m6Ha4q_BRD9nBYp9r0vP4QdsfsK0pegYawDfZ3U9Vuk0dRZp3Z2QBXDLuIs0-0ol7_liDeC64KCdL2zrDSQCXeSQGtDpBdbSDf5xkzQ1N_IStAz6dI_FLbLqRPfE9tf3AfA9k7j3BwN_K6eeVfRueVnf0VOXukHURPwMTVE9C8IdPA8OnwLBD-k1YT2aV3Aow6eC4Dwl7cW2FtQ_BuHcpjMfWuJFiUuw9L8bLCWSlJ3rYdX_MYv-9mY--9d3r49p5FHAoK-bJS5yxHg2Q6Eg6DrSC4dORU5p_fKxrPklgOJKbZoQyb96_dp2qkCVgPjN1naoHfhgqHp49MxalqSx9n-vd86NTSXNw22lnboj4qAsLg54P4RSayO-U6jvj09ZuGtLGrCvKPAgHl_xP4dtpdbOC8OJ3nwHNfxAgZr2P5JEaFHN3RuIQGH5gkwNEA2otd40YptNJvD6r4gasyBPNY15jeYYL18yFQobK60gnXQweT_JXTlnGgbvgoGw6rJ2nifXw_o6Q_uBDQE9MOCJiN0FoivBdcwk-NHU-nNg93U30q4zbGbJ96O0E2X2qRyoOaEhBKAqkHrQM-NGjX7aj1YJFCxIFtQ00OQjT0vhGng6-3cB01l44mGdDFV47PZLzcFrGx7iDaR1Oy2Na5rOLphgT1_zvVF2mCw10HYxOYwSDnm6uqo_kADX_HQAGxQx1xDZ9iaZZGD00hdoZp55kRPGt6uZ9ZEEXPWUpAV8mPUlu0DcK6rr948_btFuMWo9KrVneCiF4qxkk_Q56aFoRa_HQwEEuh3sp9PSCT9wIfBYSR3661Ox7C-25rHNkrdv7XC8ArnQ7xT04y9JYOF_XLxtOLlAzscUryz56Qk7lexv7Qqe80fTTSRNFseDNFCxLjWm6wAo_kpaTOOvFiPUxlYwcmW4hy-hW8zH_JRVPaBCCKR_s68yEEAVve-8q0ePzqcElS4Bt8cFyU2kqodDmzzh2HAFcrA_ScDciNbwKWeJublK97rkWmLCuPZwJcvKNT_FfgYU5OxtF6G2TVVhUcbVAhPQFFegVn_8hYkZ3mJFkZa8FYYNMSGn8nssR8F9RInU9PFLfBiI2_sDJKwfhgLZ9Lb4x2Idx1-XNh9pAFkCv4eRKCoQNrfxZ4VgD7L2UeLTiTBOsH117rSSF3Aq5kaLLV9yqXc7bB8ZVdvsQ64ET6Z3sNM6xk78phFYy-Dnl9sM73dX2qpUefxdItLtql4E_jwm-D2qRdGtdkm3FpQhYhTKgfm--H3hj64AfDQP-7WVykl508pb7Ultl6j9ne28UqtsV6LHaXX3Raq78sZZl7pmkgp3dSZlZXuo0zwyh0eR8aDp201EdOqbG6a8Vs7cHo2pjy_31ZrIGA_rZhFRN5uVohUvtPWCwwV3D6qq9XQRFK6GsiIMgO8oH8v2AB_qopEXWkStyn9HgA-UntHqncuVnnVrprWFYfWVuTDkJhTC1-i9ZgdA1eUvZVxl-I4SfmDG540HUVVRw-Kt15vS7K2vc1FDiQA91Iya8eMjVKOs96Cr--cngQ_zZw062ZqKp7avO0EOTamvz8Zi2a0XzdIH5dH0_9_kXE_T4U43Ud_29QMElOxJfxt-9p9lBNBjfEkUvBayPX2XWlePtoQL89QLg-Xwe7RaGu0hvUiROaArk47B_703dSKDll2V5eUKc5f0H7icWyqp8u5rnjQsafBu6RCWHr7YJ1Pk5TBaw1qQCvNA2Z_FVZWN18No61fV16DHyjoiHBBjTROCS7m7_3snv4SDkoiFvIswpEt7pbYtbXLp5t0EQOQkWQOITojrGYIUi9c23kdiXr3EoPsvSMKlJcDyag25wzVNfA-bfiMCkdHPqaaTFBqYqlwA0SI6bwHKhqFKdGkrJ5YIxgaFLsLwwiNMSBR2wWXSFRXz-HCMewHkVV4LpGxkzeihWXJUO3gXeJuVY1EGxB8U15BUtQQcAAe2Om9KZtOsS2kRtO7vZq62E8jl7bUbTmw0XTZ4eh3xg-IRiK1ynur6XqtZH1kNQFq7k60X-6cFwDS7eDGdzrgl-Kbl6VSzxpwxu5Lz-KIjV5gGBUcOjnIpRuwY_s',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         provider_name='openai',
@@ -7866,7 +7869,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         content=IsInstance(BinaryImage),
                         id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -7916,7 +7919,7 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
 
 async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
     assert result.output == snapshot(IsStr())
@@ -7929,7 +7932,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Animal)
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=Animal)
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='Axolotl', name='Axie'))
@@ -7954,7 +7957,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         provider_name='openai',
@@ -7963,7 +7966,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         content=IsInstance(BinaryImage),
                         id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8059,7 +8062,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=NativeOutput(Animal))
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=NativeOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
@@ -8084,7 +8087,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                         provider_name='openai',
@@ -8093,7 +8096,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         content=IsInstance(BinaryImage),
                         id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8136,7 +8139,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=PromptedOutput(Animal))
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=PromptedOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='axolotl', name='Axel'))
@@ -8161,7 +8164,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                         provider_name='openai',
@@ -8170,7 +8173,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         content=IsInstance(BinaryImage),
                         id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8275,7 +8278,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                         provider_name='openai',
@@ -8284,7 +8287,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         content=IsInstance(BinaryImage),
                         id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8347,7 +8350,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                         provider_name='openai',
@@ -8356,7 +8359,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         content=IsInstance(BinaryImage),
                         id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8369,7 +8372,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                         provider_name='openai',
@@ -8378,7 +8381,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         content=IsInstance(BinaryImage),
                         id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8419,7 +8422,9 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
 
 async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=BinaryImage)
+    agent = Agent(
+        model=model, capabilities=[NativeTool(ImageGenerationTool(output_format='jpeg'))], output_type=BinaryImage
+    )
 
     result = await agent.run('Generate an image of axolotl.')
 
@@ -8445,7 +8450,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='image_generation',
                         tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
                         provider_name='openai',
@@ -8454,7 +8459,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         content=IsInstance(BinaryImage),
                         id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='image_generation',
                         content={
                             'status': 'completed',
@@ -8593,10 +8598,10 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
 
 
 async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_requests: None):
-    """Regression test: BuiltinToolCallPart.id should be preferred over tool_call_id when replaying.
+    """Regression test: NativeToolCallPart.id should be preferred over tool_call_id when replaying.
 
     The Responses API generates long id fields (~53 chars) for ResponseFunctionWebSearch items.
-    These are stored as both tool_call_id and id on BuiltinToolCallPart. When replayed via
+    These are stored as both tool_call_id and id on NativeToolCallPart. When replayed via
     _map_messages, the id field should be used to preserve the original Responses API item id.
     See: https://github.com/pydantic/pydantic-ai/issues/4389
     """
@@ -8632,14 +8637,14 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         ),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id=long_id,
                     args={'query': 'Python news'},
                     provider_name='openai',
                     id=long_id,
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     tool_call_id=long_id,
                     content={'status': 'completed'},
@@ -8684,13 +8689,13 @@ async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_req
         ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='mcp_server:clock',
                     tool_call_id='mcp_123',
                     args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
                     provider_name='openai',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='mcp_server:clock',
                     tool_call_id='mcp_123',
                     content={'output': '2026-05-06T00:00:00Z', 'error': None},
@@ -8706,7 +8711,7 @@ async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_req
         messages,
         cast(OpenAIResponsesModelSettings, {'openai_send_reasoning_ids': True}),
         ModelRequestParameters(
-            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+            native_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
         ),
     )
 
@@ -8732,13 +8737,15 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
     )
@@ -8760,13 +8767,13 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={'action': 'list_tools'},
                         tool_call_id='mcpl_0083938b3a28070e0068fabd81d51081a09d4b183ced693273',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'tools': [
@@ -8804,7 +8811,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo-r2bs6ChS2NtAXH6S8ZWRHzygQvAZrQGsb5ziJKg6dINF9TQnq4llBquiZh-3Ngx2Ha4S-2_TLSbgcsglradULI8c8N2CnilghcqlLE90MXgHWzGfMDbmnRVpTW9iJsOnBn4ferQtNLIsXzfGWq4Ov0Bbvlw_fCm9pQsqOavcJ5Kop2lJ9Xqb__boYMcBCPq3FcNlfC3aia2wZkacS4qKZGqytqQP13EX3q6LwFVnAMIFuwn5XLrh4lFf-S5u8UIw3C6wvVIXEUatY6-awgHHJKXxWUxqRQPJegatMb8KE-QtuKQUfdvEE0ykdHtWqT7nnC3qTY67UaSCCvJ9SdXj-t806GVei9McSUe8riU3viHnfY0R0u9GIXsVnfVthIDRnX7KzpF5ot_CpCrgbCmD9Rj2AAos5pCdSzpc08G5auUuuMZfoiWANADTHHhO2OvflSEpmO8pb-QAYfMoK9exYVQ8Oig-Nj35unupcYy7A2bDCViXzqy32aw9QHmH7rErI4v72beWQxRVdX15Z7VS2c6L1dD7cU18K35CWqlSz9hEX5AcGqEEtIDVu1TdF3m1m2u4ooc4TjYpRecjYoG8Ib-vVKoX5C65a7G1cTbCo8dO0DYKGgM8jM7ZDubxbCcZ22Sxk58f8cer7WxHyp7WRo5-6zvMwMCk8uEY44RJmg-m0Oxl_6qxdr4Md80xZah_6tCCB62agQmYwCrR75_r93xOckQAK0R_37khvQD5gWVlE5Rg-01eUTboiPGqYmIsqWvOkziMGnxgKVw_yUf8swHU1ciWr7O1EdVPHLG7YXlVQTHTE_CX3uOsE2FoZnpS_MgpxGfjb76majV50h7mJ6ySVPF_3NF3RQXx64W08SW4eVFD8JJf0yChqXDmlwu2CDZN1n99xdaE9QbMODNEOmfTQOPhQ9g-4LhstNTKCCxWDh0qiv_dq2qAd0I9Gupoit33xGpb66mndc0nuuNFe8-16iC_KzQtHBNzgasgYK-r83KFVmiYK3Jxvz_2dfdwe0M1q7NLBvbnWc6k9LIf8iDUF6Q1J-cfC7SsncCbROtzIPlKpQwxhP-M09Xy3RVxlH9dcvuk3_qqEAartUQC8ZbuLRbhiq66eE1RvQzdNd2tsoBQ85cdNs57Penio7w9zILUf1JP5O8-zCe5GPC3W3EXTIEvHR-kiuxJvhcsySijpldGmuygRx05ARNOIT7VDCZvF23RfmnRduY1X1FAqb_i_aMStK7iyHr_2ohwOWLuklpyuoG0Y1ulvq1A9-hyCZ0mpvTEF6om2tAZ9_7h8W9ksiOkey0yA-6ze17MCjfnK2XcbqmSMgOngW1PrD81oKoheMnIeJdcWgF2mk8VDqmAwaDTxMxdnXkzK74rA43a4rWk3d2bUts8dAUkuYXTwJwKQw4LfXtu-mwwgJ6BkT_GiBcBJ6ulBuPsNZfpwPuxox6PS6KpzVTQ94cKNqSIIyFCD4xZsEvPALud09-gmAEDHxdnPjqLSi2U8xd0j-6XYKN0JtZ45kwEIRsOrFu-SYLz1OcYFKI5A5P-vYlzGx1WhEnoeUlyooJBhNj6ZBfj9f63SByxm7sgh260vf1t-4OGzVTIUKFluxkI4ubigLZ-g4q4dSwiEWXn50JFPrtuPs5VxsIIz_lXbh1SrKeQ647KdDSAQZFgEfzOOt3el5K97V1x7V7gEWCCgmqDIz3yZPpwD6qmUQKqlj_p8-OQrniamGULkXrmrgbNQVfV-Qw7Hg6ELw4aHF_IZME9Qnyn7peFhH6ai_YapuNF7FK-MBtPYoMaqBf05U2-uJAVUas3VuT_-pTyHvhtFmB7vc0-qgf_CtVNIXSPq2_vXdQdEwwCVPPwW6xWm-invrzhyQR_mf3OQqZT6_zOHIMPBJUaXcQKT0KTdoBZUDamAR-ECZl8r6wdLCn0HjAEwj3ifUCNMzQ7CZHUQG46rj61YyasNWO__4Ef4kTcApKgljosuABqP4HAdmkP5eEnX-6nutrL50iv-Mms_R-T7SKtmEEf9wihTu4Meb441cU9DI4WwSyiBSnsYdGy9FJKmHwP7HD0FmpmWkOrtROkQVMlMVKQFlKK8OBtxafHYsZkWDawbA1eetzMBzQ3PP8PSvva6SJWjbgURHVm5RjXV8Hk6toIBEDx9r9vAIczSp49eDCkQbzPkGAVilO3KLQpNx2itBbZzgE36uV0neZZsVs7aqafI4qCTQOLzYA8YFDKz92yhgdIzl5VPFLFNHqRS4duPRQImQ7vb6yKSxjDThiyQQUTPBX_EXUAAR7JHwJI1i8la3V',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -8817,7 +8824,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         tool_call_id='mcp_0083938b3a28070e0068fabd88db5c81a08e56f163bbc6088b',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'output': """\
@@ -8955,11 +8962,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                allowed_tools=['ask_question', 'read_wiki_structure'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    allowed_tools=['ask_question', 'read_wiki_structure'],
+                )
             ),
         ],
     )
@@ -8975,7 +8984,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                     async for event in request_stream:
                         if (
                             isinstance(event, PartStartEvent)
-                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                            and isinstance(event.part, NativeToolCallPart | NativeToolReturnPart)
                         ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
                             event_parts.append(event)
 
@@ -8997,13 +9006,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={'action': 'list_tools'},
                         tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'tools': [
@@ -9058,13 +9067,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo-qDma-ZMjX6meVDoCLYMqgkbQoEVzx_VFnmBFRLqsq37MiF7LP1HrMpqXqtrZ0R2Knb6lUiGSKhsOjOUAn9IFNUCuJx23cPLObF2CKt86wGLb7vccbCrp8bx-I6-kUtZASjlJx7_eJnvwyr24FLZlaDyGDuqRecGA8H4tXnQSAQTT9fJqy8h8dXvxvYzNj5rgOUWgRGn1NBph164KpiEzVWHADzZ_K0l4fX-DFHgtNFssPDYqOKLs_nU0XO8xaIZOgJ8QTf0XmHYF02GA_KciV6sIlSzVricQkwmu1XfJbjpME8XmRMIzlnLRqC8SAJs2kiaYnA8ObfI-s0RbRd3ztIUrzmAsdeo13ualD3tqC1w1_H6S5F47BB47IufTTbpwe_P6f5dLGpOzcrDPbtfHXv-aAW5YEsGyusXqxk51Wp7EONtADmPmVLJffFbRgnwfvPslbxxpNGfxNkN2pIs3U1FW7g1VvmxUfrF84LJpPKvs3xOaWXGorrPBY5nUyeRckhDFt6hGdS59VICmVy8lT4dL_LNswq7dVRS74HrrkfraXDDm2EhL2rtkwhiMqZtuYFsyIK2ys0lZuhNAkhtfgIoV8IwY6O4Y7iXbODxXUr48oZyvLdgV2J2TCcyqIbWClh3-q8MXMmP5wUJdrqajJ8lMVyhQt0UtMJKyk6EWY1DayGpSEW6t8vkqmuYdhyXQOstluONd31LqnEq58Sh8aHCzrypjcLfjDRo5Om1RlxIa-y8S-6rEIXahcJCX_juSg8uYHzDNJffYdBbcLSVQ5mAVl6OM9hE8gHs7SYqw-k-MCeoYsZwt3MqSV7piAu91SMZqB0gXrRDD67bdhmcLBYKmZYKNmLce60WkLH0eZMPSls-n2yyvmwflJA---IZQZOvYXpNUuS7FgMrh3c7n9oDVp15bUgJ8jDx6Mok4pq9E-MHxboblGUpMlFCJDH3NK_7_iHetcqC6Mp2Vc5KJ0OMpDFhCfT3Bvohsee5dUYZezxAkM67qg0BUFyQykulYLHoayemGxzi1YhiX1Of_PEfijmwV2qkUJodq5-LeBVIv8Nj0WgRO-1Y_QW3AWNfQ80Iy6AVa8j9YfsvQU1vwwE9qiAhzSIEeN1Pm2ub8PaRhVIFRgyMOLPVW7cDoNN8ibcOpX-k9p_SfKA9WSzSXuorAs80CTC9OwJibfcPzFVugnnBjBENExTQRfn4l7nWq-tUQNrT4UNGx-xdNeiSeEFCNZlH50Vr5dMaz5sjQQEw_lcTrvxKAV5Zs1mtDf6Kf29LkqhuUEdlMLEJwnAdz2IHLIy41zWLQctSnzBl9HB3mkw8eHZ1LdaRBQRFH4o7Rumhb3D1HdIqDLWeE3jkA6ZBAh2KadGx1u3AIIh4g3dHUS6UREkmzyRIuImbdTsoin1DrQbuYbaqZwIqU4TTIEmA8VeohMfff0rIL5yyFy7cfgGYurgAyMhARPGAAMAoTrR8ldWwymzPkGOJ_SQlzfNGV8weHOEYUl2BgQe57EDX4n1Uk294GIbvGR7eLRL_TLBUyHQErCaOCi8TkBNlLXIobw4ScN_jqqtURmC0mjRDVZeBi6hfrVShWChpQR8A2HxxHrcuHi2hi_2akgUea3zz6_zbUYVoIRdOa9DvZuN015E8ZSL-v_1_vOzUGvt0MuWPazjiRDWgpgcISYzT8N-Xzu_EbwO1OsaOFIeUqrD8mZ6MKOuBQts68og0DWo8KQaHmCaWi4O-c8-5fbB2q3H6oiIoZtSJIoowAmFGOwyWxn_OPS9svDgEaeFYEYhXZ5wZDphxoHkjJ703opxrWoEfQw==',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}}',
                         tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'error': None,
@@ -9181,7 +9190,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={'action': 'list_tools'},
                     tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
@@ -9190,7 +9199,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content={
                         'tools': [
@@ -9243,7 +9252,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                     provider_name='openai',
@@ -9272,7 +9281,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content={
                         'error': None,
@@ -9370,13 +9379,15 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='google_calendar',
-                url='x-openai-connector:connector_googlecalendar',
-                authorization_token='fake',
-                description='Google Calendar',
-                allowed_tools=['search_events'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='google_calendar',
+                    url='x-openai-connector:connector_googlecalendar',
+                    authorization_token='fake',
+                    description='Google Calendar',
+                    allowed_tools=['search_events'],
+                )
             ),
         ],
     )
@@ -9395,13 +9406,13 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:google_calendar',
                         args={'action': 'list_tools'},
                         tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:google_calendar',
                         content={
                             'tools': [
@@ -9464,7 +9475,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         signature='gAAAAABo-qEE669V-_c3vkQAeRtSj9pi72OLJweRJe4IRZkLcFfnuwdxSeJM5DVDLzb3LbfzU0ee6a4KAae0XsETU3hELT1hn3LZPwfFku5zl7CVgsc1DmYBf41Qki1EPHFyIlMj937K8TbppAAqMknfLHHwV1FLb8TapccSEhJbzGutqD3c2519P9f6XHKcuDa8d-sjyUejF0QuSjINFcjifJ8DiU40cL_-K6OJotlx6e0FqOivz6Nlj13QZxQ0I3FiiSi03mYKy240jYMpOpjXr7yPmEXLdCJdP5ycmTiJLxf4Bugww6u4F2uxy22978ACyFGSLHBiQyjczj_can7qKXAkMwYJKcGNjaNi8jG5iTIwsGswRjD1hvY-AGUotMFbPCszX3HW1M_ar-livaheiZauCfKV-Uc1ZeI3gijWEwtWQ0jye29FyQPCCpOBvT6RbUvFEpfqpwcMQuUhOyEfgzli2dpuOAgkSjCPE6ctoxjbYa62YzE-yrXAGc5_ptQy_2vw7t0k3jUzSo2Tv0aKnqvvKcj9SIilkZV4Nf-TL_d2E7d48bBJDlqbAv7fkhhd2YlkLqwdR1MqZtygcR1Jh8p2Y1pFAa4mSj7hh4M-zfSu--6dij2iKIbnKQ4DbXyGpMZXBAqTHMe9PPOwGxWKShlN5a5T89B04d_GwJYBDJx2ctecqZxDMjkTn3wVGl_5wuDnrEgd0I91vmAoYuWldR_h8M_FjDFiHefdbZjw1TxVKjkp6wk6zQiXCvvCZYJa9XkhytcllWvUI4C0gbxHrEzZRy9Vii3buqnbiIM9Qj0VPx-Q-FKM_usZBBmlvmk9PMQ8rH9vVT8dRFNQEj-aqudB5yUcTx8XaUFwYAts04OObGBqXoazYtxh6WvHwrf09pb_g0dwzE_rlcQdYxcFLOpYD-AentRAjOuIr4bLRM9BMERBxPvvPCxZ2Mva8YqV2TIOtxzMY08freim6du1IuYprO6CoejPaBdULhct-nsPubOdjLBikZt_bwumvmqGXnxI_uu51b9HtzPeDpWIjF6pi88bcsOk0qglA9GAu3wwX-iIdaV19VdVCO4KJjxiVrbTY1IVgWSdz98Alb_HzpXsoS6i2PRAjjsYOe4RBX3etxjsY07XXLlmXAM_vuYXc8Y6STxvBk4ST4OkaCvUk9DoZbVL5KmVcT6TaFpbVCOB_eHkHIvMjXc35kzxCdqEMG3FpRzL_UkY8pPridvq2z1Xw0al2KEBvdKPlInB8-zX5ANGeRkMGZ6ZfyX1zCIdYLe3wrC8xqr5nUZ-ueWmtqYLavSg8mQKphp4QyVaiwtbxEt5GEiVG7_LR754mGQYPdr9Shh3ECAp8wmSfDVO8MHaLmzgo3RXeqlqFldRjQzDHtCaGhjD9bHKF3yWF2LtH4gUN-Sf--86lcq7iwHDSDm656P_FBfYmE7rA0svH-m3hQoBhza4CKJ7s7f7ZymEhcHAfH7SPImZ3Y-kT_Sy1mbCCf3Yg8uitrpX7ukO6_bIANS_R4oiOPcuLixbWY0ZSyq8ERB5fa5EsIUm7PpGxbO96nmk5rPkewyB4gCtslwJI0Ye7zHtqrDBz1j1nsjIKsRCfFWlUdRF8J1JPiiBSvP8SraQ_94cnKBCsl34BGsVm-R1_ULbuyahBzSHq2Kwr0XQuNLdGChyLKS_FZVT58kbRFsvjZnbalAZ-k9alMeZ-pdWX5f9nSn3w7fz675zOxnBaqiZmoWHXFNOBVGH7gkz05ynJ2B8j_RpdRNJKXUN8pAvf595HGl2IPdaDhqoeS2_3jixO5mmxZuPEdzopoBFRarWud99mxH-mYxWJzKiA1pLNqj7SO93p2-jB-jtsCfZfk6bVEWpRRkIEz0XvxffFTVuGUCqpGS7FiFZc4pQU24pCrdpg2w3xeDSrmfHDAx2vUvv0iRBnQxTTWx2-de2TQQTpR5tjFNyOhYGVn1OXqkbkNtIUHdnNGA1QBCU0Qs0471Ss1CrxXIeeNVSTd00jiu4_ELk6nJYgSpmS8G_crrDza8mRLV5Yk0ItRrZj6pwKUOEaYeyM-RHyhrjf09yaf7Qc3sAozQF0aXFCQjSYiVb98DuGH28HLUxW9ulmSKKR4pYKlCOLNGm0h_gWCpSa0H1HXCgEoPn68HyaJogv_xH3k4ERYyJnxu8zVbVPMGoa9q9nNRQQ9Ks2AvxYRQeGFSCTACBmuookvHsO1zjYfHNuSCD7pCLRFE76KlmSiAX6l9LNOq_xe9Oos-1AvcZHkmVsuh-mjTVkBOjG6zmnHiNJirBpORs_UWL5lmlQBeaXgdHxcb4tHIn8XYXFkQiC4b4pw==',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:google_calendar',
                         args={
                             'action': 'call_tool',
@@ -9482,7 +9493,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         tool_call_id='mcp_0558010cf1416a490068faa0fdf64481a085a3e5b8f7d6559a',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:google_calendar',
                         content={
                             'output': None,
@@ -9502,7 +9513,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         signature='gAAAAABo-qEE72KCH4RlulMdH6cOTaOQwFy4of4dPd8YlZ-zF9MIsPbumWO2qYlZdGjIIXDJTrlRh_5FJv2LtTmMbdbbECA20AzFMwE4pfNd2aNLC5RhcHKa4M9acC1wYKAddqEOPP7ETVNBj-GMx-tMT_CY8XnBLWvSwPpcfde9E--kSrfsgvRn1umqDsao4sLlAtV-9Gc6hmW1P9CSJDQbHWkdTKMV-cjQ-wZHFCly5kSdIW4OKluFuFRPkrXs7kVmlGnMr8-Q5Zuu1ZOFR9mPvpu2JdxAFohjioM-ftjeBuBWVJvOrIF4nV-yIVHVT-_psAZaPUUB5cyPAtqpoxxIV3iPKPU8DHctP03g_0R6pSWWHhggvO5PBw3zyPwtBwOrHBipc4nQEWEMxZxLH5SYJauTKwHNOx9NyCq8JUjZXM_v4xsGxNa4cAp7GuXqR2YyW2sx7syRUiDwtebh0xk_YOQtkv8tAjzCofmaz3n8FJ2nGSXkilaV5Q8LUNO-9-D2tsAaScDVMuLMMAHFNp_GPplWrmGES4mTCNtTXWyF1GLcQBw8dYYctV66Ocy2_zxyDoB7SsR5htlV77nJ6u1Hbp3tk26LutDrhAhe55xcki8iblHbXNY9MRzR1SS5Zk3-dv0ex4QOzC663NvS9aK3olQbKYko5TvM7Pq4MFYfaxwFTVFVEdaskoDJieVyikz0ZzBjTsItIwL-Q2BVN2F_P_wgCV5hyDclNMPEGTMxajxfIFv-oEunmHY1_RJavl47iXWS8H3JWAvp-9YYQdTS4Aa6m5zPndvHOvEV355UawLHRPctHFUS7rE7rYmcU6KQaqC96JRM0KRfXNIgYtNfw6cxgnyqGxzTF7qeeVzObOqoQmz59Rh0U9ti37vqHb8Ca43-q2Gx2KaVZFj7MBQK8UodfaDRIEuyMB3XNfckxCefwHs7FeAj5NuNDBrm0uDcwJjs2JfY2i54gAES8kAPLGJgRpq_qdjVXqpO6W0H9E1vBdRem7zLPYbA8OOo-KCkRW4AFCVbgCpgIvo4GDNvFOMksl-d8zgQU2qroUWJRu58j1bdaar7Zlfxk0UR33nROmJpXGb_R-RCNAN1ZxJTdEU_dVfyLCeuIXPsnO-FlfO8J6Un3WWPNLuN_bDS5RocniI_ms71qLsisJQiPTs-JDFl-eMM2Hk3QqSCC6OT0CLG9XMmI_zva9yp2joQ8HdGMddE3FDCbLejRrx8fV-9Nd0tZ7SYjFG78_fre8IfL0L67CK1JIPYzhgRZgCb-FFwUy-stR_BstIn0sRr_tDCoHdxuoVCh0dZfTY1p27xbKQ50svHxp1caNp3uze0wLXP9STNouFjFpdIHMsDRaGfO9R9mMmUsFcmBMK3aikuHTpebyL1CeZsIzH2cbZLPRx3pN2IqJ-5h6-cORHuMqf3ysEEFCjXnqmzvWPuBjYDsxnxA1awaGkYKsKhqchgakrfplOjdG5tSkklggBJA93iRaUWIR-4oV6HkkrnpdK1w7BL_VT8upqZmkpHZtZCDSgINk5S5hoYPLBTtS3dcCmQIbLvPXPuGzdAZxl0bhD4Rm3GPDFszaDoFK0Jszcjlaf4SJqyZABKEf71dDbi1as-2Qwr4fxBiQIOsF8ChbYo6Z2iFtUpBnbruFUIwB5QyKfWnwEZbOgf4UbIvIqNMkTzMc8tJgz6Ddqfih8VeNH3v8_84J6vHU0SVm_gvkgQ6P6N_6r5LwNdlAEff0hFwn-aTHWZ3s8MICckUZj97lKoZxAl91WlsKa0yrLw24dxvJ6bhZf0FsOitUJGd7vFPx0TxSobUkzE2RrbQ3hziPxw2Gins4aI6YG3M1gfumd3MgdH-fYBvZulJ9vmw0ZC1Dqh6BkCWHOFKsnpQvHmYuyTzUmnYuJf8N5j_b9XNw0krmxouOCPQClFmIOBLw8XPbe3xf0F5JP7BC0PpjlPT33A5Z6Za5zlA5O-DE_Wp0WG885-GaKtZI-zBZW3R0lc9A4s0HbxqA3lqH8leXOCe6WO46Z_iTQlALpTR-7oaHqzTegq0KSmEjCFO-jLSrVZnBOQ4ddTvLj4ASsQbj-o6TFUFVZAKSLI3FtWovHw02Gc_D0luFz9TbfaXM-EapEQYajkG0_b_nSCoPq0T9HSyvU4oCxXyQvhwIgzbijR-BheN6a_l6hiqZCw9L1c8MdPRtjpbHtEwWkpQ62s8XdydeJnV5vJYp9ezBbS_vWQ7Nz1siai6epJTdzDkRm-dudVhKzdohwg-FOQ-5gSrvoPS_MF4lZvah3iXY1g4uePO4eNDWGJ74YPybiy',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:google_calendar',
                         args={
                             'action': 'call_tool',
@@ -9520,7 +9531,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         tool_call_id='mcp_0558010cf1416a490068faa102400481a09fa35e84bc26c170',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:google_calendar',
                         content={
                             'output': None,
@@ -10251,7 +10262,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -10271,14 +10282,14 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
                             id='fs_0995dffd0769e0bd006931d72fecf48194bf314348aa6b2494',
                             provider_name='openai',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content={'status': 'completed'},
                             tool_call_id=IsStr(),
@@ -10319,14 +10330,14 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'queries': ['Eiffel Tower']},
                             tool_call_id=IsStr(),
                             id='fs_019d8541afd6ed8d006931d7382ef481998c5cd3117a0ff8fe',
                             provider_name='openai',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content={'status': 'completed'},
                             tool_call_id=IsStr(),
@@ -10382,14 +10393,14 @@ def test_map_file_search_tool_call():
     call_part, return_part = _map_file_search_tool_call(item, 'openai')
     assert (call_part, return_part) == snapshot(
         (
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name='file_search',
                 args={'queries': ['test query']},
                 tool_call_id='test-id',
                 id='test-id',
                 provider_name='openai',
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name='file_search',
                 content={
                     'status': 'completed',
@@ -10435,7 +10446,7 @@ async def test_openai_responses_model_file_search_tool_stream(
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         event_parts: list[Any] = []
@@ -10464,14 +10475,14 @@ async def test_openai_responses_model_file_search_tool_stream(
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
                             id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                             provider_name='openai',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content={'status': 'completed'},
                             tool_call_id=IsStr(),
@@ -10498,7 +10509,7 @@ async def test_openai_responses_model_file_search_tool_stream(
             [
                 PartStartEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         tool_call_id=IsStr(),
                         id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
@@ -10514,7 +10525,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                 ),
                 PartEndEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         args={'queries': ['What is the capital of France?']},
                         tool_call_id=IsStr(),
@@ -10525,7 +10536,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                 ),
                 PartStartEvent(
                     index=1,
-                    part=BuiltinToolReturnPart(
+                    part=NativeToolReturnPart(
                         tool_name='file_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -10551,7 +10562,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                 ),
                 BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         args={'queries': ['What is the capital of France?']},
                         tool_call_id=IsStr(),
@@ -10560,7 +10571,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     )
                 ),
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=BuiltinToolReturnPart(
+                    result=NativeToolReturnPart(
                         tool_name='file_search',
                         content={'status': 'completed'},
                         tool_call_id=IsStr(),
@@ -10598,7 +10609,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         # Use the openai_include_file_search_results setting to include search results
@@ -10623,14 +10634,14 @@ async def test_openai_responses_model_file_search_tool_with_results(
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
                             id='fs_08aa886305ae5628006939ad6cfa30819a85b07d52d61eb121',
                             provider_name='openai',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content={
                                 'status': 'completed',
@@ -10721,14 +10732,14 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
     assert result.all_messages()[1] == snapshot(
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
                     tool_call_id='web-search-1',
                     id='web-search-1',
                     provider_name='openai',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed'},
                     tool_call_id='web-search-1',
@@ -10826,7 +10837,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     instructions = 'Use web search and include citations in your answer.'
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     # Test with annotations enabled
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
@@ -10845,7 +10856,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert response.provider_url == 'https://api.openai.com/v1/'
     assert response.finish_reason == 'stop'
 
-    tool_call = next(part for part in response.parts if isinstance(part, BuiltinToolCallPart))
+    tool_call = next(part for part in response.parts if isinstance(part, NativeToolCallPart))
     assert tool_call.tool_name == 'web_search'
     assert isinstance(tool_call.args, dict)
     assert tool_call.args.get('query') == 'tallest mountain in Alberta'
@@ -10856,7 +10867,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
 
     # Test with annotations disabled (default)
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     result2 = await agent2.run(prompt)
 
     messages2 = result2.all_messages()

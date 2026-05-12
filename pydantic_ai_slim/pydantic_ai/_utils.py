@@ -391,8 +391,8 @@ def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
     | _messages.RetryPromptPart
-    | _messages.BuiltinToolCallPart
-    | _messages.BuiltinToolReturnPart,
+    | _messages.NativeToolCallPart
+    | _messages.NativeToolReturnPart,
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
@@ -731,6 +731,130 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
     if _kwargs:
         unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+
+
+def install_deprecated_kwarg_alias(
+    cls: type[Any],
+    *,
+    old: str,
+    new: str,
+    owner_name: str | None = None,
+) -> None:
+    """Install a wrapper around `cls.__init__` that accepts a deprecated kwarg as an alias for a renamed one.
+
+    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
+    from leaking into Pydantic's JSON-schema introspection of the wrapped class.
+
+    For `@dataclass` hierarchies, each subclass gets its own generated `__init__` that
+    bypasses the parent's wrap, so apply this helper to each subclass that needs the alias.
+
+    Args:
+        cls: The class whose `__init__` should be wrapped.
+        old: The deprecated kwarg name.
+        new: The renamed kwarg name that the legacy value should be forwarded to.
+        owner_name: Optional class name to use in the warning message. Defaults to the
+            class name of the instance being constructed (`type(self).__name__`).
+    """
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    orig_init = cls.__init__
+
+    @functools.wraps(orig_init)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
+        if old in kwargs:
+            name = owner_name or type(self).__name__
+            warnings.warn(
+                f'`{name}({old}=...)` is deprecated, use `{new}=` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            # When both `old` and `new` are present, the user explicitly typed the legacy spelling, so
+            # let it win. The common path that puts both keys here is `dataclasses.replace(obj, <old>=...)`,
+            # which silently re-passes every existing field value as `<new>=...`. The deprecation
+            # warning still tells the caller they're on the legacy kwarg.
+            kwargs[new] = kwargs.pop(old)
+        orig_init(self, *args, **kwargs)
+
+    cls.__init__ = wrapper
+
+
+_T = TypeVar('_T')
+
+
+def consume_deprecated_builtin_tools(
+    deprecated_kwargs: dict[str, Any],
+    native_tools: _T,
+    *,
+    stacklevel: int = 3,
+) -> _T:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and reconcile it with `native_tools=`.
+
+    Used by `override()` (and its `WrapperAgent` counterpart), where `native_tools=`
+    survives as a first-party kwarg. The legacy `builtin_tools=` kwarg stays functional
+    but emits a `PydanticAIDeprecationWarning` (visible by default, `UserWarning`
+    subclass) at runtime.
+
+    Returns `native_tools` if the caller passed an explicit value (anything other
+    than `None`/`UNSET`); otherwise the legacy value.
+
+    For per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    use [`consume_deprecated_builtin_tools_as_capabilities`][pydantic_ai._utils.consume_deprecated_builtin_tools_as_capabilities]
+    instead — those surfaces no longer expose a `native_tools=` kwarg.
+    """
+    from ._warnings import PydanticAIDeprecationWarning
+
+    if 'builtin_tools' not in deprecated_kwargs:
+        return native_tools
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    warnings.warn(
+        '`builtin_tools=` is deprecated, use `native_tools=` instead. '
+        'For higher-level capability-based registration, use '
+        '`capabilities=[NativeTool(...)]` or a provider-adaptive capability '
+        'like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if native_tools is None or native_tools is UNSET:
+        return legacy
+    return native_tools
+
+
+def consume_deprecated_builtin_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and return native-tool capability wrappers.
+
+    Returns a list of [`NativeTool`][pydantic_ai.capabilities.NativeTool] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    Used by per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    where the `native_tools=` parameter has been removed. For `override()` (which keeps
+    `native_tools=`), use
+    [`consume_deprecated_builtin_tools`][pydantic_ai._utils.consume_deprecated_builtin_tools] instead.
+    """
+    if 'builtin_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import NativeTool
+
+    warnings.warn(
+        f'`{owner}(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
+        'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
+        '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [NativeTool(t) for t in legacy]
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)

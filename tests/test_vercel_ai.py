@@ -12,14 +12,12 @@ import pytest
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FunctionToolResultEvent,
@@ -27,6 +25,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -55,6 +55,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 
@@ -111,10 +112,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -141,7 +142,7 @@ def test_build_run_input_allows_regenerate_without_message_id():
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     data = SubmitMessage(
         trigger='submit-message',
@@ -1590,7 +1591,7 @@ async def test_run_stream_builtin_tool_call():
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -1604,7 +1605,7 @@ async def test_run_stream_builtin_tool_call():
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content=[
                     {
@@ -3569,26 +3570,26 @@ async def test_adapter_load_messages():
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         timestamp=IsDatetime(),
                         provider_name='openai_return',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
@@ -3603,7 +3604,7 @@ async def test_adapter_load_messages():
                     ToolCallPart(
                         tool_name='get_table_of_contents', args={'repo': 'pydantic'}, tool_call_id='toolu_01XX3rjFfG77h'
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
@@ -4122,14 +4123,14 @@ async def test_adapter_dump_messages_with_builtin_tools():
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='tool_456',
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed'},
                     tool_call_id='tool_456',
@@ -4190,7 +4191,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'orphan query'},
                     tool_call_id='orphan_tool_id',
@@ -4534,13 +4535,13 @@ async def test_adapter_dump_messages_text_with_interruption():
         ModelResponse(
             parts=[
                 TextPart(content='Before tool'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='test',
                     args={},
                     tool_call_id='t1',
                     provider_name='test',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='test',
                     content='result',
                     tool_call_id='t1',
@@ -5031,7 +5032,7 @@ async def test_adapter_dump_messages_deferred_builtin_tool():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='builtin_deferred_tc1',
@@ -5756,13 +5757,13 @@ async def test_adapter_load_messages_file_with_provider_metadata():
 
 
 async def test_adapter_builtin_tool_part_with_provider_metadata():
-    """Test BuiltinToolCallPart with id, provider_name, provider_details and roundtrips."""
+    """Test NativeToolCallPart with id, provider_name, provider_details and roundtrips."""
     # Use JSON string for content since that's what load_messages produces
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_123',
@@ -5770,7 +5771,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='{"results":[]}',  # JSON string for roundtrip compatibility
                     tool_call_id='bt_123',
@@ -5832,12 +5833,12 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
 
 
 async def test_adapter_builtin_tool_error_part_with_provider_metadata():
-    """Test BuiltinToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
+    """Test NativeToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_err_123',
@@ -5845,7 +5846,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='Search failed: rate limit exceeded',
                     tool_call_id='bt_err_123',
@@ -5945,7 +5946,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_load',
@@ -5953,7 +5954,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         provider_details={'tool_type': 'web_search_preview'},
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='{"results": []}',
                         tool_call_id='bt_load',
@@ -6005,7 +6006,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_error',
@@ -6013,7 +6014,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         provider_name='openai',
                         provider_details={'tool_type': 'web_search_preview'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Search failed: rate limit exceeded',
                         tool_call_id='bt_error',
@@ -6369,7 +6370,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v5():
     """Test that builtin tool-input-start events exclude provider_metadata for SDK v5."""
 
     async def event_generator():
-        part = BuiltinToolCallPart(
+        part = NativeToolCallPart(
             tool_name='web_search',
             tool_call_id='btc_meta',
             args={'query': 'test'},
@@ -6427,7 +6428,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
     """Test that builtin tool-input-available events include provider_name in provider_metadata for SDK v6."""
 
     async def event_generator():
-        part = BuiltinToolCallPart(
+        part = NativeToolCallPart(
             tool_name='web_search',
             tool_call_id='btc_meta',
             args={'query': 'test'},
@@ -6583,12 +6584,12 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
 
 
 async def test_event_stream_builtin_tool_return_denied():
-    """Test that ToolOutputDeniedChunk is emitted for a denied BuiltinToolReturnPart."""
+    """Test that ToolOutputDeniedChunk is emitted for a denied NativeToolReturnPart."""
 
     async def event_generator():
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolReturnPart(
+            part=NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='tc_denied',
                 content='Blocked by policy',
@@ -6628,7 +6629,7 @@ async def test_event_stream_builtin_tool_return_error():
     async def event_generator():
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolReturnPart(
+            part=NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='tc_err',
                 content='Search failed',
@@ -6716,17 +6717,17 @@ async def test_adapter_dump_messages_tool_return_error():
 
 
 async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
-    """Test that old-format BuiltinToolReturnPart with is_error content is still detected as error."""
+    """Test that old-format NativeToolReturnPart with is_error content is still detected as error."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_old',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content={'error_text': 'Rate limit exceeded', 'is_error': True},
                     tool_call_id='bt_old',
@@ -7452,12 +7453,12 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'secret data'},
                         tool_call_id='tc_builtin_denied',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc_builtin_denied',
@@ -7524,8 +7525,8 @@ async def test_denied_builtin_tool_round_trip():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='Blocked by policy',
                     tool_call_id='tc2',
@@ -7551,8 +7552,8 @@ async def test_denied_builtin_tool_round_trip():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
-                    BuiltinToolReturnPart(
+                    NativeToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc2',

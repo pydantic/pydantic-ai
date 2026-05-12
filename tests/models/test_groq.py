@@ -18,8 +18,6 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -27,6 +25,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -42,11 +42,12 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -79,10 +80,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -865,7 +866,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
 
 async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.output == snapshot("""\
@@ -991,13 +992,13 @@ Based on the search results, the current weather in San Francisco is partly clou
 The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F).\
 """
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1140,7 +1141,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
 
 async def test_groq_model_web_search_tool_stream(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -1176,13 +1177,13 @@ To find the current weather in San Francisco, I will use the search tool to look
 search(What is the weather in San Francisco today?)
 """
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1374,7 +1375,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1384,7 +1385,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1394,7 +1395,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,
@@ -1929,7 +1930,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1937,7 +1938,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,

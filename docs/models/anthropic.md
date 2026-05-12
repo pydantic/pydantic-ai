@@ -558,11 +558,12 @@ By default, Pydantic AI chooses a compatible Anthropic code execution tool versi
 
 ```py {title="anthropic_code_execution_tool_version.py"}
 from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    builtin_tools=[CodeExecutionTool()],
+    capabilities=[NativeTool(CodeExecutionTool())],
     model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
 )
 ```

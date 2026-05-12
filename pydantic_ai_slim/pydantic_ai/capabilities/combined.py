@@ -13,8 +13,8 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -113,11 +113,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
         return CombinedToolset(toolsets) if toolsets else None
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            builtin_tools.extend(capability.get_builtin_tools() or [])
-        return builtin_tools
+            native_tools.extend(capability.get_native_tools() or [])
+        return native_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

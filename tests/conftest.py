@@ -25,14 +25,14 @@ from vcr import VCR, request as vcr_request
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -966,7 +966,7 @@ def disable_ssrf_protection_for_vcr():
 _RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
-    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
 )
 
 
