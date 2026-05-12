@@ -392,6 +392,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
+    _client: BaseClient | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -414,6 +415,7 @@ class BedrockConverseModel(Model[BaseClient]):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
+        self._client = None
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
@@ -423,7 +425,21 @@ class BedrockConverseModel(Model[BaseClient]):
 
     @property
     def client(self) -> BedrockRuntimeClient:
-        return cast('BedrockRuntimeClient', self._provider.client)
+        """The boto3 client used to make requests to the Bedrock Converse API.
+
+        Defaults to the client from the [`Provider`][pydantic_ai.providers.Provider]. It can be reassigned, e.g. to
+        rotate short-lived credentials in a long-running service, but prefer assigning to
+        [`BedrockProvider.client`][pydantic_ai.providers.bedrock.BedrockProvider.client] so all models sharing the
+        provider pick up the new client. Once you've assigned a client here, you're responsible for keeping it valid;
+        the provider's client is no longer consulted.
+        """
+        return cast('BedrockRuntimeClient', self._client or self._provider.client)
+
+    @client.setter
+    def client(self, client: BedrockRuntimeClient) -> None:
+        # Kept for backward compatibility (this used to be a plain attribute); `BedrockProvider.client` is the cleaner
+        # place to swap the client, as it's shared by all models using the provider.
+        self._client = client
 
     @property
     def base_url(self) -> str:
