@@ -880,6 +880,46 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Deprecated: use [`supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] instead."""
+        warnings.warn(
+            '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.supported_native_tools()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # If a subclass overrides only the deprecated `supported_builtin_tools` classmethod
+        # (and not the new `supported_native_tools`), wire the legacy override through so
+        # the framework still picks up the user's declared tools — with a warning.
+        own = cls.__dict__
+        if 'supported_builtin_tools' in own and 'supported_native_tools' not in own:
+            legacy: Any = own['supported_builtin_tools']
+            warnings.warn(
+                f'{cls.__name__} overrides `supported_builtin_tools()`, which is deprecated — '
+                'override `supported_native_tools()` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+
+            # Re-route framework lookups (`cls.supported_native_tools()`) to the legacy
+            # override, preserving the legacy `cls.supported_builtin_tools()` call too.
+            if isinstance(legacy, classmethod):
+                legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
+            else:
+                legacy_func = legacy
+
+            def _supported_native_tools_via_legacy(
+                _cls: type[Model[Any]],
+                _legacy_func: Any = legacy_func,
+            ) -> frozenset[type[AbstractNativeTool]]:
+                return _legacy_func(_cls)
+
+            setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.

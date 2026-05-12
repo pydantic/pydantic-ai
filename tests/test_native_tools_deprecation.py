@@ -728,3 +728,328 @@ def test_ag_ui_app_builtin_tools_kwarg_routed_to_capabilities(monkeypatch: pytes
     assert isinstance(capabilities, list)
     capabilities_list = cast(list[NativeTool[Any]], capabilities)
     assert any(isinstance(cap, NativeTool) and isinstance(cap.tool, WebSearchTool) for cap in capabilities_list)
+
+
+# --- Audit-driven deprecations (post-rename version-policy fixes) ---
+
+
+def test_tool_definition_prefer_builtin_constructor_deprecated():
+    """`ToolDefinition(prefer_builtin=...)` warns and routes to `prefer_native=`."""
+    from pydantic_ai.tools import ToolDefinition
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `prefer_native=`',
+    ):
+        td = ToolDefinition(name='foo', prefer_builtin='web_search')  # pyright: ignore[reportCallIssue]
+    assert td.prefer_native == 'web_search'
+
+
+def test_tool_definition_prefer_builtin_attribute_deprecated():
+    """Reading `ToolDefinition.prefer_builtin` warns and returns `prefer_native`."""
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(name='foo', prefer_native='web_search')
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\.prefer_builtin` is deprecated, use `ToolDefinition\.prefer_native`',
+    ):
+        result = td.prefer_builtin
+    assert result == td.prefer_native == 'web_search'
+
+
+def test_tool_definition_prefer_native_wins_when_both_kwargs_passed():
+    """`ToolDefinition(prefer_native=..., prefer_builtin=...)` warns and the explicit `prefer_native=` wins."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `prefer_native=`',
+    ):
+        from pydantic_ai.tools import ToolDefinition
+
+        td = ToolDefinition(
+            name='foo',
+            prefer_native='web_search',
+            prefer_builtin='code_execution',  # pyright: ignore[reportCallIssue]
+        )
+    assert td.prefer_native == 'web_search'
+
+
+def test_model_profile_supported_builtin_tools_constructor_deprecated():
+    """`ModelProfile(supported_builtin_tools=...)` warns and routes to `supported_native_tools=`."""
+    from pydantic_ai.profiles import ModelProfile
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile = ModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
+    assert profile.supported_native_tools == frozenset({WebSearchTool})
+
+
+def test_model_profile_supported_builtin_tools_attribute_deprecated():
+    """Reading `ModelProfile.supported_builtin_tools` warns and returns `supported_native_tools`."""
+    from pydantic_ai.profiles import ModelProfile
+
+    profile = ModelProfile(supported_native_tools=frozenset({WebSearchTool}))
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelProfile\.supported_builtin_tools` is deprecated, use `\.supported_native_tools`',
+    ):
+        result = profile.supported_builtin_tools
+    assert result == profile.supported_native_tools == frozenset({WebSearchTool})
+
+
+def test_model_profile_supported_native_tools_wins_when_both_kwargs_passed():
+    """`ModelProfile(supported_native_tools=..., supported_builtin_tools=...)` warns and the explicit `supported_native_tools=` wins."""
+    from pydantic_ai.profiles import ModelProfile
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile = ModelProfile(
+            supported_native_tools=frozenset({WebSearchTool}),
+            supported_builtin_tools=frozenset({CodeExecutionTool}),  # pyright: ignore[reportCallIssue]
+        )
+    assert profile.supported_native_tools == frozenset({WebSearchTool})
+
+
+def test_model_profile_subclass_supported_builtin_tools_constructor_deprecated():
+    """`OpenAIModelProfile(supported_builtin_tools=...)` propagates the deprecated alias through subclasses."""
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`OpenAIModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `supported_native_tools=`',
+    ):
+        profile = OpenAIModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
+    assert profile.supported_native_tools == frozenset({WebSearchTool})
+
+
+def test_model_subclass_supported_builtin_tools_override_still_used():
+    """`Model` subclass overriding only the deprecated classmethod still has its tools picked up."""
+    from pydantic_ai.models import Model
+
+    # Subclass creation should warn that the override uses the deprecated name.
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'overrides `supported_builtin_tools\(\)`, which is deprecated — '
+        r'override `supported_native_tools\(\)` instead',
+    ):
+
+        class _LegacyModel(Model[Any]):
+            @classmethod
+            def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+                return frozenset({WebSearchTool})
+
+            @property
+            def system(self) -> str:
+                return 'test'  # pragma: no cover
+
+            @property
+            def model_name(self) -> str:
+                return 'test'  # pragma: no cover
+
+            async def request(self, *args: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError  # pragma: no cover
+
+    # Framework lookup via the new name reaches the user's legacy override.
+    assert _LegacyModel.supported_native_tools() == frozenset({WebSearchTool})
+    # And the legacy classmethod direct call still works.
+    assert _LegacyModel.supported_builtin_tools() == frozenset({WebSearchTool})
+
+
+def test_model_supported_builtin_tools_classmethod_deprecated_on_base():
+    """`Model.supported_builtin_tools()` warns and dispatches to `supported_native_tools()` for unmodified subclasses."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Model\.supported_builtin_tools\(\)` is deprecated, '
+        r'use `Model\.supported_native_tools\(\)`',
+    ):
+        result = TestModel.supported_builtin_tools()
+    assert result == TestModel.supported_native_tools()
+
+
+def test_google_profile_supports_native_output_with_builtin_tools_constructor_deprecated():
+    """`GoogleModelProfile(google_supports_native_output_with_builtin_tools=...)` warns and routes to the renamed field."""
+    from pydantic_ai.profiles.google import GoogleModelProfile
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`GoogleModelProfile\(google_supports_native_output_with_builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `google_supports_native_output_with_native_tools=`',
+    ):
+        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)  # pyright: ignore[reportCallIssue]
+    assert profile.google_supports_native_output_with_native_tools is True
+
+
+def test_google_profile_supports_native_output_with_builtin_tools_attribute_deprecated():
+    """Reading `GoogleModelProfile.google_supports_native_output_with_builtin_tools` warns and returns the renamed field."""
+    from pydantic_ai.profiles.google import GoogleModelProfile
+
+    profile = GoogleModelProfile(google_supports_native_output_with_native_tools=True)
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`GoogleModelProfile\.google_supports_native_output_with_builtin_tools` is deprecated, '
+        r'use `\.google_supports_native_output_with_native_tools`',
+    ):
+        result = profile.google_supports_native_output_with_builtin_tools
+    assert result is profile.google_supports_native_output_with_native_tools is True
+
+
+def test_openai_responses_settings_openai_builtin_tools_key_deprecated():
+    """The deprecated `openai_builtin_tools` settings key warns and its tools reach the resolved native-tool list."""
+    from pydantic_ai.models.openai import (  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModelSettings,
+        _resolve_openai_native_tools_setting,
+    )
+
+    legacy_tool: dict[str, Any] = {'type': 'web_search_preview'}
+    settings_with_legacy = cast(OpenAIResponsesModelSettings, {'openai_builtin_tools': [legacy_tool]})
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`OpenAIResponsesModelSettings\(\{"openai_builtin_tools": \[\.\.\.\]\}\)` is deprecated, '
+        r'use `openai_native_tools`',
+    ):
+        resolved = _resolve_openai_native_tools_setting(settings_with_legacy)
+    assert list(resolved) == [legacy_tool]
+
+
+def test_openai_responses_settings_openai_native_tools_key_wins_when_both_passed():
+    """When both legacy and new keys are present, the explicit `openai_native_tools` wins and no warning fires."""
+    import warnings
+
+    from pydantic_ai.models.openai import (  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModelSettings,
+        _resolve_openai_native_tools_setting,
+    )
+
+    new_tool: dict[str, Any] = {'type': 'web_search'}
+    legacy_tool: dict[str, Any] = {'type': 'web_search_preview'}
+    settings_with_both = cast(
+        OpenAIResponsesModelSettings,
+        {'openai_native_tools': [new_tool], 'openai_builtin_tools': [legacy_tool]},
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        resolved = _resolve_openai_native_tools_setting(settings_with_both)
+    assert list(resolved) == [new_tool]
+
+
+def test_abstract_capability_get_builtin_tools_override_still_used():
+    """`AbstractCapability` subclass overriding only `get_builtin_tools()` keeps tools picked up by `get_native_tools()`."""
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.tools import AgentNativeTool
+
+    tool = WebSearchTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'overrides `get_builtin_tools\(\)`, which is deprecated — '
+        r'override `get_native_tools\(\)` instead',
+    ):
+
+        class _LegacyCap(AbstractCapability[Any]):
+            def get_builtin_tools(self) -> list[AgentNativeTool[Any]]:
+                return [tool]
+
+    cap = _LegacyCap()
+    # Framework lookup via the new name returns the legacy override's tools.
+    assert list(cap.get_native_tools()) == [tool]
+
+
+def test_abstract_capability_get_builtin_tools_base_method_deprecated():
+    """Calling `AbstractCapability.get_builtin_tools()` on a non-legacy subclass warns and dispatches to `get_native_tools()`."""
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.tools import AgentNativeTool
+
+    class _ModernCap(AbstractCapability[Any]):
+        def get_native_tools(self) -> list[AgentNativeTool[Any]]:
+            return [WebSearchTool()]
+
+    cap = _ModernCap()
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`AbstractCapability\.get_builtin_tools\(\)` is deprecated, use `get_native_tools\(\)`',
+    ):
+        legacy_result = list(cap.get_builtin_tools())
+    assert legacy_result == list(cap.get_native_tools())
+
+
+def test_image_generation_subagent_tool_builtin_tool_constructor_deprecated():
+    """`ImageGenerationSubagentTool(builtin_tool=...)` warns and routes to `native_tool=`."""
+    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    legacy_tool = ImageGenerationTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ImageGenerationSubagentTool\(builtin_tool=\.\.\.\)` is deprecated, use `native_tool=`',
+    ):
+        subagent = ImageGenerationSubagentTool(
+            model='openai-responses:gpt-5',
+            builtin_tool=legacy_tool,  # pyright: ignore[reportCallIssue]
+        )
+    assert subagent.native_tool is legacy_tool
+
+
+def test_image_generation_subagent_tool_builtin_tool_attribute_deprecated():
+    """Reading `ImageGenerationSubagentTool.builtin_tool` warns and returns `native_tool`."""
+    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    native_tool = ImageGenerationTool()
+    subagent = ImageGenerationSubagentTool(model='openai-responses:gpt-5', native_tool=native_tool)
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ImageGenerationSubagentTool\.builtin_tool` is deprecated, use `\.native_tool`',
+    ):
+        result = subagent.builtin_tool
+    assert result is native_tool
+
+
+def test_image_generation_subagent_tool_native_tool_wins_when_both_kwargs_passed():
+    """When both kwargs are passed, the explicit `native_tool=` wins and the legacy `builtin_tool=` is dropped."""
+    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    explicit = ImageGenerationTool()
+    legacy = ImageGenerationTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ImageGenerationSubagentTool\(builtin_tool=\.\.\.\)` is deprecated, use `native_tool=`',
+    ):
+        subagent = ImageGenerationSubagentTool(
+            model='openai-responses:gpt-5',
+            native_tool=explicit,
+            builtin_tool=legacy,  # pyright: ignore[reportCallIssue]
+        )
+    assert subagent.native_tool is explicit
+
+
+def test_image_generation_tool_factory_builtin_tool_kwarg_deprecated():
+    """`image_generation_tool(builtin_tool=...)` warns and forwards the legacy kwarg to the subagent."""
+    from pydantic_ai.common_tools.image_generation import image_generation_tool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    legacy_tool = ImageGenerationTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`image_generation_tool\(builtin_tool=\.\.\.\)` is deprecated, use `native_tool=`',
+    ):
+        tool = image_generation_tool(
+            'openai-responses:gpt-5',
+            builtin_tool=legacy_tool,
+        )
+
+    # The legacy value reaches the subagent's `native_tool` field via the factory.
+    subagent_self = tool.function.__self__  # pyright: ignore[reportFunctionMemberAccess]
+    assert subagent_self.native_tool is legacy_tool

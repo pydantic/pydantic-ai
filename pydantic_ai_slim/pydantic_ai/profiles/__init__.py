@@ -1,12 +1,16 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
+from typing import Any
 
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from .._utils import install_deprecated_kwarg_alias
+from .._warnings import PydanticAIDeprecationWarning
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
@@ -17,6 +21,15 @@ __all__ = [
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
 ]
+
+
+# Maps deprecated kwarg/attribute names to their renamed targets for `ModelProfile`.
+# Used by `ModelProfile.__getattr__` for read access. Constructor aliasing is installed
+# per-subclass with `install_deprecated_kwarg_alias` (see `__init_subclass__` below), since
+# `@dataclass` regenerates `__init__` on each subclass and overwrites a single base wrap.
+_MODEL_PROFILE_DEPRECATED_FIELD_ALIASES: dict[str, str] = {
+    'supported_builtin_tools': 'supported_native_tools',
+}
 
 
 @dataclass(kw_only=True)
@@ -112,6 +125,26 @@ class ModelProfile:
             if f.name in field_names and getattr(profile, f.name) != f.default
         }
         return replace(self, **non_default_attrs)
+
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated alias for read access to a renamed field. Only warns when the renamed
+        # target field actually exists on this class — otherwise raise `AttributeError` so
+        # genuine typos still surface clearly.
+        new_name = _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES.get(name)
+        if new_name is not None and new_name in {f.name for f in fields(type(self))}:
+            warnings.warn(
+                f'`{type(self).__name__}.{name}` is deprecated, use `.{new_name}` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return getattr(self, new_name)
+        raise AttributeError(name)
+
+
+# The dataclass-generated `__init__` is regenerated per subclass, so each subclass needs
+# its own deprecated-kwarg wrap. Built-in subclasses register themselves via an
+# `__init_subclass__` hook that defers the wrap until the dataclass decoration completes.
+install_deprecated_kwarg_alias(ModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]

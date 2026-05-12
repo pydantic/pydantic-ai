@@ -733,6 +733,52 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+def install_deprecated_kwarg_alias(
+    cls: type[Any],
+    *,
+    old: str,
+    new: str,
+    owner_name: str | None = None,
+) -> None:
+    """Install a wrapper around `cls.__init__` that accepts a deprecated kwarg as an alias for a renamed one.
+
+    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
+    from leaking into Pydantic's JSON-schema introspection of the wrapped class.
+
+    For `@dataclass` hierarchies, each subclass gets its own generated `__init__` that
+    bypasses the parent's wrap, so apply this helper to each subclass that needs the alias.
+
+    Args:
+        cls: The class whose `__init__` should be wrapped.
+        old: The deprecated kwarg name.
+        new: The renamed kwarg name that the legacy value should be forwarded to.
+        owner_name: Optional class name to use in the warning message. Defaults to the
+            class name of the instance being constructed (`type(self).__name__`).
+    """
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    orig_init = cls.__init__
+
+    @functools.wraps(orig_init)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
+        if old in kwargs:
+            name = owner_name or type(self).__name__
+            warnings.warn(
+                f'`{name}({old}=...)` is deprecated, use `{new}=` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            if new not in kwargs:
+                kwargs[new] = kwargs.pop(old)
+            else:
+                kwargs.pop(old)
+        orig_init(self, *args, **kwargs)
+
+    cls.__init__ = wrapper
+
+
 _T = TypeVar('_T')
 
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._utils import install_deprecated_kwarg_alias
 from ..exceptions import UserError
 from ..settings import ThinkingLevel
 from . import ModelProfile
@@ -162,6 +163,9 @@ class OpenAIModelProfile(ModelProfile):
                 '`openai_chat_thinking_field` must be set to a non-None value.'
             )
         # Note: 'auto' mode doesn't require openai_chat_thinking_field since it detects dynamically
+
+
+install_deprecated_kwarg_alias(OpenAIModelProfile, old='supported_builtin_tools', new='supported_native_tools')
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:

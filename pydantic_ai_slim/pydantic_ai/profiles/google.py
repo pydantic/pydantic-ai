@@ -3,7 +3,17 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
-from . import ModelProfile
+from .._utils import install_deprecated_kwarg_alias
+from . import (
+    _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES as _PROFILE_FIELD_ALIASES,  # pyright: ignore[reportPrivateUsage]
+    ModelProfile,
+)
+
+# Register the Google-specific deprecated field alias so `ModelProfile.__getattr__` resolves
+# `profile.google_supports_native_output_with_builtin_tools` on `GoogleModelProfile` instances.
+_PROFILE_FIELD_ALIASES['google_supports_native_output_with_builtin_tools'] = (
+    'google_supports_native_output_with_native_tools'
+)
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
 # See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
@@ -36,6 +46,14 @@ class GoogleModelProfile(ModelProfile):
 
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
+
+
+install_deprecated_kwarg_alias(GoogleModelProfile, old='supported_builtin_tools', new='supported_native_tools')
+install_deprecated_kwarg_alias(
+    GoogleModelProfile,
+    old='google_supports_native_output_with_builtin_tools',
+    new='google_supports_native_output_with_native_tools',
+)
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:

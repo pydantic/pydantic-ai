@@ -804,7 +804,21 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated alias for read access to the renamed `prefer_builtin` field.
+        if name == 'prefer_builtin':
+            warnings.warn(
+                '`ToolDefinition.prefer_builtin` is deprecated, use `ToolDefinition.prefer_native` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return self.prefer_native
+        raise AttributeError(name)
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='prefer_native')
 
 
 _RENAMED_TYPE_ALIASES: dict[str, str] = {
