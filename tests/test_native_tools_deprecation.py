@@ -939,6 +939,9 @@ def test_model_subclass_mixed_legacy_and_modern_overrides_modern_wins_on_legacy_
     ):
         legacy_result = _ModernChild.supported_builtin_tools()
     assert legacy_result == frozenset({CodeExecutionTool})
+    # And calling the parent directly still executes the legacy override's body via the rewire's
+    # captured `legacy_func` reference (promoted onto the parent's `supported_native_tools`).
+    assert _LegacyParent.supported_native_tools() == frozenset({WebSearchTool})
 
 
 def test_abstract_capability_mixed_legacy_and_modern_overrides_modern_wins_on_legacy_call():
@@ -973,6 +976,10 @@ def test_abstract_capability_mixed_legacy_and_modern_overrides_modern_wins_on_le
     ):
         legacy_result = list(cap.get_builtin_tools())
     assert legacy_result == [child_tool]
+    # And instantiating the parent directly still executes the legacy override's body
+    # via the rewire (the legacy function is promoted onto the parent's `get_native_tools`).
+    parent_cap = _LegacyParentCap()
+    assert list(parent_cap.get_native_tools()) == [parent_tool]
 
 
 def test_model_supported_builtin_tools_classmethod_deprecated_on_base():
@@ -1364,3 +1371,103 @@ def test_model_request_parameters_replace_with_builtin_tools_routes_to_native_to
     ):
         params2 = replace(params, builtin_tools=legacy_tools)
     assert params2.native_tools == legacy_tools
+
+
+def test_model_subclass_supported_builtin_tools_plain_method_override_still_used():
+    """`Model` subclass overriding `supported_builtin_tools` as a plain function (not `@classmethod`) is still wired up.
+
+    Lock-in for the `else: legacy_func = legacy` branch in `Model.__init_subclass__`:
+    Python's resolution treats a bare `def` inside the class as an unbound function, so
+    the rewire must accept that shape too and not silently drop the user's tools.
+    """
+    from pydantic_ai.models import Model
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'overrides `supported_builtin_tools\(\)`, which is deprecated',
+    ):
+
+        class _PlainMethodLegacyModel(Model[Any]):
+            # Intentionally a plain function, not `@classmethod`, to exercise the
+            # `else: legacy_func = legacy` branch in `__init_subclass__`.
+            def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:  # type: ignore[override]
+                return frozenset({WebSearchTool})
+
+            @property
+            def system(self) -> str:
+                return 'test'  # pragma: no cover
+
+            @property
+            def model_name(self) -> str:
+                return 'test'  # pragma: no cover
+
+            async def request(self, *args: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError  # pragma: no cover
+
+    # Framework lookup via the new name reaches the user's plain-method legacy override.
+    assert _PlainMethodLegacyModel.supported_native_tools() == frozenset({WebSearchTool})
+
+
+def test_image_generation_subagent_tool_attribute_unknown_raises():
+    """`ImageGenerationSubagentTool.__getattr__` raises `AttributeError` for non-deprecated unknown attrs.
+
+    Lock-in for the fallback in the custom `__getattr__` that intercepts the deprecated
+    `builtin_tool` read alias: any other unknown attribute must still raise so callers
+    (and `hasattr()`) behave as users expect for non-existent fields.
+    """
+    from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    subagent = ImageGenerationSubagentTool(model='openai-responses:gpt-5', native_tool=ImageGenerationTool())
+    with pytest.raises(AttributeError, match='does_not_exist'):
+        subagent.does_not_exist
+    assert not hasattr(subagent, 'does_not_exist')
+
+
+def test_image_generation_tool_factory_native_tool_wins_when_both_kwargs_passed():
+    """`image_generation_tool(native_tool=..., builtin_tool=...)` warns and the explicit `native_tool=` wins.
+
+    The factory signature exposes `native_tool` as a real parameter (unlike the dataclass alias
+    install used on `ImageGenerationSubagentTool`), so when both are passed via the
+    `**_deprecated_kwargs` channel, the caller's explicit `native_tool=` is the one they typed
+    and must take precedence over the legacy spelling.
+    """
+    from pydantic_ai.common_tools.image_generation import image_generation_tool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    explicit = ImageGenerationTool()
+    legacy = ImageGenerationTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`image_generation_tool\(builtin_tool=\.\.\.\)` is deprecated, use `native_tool=`',
+    ):
+        tool = image_generation_tool(
+            'openai-responses:gpt-5',
+            native_tool=explicit,
+            builtin_tool=legacy,
+        )
+
+    subagent_self = tool.function.__self__  # pyright: ignore[reportFunctionMemberAccess]
+    assert subagent_self.native_tool is explicit
+
+
+def test_image_generation_tool_factory_rejects_unknown_kwargs():
+    """`image_generation_tool(...)` raises `TypeError` for unknown kwargs that aren't the deprecated alias."""
+    from pydantic_ai.common_tools.image_generation import image_generation_tool
+    from pydantic_ai.native_tools import ImageGenerationTool
+
+    with pytest.raises(TypeError, match=r'unexpected keyword arguments: `bogus`'):
+        image_generation_tool(
+            'openai-responses:gpt-5',
+            native_tool=ImageGenerationTool(),
+            bogus='nope',
+        )
+
+
+def test_image_generation_tool_factory_requires_native_tool():
+    """`image_generation_tool(...)` raises `TypeError` when neither `native_tool=` nor `builtin_tool=` is passed."""
+    from pydantic_ai.common_tools.image_generation import image_generation_tool
+
+    with pytest.raises(TypeError, match=r"missing required argument: 'native_tool'"):
+        image_generation_tool('openai-responses:gpt-5')
