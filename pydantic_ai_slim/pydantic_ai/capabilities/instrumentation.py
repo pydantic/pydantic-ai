@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -372,33 +372,48 @@ class Instrumentation(AbstractCapability[Any]):
             ).decode(),
         }
 
-    async def wrap_tool_execute(
+    async def _run_tool_span(
         self,
-        ctx: RunContext[AgentDepsT],
         *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
+        span_name: str,
+        attributes: dict[str, Any],
+        action: Callable[[], Awaitable[Any]],
+        serialize_result: Callable[[Any], str],
+        handle_tool_control_flow: bool = False,
     ) -> Any:
+        """Open a `gen_ai`-flavoured tool/output span around `action`.
+
+        Records the serialized result on success (when `include_content` is enabled and
+        the span is recording), records the exception and sets status `ERROR` on failure.
+
+        When `handle_tool_control_flow` is True, the helper additionally special-cases
+        `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and
+        records `ToolRetryError`'s retry prompt as the tool result before re-raising.
+        Output-function spans leave that flag off — `ToolRetryError` is treated as a
+        plain error there because the retry prompt is recorded on the surrounding
+        request/agent spans, and `CallDeferred`/`ApprovalRequired` never reach output
+        processing.
+        """
         settings = self.settings
         names = self._instrumentation_names
         include_content = settings.include_content
 
         with settings.tracer.start_as_current_span(
-            names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            span_name,
+            attributes=attributes,
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
             try:
-                tool_result = await handler(args)
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        names.tool_result_attr,
-                        tool_result if isinstance(tool_result, str) else tool_return_ta.dump_json(tool_result).decode(),
-                    )
+                result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
+                if not handle_tool_control_flow:
+                    span.record_exception(exc, escaped=True)
+                    span.set_status(StatusCode.ERROR)
+                    raise
+                # Deferrals are control flow, not errors: capture the deferral name (and
+                # metadata when available) as span attributes, and only mark the span
+                # ERROR for older instrumentation versions that expected that shape.
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
                     try:
@@ -411,9 +426,10 @@ class Instrumentation(AbstractCapability[Any]):
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
-                part = e.tool_retry
-                if include_content and span.is_recording():
-                    span.set_attribute(names.tool_result_attr, part.model_response())
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    # Tool retries are surfaced as model-visible errors; record the prompt
+                    # the model will see as the tool result before re-raising.
+                    span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
@@ -422,7 +438,30 @@ class Instrumentation(AbstractCapability[Any]):
                 span.set_status(StatusCode.ERROR)
                 raise
 
-        return tool_result
+            if include_content and span.is_recording():
+                span.set_attribute(
+                    names.tool_result_attr,
+                    result if isinstance(result, str) else serialize_result(result),
+                )
+
+        return result
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        return await self._run_tool_span(
+            span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
+            attributes=self._tool_span_attributes(call),
+            action=lambda: handler(args),
+            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            handle_tool_control_flow=True,
+        )
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)
@@ -447,9 +486,8 @@ class Instrumentation(AbstractCapability[Any]):
         if not output_context.has_function:
             return await handler(output)
 
-        settings = self.settings
         names = self._instrumentation_names
-        include_content = settings.include_content
+        include_content = self.settings.include_content
         tool_call = output_context.tool_call
         # Tool-mode output: the registered tool name (e.g. `final_result`) is what the
         # model called, so use it as the span target. For non-tool output, fall back to
@@ -485,25 +523,9 @@ class Instrumentation(AbstractCapability[Any]):
             }
         ).decode()
 
-        with settings.tracer.start_as_current_span(
-            names.get_output_tool_span_name(span_target),
+        return await self._run_tool_span(
+            span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            try:
-                result = await handler(output)
-            except BaseException as e:
-                # `do_process` (passed as `handler` by `run_output_process_hooks`) raises
-                # `ModelRetry` (or other exceptions) — `ToolRetryError` is only synthesized
-                # by `run_output_process_hooks`'s outer wrapper, after this span has closed.
-                span.record_exception(e, escaped=True)
-                span.set_status(StatusCode.ERROR)
-                raise
-            if include_content and span.is_recording():
-                span.set_attribute(
-                    names.tool_result_attr,
-                    result if isinstance(result, str) else to_json(serialize_any(result)).decode(),
-                )
-
-        return result
+            action=lambda: handler(output),
+            serialize_result=lambda value: to_json(serialize_any(value)).decode(),
+        )
