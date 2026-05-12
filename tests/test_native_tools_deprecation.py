@@ -30,6 +30,9 @@ from .conftest import try_import
 with try_import() as mcp_imports:
     from pydantic_ai.capabilities import MCP
 
+with try_import() as bedrock_imports:
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
+
 pytestmark = pytest.mark.anyio
 
 
@@ -927,9 +930,9 @@ def test_google_profile_supports_native_output_with_builtin_tools_attribute_depr
 
 def test_openai_responses_settings_openai_builtin_tools_key_deprecated():
     """The deprecated `openai_builtin_tools` settings key warns and its tools reach the resolved native-tool list."""
-    from pydantic_ai.models.openai import (  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai import (
         OpenAIResponsesModelSettings,
-        _resolve_openai_native_tools_setting,
+        _resolve_openai_native_tools_setting,  # pyright: ignore[reportPrivateUsage]
     )
 
     legacy_tool: dict[str, Any] = {'type': 'web_search_preview'}
@@ -948,9 +951,9 @@ def test_openai_responses_settings_openai_native_tools_key_wins_when_both_passed
     """When both legacy and new keys are present, the explicit `openai_native_tools` wins and no warning fires."""
     import warnings
 
-    from pydantic_ai.models.openai import (  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai import (
         OpenAIResponsesModelSettings,
-        _resolve_openai_native_tools_setting,
+        _resolve_openai_native_tools_setting,  # pyright: ignore[reportPrivateUsage]
     )
 
     new_tool: dict[str, Any] = {'type': 'web_search'}
@@ -1089,6 +1092,7 @@ def test_image_generation_tool_factory_builtin_tool_kwarg_deprecated():
 # --- Profile-subclass and spec-loader deprecations (post-audit catch-ups) ---
 
 
+@pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
 def test_bedrock_profile_supported_builtin_tools_constructor_deprecated():
     """`BedrockModelProfile(supported_builtin_tools=...)` warns and routes to `supported_native_tools=`.
 
@@ -1096,8 +1100,6 @@ def test_bedrock_profile_supported_builtin_tools_constructor_deprecated():
     was missed when the prior fix wired the deprecated kwarg through each known profile
     subclass via explicit `install_deprecated_kwarg_alias` calls.
     """
-    from pydantic_ai.providers.bedrock import BedrockModelProfile
-
     with pytest.warns(
         PydanticAIDeprecationWarning,
         match=r'`BedrockModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
