@@ -43,7 +43,7 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -2619,3 +2619,19 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+@pytest.mark.filterwarnings('default:.*InstrumentedModel.*:DeprecationWarning')
+def test_instrumented_model_constructor_emits_deprecation_warning():
+    """User-facing `InstrumentedModel(...)` construction emits a deprecation warning."""
+    with pytest.warns(
+        DeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.InstrumentedModel` is deprecated'
+    ):
+        InstrumentedModel(MyModel(), InstrumentationSettings())
+
+
+@pytest.mark.filterwarnings('default:.*instrument_model.*:DeprecationWarning')
+def test_instrument_model_helper_emits_deprecation_warning():
+    """User-facing `instrument_model(...)` helper emits a deprecation warning."""
+    with pytest.warns(DeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.instrument_model` is deprecated'):
+        instrument_model(MyModel(), True)

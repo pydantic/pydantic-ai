@@ -3879,3 +3879,33 @@ async def test_instrument_combines_with_outermost_and_innermost_capabilities() -
     )
     result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_output_function_call_deferred_recorded_as_error(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """An output function raising `CallDeferred` is recorded as a regular error on the
+    `wrap_output_process` span — that hook reserves the deferral-attribute path for
+    real tool executions (`wrap_tool_execute`)."""
+
+    def defer_text(text: str) -> str:
+        from pydantic_ai.exceptions import CallDeferred
+
+        raise CallDeferred()
+
+    def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hi')])
+
+    from pydantic_ai.exceptions import CallDeferred
+
+    my_agent = Agent(model=FunctionModel(call_text_response), instrument=True)
+    with pytest.raises(CallDeferred):
+        my_agent.run_sync('anything', output_type=TextOutput(defer_text))
+
+    summary = get_logfire_summary()
+    [span_attrs] = [attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.tool.name') == 'defer_text']
+    # The span was recorded with ERROR status — the standard exception path,
+    # not the deferral-attribute path that `wrap_tool_execute` uses.
+    assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
+    assert 'pydantic_ai.tool.deferral.name' not in span_attrs
