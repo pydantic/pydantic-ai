@@ -180,7 +180,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # implementation and keep `search_tools` wired up.
         #
         # Always wrap with `ToolSearchToolset` so the deferred corpus is exposed
-        # via the per-tool `with_builtin='tool_search'` flag — the wrapper toolset
+        # via the per-tool `with_native='tool_search'` flag — the wrapper toolset
         # is what teaches `_resolve_builtin_tool_swap` which function tools belong
         # to the tool-search corpus, regardless of whether `search_tools` itself is
         # emitted.

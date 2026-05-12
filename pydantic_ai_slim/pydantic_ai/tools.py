@@ -766,37 +766,37 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    unless_builtin: Annotated[
+    unless_native: Annotated[
         str | None,
         # Old names were `prefer_builtin` and (after the builtin → native rename in #5338)
         # `prefer_native`; keep accepting both for serialized-history backward compat.
-        Field(validation_alias=AliasChoices('unless_builtin', 'prefer_native', 'prefer_builtin')),
+        Field(validation_alias=AliasChoices('unless_native', 'prefer_native', 'prefer_builtin')),
     ] = None
     """If set, this tool is dropped from the wire when the named native tool is supported by the model.
 
     Generic version of the old `prefer_builtin` flag: a function tool carrying
-    `unless_builtin='web_search'` is treated as a local fallback for the
+    `unless_native='web_search'` is treated as a local fallback for the
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] native tool and silently
     removed from the request whenever the model handles `WebSearchTool` natively. It
     stays in the request when the native tool isn't supported.
     """
 
-    with_builtin: Annotated[
+    with_native: Annotated[
         str | None,
         # Old name was `managed_by_builtin`; keep accepting it for serialized-history backward compat.
-        Field(validation_alias=AliasChoices('with_builtin', 'managed_by_builtin')),
+        Field(validation_alias=AliasChoices('with_native', 'managed_by_builtin')),
     ] = None
     """If set, this tool is kept on the wire when the named native tool is supported, with the
     native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
     on the request param for the framework-managed tool-search native tool).
 
-    Symmetric pair with `unless_builtin`:
+    Symmetric pair with `unless_native`:
 
-    * `unless_builtin='X'` — drop me from the wire when X is supported (local fallback).
-    * `with_builtin='X'` — keep me on the wire when X is supported, formatted via X's adapter
+    * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
+    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
       (corpus member managed by the native tool).
 
-    When the named native tool is unsupported, a tool with `with_builtin` and `defer_loading=True`
+    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
     is dropped (the corpus member is currently undiscovered, so the model can't call it on
     this provider); otherwise it's kept as a regular function tool.
     """
@@ -875,30 +875,30 @@ class ToolDefinition:
         return self.kind in ('external', 'unapproved')
 
     def __getattr__(self, name: str) -> Any:
-        # Deprecated aliases for read access to the renamed `unless_builtin` field
+        # Deprecated aliases for read access to the renamed `unless_native` field
         # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
         if name in ('prefer_builtin', 'prefer_native'):
             warnings.warn(
-                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_builtin` instead.',
+                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            return self.unless_builtin
+            return self.unless_native
         if name == 'managed_by_builtin':
             warnings.warn(
-                '`ToolDefinition.managed_by_builtin` is deprecated, use `ToolDefinition.with_builtin` instead.',
+                '`ToolDefinition.managed_by_builtin` is deprecated, use `ToolDefinition.with_native` instead.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            return self.with_builtin
+            return self.with_native
         raise AttributeError(name)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_builtin')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_builtin')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='managed_by_builtin', new='with_builtin')
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='managed_by_builtin', new='with_native')
 
 
 _RENAMED_TYPE_ALIASES: dict[str, str] = {

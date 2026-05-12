@@ -508,7 +508,7 @@ async def _prepare_request_parameters(
     # here (at MRP-construction time) keeps the request shape honest before
     # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
     # preserved so the request still fails loudly on unsupported models.
-    has_tool_search_corpus = any(t.with_builtin == ToolSearchTool.kind for t in function_tools)
+    has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
     if not has_tool_search_corpus:
         # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
         # (e.g. a hypothetical `WebSearchTool(optional=True)`) don't have a corpus and

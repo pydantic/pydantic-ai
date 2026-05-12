@@ -847,7 +847,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.native_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
-            and not any(t.unless_builtin == 'web_search' for t in model_request_parameters.function_tools)
+            and not any(t.unless_native == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -2425,10 +2425,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
-        if f.with_builtin == ToolSearchTool.kind:
+        if f.with_native == ToolSearchTool.kind:
             # `defer_loading` on the wire controls OpenAI's native tool search caching.
             # `ToolDefinition.defer_loading` is the local discovery flag — separate
-            # concern — so we gate on `with_builtin` to know we're on the native
+            # concern — so we gate on `with_native` to know we're on the native
             # path.
             tool_param['defer_loading'] = True
         return tool_param
@@ -4182,7 +4182,7 @@ def _find_search_tool_definition(
     """Locate the local `search_tools` function-tool definition in the current request.
 
     In custom-callable tool search mode, `ToolSearchToolset` leaves its `search_tools`
-    function tool in `function_tools` (no `unless_builtin`), so we look it up by name.
+    function tool in `function_tools` (no `unless_native`), so we look it up by name.
     """
     return next(
         (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),

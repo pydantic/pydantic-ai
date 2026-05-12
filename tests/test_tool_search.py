@@ -793,7 +793,7 @@ async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
     Dropping it would invalidate the cached request prefix on the next turn — keeping
     it preserves prompt caching across discovery steps. The local tool's body is a no-op
     branch in `_search_tools` since the index is empty, and on native paths it's dropped
-    by the adapter via its `unless_builtin='tool_search'` flag anyway.
+    by the adapter via its `unless_native='tool_search'` flag anyway.
     """
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -926,7 +926,7 @@ def test_tool_search_in_capability_registry():
 
 async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     """Every deferred tool appears once under its real name with
-    ``with_builtin='tool_search'``. Visible tools and ``search_tools`` round
+    ``with_native='tool_search'``. Visible tools and ``search_tools`` round
     out the dispatch dict. ``Model.prepare_request`` filters per-model to decide what
     actually reaches the wire."""
     toolset = _create_function_toolset()
@@ -936,10 +936,10 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     tool_manager = ToolManager[None](searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
-    managed_names = {t.name for t in run_step_toolset.tool_defs if t.with_builtin == 'tool_search'}
+    managed_names = {t.name for t in run_step_toolset.tool_defs if t.with_native == 'tool_search'}
     assert managed_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
 
-    local_names = [t.name for t in run_step_toolset.tool_defs if not t.with_builtin]
+    local_names = [t.name for t in run_step_toolset.tool_defs if not t.with_native]
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
 
@@ -1127,9 +1127,9 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert tools['tool_b'].tool_def.defer_loading is True
 
 
-async def test_tool_search_toolset_marks_corpus_with_builtin():
+async def test_tool_search_toolset_marks_corpus_with_native():
     """Every deferred tool keeps its real name in the toolset output and carries
-    ``with_builtin='tool_search'`` regardless of the current model — the adapter's
+    ``with_native='tool_search'`` regardless of the current model — the adapter's
     ``prepare_request`` decides what reaches the wire so the toolset can't commit early
     (e.g. under ``FallbackModel``)."""
     toolset = _create_function_toolset()
@@ -1138,12 +1138,12 @@ async def test_tool_search_toolset_marks_corpus_with_builtin():
 
     tools = await searchable.get_tools(ctx)
 
-    managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.with_builtin}
+    managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.with_native}
     assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     for tool_def in managed.values():
-        assert tool_def.with_builtin == 'tool_search'
+        assert tool_def.with_native == 'tool_search'
         assert tool_def.defer_loading
-    # The local fallback is still present — dropped by the adapter via ``unless_builtin``.
+    # The local fallback is still present — dropped by the adapter via ``unless_native``.
     assert _SEARCH_TOOLS_NAME in tools
 
 
@@ -1188,7 +1188,7 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
 
 async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
     """A custom ``search_fn`` handles local discovery, but the toolset still flags every
-    deferred tool with ``with_builtin='tool_search'`` — when the model supports
+    deferred tool with ``with_native='tool_search'`` — when the model supports
     native tool search (including provider-side custom callable modes like Anthropic's
     tool_reference mechanism or OpenAI's ``execution='client'``), the adapter keeps them
     and applies ``defer_loading`` on the wire. Commitment to native-vs-local happens in
@@ -1205,7 +1205,7 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
     tools = await searchable.get_tools(ctx)
 
-    managed = [t.tool_def.name for t in tools.values() if t.tool_def.with_builtin == 'tool_search']
+    managed = [t.tool_def.name for t in tools.values() if t.tool_def.with_native == 'tool_search']
     assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     assert _SEARCH_TOOLS_NAME in tools
 
@@ -2651,9 +2651,9 @@ async def test_tool_search_named_strategy_skips_local_search_tools_emission(stra
     ctx = _build_run_context(None)
     tools = await wrapped.get_tools(ctx)
     # `search_tools` is omitted entirely — the deferred corpus is still exposed by name
-    # (carrying `with_builtin='tool_search'`) so the swap logic can route discovery.
+    # (carrying `with_native='tool_search'`) so the swap logic can route discovery.
     assert _SEARCH_TOOLS_NAME not in tools
-    corpus_names = {name for name, t in tools.items() if t.tool_def.with_builtin == 'tool_search'}
+    corpus_names = {name for name, t in tools.items() if t.tool_def.with_native == 'tool_search'}
     assert corpus_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
 
 
@@ -2676,8 +2676,8 @@ async def test_tool_search_keywords_ignores_builtin_support():
     assert [t.name for t in prepared.function_tools] == [_SEARCH_TOOLS_NAME]
 
 
-def test_with_builtin_undiscovered_drops_on_unsupported_model():
-    """In `prepare_request`, `with_builtin` corpus members with `defer_loading=True`
+def test_with_native_undiscovered_drops_on_unsupported_model():
+    """In `prepare_request`, `with_native` corpus members with `defer_loading=True`
     (still undiscovered) drop on a model that doesn't support the builtin — the model has
     no way to call them and the local `search_tools` fallback handles discovery."""
 
@@ -2686,7 +2686,7 @@ def test_with_builtin_undiscovered_drops_on_unsupported_model():
     # upgrade; on a model that doesn't support it, both the builtin and its undiscovered
     # corpus drop so the local `ToolSearch` fallback handles discovery.
     search_builtin = ToolSearchTool(optional=True)
-    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search', defer_loading=True)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=True)
 
     _, prepared = m.prepare_request(
         None,
@@ -2699,12 +2699,12 @@ def test_with_builtin_undiscovered_drops_on_unsupported_model():
     assert prepared.function_tools == []
 
 
-def test_with_builtin_discovered_kept_on_unsupported_model():
+def test_with_native_discovered_kept_on_unsupported_model():
     """A discovered corpus member (`defer_loading=False`) stays in the request even when
     the builtin is unsupported — the model can call it directly by name on the local path."""
 
     m = TestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search', defer_loading=False)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=False)
 
     _, prepared = m.prepare_request(
         None,
@@ -2717,7 +2717,7 @@ def test_with_builtin_discovered_kept_on_unsupported_model():
     assert [t.name for t in prepared.function_tools] == ['deferred_tool']
 
 
-def test_with_builtin_kept_on_supporting_model():
+def test_with_native_kept_on_supporting_model():
     """On a supporting model, managed tools are kept so the adapter can emit them
     with provider-specific wire-format tweaks."""
 
@@ -2727,7 +2727,7 @@ def test_with_builtin_kept_on_supporting_model():
             return frozenset({ToolSearchTool})
 
     m = ToolSearchTestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search')
+    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search')
     _, prepared = m.prepare_request(
         None,
         ModelRequestParameters(

@@ -781,7 +781,7 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check native tools and handle fallback swap
-        if params.native_tools or any(t.unless_builtin or t.with_builtin for t in params.function_tools):
+        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
             params = self._resolve_native_tool_swap(params)
 
         return model_settings, params
@@ -811,11 +811,11 @@ class Model(ABC, Generic[InterfaceClient]):
 
         Four rules drive the per-tool filter:
 
-        1. `unless_builtin` matches a supported native tool → drop from wire.
-        2. `with_builtin` matches a supported native tool → keep on wire; the adapter
+        1. `unless_native` matches a supported native tool → drop from wire.
+        2. `with_native` matches a supported native tool → keep on wire; the adapter
            applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
            `defer_loading` flag for `ToolSearchTool`).
-        3. `with_builtin` matches an *unsupported* native tool AND `defer_loading=True`
+        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
            → drop from wire (the corpus member is currently undiscovered, so the model has
            no way to call it on this provider).
         4. Otherwise → keep.
@@ -841,7 +841,7 @@ class Model(ABC, Generic[InterfaceClient]):
         supported_ids = {t.unique_id for t in supported_natives}
         unsupported_ids = {t.unique_id for t in unsupported_natives}
         optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-        fallback_ids = {t.unless_builtin for t in params.function_tools if t.unless_builtin}
+        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
 
         without_fallback = unsupported_ids - fallback_ids - optional_ids
         if without_fallback:
@@ -858,10 +858,10 @@ class Model(ABC, Generic[InterfaceClient]):
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
             # Rule 1: drop local fallback when the native tool is supported.
-            if t.unless_builtin and t.unless_builtin in supported_ids:
+            if t.unless_native and t.unless_native in supported_ids:
                 continue
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
-            if t.with_builtin and t.with_builtin not in supported_ids and t.defer_loading:
+            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
                 continue
             # Rules 2 + 4: keep.
             function_tools.append(t)
@@ -871,7 +871,7 @@ class Model(ABC, Generic[InterfaceClient]):
         # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
         # so making `optional` a base-class field doesn't accidentally drop e.g.
         # `WebSearchTool(optional=True)` here on absence of dependents.
-        remaining_corpus_ids = {t.with_builtin for t in function_tools if t.with_builtin}
+        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
         supported_natives = [
             t
             for t in supported_natives

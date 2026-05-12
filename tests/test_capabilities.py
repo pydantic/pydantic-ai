@@ -6516,7 +6516,7 @@ def test_native_or_local_with_explicit_native():
     # get_native_tools returns the explicit native tool
     assert len(cap.get_native_tools()) == 1
     assert isinstance(cap.get_native_tools()[0], WebSearchTool)
-    # get_toolset wraps local with unless_builtin from _native_unique_id()
+    # get_toolset wraps local with unless_native from _native_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
 

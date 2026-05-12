@@ -3,7 +3,7 @@
 `ToolSearchToolset` wraps another toolset to support discovery of tools marked with
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
 know which model will actually serve the request — think `FallbackModel`), the toolset
-emits one entry per deferred tool with both `with_builtin='tool_search'` and the
+emits one entry per deferred tool with both `with_native='tool_search'` and the
 current local visibility on `defer_loading`, then lets
 [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
 specific model's support for the framework-managed tool-search builtin:
@@ -16,7 +16,7 @@ specific model's support for the framework-managed tool-search builtin:
   dropped from the wire; discovered ones (`defer_loading=False`) stay so the model can
   call them by their real name.
 
-`search_tools`, the local discovery function, carries `unless_builtin='tool_search'`
+`search_tools`, the local discovery function, carries `unless_native='tool_search'`
 and is dropped by the adapter when the builtin is supported. When the capability commits
 to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
 constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
@@ -253,7 +253,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Single entry per deferred tool, keyed by its real name. `with_builtin`
+        # Single entry per deferred tool, keyed by its real name. `with_native`
         # stays set across the run (the tool is part of the search corpus regardless of
         # current discovery state); `defer_loading` reflects current visibility — flipped
         # to `False` once the tool is discovered. `Model.prepare_request` reads both
@@ -262,13 +262,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for name, tool in deferred.items():
             managed_def = replace(
                 tool.tool_def,
-                with_builtin=_TOOL_SEARCH_BUILTIN_ID,
+                with_native=_TOOL_SEARCH_BUILTIN_ID,
                 defer_loading=name not in discovered,
             )
             result[name] = replace(tool, tool_def=managed_def)
 
         # Emit `search_tools` whenever the corpus is non-empty and a local fallback is
-        # enabled. It carries `unless_builtin='tool_search'` so the adapter drops it on
+        # enabled. It carries `unless_native='tool_search'` so the adapter drops it on
         # the wire when the builtin is supported (the native path handles discovery
         # server-side); keeping it in the toolset across discovery steps preserves prompt
         # caching, since dropping it once everything is discovered would invalidate the
@@ -296,23 +296,23 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # search function sees, and what the local keywords search indexes.
         corpus = [tool.tool_def for name, tool in deferred.items() if name not in discovered]
 
-        # `unless_builtin` tells the adapter to drop this function tool when the native
+        # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the
         # provider handles search entirely). For a custom callable strategy, the native
         # path on both Anthropic (regular function tool with tool_reference result
         # formatting) and OpenAI (`execution='client'`) still needs the local function
-        # tool to execute the search, so we leave `unless_builtin` unset in that case.
+        # tool to execute the search, so we leave `unless_native` unset in that case.
         #
         # The `enable_fallback=False` path (named-native `'bm25'`/`'regex'`) never reaches
         # here — `get_tools` skips emitting `search_tools` entirely in that case (see the
         # caller).
-        unless_builtin = _TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None
+        unless_native = _TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
             tool_kind='tool-search',
-            unless_builtin=unless_builtin,
+            unless_native=unless_native,
         )
 
         return _SearchTool(

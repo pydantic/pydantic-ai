@@ -105,7 +105,7 @@ class ToolSearchTool(AbstractNativeTool):
 
     A native tool that enables provider-side tool search.
 
-    Tools marked as part of the search corpus (via `with_builtin='tool_search'`
+    Tools marked as part of the search corpus (via `with_native='tool_search'`
     on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
     providers with `defer_loading` on the wire; the provider manages their visibility
     and only exposes them once they've been discovered.

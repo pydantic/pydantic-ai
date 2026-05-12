@@ -750,63 +750,63 @@ def test_ag_ui_app_builtin_tools_kwarg_routed_to_capabilities(monkeypatch: pytes
 
 
 def test_tool_definition_prefer_builtin_constructor_deprecated():
-    """`ToolDefinition(prefer_builtin=...)` warns and routes to `unless_builtin=`."""
+    """`ToolDefinition(prefer_builtin=...)` warns and routes to `unless_native=`."""
     from pydantic_ai.tools import ToolDefinition
 
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_builtin=`',
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_native=`',
     ):
         td = ToolDefinition(name='foo', prefer_builtin='web_search')  # pyright: ignore[reportCallIssue]
-    assert td.unless_builtin == 'web_search'
+    assert td.unless_native == 'web_search'
 
 
 def test_tool_definition_prefer_builtin_attribute_deprecated():
-    """Reading `ToolDefinition.prefer_builtin` warns and returns `unless_builtin`."""
+    """Reading `ToolDefinition.prefer_builtin` warns and returns `unless_native`."""
     from pydantic_ai.tools import ToolDefinition
 
-    td = ToolDefinition(name='foo', unless_builtin='web_search')
+    td = ToolDefinition(name='foo', unless_native='web_search')
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`ToolDefinition\.prefer_builtin` is deprecated, use `ToolDefinition\.unless_builtin`',
+        match=r'`ToolDefinition\.prefer_builtin` is deprecated, use `ToolDefinition\.unless_native`',
     ):
         result = td.prefer_builtin
-    assert result == td.unless_builtin == 'web_search'
+    assert result == td.unless_native == 'web_search'
 
 
 def test_tool_definition_managed_by_builtin_attribute_deprecated():
-    """Reading `ToolDefinition.managed_by_builtin` warns and returns `with_builtin`."""
+    """Reading `ToolDefinition.managed_by_builtin` warns and returns `with_native`."""
     from pydantic_ai.tools import ToolDefinition
 
-    td = ToolDefinition(name='foo', with_builtin='tool_search')
+    td = ToolDefinition(name='foo', with_native='tool_search')
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`ToolDefinition\.managed_by_builtin` is deprecated, use `ToolDefinition\.with_builtin`',
+        match=r'`ToolDefinition\.managed_by_builtin` is deprecated, use `ToolDefinition\.with_native`',
     ):
         result = td.managed_by_builtin
-    assert result == td.with_builtin == 'tool_search'
+    assert result == td.with_native == 'tool_search'
 
 
 def test_tool_definition_prefer_legacy_wins_when_both_kwargs_passed():
-    """`ToolDefinition(unless_builtin=..., prefer_builtin=...)` warns and the legacy `prefer_builtin=` wins.
+    """`ToolDefinition(unless_native=..., prefer_builtin=...)` warns and the legacy `prefer_builtin=` wins.
 
     The dominant trigger for "both kwargs present" is `dataclasses.replace(obj, prefer_builtin=...)`,
-    which silently re-passes every existing field value as `unless_builtin=...`. Letting the
+    which silently re-passes every existing field value as `unless_native=...`. Letting the
     legacy spelling win preserves the explicit value the caller actually typed; the
-    deprecation warning still informs them they should switch to `unless_builtin=`.
+    deprecation warning still informs them they should switch to `unless_native=`.
     """
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_builtin=`',
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_native=`',
     ):
         from pydantic_ai.tools import ToolDefinition
 
         td = ToolDefinition(
             name='foo',
-            unless_builtin='web_search',
+            unless_native='web_search',
             prefer_builtin='code_execution',  # pyright: ignore[reportCallIssue]
         )
-    assert td.unless_builtin == 'code_execution'
+    assert td.unless_native == 'code_execution'
 
 
 def test_model_profile_supported_builtin_tools_constructor_deprecated():
@@ -1278,19 +1278,19 @@ def test_agent_from_spec_with_builtin_or_local_tool_capability_key_deprecated():
 # value win — not the implicit re-passed `obj.<new>` value.
 
 
-def test_tool_definition_replace_with_prefer_builtin_routes_to_unless_builtin():
-    """`replace(td, prefer_builtin=...)` warns AND the legacy value reaches `unless_builtin`."""
+def test_tool_definition_replace_with_prefer_builtin_routes_to_unless_native():
+    """`replace(td, prefer_builtin=...)` warns AND the legacy value reaches `unless_native`."""
     from dataclasses import replace
 
     from pydantic_ai.tools import ToolDefinition
 
-    td = ToolDefinition(name='foo', unless_builtin='web_search')
+    td = ToolDefinition(name='foo', unless_native='web_search')
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_builtin=`',
+        match=r'`ToolDefinition\(prefer_builtin=\.\.\.\)` is deprecated, use `unless_native=`',
     ):
         td2 = replace(td, prefer_builtin='code_execution')
-    assert td2.unless_builtin == 'code_execution'
+    assert td2.unless_native == 'code_execution'
 
 
 def test_model_profile_replace_with_supported_builtin_tools_routes_to_supported_native_tools():
