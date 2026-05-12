@@ -1670,6 +1670,23 @@ def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
     assert wrapped.wrapped is toolset
 
 
+async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
+    """When `_cached_tool_defs` is populated, `DBOSMCPToolset.get_tools` skips the step and returns from cache."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
+    wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
+    wrapper._cached_tool_defs = {  # pyright: ignore[reportPrivateUsage]
+        'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
+    }
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    tools = await wrapper.get_tools(run_context)
+    assert list(tools.keys()) == ['foo']
+    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
+    assert tools['foo'].tool_def.name == 'foo'
+
+
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',

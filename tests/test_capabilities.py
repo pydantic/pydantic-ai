@@ -5235,6 +5235,13 @@ class TestMCPCapability:
         with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
+    def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
+        """A non-toolset `local=` input (e.g. an override URL) is wrapped in `MCPToolset` automatically."""
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', local='https://override.example.com/mcp')
+        assert isinstance(cap.local, MCPToolset)
+
 
 class TestNamedSpecDictRoundTrip:
     """Test that NamedSpec correctly round-trips various argument forms."""
