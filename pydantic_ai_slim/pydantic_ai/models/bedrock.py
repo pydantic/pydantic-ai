@@ -433,9 +433,7 @@ class BedrockConverseModel(Model[BaseClient]):
         provider pick up the new client. Once you've assigned a client here, you're responsible for keeping it valid;
         the provider's client is no longer consulted.
         """
-        if self._client is not None:
-            return cast('BedrockRuntimeClient', self._client)
-        return cast('BedrockRuntimeClient', self._provider.client)
+        return cast('BedrockRuntimeClient', self._client or self._provider.client)
 
     @client.setter
     def client(self, client: BedrockRuntimeClient) -> None:
