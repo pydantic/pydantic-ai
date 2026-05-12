@@ -1210,7 +1210,9 @@ class TestGoogle:
             GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         )
 
-    @pytest.mark.filterwarnings('ignore:.*google-gla.*prefix is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_infer_model_gla(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
             model = infer_embedding_model('google-gla:gemini-embedding-001')
@@ -1227,7 +1229,9 @@ class TestGoogle:
         assert model.system == 'google'
         assert 'generativelanguage.googleapis.com' in model.base_url
 
-    @pytest.mark.filterwarnings('ignore:.*google-vertex.*prefix is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:.*google-vertex.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_infer_model_vertex(self):
         # Google Cloud requires project setup, so we just test the model creation
         # without actually calling the API.

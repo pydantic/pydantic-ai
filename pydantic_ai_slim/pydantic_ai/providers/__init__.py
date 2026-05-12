@@ -16,6 +16,7 @@ import anyio
 import httpx
 from typing_extensions import Self, TypeVar
 
+from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
@@ -123,14 +124,14 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     if provider == 'google-gla':
         warnings.warn(
             "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
         provider = 'google'
     elif provider == 'google-vertex':
         warnings.warn(
             "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
         provider = 'google-cloud'
@@ -273,7 +274,7 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider == 'google-gla':
         warnings.warn(
             "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
         from .google import GoogleProvider
@@ -282,7 +283,7 @@ def infer_provider(provider: str) -> Provider[Any]:
     elif provider == 'google-vertex':
         warnings.warn(
             "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
         from .google_cloud import GoogleCloudProvider

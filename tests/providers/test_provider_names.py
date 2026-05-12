@@ -88,8 +88,12 @@ def empty_env():
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 @pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:.*google-gla.*prefix is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:.*google-vertex.*prefix is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings(
+    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:.*google-vertex.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if provider in ('google-vertex', 'vertexai', 'google-cloud'):
         try:
@@ -105,8 +109,12 @@ def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], except
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-@pytest.mark.filterwarnings('ignore:.*google-gla.*prefix is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:.*google-vertex.*prefix is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings(
+    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:.*google-vertex.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if provider.startswith('gateway/'):
         pytest.skip('Gateway providers are not supported for this test')

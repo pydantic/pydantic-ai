@@ -5,6 +5,7 @@ from typing import Literal
 
 import httpx
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
 
 try:
@@ -55,7 +56,7 @@ class GoogleCloudProvider(GoogleProvider):
         with warnings.catch_warnings():
             # Internal forward; the user-visible deprecations are the legacy prefixes /
             # `GoogleProvider(vertexai=...)` kwarg, not this delegation.
-            warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             super().__init__(  # pyright: ignore[reportCallIssue]
                 vertexai=True,
                 credentials=credentials,

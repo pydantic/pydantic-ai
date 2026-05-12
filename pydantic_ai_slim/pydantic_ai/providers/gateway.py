@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -203,7 +204,7 @@ def gateway_provider(
 
         with warnings.catch_warnings():
             # Internal forward; the gateway-vertex path is reworked in v2.
-            warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             return _with_http_client(
                 GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
             )

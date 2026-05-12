@@ -22,6 +22,8 @@ import warnings
 
 import pytest
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -42,9 +44,9 @@ def _set_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_google_gla_prefix_warns_and_routes_to_google_provider() -> None:
-    with pytest.warns(DeprecationWarning, match=r"'google-gla.' prefix is deprecated"):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-gla.' prefix is deprecated"):
         assert infer_provider_class('google-gla') is GoogleProvider
-    with pytest.warns(DeprecationWarning, match=r"'google-gla.' prefix is deprecated"):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-gla.' prefix is deprecated"):
         provider = infer_provider('google-gla')
     assert type(provider) is GoogleProvider
 
@@ -59,9 +61,9 @@ def test_google_prefix_no_warning() -> None:
 
 
 def test_google_vertex_prefix_warns_and_routes_to_google_cloud_provider() -> None:
-    with pytest.warns(DeprecationWarning, match=r"'google-vertex.' prefix is deprecated"):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-vertex.' prefix is deprecated"):
         assert infer_provider_class('google-vertex') is GoogleCloudProvider
-    with pytest.warns(DeprecationWarning, match=r"'google-vertex.' prefix is deprecated"):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-vertex.' prefix is deprecated"):
         provider = infer_provider('google-vertex')
     assert isinstance(provider, GoogleCloudProvider)
     assert provider.name == 'google-cloud'
@@ -77,7 +79,7 @@ def test_google_cloud_prefix_no_warning() -> None:
 
 
 def test_google_provider_vertexai_true_warns() -> None:
-    with pytest.warns(DeprecationWarning, match=r'Google Cloud .* arguments'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'Google Cloud .* arguments'):
         GoogleProvider(vertexai=True, project='p', location='us-central1')  # pyright: ignore[reportCallIssue]
 
 
@@ -87,12 +89,12 @@ def test_google_provider_vertex_kwargs_warn() -> None:
     The google-genai SDK silently routes to Google Cloud when these kwargs are present, so a user could end
     up on Google Cloud without ever passing `vertexai=True` — we still want to steer them to `GoogleCloudProvider`.
     """
-    with pytest.warns(DeprecationWarning, match=r'Google Cloud .* arguments'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'Google Cloud .* arguments'):
         GoogleProvider(project='p', location='us-central1')
 
 
 def test_google_provider_vertexai_false_warns() -> None:
-    with pytest.warns(DeprecationWarning, match=r'`GoogleProvider\(vertexai=False'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`GoogleProvider\(vertexai=False'):
         GoogleProvider(vertexai=False, api_key='k')
 
 

@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
@@ -240,6 +241,7 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)
@@ -336,7 +338,9 @@ def test_infer_model_profile(model_id: str, is_default: bool):
         ),
     ],
 )
-@pytest.mark.filterwarnings('ignore:.*google-gla.*prefix is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings(
+    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""
     module_path, class_name = provider_path.rsplit('.', 1)

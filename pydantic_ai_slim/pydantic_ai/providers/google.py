@@ -7,6 +7,7 @@ from typing import Literal, overload
 import httpx
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
@@ -120,14 +121,14 @@ class GoogleProvider(Provider[Client]):
                     '(`vertexai=True`, `location=`, `project=`, or `credentials=`) is deprecated and will '
                     'be removed in v2.0. Use `GoogleCloudProvider(...)` instead, which only accepts the '
                     'Google Cloud arguments.',
-                    DeprecationWarning,
+                    PydanticAIDeprecationWarning,
                     stacklevel=2,
                 )
             elif vertexai is False:
                 warnings.warn(
                     '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
                     "drop the explicit `vertexai=False` (it's the default).",
-                    DeprecationWarning,
+                    PydanticAIDeprecationWarning,
                     stacklevel=2,
                 )
 
