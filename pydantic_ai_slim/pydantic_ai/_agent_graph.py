@@ -2102,7 +2102,9 @@ def _narrow_tool_call_parts(
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
     """
-    tool_kind_by_name = {td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind}
+    tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
+        td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
+    }
     if not tool_kind_by_name:
         return response
 
@@ -2114,7 +2116,7 @@ def _narrow_tool_call_parts(
             and part.tool_kind is None
             and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
         ):
-            promoted = _messages.ToolCallPart.narrow_type(replace(part, tool_kind=tool_kind))
+            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
             new_parts.append(promoted)
             changed = True
         else:

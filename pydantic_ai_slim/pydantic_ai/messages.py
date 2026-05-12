@@ -1309,17 +1309,20 @@ class ToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @staticmethod
-    def narrow_type(part: ToolReturnPart) -> ToolReturnPart:
+    def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when `part.tool_kind` is `None` (the user-tool default)
-        or doesn't match a registered subclass. Use this on direct construction;
-        Pydantic deserialization promotes automatically via the discriminated-union dispatch on
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone, dropping the need for an upstream
+        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
+        promotes automatically via the discriminated-union dispatch on
         [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
         """
-        if part.tool_kind is None:
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
             return part
-        narrower = _TOOL_RETURN_NARROWERS.get(part.tool_kind)
+        narrower = _TOOL_RETURN_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 
@@ -1351,17 +1354,19 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @staticmethod
-    def narrow_type(part: BuiltinToolReturnPart) -> BuiltinToolReturnPart:
+    def narrow_type(part: BuiltinToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> BuiltinToolReturnPart:
         """Promote a base `BuiltinToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when `part.tool_kind` is `None` or doesn't match a
-        registered subclass. Use this on direct construction; Pydantic deserialization promotes
-        automatically via the discriminated-union dispatch on
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
+        deserialization promotes automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        if part.tool_kind is None:
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
             return part
-        narrower = _BUILTIN_RETURN_NARROWERS.get(part.tool_kind)
+        narrower = _BUILTIN_RETURN_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 
@@ -1842,17 +1847,20 @@ class ToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
     @staticmethod
-    def narrow_type(part: ToolCallPart) -> ToolCallPart:
+    def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when `part.tool_kind` is `None` (the user-tool default)
-        or doesn't match a registered subclass. Use this on direct construction;
-        Pydantic deserialization promotes automatically via the discriminated-union dispatch on
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone, dropping the need for an upstream
+        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
+        promotes automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        if part.tool_kind is None:
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
             return part
-        narrower = _TOOL_CALL_NARROWERS.get(part.tool_kind)
+        narrower = _TOOL_CALL_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 
@@ -1901,17 +1909,19 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     @staticmethod
-    def narrow_type(part: BuiltinToolCallPart) -> BuiltinToolCallPart:
+    def narrow_type(part: BuiltinToolCallPart, *, tool_kind: ToolPartKind | None = None) -> BuiltinToolCallPart:
         """Promote a base `BuiltinToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when `part.tool_kind` is `None` or doesn't match a
-        registered subclass. Use this on direct construction; Pydantic deserialization promotes
-        automatically via the discriminated-union dispatch on
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
+        deserialization promotes automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        if part.tool_kind is None:
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
             return part
-        narrower = _BUILTIN_CALL_NARROWERS.get(part.tool_kind)
+        narrower = _BUILTIN_CALL_NARROWERS.get(kind)
         return narrower(part) if narrower else part
 
 

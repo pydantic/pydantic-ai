@@ -92,7 +92,7 @@ class ModelResponsePartsManager:
         kind = self._tool_kind_for(part.tool_name)
         if kind is None:
             return part
-        return ToolCallPart.narrow_type(replace(part, tool_kind=kind))
+        return ToolCallPart.narrow_type(part, tool_kind=kind)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
