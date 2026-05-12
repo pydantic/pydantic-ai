@@ -2354,10 +2354,10 @@ def _build_custom_tool_search_replay_blocks(
         return None, None
     refs = [
         BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
-        for match in request_part.content['discovered_tools']
+        for match in request_part.discovered_tools
         if match['name'] in available_tool_names
     ]
-    return refs, request_part.content.get('message')
+    return refs, request_part.message
 
 
 def _build_tool_search_replay_block(
@@ -2385,10 +2385,9 @@ def _build_tool_search_replay_block(
             error_code=err['error_code'],
         )
     else:
-        matches = response_part.content['discovered_tools'] if response_part.content else []
         tool_refs = [
             BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
-            for match in matches
+            for match in response_part.discovered_tools
             if match['name'] in available_tool_names
         ]
         inner = BetaToolSearchToolSearchResultBlockParam(

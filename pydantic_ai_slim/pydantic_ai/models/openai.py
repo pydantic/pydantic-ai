@@ -4198,7 +4198,7 @@ def _build_client_tool_search_output_param(
     `map_tool_definition` the model used at initial send-time, so `strict` honors
     the user's preference and the model profile rather than a replay-only override.
     """
-    discovered = [match['name'] for match in part.content['discovered_tools']] if part.content else []
+    discovered = [match['name'] for match in part.discovered_tools]
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
     tool_params: list[responses.tool_param.ToolParam] = [
         cast('responses.tool_param.ToolParam', map_tool_definition(tool_def))
