@@ -6548,6 +6548,72 @@ async def test_event_stream_output_tool_input_error():
     )
 
 
+async def test_event_stream_output_tool_input_error_with_status_return_part():
+    """Exhaustive output-strategy skip path: a final result already exists, so a second
+    output tool that fails validation is recorded as a status `ToolReturnPart` (not a
+    `RetryPromptPart`). The v6 lifecycle must still complete with `tool-input-error`
+    — not `tool-output-available` — since the call never actually executed.
+
+    Mirrors the `_make_output_status_part` + `_emit_output_tool_events(args_valid=False)`
+    sequence in `_agent_graph.py`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_skipped',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Output tool not used - output failed validation.',
+                tool_call_id='out_skipped',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    # Crucially: no `tool-output-available` for a call that never executed.
+    assert 'tool-output-available' not in chunk_types
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_skipped', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output tool not used - output failed validation.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_tool_call_end_with_provider_metadata_v5():
     """Test that tool-input-start events exclude provider_metadata for SDK v5."""
 

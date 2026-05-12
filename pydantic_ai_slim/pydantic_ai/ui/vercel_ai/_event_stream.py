@@ -328,7 +328,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
-        elif isinstance(part, RetryPromptPart) and invalidated_part is not None:
+        elif invalidated_part is not None:
+            # The original `tool-input-available` was suppressed because `args_valid=False`.
+            # Complete the v6 lifecycle by emitting `tool-input-error` instead of letting the
+            # result chunk (success/output-error) fire — the call never actually executed.
+            # `error_text` comes from `RetryPromptPart.model_response()` on the normal retry
+            # path, or `ToolReturnPart.model_response_str()` on the exhaustive output-strategy
+            # skip path (where the status part says e.g. "Output tool not used …").
             yield ToolInputErrorChunk(
                 tool_call_id=tool_call_id,
                 tool_name=invalidated_part.tool_name,
@@ -338,7 +344,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_name=invalidated_part.provider_name,
                     provider_details=invalidated_part.provider_details,
                 ),
-                error_text=part.model_response(),
+                error_text=part.model_response() if isinstance(part, RetryPromptPart) else part.model_response_str(),
             )
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
