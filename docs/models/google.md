@@ -21,7 +21,7 @@ Two providers wrap those endpoints:
     ```python {title="cancel_google.py" test="skip"}
     from pydantic_ai import Agent
 
-    agent = Agent('google-gla:gemini-3-pro-preview')
+    agent = Agent('google:gemini-3-pro-preview')
 
 
     def should_stop(chunk: str) -> bool:
@@ -43,7 +43,7 @@ Two providers wrap those endpoints:
 
     from pydantic_ai import Agent
 
-    agent = Agent('google-gla:gemini-3-pro-preview')
+    agent = Agent('google:gemini-3-pro-preview')
 
 
     def should_stop(chunk: str) -> bool:

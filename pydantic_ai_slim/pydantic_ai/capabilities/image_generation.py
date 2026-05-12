@@ -40,7 +40,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     image-only API. Examples:
 
     * `'openai-responses:gpt-5.4'` — OpenAI model with image generation support
-    * `'google-gla:gemini-3-pro-image-preview'` — Google image generation model
+    * `'google:gemini-3-pro-image-preview'` — Google image generation model
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a `Model` instance.

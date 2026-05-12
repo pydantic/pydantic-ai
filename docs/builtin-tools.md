@@ -346,7 +346,7 @@ Image generation with Google [image generation models](https://ai.google.dev/gem
 ```py {title="image_generation_google.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('google-gla:gemini-3-pro-image-preview')
+agent = Agent('google:gemini-3-pro-image-preview')
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -419,7 +419,7 @@ To control the aspect ratio when using Gemini image models, include the `ImageGe
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 
 agent = Agent(
-    'google-gla:gemini-3-pro-image-preview',
+    'google:gemini-3-pro-image-preview',
     builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')],
     output_type=BinaryImage,
 )
@@ -436,7 +436,7 @@ To control the image resolution with Google image generation models (starting wi
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 
 agent = Agent(
-    'google-gla:gemini-3-pro-image-preview',
+    'google:gemini-3-pro-image-preview',
     builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')],
     output_type=BinaryImage,
 )
@@ -497,7 +497,7 @@ allowing it to pull up-to-date information from the web.
 ```py {title="web_fetch_basic.py"}
 from pydantic_ai import Agent, WebFetchTool
 
-agent = Agent('google-gla:gemini-3-flash-preview', builtin_tools=[WebFetchTool()])
+agent = Agent('google:gemini-3-flash-preview', builtin_tools=[WebFetchTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)
