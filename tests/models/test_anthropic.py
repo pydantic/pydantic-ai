@@ -645,16 +645,12 @@ def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
         )
 
 
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropic, 'https://api.anthropic.com', id='direct'),
-        pytest.param(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', id='bedrock-mantle'),
-    ],
-)
-def test_anthropic_tool_search_defaults_to_bm25(client_cls: Any, base_url: str):
-    """`bm25` remains the default on the direct API and the (Messages-API-based) Bedrock Mantle client."""
-    param = _tool_search_param(client_cls, base_url, ToolSearchTool())
+def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
+    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
+    param = _tool_search_param(
+        AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
+    )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
 
 
