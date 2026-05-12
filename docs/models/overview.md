@@ -175,7 +175,7 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
-failure (like a truncated response or a failed built-in tool call).
+failure (like a truncated response or a failed native tool call).
 
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
 so you don't need to configure anything for the most common use case.
@@ -335,7 +335,7 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 ### Response-Based Fallback
 
-In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
 !!! note "Non-streaming only"
     Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
@@ -390,11 +390,11 @@ print(result.output)
     catches by default), and empty responses are retried. A response handler is useful for custom
     checks beyond these built-in behaviors.
 
-#### Built-in Tool Failure Example
+#### Native Tool Failure Example
 
-A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
+A more complex use case is when using native tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
 
-```python {title="fallback_on_builtin_tool.py"}
+```python {title="fallback_on_native_tool.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -403,8 +403,8 @@ from pydantic_ai.models.google import GoogleModel
 
 
 def web_fetch_failed(response: ModelResponse) -> bool:
-    """Check if a web_fetch built-in tool failed to retrieve content."""
-    for call, result in response.builtin_tool_calls:
+    """Check if a web_fetch native tool failed to retrieve content."""
+    for call, result in response.native_tool_calls:
         if call.tool_name != 'web_fetch':
             continue
         if not isinstance(result.content, list):
@@ -443,11 +443,11 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
-```python {title="fallback_on_mixed.py" requires="fallback_on_builtin_tool.py"}
+```python {title="fallback_on_mixed.py" requires="fallback_on_native_tool.py"}
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
 
-from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
+from fallback_on_native_tool import anthropic_model, google_model, web_fetch_failed
 
 fallback_model = FallbackModel(
     google_model,

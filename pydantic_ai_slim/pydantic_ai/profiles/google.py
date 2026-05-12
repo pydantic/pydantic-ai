@@ -4,6 +4,7 @@ import warnings
 from dataclasses import dataclass
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._warnings import PydanticAIDeprecationWarning
 from . import ModelProfile
 
 # MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
@@ -25,11 +26,11 @@ class GoogleModelProfile(ModelProfile):
     """
 
     google_supports_tool_combination: bool = False
-    """Whether the model supports combining function declarations with builtin tools and response_schema.
+    """Whether the model supports combining function declarations with native tools and response_schema.
 
     Gemini 3+ supports all tool combinations:
-    - function_declarations + builtin_tools
-    - output_tools (function declarations) + builtin_tools
+    - function_declarations + native_tools
+    - output_tools (function declarations) + native_tools
     - response_schema (NativeOutput) + function_declarations
     See https://ai.google.dev/gemini-api/docs/tool-combination
     """
@@ -38,14 +39,14 @@ class GoogleModelProfile(ModelProfile):
     """Whether the model accepts the `include_server_side_tool_invocations` tool-config field.
 
     When enabled, Gemini emits explicit `tool_call`/`tool_response` parts for server-side
-    builtin tools (Google Search, URL Context, File Search) that we round-trip through
-    [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] /
-    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Pre-Gemini-3 models
+    native tools (Google Search, URL Context, File Search) that we round-trip through
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Pre-Gemini-3 models
     reject the field with `'Tool call context circulation is not enabled'`.
 
     Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
     even though both currently flip on for Gemini 3+ — the former gates the SDK request
-    field, the latter gates which combinations of builtin / function / output tools are
+    field, the latter gates which combinations of native / function / output tools are
     allowed in the same request.
     """
 
@@ -68,7 +69,7 @@ class GoogleModelProfile(ModelProfile):
             warnings.warn(
                 '`google_supports_native_output_with_builtin_tools` is deprecated, '
                 'use `google_supports_tool_combination` instead.',
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
             # New flag wins on conflict — silently overwriting an explicitly-set new value with

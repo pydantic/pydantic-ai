@@ -6,11 +6,12 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
-from pydantic_ai.builtin_tools import MCPServerTool
+from pydantic_ai._utils import install_deprecated_kwarg_alias
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 try:
     from pydantic_ai.mcp import MCPServer
@@ -22,10 +23,10 @@ except ImportError:  # pragma: lax no cover
 
 
 @dataclass(init=False)
-class MCP(BuiltinOrLocalTool[AgentDepsT]):
+class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
-    Uses the model's builtin MCP server support when available, connecting
+    Uses the model's native MCP server support when available, connecting
     directly via HTTP when it isn't.
     """
 
@@ -36,22 +37,22 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
 
     authorization_token: str | None
-    """Authorization header value for MCP server requests. Passed to both builtin and local."""
+    """Authorization header value for MCP server requests. Passed to both native and local."""
 
     headers: dict[str, str] | None
-    """HTTP headers for MCP server requests. Passed to both builtin and local."""
+    """HTTP headers for MCP server requests. Passed to both native and local."""
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Applied to both builtin and local."""
+    """Filter to only these tools. Applied to both native and local."""
 
     description: str | None
-    """Description of the MCP server. Builtin-only; ignored by local tools."""
+    """Description of the MCP server. Native-only; ignored by local tools."""
 
     def __init__(
         self,
         url: str,
         *,
-        builtin: MCPServerTool
+        native: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
         | bool = True,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
@@ -62,7 +63,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         description: str | None = None,
     ) -> None:
         self.url = url
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.id = id
         self.authorization_token = authorization_token
@@ -82,7 +83,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         host = parsed.hostname or ''
         return f'{host}-{slug}' if slug else host or self.url
 
-    def _default_builtin(self) -> MCPServerTool:
+    def _default_native(self) -> MCPServerTool:
         return MCPServerTool(
             id=self._resolved_id,
             url=self.url,
@@ -92,7 +93,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             description=self.description,
         )
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
@@ -117,3 +118,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             allowed = set(self.allowed_tools)
             return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
         return toolset
+
+
+install_deprecated_kwarg_alias(MCP, old='builtin', new='native')

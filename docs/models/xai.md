@@ -75,7 +75,7 @@ agent = Agent(model)
 
 ## X Search
 
-xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.models.xai.XSearch] capability, which configures the underlying `x_search` builtin tool and can be passed alongside any other capabilities on the agent. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
+xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.models.xai.XSearch] capability, which configures the underlying `x_search` native tool and can be passed alongside any other capabilities on the agent. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
 
 ```py {title="xai_x_search.py"}
 from datetime import datetime
@@ -112,9 +112,9 @@ The `XSearch` capability accepts:
 - **`from_date`** / **`to_date`**: restrict results to posts created within the given datetime range (naive datetimes are interpreted as UTC).
 - **`enable_image_understanding`** (default: `False`): analyze images attached to posts.
 - **`enable_video_understanding`** (default: `False`): analyze video content attached to posts.
-- **`include_output`** (default: `False`): include the raw X search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. Without this, the model uses the search results internally but only returns its text summary; enabling it gives programmatic access to the searched posts, sources, and metadata.
+- **`include_output`** (default: `False`): include the raw X search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. Without this, the model uses the search results internally but only returns its text summary; enabling it gives programmatic access to the searched posts, sources, and metadata.
 
-As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] directly via `builtin_tools=[...]` — see the [X Search Tool documentation](../builtin-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
+As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
 
 ## Streaming cancellation
 

@@ -16,9 +16,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
+import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
@@ -26,7 +27,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -48,6 +49,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
+from ..native_tools import AbstractNativeTool
 from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -503,7 +505,12 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
+    native_tools: Annotated[
+        list[AbstractNativeTool],
+        # Accept the pre-rename `builtin_tools` key when validating from a dict (e.g. through
+        # `pydantic.TypeAdapter`). The dump uses the new name only.
+        pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
+    ] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -535,6 +542,16 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
+    @property
+    def builtin_tools(self) -> list[AbstractNativeTool]:
+        """Deprecated: use [`native_tools`][pydantic_ai.models.ModelRequestParameters.native_tools] instead."""
+        warnings.warn(
+            '`ModelRequestParameters.builtin_tools` is deprecated, use `ModelRequestParameters.native_tools` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.native_tools
+
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -553,6 +570,12 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+# Wrap the dataclass-generated `__init__` so direct construction still accepts a
+# deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
+# `validation_alias` on the `native_tools` field above.)
+_utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
 @dataclass(kw_only=True)
@@ -717,11 +740,11 @@ class Model(ABC, Generic[InterfaceClient]):
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
-        if builtin_tools := params.builtin_tools:
-            # Deduplicate builtin tools
+        if native_tools := params.native_tools:
+            # Deduplicate native tools
             params = replace(
                 params,
-                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+                native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
         params = params.with_default_output_mode(self.profile.default_structured_output_mode)
@@ -756,36 +779,36 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
-            supported_types = self.profile.supported_builtin_tools
+        # Check native tools and handle fallback swap
+        if params.native_tools or any(t.prefer_native for t in params.function_tools):
+            supported_types = self.profile.supported_native_tools
 
-            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+            supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+            unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
 
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
-            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+            supported_ids = {t.unique_id for t in supported_natives}
+            unsupported_ids = {t.unique_id for t in unsupported_natives}
+            fallback_ids = {t.prefer_native for t in params.function_tools if t.prefer_native}
 
-            # Error only for unsupported builtins that have no local fallback
+            # Error only for unsupported native tools that have no local fallback
             without_fallback = unsupported_ids - fallback_ids
             if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
+                unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Native tool(s) {unsupported_names} not supported by this model. '
                     f'Supported: {supported_names}. '
                     f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
                     f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
 
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
+            # Remove local fallback tools whose preferred native tool IS supported (model handles natively)
+            # Remove unsupported native tools (their local fallbacks stay)
             function_tools = [
-                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+                t for t in params.function_tools if not t.prefer_native or t.prefer_native not in supported_ids
             ]
-            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+            params = replace(params, native_tools=supported_natives, function_tools=function_tools)
 
         return model_settings, params
 
@@ -832,21 +855,76 @@ class Model(ABC, Generic[InterfaceClient]):
         return ' '.join(result)
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle.
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model class can handle.
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
         """
         return frozenset()
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Deprecated: use [`supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] instead."""
+        warnings.warn(
+            '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.supported_native_tools()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # If a subclass overrides only the deprecated `supported_builtin_tools` classmethod
+        # (and not the new `supported_native_tools`), wire the legacy override through so
+        # the framework still picks up the user's declared tools — with a warning.
+        own = cls.__dict__
+        if 'supported_builtin_tools' in own and 'supported_native_tools' not in own:
+            legacy: Any = own['supported_builtin_tools']
+            warnings.warn(
+                f'{cls.__name__} overrides `supported_builtin_tools()`, which is deprecated — '
+                'override `supported_native_tools()` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+
+            # Promote the legacy override to be this class's `supported_native_tools`, and
+            # replace its `supported_builtin_tools` with a stub that warns and delegates to
+            # the modern method. This way a further subclass overriding only the modern
+            # method still wins when callers reach for the legacy name (mixed-generation
+            # MRO case): `Sub.supported_builtin_tools()` → modern stub → `cls.supported_native_tools()`
+            # → modern override on `Sub`.
+            if isinstance(legacy, classmethod):
+                legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
+            else:
+                legacy_func = legacy
+
+            def _supported_native_tools_via_legacy(
+                _cls: type[Model[Any]],
+                _legacy_func: Any = legacy_func,
+            ) -> frozenset[type[AbstractNativeTool]]:
+                return _legacy_func(_cls)
+
+            def _supported_builtin_tools_delegating(
+                _cls: type[Model[Any]],
+            ) -> frozenset[type[AbstractNativeTool]]:
+                warnings.warn(
+                    '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
+                    PydanticAIDeprecationWarning,
+                    stacklevel=2,
+                )
+                return _cls.supported_native_tools()
+
+            setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
+            setattr(cls, 'supported_builtin_tools', classmethod(_supported_builtin_tools_delegating))
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
 
-        We use this to compute the intersection of the profile's supported_builtin_tools
-        and the model's implemented tools, ensuring model.profile.supported_builtin_tools
-        is the single source of truth for what builtin tools are actually usable.
+        We use this to compute the intersection of the profile's supported_native_tools
+        and the model's implemented tools, ensuring model.profile.supported_native_tools
+        is the single source of truth for what native tools are actually usable.
         """
         _profile = self._profile
         if callable(_profile):
@@ -856,12 +934,12 @@ class Model(ABC, Generic[InterfaceClient]):
             _profile = DEFAULT_PROFILE
 
         # Compute intersection: profile's allowed tools & model's implemented tools
-        model_supported = self.__class__.supported_builtin_tools()
-        profile_supported = _profile.supported_builtin_tools
+        model_supported = self.__class__.supported_native_tools()
+        profile_supported = _profile.supported_native_tools
         effective_tools = profile_supported & model_supported
 
         if effective_tools != profile_supported:
-            _profile = replace(_profile, supported_builtin_tools=effective_tools)
+            _profile = replace(_profile, supported_native_tools=effective_tools)
 
         return _profile
 
@@ -1272,8 +1350,8 @@ def infer_model_profile(model: str) -> ModelProfile:
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
-    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
-    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    `Model.supported_native_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for native tools that a specific `Model` subclass doesn't
     implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
     unregistered model strings) where the actual `Model` class isn't available.
 

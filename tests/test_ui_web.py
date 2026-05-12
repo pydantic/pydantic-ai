@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
-from pydantic_ai.builtin_tools import AbstractBuiltinTool, MCPServerTool
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
@@ -28,7 +28,7 @@ with try_import() as starlette_import_successful:
     from starlette.testclient import TestClient
 
     import pydantic_ai.ui._web.app as app_module
-    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.native_tools import WebSearchTool
     from pydantic_ai.ui._web import create_web_app
     from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -139,7 +139,7 @@ def test_chat_app_configure_endpoint():
     app = create_web_app(
         agent,
         models=['test'],
-        builtin_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool()],
     )
 
     with TestClient(app) as client:
@@ -315,8 +315,8 @@ def test_model_profile():
 
 
 @pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
-def test_supported_builtin_tools(profile_name: str):
-    """Test profile.supported_builtin_tools returns proper tool types."""
+def test_supported_native_tools(profile_name: str):
+    """Test profile.supported_native_tools returns proper tool types."""
     if profile_name == 'base':
         profile: ModelProfile = ModelProfile()
     elif profile_name == 'openai':
@@ -326,9 +326,9 @@ def test_supported_builtin_tools(profile_name: str):
     else:
         profile = GroqModelProfile()
 
-    result = profile.supported_builtin_tools
+    result = profile.supported_native_tools
     assert isinstance(result, frozenset)
-    assert all(issubclass(t, AbstractBuiltinTool) for t in result)
+    assert all(issubclass(t, AbstractNativeTool) for t in result)
 
 
 def test_post_chat_invalid_model():
@@ -362,7 +362,7 @@ def test_post_chat_invalid_model():
 def test_post_chat_invalid_builtin_tool():
     """Test POST /api/chat returns 400 when builtin tool is not in allowed list."""
     agent = Agent(TestModel(custom_output_text='Hello'))
-    app = create_web_app(agent, builtin_tools=[WebSearchTool()])
+    app = create_web_app(agent, native_tools=[WebSearchTool()])
 
     with TestClient(app) as client:
         response = client.post(

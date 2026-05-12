@@ -1,9 +1,9 @@
-"""Tests for Google built-in tools serialization in `_content_model_response`.
+"""Tests for Google native tools serialization in `_content_model_response`.
 
-Covers the message-history echo path that round-trips `BuiltinToolCallPart` /
-`BuiltinToolReturnPart` between the API and the application:
+Covers the message-history echo path that round-trips `NativeToolCallPart` /
+`NativeToolReturnPart` between the API and the application:
 
-- pre-Gemini-3 models drop server-side builtin parts (the API would reject them);
+- pre-Gemini-3 models drop server-side native parts (the API would reject them);
 - `pyd_ai_`-synthesized `tool_call_id`s are dropped on every model;
 - `CodeExecutionTool` uses `executable_code` / `code_execution_result` parts and is
   preserved regardless of the tool-combination capability.
@@ -14,16 +14,16 @@ from __future__ import annotations as _annotations
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.builtin_tools import (
+from pydantic_ai.messages import (
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+)
+from pydantic_ai.native_tools import (
     CodeExecutionTool,
     FileSearchTool,
     WebSearchTool,
-)
-from pydantic_ai.messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
-    ModelResponse,
-    TextPart,
 )
 
 from ...conftest import try_import
@@ -38,28 +38,28 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
 
-def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
+def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
     response = ModelResponse(
         parts=[
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
                 args={'query': 'foo'},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
                 content={'result': 'ok'},
             ),
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=FileSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='file_search_call',
                 args={'query': 'bar'},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=FileSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='file_search_call',
@@ -108,15 +108,15 @@ def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
         }
     )
 
-    builtin_only = ModelResponse(
+    native_only = ModelResponse(
         parts=[
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
                 args={'query': 'foo'},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
@@ -125,10 +125,10 @@ def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(builtin_only, 'google-gla') is None
+    assert _content_model_response(native_only, 'google-gla') is None
 
 
-def test_content_model_response_drops_pyd_ai_synthesized_builtin_tool_ids():
+def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
     """`pyd_ai_`-prefixed `tool_call_id`s come from `grounding_metadata` reconstruction in older versions
     of pydantic-ai (or from streaming chunks before native `tool_call`/`tool_response` parts landed).
     The Gemini API rejects unknown ids, so message histories built that way must drop those parts even
@@ -136,13 +136,13 @@ def test_content_model_response_drops_pyd_ai_synthesized_builtin_tool_ids():
     """
     response = ModelResponse(
         parts=[
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='pyd_ai_legacy_synthesized',
                 args={'queries': ['foo']},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 provider_name='google-gla',
                 tool_call_id='pyd_ai_legacy_synthesized',
@@ -161,13 +161,13 @@ def test_content_model_response_drops_pyd_ai_synthesized_builtin_tool_ids():
 def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_tool_combination: bool):
     response = ModelResponse(
         parts=[
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name=CodeExecutionTool.kind,
                 provider_name='google-gla',
                 tool_call_id='code_exec_call',
                 args={'language': 'PYTHON', 'code': 'print(1)'},
             ),
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name=CodeExecutionTool.kind,
                 provider_name='google-gla',
                 tool_call_id='code_exec_call',

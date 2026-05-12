@@ -165,7 +165,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -204,7 +204,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -251,7 +251,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -298,7 +298,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -343,7 +343,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -394,7 +394,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -433,7 +433,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -463,7 +463,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -511,7 +511,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -552,7 +552,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -602,7 +602,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -994,7 +994,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -1071,7 +1071,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'prefer_native': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1091,7 +1091,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'prefer_native': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1184,7 +1184,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'prefer_native': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1203,7 +1203,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'prefer_native': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1245,7 +1245,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'prefer_native': None,
             'return_schema': None,
             'include_return_schema': None,
         }
