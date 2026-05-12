@@ -1875,6 +1875,30 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     )
 
 
+async def test_response_cost_unknown_model(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    model = InstrumentedModel(MyModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
+
+    def raise_lookup(self: ModelResponse) -> None:
+        raise LookupError('no pricing data')
+
+    monkeypatch.setattr(ModelResponse, 'cost', raise_lookup)
+
+    with warns(
+        snapshot(
+            [
+                'CostCalculationFailedWarning: No pricing data found for gpt-4o-2024-11-20; '
+                '`operation.cost` will not be set. Upgrade `genai-prices` or call '
+                '`pydantic_ai.prices.update_in_background()` to keep pricing up to date.'
+            ]
+        )
+    ):
+        await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
+
+    [span] = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert 'operation.cost' not in span['attributes']
+
+
 def test_message_with_builtin_tool_calls():
     messages: list[ModelMessage] = [
         ModelResponse(
