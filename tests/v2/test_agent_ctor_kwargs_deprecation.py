@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ProcessEventStream
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -49,7 +50,7 @@ async def test_event_stream_handler_kwarg_emits_deprecation_warning():
             pass
 
     with pytest.warns(
-        DeprecationWarning,
+        PydanticAIDeprecationWarning,
         match=r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
         agent = Agent(_make_model(), event_stream_handler=handler)
@@ -65,7 +66,7 @@ async def test_event_stream_handler_kwarg_runs_handler():
         async for event in stream:
             seen.append(event)
 
-    with pytest.warns(DeprecationWarning, match=r'event_stream_handler'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'event_stream_handler'):
         agent = Agent(_make_model(), event_stream_handler=handler)
 
     await agent.run('hello')
@@ -95,7 +96,7 @@ async def _noop_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> 
 
 async def test_prepare_tools_kwarg_emits_deprecation_warning():
     with pytest.warns(
-        DeprecationWarning,
+        PydanticAIDeprecationWarning,
         match=r'`Agent\(prepare_tools=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
         Agent(_make_model(), prepare_tools=_noop_prep)
@@ -104,21 +105,21 @@ async def test_prepare_tools_kwarg_emits_deprecation_warning():
 async def test_prepare_tools_kwarg_warning_points_at_capability():
     """The migration target named in the warning is the `PrepareTools` capability,
     not the `Hooks(prepare_tools=...)` hook — both work but the capability is the cleaner v2 path."""
-    with pytest.warns(DeprecationWarning, match=r'capabilities=\[PrepareTools\(prepare_tools\)\]'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'capabilities=\[PrepareTools\(prepare_tools\)\]'):
         Agent(_make_model(), prepare_tools=_noop_prep)
 
 
 async def test_prepare_tools_kwarg_warning_mentions_function_tools_only_rescoping():
     """PR #4859 narrowed `prepare_tools` from all-tools to function-tools-only. The deprecation
     warning surfaces that so users know they may also need `PrepareOutputTools` to preserve old behavior."""
-    with pytest.warns(DeprecationWarning, match=r'prepare_tools` runs only on function tools'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_tools` runs only on function tools'):
         Agent(_make_model(), prepare_tools=_noop_prep)
 
 
 async def test_prepare_tools_kwarg_remaps_to_capability():
     """The kwarg auto-injects a `PrepareTools` capability into the agent's capability list,
     and the prepare callback fires once during a run."""
-    with pytest.warns(DeprecationWarning, match=r'prepare_tools'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_tools'):
         agent = Agent(_make_model(), prepare_tools=_noop_prep)
 
     assert any(isinstance(cap, PrepareTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
@@ -144,7 +145,7 @@ async def test_prepare_tools_kwarg_vs_capability_equivalence():
         cap_calls.append(len(tool_defs))
         return tool_defs
 
-    with pytest.warns(DeprecationWarning, match=r'prepare_tools'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_tools'):
         kwarg_agent = Agent(_make_model(), tools=[my_tool], prepare_tools=kwarg_prep)
     cap_agent = Agent(_make_model(), tools=[my_tool], capabilities=[PrepareTools(cap_prep)])
 
@@ -160,14 +161,16 @@ async def test_prepare_tools_kwarg_vs_capability_equivalence():
 
 async def test_prepare_output_tools_kwarg_emits_deprecation_warning():
     with pytest.warns(
-        DeprecationWarning,
+        PydanticAIDeprecationWarning,
         match=r'`Agent\(prepare_output_tools=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
         Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)
 
 
 async def test_prepare_output_tools_kwarg_warning_points_at_capability():
-    with pytest.warns(DeprecationWarning, match=r'capabilities=\[PrepareOutputTools\(prepare_output_tools\)\]'):
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'capabilities=\[PrepareOutputTools\(prepare_output_tools\)\]'
+    ):
         Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)
 
 
@@ -180,7 +183,7 @@ async def test_prepare_output_tools_kwarg_remaps_to_capability():
         seen.append(len(tool_defs))
         return tool_defs
 
-    with pytest.warns(DeprecationWarning, match=r'prepare_output_tools'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_output_tools'):
         agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=prep)
 
     assert any(isinstance(cap, PrepareOutputTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
@@ -202,7 +205,7 @@ async def test_prepare_output_tools_kwarg_vs_capability_equivalence():
         cap_calls.append(len(tool_defs))
         return tool_defs
 
-    with pytest.warns(DeprecationWarning, match=r'prepare_output_tools'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_output_tools'):
         kwarg_agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=kwarg_prep)
     cap_agent = Agent(TestModel(), output_type=ToolOutput(str), capabilities=[PrepareOutputTools(cap_prep)])
 

@@ -8325,7 +8325,9 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
-@pytest.mark.filterwarnings(r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings(
+    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_wrapper_agent():
     async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
         pass  # pragma: no cover

@@ -28,6 +28,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -193,7 +194,9 @@ class BasicSpan:
 # which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
 # the handler through capabilities.
 with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', DeprecationWarning)
+    warnings.filterwarnings(
+        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
+    )
     complex_agent = Agent(
         model,
         deps_type=Deps,

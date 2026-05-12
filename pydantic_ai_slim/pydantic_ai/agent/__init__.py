@@ -49,6 +49,7 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
@@ -429,7 +430,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'Use `capabilities=[PrepareTools(prepare_tools)]` instead. '
                 'Note: `prepare_tools` runs only on function tools — to prepare output tools, '
                 'also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`.',
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
             capabilities.append(PrepareTools(prepare_tools))
@@ -437,7 +438,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`Agent(prepare_output_tools=...)` is deprecated and will be removed in v2.0. '
                 'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead.',
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
             capabilities.append(PrepareOutputTools(prepare_output_tools))
@@ -450,7 +451,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`Agent(event_stream_handler=...)` is deprecated and will be removed in v2.0. '
                 'Use `capabilities=[ProcessEventStream(handler)]` instead.',
-                DeprecationWarning,
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
 

@@ -52,6 +52,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -313,7 +314,9 @@ class Response:
 # handler in 1.x (it reads `agent.event_stream_handler`, which is only populated by the kwarg).
 # A capability-based wiring is a v2 follow-up; for now we suppress the deprecation locally.
 with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', DeprecationWarning)
+    warnings.filterwarnings(
+        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
+    )
     complex_agent = Agent(
         model,
         deps_type=Deps,
