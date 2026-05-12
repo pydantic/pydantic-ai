@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
@@ -100,6 +99,3 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.max_uses is not None
-
-
-install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')

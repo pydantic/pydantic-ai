@@ -1,8 +1,6 @@
-import warnings
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
@@ -126,21 +124,3 @@ __all__ = [
     'Hooks',
     'OutputContext',
 ]
-
-
-_RENAMED_CAPABILITIES: dict[str, str] = {
-    'BuiltinTool': 'NativeTool',
-    'BuiltinOrLocalTool': 'NativeOrLocalTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_CAPABILITIES:
-        new_name = _RENAMED_CAPABILITIES[name]
-        warnings.warn(
-            f'`pydantic_ai.capabilities.{name}` is deprecated, use `pydantic_ai.capabilities.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

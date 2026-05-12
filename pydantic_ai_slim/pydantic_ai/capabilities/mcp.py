@@ -6,7 +6,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
@@ -118,6 +117,3 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             allowed = set(self.allowed_tools)
             return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
         return toolset
-
-
-install_deprecated_kwarg_alias(MCP, old='builtin', new='native')

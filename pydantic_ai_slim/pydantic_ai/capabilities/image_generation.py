@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
@@ -198,6 +197,3 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
-
-
-install_deprecated_kwarg_alias(ImageGeneration, old='builtin', new='native')
