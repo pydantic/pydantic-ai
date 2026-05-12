@@ -781,11 +781,7 @@ class ToolDefinition:
     stays in the request when the native tool isn't supported.
     """
 
-    with_native: Annotated[
-        str | None,
-        # Old name was `managed_by_builtin`; keep accepting it for serialized-history backward compat.
-        Field(validation_alias=AliasChoices('with_native', 'managed_by_builtin')),
-    ] = None
+    with_native: str | None = None
     """If set, this tool is kept on the wire when the named native tool is supported, with the
     native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
     on the request param for the framework-managed tool-search native tool).
@@ -884,13 +880,6 @@ class ToolDefinition:
                 stacklevel=2,
             )
             return self.unless_native
-        if name == 'managed_by_builtin':
-            warnings.warn(
-                '`ToolDefinition.managed_by_builtin` is deprecated, use `ToolDefinition.with_native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.with_native
         raise AttributeError(name)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -898,7 +887,6 @@ class ToolDefinition:
 
 _utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
 _utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='managed_by_builtin', new='with_native')
 
 
 _RENAMED_TYPE_ALIASES: dict[str, str] = {
