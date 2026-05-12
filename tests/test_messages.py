@@ -10,8 +10,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -22,6 +20,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RequestUsage,
     RetryPromptPart,
     TextContent,
@@ -557,7 +557,7 @@ def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     ],
 )
 def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert part.has_content()
 
 
@@ -569,7 +569,7 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
     ],
 )
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
 
 
@@ -702,7 +702,7 @@ def test_model_response_convenience_methods():
     assert response.files == snapshot([])
     assert response.images == snapshot([])
     assert response.tool_calls == snapshot([])
-    assert response.builtin_tool_calls == snapshot([])
+    assert response.native_tool_calls == snapshot([])
 
     response = ModelResponse(
         parts=[
@@ -710,9 +710,9 @@ def test_model_response_convenience_methods():
             ThinkingPart(content="And then, call the 'hello_world' tool"),
             TextPart(content="I'm going to"),
             TextPart(content=' generate an image'),
-            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
             FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
-            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            NativeToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
             TextPart(content="I'm going to call"),
             TextPart(content=" the 'hello_world' tool"),
             ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
@@ -731,11 +731,11 @@ And then, call the 'hello_world' tool\
     assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
-    assert response.builtin_tool_calls == snapshot(
+    assert response.native_tool_calls == snapshot(
         [
             (
-                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                NativeToolReturnPart(
                     tool_name='image_generation',
                     content={},
                     tool_call_id='123',

@@ -429,7 +429,7 @@ Agent('test', capabilities=[Thinking(effort='high')])
 
 if not MYPY:
     # pyright can infer AgentDepsT from capabilities; mypy cannot
-    # WebSearch is BuiltinOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
+    # WebSearch is NativeOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
     Agent('test', deps_type=MyDeps, capabilities=[WebSearch()])
     Agent('test', capabilities=[WebSearch()])
 

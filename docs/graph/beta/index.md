@@ -312,7 +312,7 @@ The original graph API (documented in the [main graph page](../../graph.md)) use
 **Advantages:**
 - More concise syntax for simple workflows
 - Explicit control over parallelism with map/broadcast
-- Built-in reducers for common aggregation patterns
+- Native reducers for common aggregation patterns
 - Easier to visualize complex data flows
 
 **Trade-offs:**

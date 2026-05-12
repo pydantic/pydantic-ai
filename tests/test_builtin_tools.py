@@ -4,21 +4,22 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import (
-    AbstractBuiltinTool,
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
+from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     with pytest.raises(UserError):
         await agent.run('What day is tomorrow?')
@@ -26,7 +27,7 @@ async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     with pytest.raises(UserError):
         async with agent.run_stream('What day is tomorrow?'):
@@ -35,7 +36,7 @@ async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow
 
 @pytest.mark.parametrize('model', ('groq', 'openai', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
 
     with pytest.raises(UserError):
         await agent.run('What day is tomorrow?')
@@ -43,7 +44,7 @@ async def test_builtin_tools_not_supported_code_execution(model: Model, allow_mo
 
 @pytest.mark.parametrize('model', ('groq', 'openai', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution_stream(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
 
     with pytest.raises(UserError):
         async with agent.run_stream('What day is tomorrow?'):
@@ -54,7 +55,7 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
     'model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test', 'outlines'), indirect=True
 )
 async def test_builtin_tools_not_supported_file_search(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids=['test-id'])])
+    agent = Agent(model=model, capabilities=[NativeTool(FileSearchTool(file_store_ids=['test-id']))])
 
     with pytest.raises(UserError):
         await agent.run('Search my files')
@@ -62,7 +63,7 @@ async def test_builtin_tools_not_supported_file_search(model: Model, allow_model
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_file_search_stream(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids=['test-id'])])
+    agent = Agent(model=model, capabilities=[NativeTool(FileSearchTool(file_store_ids=['test-id']))])
 
     with pytest.raises(UserError):
         async with agent.run_stream('Search my files'):
@@ -77,7 +78,7 @@ def test_url_context_tool_is_deprecated():
 
 def test_url_context_tool_backward_compatibility():
     """Test that old payloads with 'url_context' kind can be deserialized."""
-    adapter = TypeAdapter(AbstractBuiltinTool)
+    adapter = TypeAdapter(AbstractNativeTool)
 
     # Test 1: Old payload with url_context should deserialize to UrlContextTool (which is deprecated)
     old_payload = {'kind': 'url_context', 'max_uses': 5, 'enable_citations': True}
@@ -105,7 +106,7 @@ def test_url_context_tool_backward_compatibility():
 
 def test_url_context_tool_instance_behavior():
     """Test that UrlContextTool instances work correctly with deprecation warning."""
-    adapter = TypeAdapter(AbstractBuiltinTool)
+    adapter = TypeAdapter(AbstractNativeTool)
 
     # Create instance with deprecation warning
     with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
@@ -125,7 +126,7 @@ def test_url_context_tool_instance_behavior():
 
 def test_url_context_discriminated_union():
     """Test that the discriminated union correctly handles both url_context and web_fetch."""
-    adapter = TypeAdapter(list[AbstractBuiltinTool])
+    adapter = TypeAdapter(list[AbstractNativeTool])
 
     # Mix of old and new payloads
     payloads = [
@@ -148,61 +149,61 @@ def test_url_context_discriminated_union():
     assert results[1].max_uses == 2
 
 
-# --- prefer_builtin swap tests ---
+# --- prefer_native swap tests ---
 
 
-def test_prefer_builtin_model_supports_builtin():
+def test_prefer_native_model_supports_builtin():
     """When model supports the builtin, the fallback function tool is removed."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.tools import ToolDefinition
 
     model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
-    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_builtin='web_search')
+    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
-        builtin_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool()],
     )
     _, result = model.prepare_request(None, params)
     # Builtin is supported → fallback removed, builtin kept
-    assert len(result.builtin_tools) == 1
-    assert isinstance(result.builtin_tools[0], WebSearchTool)
+    assert len(result.native_tools) == 1
+    assert isinstance(result.native_tools[0], WebSearchTool)
     assert len(result.function_tools) == 0
 
 
-def test_prefer_builtin_model_does_not_support():
+def test_prefer_native_model_does_not_support():
     """When model doesn't support the builtin, the builtin is removed and fallback stays."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.profiles import ModelProfile
     from pydantic_ai.tools import ToolDefinition
 
-    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_builtin='web_search')
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
-        builtin_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool()],
     )
     _, result = model.prepare_request(None, params)
     # Builtin not supported → builtin removed, fallback kept
-    assert len(result.builtin_tools) == 0
+    assert len(result.native_tools) == 0
     assert len(result.function_tools) == 1
     assert result.function_tools[0].name == 'my_search'
 
 
-def test_prefer_builtin_no_fallback_raises_error():
+def test_prefer_native_no_fallback_raises_error():
     """Unsupported builtin without fallback still raises UserError."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.profiles import ModelProfile
 
-    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-    params = ModelRequestParameters(builtin_tools=[WebSearchTool()])
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+    params = ModelRequestParameters(native_tools=[WebSearchTool()])
     with pytest.raises(UserError, match='not supported by this model'):
         model.prepare_request(None, params)
 
 
-def test_prefer_builtin_multiple_fallbacks_for_same_builtin():
+def test_prefer_native_multiple_fallbacks_for_same_builtin():
     """Multiple fallback tools for the same builtin are all removed when builtin is supported."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -211,19 +212,19 @@ def test_prefer_builtin_multiple_fallbacks_for_same_builtin():
     model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='search_a', description='A', prefer_builtin='web_search'),
-            ToolDefinition(name='search_b', description='B', prefer_builtin='web_search'),
+            ToolDefinition(name='search_a', description='A', prefer_native='web_search'),
+            ToolDefinition(name='search_b', description='B', prefer_native='web_search'),
             ToolDefinition(name='regular_tool', description='C'),
         ],
-        builtin_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool()],
     )
     _, result = model.prepare_request(None, params)
-    assert len(result.builtin_tools) == 1
+    assert len(result.native_tools) == 1
     # Both fallbacks removed, regular tool kept
     assert [t.name for t in result.function_tools] == ['regular_tool']
 
 
-def test_prefer_builtin_mixed_support():
+def test_prefer_native_mixed_support():
     """Multiple builtins with mixed support — each resolved independently."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -233,18 +234,18 @@ def test_prefer_builtin_mixed_support():
     # Only supports web search, not code execution
     model = FunctionModel(
         lambda m, i: None,  # type: ignore
-        profile=ModelProfile(supported_builtin_tools=frozenset({WebSearchTool})),
+        profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})),
     )
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='local_search', description='Search', prefer_builtin='web_search'),
-            ToolDefinition(name='local_code', description='Code', prefer_builtin='code_execution'),
+            ToolDefinition(name='local_search', description='Search', prefer_native='web_search'),
+            ToolDefinition(name='local_code', description='Code', prefer_native='code_execution'),
         ],
-        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        native_tools=[WebSearchTool(), CodeExecutionTool()],
     )
     _, result = model.prepare_request(None, params)
     # WebSearch: builtin supported → fallback removed, builtin kept
     # CodeExecution: builtin not supported → builtin removed, fallback kept
-    assert len(result.builtin_tools) == 1
-    assert isinstance(result.builtin_tools[0], WebSearchTool)
+    assert len(result.native_tools) == 1
+    assert isinstance(result.native_tools[0], WebSearchTool)
     assert [t.name for t in result.function_tools] == ['local_code']
