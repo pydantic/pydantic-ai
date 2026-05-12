@@ -17,7 +17,11 @@ specific model's support for the framework-managed tool-search builtin:
   call them by their real name.
 
 `search_tools`, the local discovery function, carries `unless_builtin='tool_search'`
-and is dropped by the adapter when the builtin is supported.
+and is dropped by the adapter when the builtin is supported. When the capability commits
+to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
+constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
+way `_resolve_builtin_tool_swap` raises on providers that can't honor the builtin, and
+the wire stays clean (just the native tool) on those that can.
 """
 
 from __future__ import annotations
@@ -219,11 +223,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """Custom description for the `keywords` parameter shown to the model."""
 
     enable_fallback: bool = True
-    """When False, the local `search_tools` function tool is not registered as a fallback
-    for the builtin `ToolSearchTool` — used when the capability commits to a named-native
-    strategy that has no local equivalent (e.g. `'bm25'`, `'regex'`). The wire-side request
-    will error on providers that can't honor the builtin, instead of silently substituting
-    the local keyword algorithm."""
+    """When False, the local `search_tools` function tool is not emitted — used when the
+    capability commits to a named-native strategy that has no local equivalent (e.g.
+    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_builtin_tool_swap` raises
+    on providers that can't honor the builtin, instead of silently substituting the local
+    keyword algorithm; and on providers that DO support it, only the native tool reaches
+    the wire (no redundant `search_tools` slot that could confuse the model)."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
@@ -262,13 +267,20 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             )
             result[name] = replace(tool, tool_def=managed_def)
 
-        # Emit `search_tools` whenever the corpus is non-empty — we always reach this
-        # point with deferred tools to manage. It carries `unless_builtin='tool_search'`
-        # so the adapter drops it when the builtin is supported (the native path handles
-        # discovery server-side). Keeping it across discovery steps preserves prompt
-        # caching: dropping it once everything is discovered would invalidate the
+        # Emit `search_tools` whenever the corpus is non-empty and a local fallback is
+        # enabled. It carries `unless_builtin='tool_search'` so the adapter drops it on
+        # the wire when the builtin is supported (the native path handles discovery
+        # server-side); keeping it in the toolset across discovery steps preserves prompt
+        # caching, since dropping it once everything is discovered would invalidate the
         # request prefix on the very next turn.
-        result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
+        #
+        # When `enable_fallback=False` (named-native strategies `'bm25'`/`'regex'`) we
+        # skip emission entirely: there's no local algorithm to fall back to, and emitting
+        # it would both register a phantom fallback that suppresses the
+        # "unsupported builtin" raise AND leave a redundant function tool on the wire
+        # alongside the native builtin on providers that DO support it.
+        if self.enable_fallback:
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
 
         return result
 
@@ -291,13 +303,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # formatting) and OpenAI (`execution='client'`) still needs the local function
         # tool to execute the search, so we leave `unless_builtin` unset in that case.
         #
-        # `enable_fallback=False` suppresses `unless_builtin` entirely: when the capability
-        # commits to a named-native strategy with no local equivalent (`'bm25'`, `'regex'`),
-        # the function tool must not be treated as a fallback — otherwise an unsupported
-        # model would silently swap the optional builtin for the local algorithm. With no
-        # fallback registered, `_resolve_builtin_tool_swap` raises on unsupported providers
-        # as the capability's docstring promises.
-        unless_builtin = _TOOL_SEARCH_BUILTIN_ID if self.search_fn is None and self.enable_fallback else None
+        # The `enable_fallback=False` path (named-native `'bm25'`/`'regex'`) never reaches
+        # here — `get_tools` skips emitting `search_tools` entirely in that case (see the
+        # caller).
+        unless_builtin = _TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,

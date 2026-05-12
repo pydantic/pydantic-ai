@@ -2631,6 +2631,32 @@ async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
     assert result.output
 
 
+@pytest.mark.parametrize('strategy', ['bm25', 'regex'])
+async def test_tool_search_named_strategy_skips_local_search_tools_emission(strategy: str):
+    """Named-native strategies (``'bm25'``/``'regex'``) construct the toolset with
+    ``enable_fallback=False``; ``get_tools`` then skips emitting the local ``search_tools``
+    function tool entirely. Two effects fall out:
+
+    * On *supported* providers (Anthropic), the wire carries only the native
+      ``tool_search_tool_*`` builtin — no redundant local function tool that could
+      confuse the model or waste a tool slot.
+    * On *unsupported* providers, ``_resolve_builtin_tool_swap`` has no fallback to count
+      against the (non-optional) builtin and raises ``UserError`` as promised."""
+    toolset = _create_function_toolset()
+    cap = ToolSearch(strategy=cast(Any, strategy))
+    wrapped = cap.get_wrapper_toolset(toolset)
+    assert isinstance(wrapped, ToolSearchToolset)
+    assert wrapped.enable_fallback is False
+
+    ctx = _build_run_context(None)
+    tools = await wrapped.get_tools(ctx)
+    # `search_tools` is omitted entirely — the deferred corpus is still exposed by name
+    # (carrying `with_builtin='tool_search'`) so the swap logic can route discovery.
+    assert _SEARCH_TOOLS_NAME not in tools
+    corpus_names = {name for name, t in tools.items() if t.tool_def.with_builtin == 'tool_search'}
+    assert corpus_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
+
+
 async def test_tool_search_keywords_ignores_builtin_support():
     """``strategy='keywords'`` never tries to use a native builtin — the swap is a
     no-op even on models that support ``ToolSearchTool``."""

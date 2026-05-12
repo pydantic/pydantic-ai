@@ -171,18 +171,19 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # For explicit named native strategies (`'bm25'` / `'regex'`) the
         # `ToolSearchTool` builtin is registered with `optional=False` (see
         # `get_builtin_tools` above), so `prepare_request` will raise on a model
-        # without native support. To make that raise actually fire, the toolset
-        # must NOT register the local `search_tools` function as a fallback —
-        # otherwise `_resolve_builtin_tool_swap` would treat the fallback as a
-        # legitimate substitute and silently drop the (non-optional) builtin. We
-        # signal that via `enable_fallback=False` for the named-native strategies;
-        # `None`, `'keywords'`, and callable strategies all have a real local
-        # implementation and keep the fallback wired up.
+        # without native support. To make that raise actually fire — and to avoid
+        # emitting a redundant `search_tools` function tool alongside the native
+        # builtin on supported providers — the toolset must NOT emit the local
+        # `search_tools` function at all in this mode. We signal that via
+        # `enable_fallback=False` for the named-native strategies; `None`,
+        # `'keywords'`, and callable strategies all have a real local
+        # implementation and keep `search_tools` wired up.
         #
-        # Always wrap with `ToolSearchToolset` so the corpus is exposed and
-        # `search_tools` keeps the prompt prefix stable across discovery steps; the
-        # function tool gets dropped on the wire whenever the builtin is supported
-        # via its `unless_builtin='tool_search'` flag.
+        # Always wrap with `ToolSearchToolset` so the deferred corpus is exposed
+        # via the per-tool `with_builtin='tool_search'` flag — the wrapper toolset
+        # is what teaches `_resolve_builtin_tool_swap` which function tools belong
+        # to the tool-search corpus, regardless of whether `search_tools` itself is
+        # emitted.
         return ToolSearchToolset(
             wrapped=toolset,
             search_fn=self._search_fn,
