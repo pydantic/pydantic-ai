@@ -4,7 +4,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -37,6 +37,20 @@ def test_bedrock_provider(env: TestEnv):
     assert isinstance(provider, BedrockProvider)
     assert provider.name == 'bedrock'
     assert provider.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+
+def test_bedrock_provider_client_setter(env: TestEnv):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+    original_client = provider.client
+
+    env.set('AWS_DEFAULT_REGION', 'us-west-2')
+    new_client = BedrockProvider().client
+    provider.client = new_client
+
+    assert provider.client is new_client
+    assert provider.client is not original_client
+    assert provider.base_url == 'https://bedrock-runtime.us-west-2.amazonaws.com'
 
 
 def test_bedrock_provider_bearer_token_env_var(env: TestEnv, mocker: MockerFixture):
@@ -84,7 +98,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     # Bedrock does not support native structured output, even for models that support it via direct Anthropic API
     assert anthropic_profile.supports_json_schema_output is False
     assert anthropic_profile.json_schema_transformer is None
-    assert anthropic_profile.supported_builtin_tools == frozenset()
+    assert anthropic_profile.supported_native_tools == frozenset()
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
@@ -92,7 +106,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.bedrock_supports_tool_choice is True
     assert anthropic_profile.supports_json_schema_output is False
     assert anthropic_profile.json_schema_transformer is None
-    assert anthropic_profile.supported_builtin_tools == frozenset()
+    assert anthropic_profile.supported_native_tools == frozenset()
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
@@ -105,24 +119,24 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert isinstance(mistral_profile, BedrockModelProfile)
     assert mistral_profile.bedrock_tool_result_format == 'json'
-    assert mistral_profile.supported_builtin_tools == frozenset()
+    assert mistral_profile.supported_native_tools == frozenset()
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')
     meta_model_profile_mock.assert_called_with('llama3-8b-instruct')
     assert meta_profile is not None
     assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert meta_profile.supported_builtin_tools == frozenset()
+    assert meta_profile.supported_native_tools == frozenset()
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
     assert cohere_profile is not None
-    assert cohere_profile.supported_builtin_tools == frozenset()
+    assert cohere_profile.supported_native_tools == frozenset()
 
     deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
     assert deepseek_profile.ignore_streamed_leading_whitespace is True
-    assert deepseek_profile.supported_builtin_tools == frozenset()
+    assert deepseek_profile.supported_native_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
@@ -130,7 +144,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.bedrock_supports_tool_choice is True
     assert amazon_profile.bedrock_supports_prompt_caching is True
-    assert amazon_profile.supported_builtin_tools == frozenset()
+    assert amazon_profile.supported_native_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-2-lite')
@@ -138,13 +152,13 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.bedrock_supports_tool_choice is True
     assert amazon_profile.bedrock_supports_prompt_caching is True
-    assert amazon_profile.supported_builtin_tools == frozenset({CodeExecutionTool})
+    assert amazon_profile.supported_native_tools == frozenset({CodeExecutionTool})
 
     amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')
     amazon_model_profile_mock.assert_called_with('titan-text-express')
     assert amazon_profile is not None
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert amazon_profile.supported_builtin_tools == frozenset()
+    assert amazon_profile.supported_native_tools == frozenset()
 
     unknown_model = provider.model_profile('unknown-model')
     assert unknown_model is None

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
@@ -13,10 +14,11 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from .builtin_tools import AbstractBuiltinTool
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .native_tools import AbstractNativeTool
 
 __all__ = (
     'AgentDepsT',
@@ -33,8 +35,8 @@ __all__ = (
     'ToolSelectorFunc',
     'ToolSelector',
     'matches_tool_selector',
-    'AgentBuiltinTool',
-    'BuiltinToolFunc',
+    'AgentNativeTool',
+    'NativeToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -225,19 +227,19 @@ async def matches_tool_selector(
     return tool_def.name in selector
 
 
-BuiltinToolFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+NativeToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractNativeTool | None] | AbstractNativeTool | None
 ]
-"""Definition of a function that can prepare a builtin tool at call time.
+"""Definition of a function that can prepare a native tool at call time.
 
-This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+This is useful if you want to customize the native tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
 """
 
-AgentBuiltinTool: TypeAlias = AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]
-"""A builtin tool or a function that dynamically produces one.
+AgentNativeTool: TypeAlias = AbstractNativeTool | NativeToolFunc[AgentDepsT]
+"""A native tool or a function that dynamically produces one.
 
-This is a convenience alias for `AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]`.
+This is a convenience alias for `AbstractNativeTool | NativeToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
@@ -747,11 +749,11 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    prefer_builtin: str | None = None
-    """If set, this function tool is a local fallback for the builtin tool with the given unique_id.
+    prefer_native: str | None = None
+    """If set, this function tool is a local fallback for the native tool with the given unique_id.
 
-    When the model supports the corresponding builtin tool natively, this function tool is
-    removed from the request. When the model does not support the builtin, the builtin is
+    When the model supports the corresponding native tool, this function tool is
+    removed from the request. When the model does not support the native tool, it is
     removed and this function tool stays.
     """
 
@@ -802,4 +804,36 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated alias for read access to the renamed `prefer_builtin` field.
+        if name == 'prefer_builtin':
+            warnings.warn(
+                '`ToolDefinition.prefer_builtin` is deprecated, use `ToolDefinition.prefer_native` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return self.prefer_native
+        raise AttributeError(name)
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='prefer_native')
+
+
+_RENAMED_TYPE_ALIASES: dict[str, str] = {
+    'BuiltinToolFunc': 'NativeToolFunc',
+    'AgentBuiltinTool': 'AgentNativeTool',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _RENAMED_TYPE_ALIASES:
+        new_name = _RENAMED_TYPE_ALIASES[name]
+        warnings.warn(
+            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new_name]
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

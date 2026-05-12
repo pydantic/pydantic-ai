@@ -10,11 +10,12 @@ from pydantic_core import to_json
 
 from ...messages import (
     BaseToolReturnPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -203,15 +204,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         )
         yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
-    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         return self._handle_tool_call_start(part)
 
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         return self._handle_tool_call_start(part, provider_executed=True)
 
     async def _handle_tool_call_start(
         self,
-        part: ToolCallPart | BuiltinToolCallPart,
+        part: ToolCallPart | NativeToolCallPart,
         tool_call_id: str | None = None,
         provider_executed: bool | None = None,
     ) -> AsyncIterator[BaseChunk]:
@@ -245,7 +246,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
@@ -256,7 +257,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseChunk]:
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
         elif part.outcome == 'failed':
@@ -273,7 +274,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
-        part = event.result
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id
 
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':

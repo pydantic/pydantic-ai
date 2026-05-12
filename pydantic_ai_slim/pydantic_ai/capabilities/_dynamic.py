@@ -23,7 +23,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     The factory is called once per agent run from
     [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The returned
     capability replaces this wrapper for the rest of the run, so its
-    instructions, model settings, toolset, builtin tools, and hooks all flow
+    instructions, model settings, toolset, native tools, and hooks all flow
     through normally.
 
     Pass a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] directly
