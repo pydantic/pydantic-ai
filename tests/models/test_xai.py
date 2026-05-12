@@ -387,6 +387,40 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
     )
 
 
+async def test_xai_thinking_part_followed_by_tool_call_is_grouped(allow_model_requests: None):
+    """Test that a ThinkingPart followed by a ToolCallPart maps to a single assistant message."""
+    response = create_response(content='done')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='I need to use a tool', signature='sig-abc', provider_name='xai'),
+                ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1'),
+            ],
+            finish_reason='tool_call',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call-1'),
+            ]
+        ),
+    ]
+
+    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    xai_messages = kwargs[0]['messages']
+    assistant_msgs = [m for m in xai_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert len(assistant_msgs) == 1
+    assert assistant_msgs[0]['reasoning_content'] == 'I need to use a tool'
+    assert assistant_msgs[0]['encrypted_content'] == 'sig-abc'
+    assert len(assistant_msgs[0]['tool_calls']) == 1
+
+
 async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_requests: None):
     response = create_response(
         content='done',
