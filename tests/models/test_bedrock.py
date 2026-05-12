@@ -4,7 +4,7 @@ import os
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -127,6 +127,16 @@ class _StubBedrockProvider(Provider[Any]):
 async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     assert model.client is bedrock_provider.client
+
+
+async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+    new_client = cast(Any, SimpleNamespace(meta=SimpleNamespace(endpoint_url='https://bedrock-runtime.example.com')))
+    model.client = new_client
+    assert model.client is new_client
+    assert model.base_url == 'https://bedrock-runtime.example.com'
 
 
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
