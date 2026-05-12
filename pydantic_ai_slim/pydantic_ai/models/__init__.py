@@ -800,7 +800,10 @@ class Model(ABC, Generic[InterfaceClient]):
                     f'Supported: {supported_names}. '
                     f'To use these tools with this model, provide a local fallback via '
                     f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
+                    f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+                    f'MCP(local=True), ImageGeneration(local=my_func)). '
+                    f'Some capabilities require an optional install group for the local fallback '
+                    f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
                 )
 
             # Remove local fallback tools whose preferred native tool IS supported (model handles natively)

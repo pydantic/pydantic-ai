@@ -117,7 +117,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        return self._build_local()
+        # The MCP extra may not be installed, in which case the capability still constructs cleanly
+        # — the model just has to support MCP natively (or the user has to opt into `native=True`).
+        try:
+            return self._build_local()
+        except ImportError:
+            return None
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         if name is True:
