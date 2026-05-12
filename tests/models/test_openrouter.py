@@ -1013,6 +1013,17 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
+async def test_openrouter_prepare_request_with_thinking_false() -> None:
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+
+    result, _ = model.prepare_request(OpenRouterModelSettings(thinking=False), ModelRequestParameters())
+
+    assert result is not None
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert extra_body['reasoning'] == {'enabled': False}
+
+
 async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
     """Test prepare_request loop continuation when first tool is not WebSearchTool."""
     from unittest.mock import Mock

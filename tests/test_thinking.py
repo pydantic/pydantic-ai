@@ -686,12 +686,12 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'high'}
 
-    def test_thinking_false_no_reasoning(self):
+    def test_thinking_false_disables_reasoning(self):
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert 'reasoning' not in extra_body
+        assert extra_body.get('reasoning') == {'enabled': False}
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
