@@ -255,7 +255,7 @@ def open_model_request_span(
                     price_calculation = response.cost()
                 except LookupError:
                     pass
-                except Exception as e:  # pragma: no cover — safety net for unexpected genai_prices errors
+                except Exception as e:
                     warnings.warn(
                         f'Failed to get cost from response: {type(e).__name__}: {e}',
                         CostCalculationFailedWarning,
