@@ -8,9 +8,12 @@ from urllib.parse import urlparse
 
 from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
+from opentelemetry.trace import INVALID_SPAN, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 from pydantic_core import to_json
+
+from pydantic_graph._utils import get_traceparent
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -238,13 +241,6 @@ def current_otel_traceparent() -> str | None:
     `start_as_current_span` while the capability chain is executing, which is
     exactly when consumers like `OnlineEvaluation` read the traceparent.
     """
-    # `opentelemetry` and `pydantic_graph` are hard deps of pydantic_ai_slim, so the
-    # imports below cannot fail at runtime — kept lazy only to avoid pulling
-    # OTel into `_instrumentation.py`'s import surface unless the fallback path actually fires.
-    from opentelemetry.trace import INVALID_SPAN, get_current_span
-
-    from pydantic_graph._utils import get_traceparent
-
     span = get_current_span()
     if span is INVALID_SPAN:
         return None
