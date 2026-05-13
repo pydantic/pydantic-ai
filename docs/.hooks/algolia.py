@@ -57,7 +57,7 @@ def on_page_content(html: str, page: Page, config: Config, files: Files) -> str:
     for element in soup.find_all(['autoref']):
         element.decompose()
 
-    # this removes the large source code embeds from Github
+    # this removes the large source code embeds from GitHub
     for element in soup.find_all('details'):
         element.decompose()
 
