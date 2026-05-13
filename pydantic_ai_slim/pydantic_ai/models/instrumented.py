@@ -367,8 +367,10 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
-            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
+            response = await self.wrapped.request(
+                prepared_rc.messages, prepared_rc.model_settings, prepared_rc.model_request_parameters
+            )
             finish(response)
             return response
 
@@ -386,11 +388,14 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
             try:
                 async with self.wrapped.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    prepared_rc.messages,
+                    prepared_rc.model_settings,
+                    prepared_rc.model_request_parameters,
+                    run_context,
                 ) as response_stream:
                     yield response_stream
             finally:

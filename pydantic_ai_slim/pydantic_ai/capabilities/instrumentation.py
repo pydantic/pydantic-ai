@@ -255,12 +255,12 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_parameters):
+        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
             # Stash for `_run_span_end_attributes`: feeding the parameters into
             # `get_instructions` lets it use the canonical `instruction_parts` source
             # (which includes prompted-output template instructions and is properly sorted)
             # instead of falling back to reading `ModelRequest.instructions` from history.
-            self._last_model_request_parameters = prepared_parameters
+            self._last_model_request_parameters = prepared_request_context.model_request_parameters
 
             response = await handler(request_context)
             finish(response)

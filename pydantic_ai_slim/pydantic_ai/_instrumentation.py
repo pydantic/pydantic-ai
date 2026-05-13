@@ -4,7 +4,7 @@ import itertools
 import warnings
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
 
@@ -177,24 +177,26 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Iterator[tuple[Callable[[ModelResponse], None], ModelRequestParameters]]:
-    """Open a `chat <model>` CLIENT span; yield `(finish, prepared_parameters)`.
+) -> Iterator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+    """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
     `InstrumentedModel.request`/`request_stream` (standalone / `direct.model_request*`).
-    Calls `model.prepare_request(...)` internally and exposes `prepared_parameters` to the
-    caller (the agent-flow capability uses it for end-of-run span attributes). `finish(response)`
-    annotates the response with OTel tool-call metadata and records outcome attributes. Token/cost
-    metrics are recorded *after* the span closes so backends that aggregate from span attributes
-    don't double-count.
+    Calls `model.prepare_request(...)` internally and yields a request context with the prepared
+    settings/parameters so callers don't have to re-prepare. `finish(response)` annotates the
+    response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
+    recorded *after* the span closes so backends that aggregate from span attributes don't
+    double-count.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
     #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
     model = request_context.model
-    messages = request_context.messages
     prepared_settings, prepared_parameters = model.prepare_request(
         request_context.model_settings, request_context.model_request_parameters
+    )
+    prepared_request_context = replace(
+        request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters
     )
     operation = 'chat'
     span_name = f'{operation} {model.model_name}'
@@ -268,7 +270,7 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(messages, response, system, span, prepared_parameters)
+                settings.handle_messages(prepared_request_context.messages, response, system, span, prepared_parameters)
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
@@ -283,7 +285,7 @@ def open_model_request_span(
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
-            yield finish, prepared_parameters
+            yield finish, prepared_request_context
     finally:
         if record_metrics:
             record_metrics()
