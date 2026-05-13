@@ -225,7 +225,7 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue]
+    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,
         output_type=Response,
