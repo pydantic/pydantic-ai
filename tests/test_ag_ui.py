@@ -55,6 +55,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
@@ -105,16 +106,18 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ag_ui import (
-        SSE_CONTENT_TYPE,
-        AGUIAdapter,
-        OnCompleteFunc,
-        StateDeps,
-        handle_ag_ui_request,
-        run_ag_ui,
-    )
-    from pydantic_ai.ui.ag_ui import AGUIEventStream
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
+    from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+
+    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
+    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
+    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
+        )
+        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -2355,13 +2358,16 @@ async def test_concurrent_runs() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.filterwarnings(
+    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_to_ag_ui() -> None:
-    """Test the agent.to_ag_ui method."""
+    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
 
     agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
 
     deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)
+    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
         async with httpx.AsyncClient(transport=transport) as client:

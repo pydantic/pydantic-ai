@@ -92,10 +92,10 @@ SamplingMode = Literal['independent', 'correlated']
 """Controls how per-evaluator sample rates interact across evaluators for a single call.
 
 - `'independent'` (default): Each evaluator flips its own coin. With N evaluators each at
-  rate *r*, the probability of *any* evaluation overhead is ``1 − (1−r)^N``.
+  rate *r*, the probability of *any* evaluation overhead is `1 − (1−r)^N`.
 - `'correlated'`: A single random seed is generated per call and shared across evaluators.
-  An evaluator runs when ``call_seed < rate``, so lower-rate evaluators' calls are always
-  a subset of higher-rate ones. The probability of *any* overhead equals ``max(rate_i)``.
+  An evaluator runs when `call_seed < rate`, so lower-rate evaluators' calls are always
+  a subset of higher-rate ones. The probability of *any* overhead equals `max(rate_i)`.
 """
 
 

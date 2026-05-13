@@ -3234,7 +3234,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
         ]
     )
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
 
@@ -5605,17 +5605,17 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                 async with node.stream(run.ctx) as response_stream:
                     async for _ in response_stream:
                         pass
-                    assert response_stream.get().usage == snapshot(
+                    assert response_stream.response.usage == snapshot(
                         RequestUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448})
                     )
-                    assert response_stream.usage() == snapshot(
+                    assert response_stream.usage == snapshot(
                         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                     )
-                    assert run.usage() == snapshot(RunUsage(requests=1))
-                assert run.usage() == snapshot(
+                    assert run.usage == snapshot(RunUsage(requests=1))
+                assert run.usage == snapshot(
                     RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                 )
-    assert run.usage() == snapshot(
+    assert run.usage == snapshot(
         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
     )
 

@@ -897,6 +897,39 @@ def consume_deprecated_instrument(
     return legacy
 
 
+def consume_deprecated_history_processors_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `history_processors=` kwarg, warn, and return `ProcessHistory` capability wrappers.
+
+    Returns a list of [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    `ProcessHistory` is itself a thin wrapper over the `before_model_request` lifecycle hook;
+    new code should prefer either `capabilities=[ProcessHistory(fn)]` or, for richer control,
+    `capabilities=[Hooks(before_model_request=fn)]` directly.
+    """
+    if 'history_processors' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('history_processors')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import ProcessHistory
+
+    warnings.warn(
+        f'`{owner}(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
+        f'Replace with `{owner}(capabilities=[ProcessHistory(fn), ...])`, or hook the '
+        '`before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [ProcessHistory(p) for p in legacy]
+
+
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
 
 

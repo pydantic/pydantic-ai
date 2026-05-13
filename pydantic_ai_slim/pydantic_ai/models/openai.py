@@ -3805,28 +3805,30 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     provide: passing any stateless-only parameter (`message_count_threshold`
     or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
 
-    Example usage::
+    Example usage:
 
-        from pydantic_ai import Agent
-        from pydantic_ai.models.openai import OpenAICompaction
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAICompaction
 
-        # Stateful mode with OpenAI's server-side default threshold:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction()],
-        )
+    # Stateful mode with OpenAI's server-side default threshold:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction()],
+    )
 
-        # Stateful mode with a custom token threshold:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction(token_threshold=100_000)],
-        )
+    # Stateful mode with a custom token threshold:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction(token_threshold=100_000)],
+    )
 
-        # Stateless mode for ZDR environments or explicit control:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction(message_count_threshold=20)],
-        )
+    # Stateless mode for ZDR environments or explicit control:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction(message_count_threshold=20)],
+    )
+    ```
     """
 
     def __init__(

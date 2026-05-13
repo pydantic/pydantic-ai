@@ -1988,15 +1988,17 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
     API parameter. Compaction triggers server-side when input tokens exceed
     the configured threshold.
 
-    Example usage::
+    Example usage:
 
-        from pydantic_ai import Agent
-        from pydantic_ai.models.anthropic import AnthropicCompaction
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicCompaction
 
-        agent = Agent(
-            'anthropic:claude-sonnet-4-6',
-            capabilities=[AnthropicCompaction(token_threshold=100_000)],
-        )
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        capabilities=[AnthropicCompaction(token_threshold=100_000)],
+    )
+    ```
     """
 
     def __init__(

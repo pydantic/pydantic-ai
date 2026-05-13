@@ -483,4 +483,4 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     agent = Agent()
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
