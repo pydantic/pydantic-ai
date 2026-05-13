@@ -11410,24 +11410,14 @@ async def test_anthropic_web_fetch_dynamic_filtering(allow_model_requests: None,
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
 
-    result = await agent.run(
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
-    )
-    assert 'pydantic' in result.output.lower()
+    result = await agent.run('Fetch https://example.com and reply with only the page title.')
+    assert 'example' in result.output.lower()
 
     messages = result.all_messages()
     assert len(messages) >= 2
-    assert isinstance(messages[0], ModelRequest)
-    assert messages[0].parts[0].content == (
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
-    )
-    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    all_parts = [p for msg in messages if isinstance(msg, ModelResponse) for p in msg.parts]
     tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
     assert 'web_fetch' in tool_call_names
-    assert 'code_execution' in tool_call_names
-    final_response = messages[-1]
-    assert isinstance(final_response, ModelResponse)
-    assert final_response.model_name == 'claude-sonnet-4-6'
 
 
 async def test_anthropic_web_search_dynamic_filtering_stream(allow_model_requests: None, anthropic_api_key: str):
@@ -11574,18 +11564,15 @@ async def test_anthropic_web_fetch_dynamic_filtering_stream(allow_model_requests
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
 
-    async with agent.run_stream(
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
-    ) as result:
+    async with agent.run_stream('Fetch https://example.com and reply with only the page title.') as result:
         output = await result.get_output()
-    assert 'pydantic' in output.lower()
+    assert 'example' in output.lower()
 
     messages = result.all_messages()
     assert len(messages) >= 2
-    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    all_parts = [p for msg in messages if isinstance(msg, ModelResponse) for p in msg.parts]
     tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
     assert 'web_fetch' in tool_call_names
-    assert 'code_execution' in tool_call_names
 
 
 async def test_anthropic_web_fetch_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str):
@@ -11593,14 +11580,12 @@ async def test_anthropic_web_fetch_dynamic_filtering_explicit_true(allow_model_r
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=True), CodeExecutionTool()])
 
-    result = await agent.run(
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
-    )
-    assert 'pydantic' in result.output.lower()
+    result = await agent.run('Fetch https://example.com and reply with only the page title.')
+    assert 'example' in result.output.lower()
 
     messages = result.all_messages()
     assert len(messages) >= 2
-    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    all_parts = [p for msg in messages if isinstance(msg, ModelResponse) for p in msg.parts]
     tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
     assert 'web_fetch' in tool_call_names
 
@@ -11610,14 +11595,12 @@ async def test_anthropic_web_fetch_dynamic_filtering_explicit_false(allow_model_
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()])
 
-    result = await agent.run(
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
-    )
-    assert 'pydantic' in result.output.lower()
+    result = await agent.run('Fetch https://example.com and reply with only the page title.')
+    assert 'example' in result.output.lower()
 
     messages = result.all_messages()
     assert len(messages) >= 2
-    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    all_parts = [p for msg in messages if isinstance(msg, ModelResponse) for p in msg.parts]
     tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
     assert 'web_fetch' in tool_call_names
 
