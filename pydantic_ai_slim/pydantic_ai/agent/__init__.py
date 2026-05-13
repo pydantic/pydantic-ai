@@ -408,8 +408,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
         if history_processors:
             warnings.warn(
-                '`history_processors=` is deprecated, use `capabilities=[ProcessHistory(p), ...]` instead.',
-                DeprecationWarning,
+                '`Agent(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
+                'Replace with `Agent(capabilities=[ProcessHistory(fn), ...])`.',
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
 
