@@ -28,7 +28,7 @@ classifiers = [
     'Typing :: Typed',
 ]
 dependencies = [
-    'pydantic-ai-slim>=1.89.1',
+    'pydantic-ai-slim>=1.95.0',
 ]
 
 [project.optional-dependencies]
@@ -140,3 +140,11 @@ exclude_lines = [
     'assert_never',
     'if TYPE_CHECKING:',
 ]
+
+# TEMPORARY: pin pydantic-ai-slim to `main` for pydantic/pydantic-ai#5422
+# (eager-import fix that unbreaks `current_otel_traceparent` inside Temporal
+# workflows). Released `1.95.0` still hangs the all-extras CI on `test_temporal`.
+# Drop this section and bump the `pydantic-ai-slim` floor above once `1.95.1`
+# is on PyPI. See pydantic-ai-harness#232.
+[tool.uv.sources]
+pydantic-ai-slim = { git = 'https://github.com/pydantic/pydantic-ai', subdirectory = 'pydantic_ai_slim', rev = 'main' }

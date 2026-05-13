@@ -12,7 +12,7 @@ fake everything that talks to the network so the test runs in CI without
 - The Hacker News MCP toolset is replaced with a `FunctionToolset` of
   fake functions whose return values come from the public Logfire trace
   linked in the README.
-- `WebSearch(builtin=False, local=...)` skips the default DuckDuckGo
+- `WebSearch(native=False, local=...)` skips the default DuckDuckGo
   fallback so the test doesn't pull `ddgs` and the harness doesn't depend
   on it in CI.
 
@@ -296,20 +296,20 @@ class TestReadmeQuickStart:
             FunctionModel(_model_fn),
             capabilities=[
                 # Wire the fake HN tools through the `MCP` capability the same way
-                # the README does -- `local=` overrides the default FastMCP HTTP
+                # the README does -- `local=` overrides the default MCP HTTP
                 # toolset with our in-process fake, so the test exercises the same
                 # capability composition path as production without any network.
                 # MCP's `__init__` narrows `local` to MCP-specific types, but the
-                # parent `BuiltinOrLocalTool` accepts any `AbstractToolset` at runtime.
+                # parent `NativeOrLocalTool` accepts any `AbstractToolset` at runtime.
                 MCP[None](
                     'https://hn.caseyjhand.com/mcp',
-                    builtin=False,
+                    native=False,
                     local=_make_fake_hn_toolset(),  # pyright: ignore[reportArgumentType]
                 ),
                 # The auto-wrapped Tool would take its name from the function
                 # (`_fake_web_search`); pass `name='web_search'` so the sandbox
                 # exposes it under the same name the model uses.
-                WebSearch[None](builtin=False, local=Tool(_fake_web_search, name='web_search')),
+                WebSearch[None](native=False, local=Tool(_fake_web_search, name='web_search')),
                 CodeMode[None](),
             ],
         )

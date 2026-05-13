@@ -58,15 +58,15 @@ agent = Agent(
         # asyncio.gather, and local filtering -- one model round-trip for N tool calls.
         CodeMode(),
         # Connect to any MCP server -- here, the open-source Hacker News server
-        # (https://github.com/cyanheads/hn-mcp-server). builtin=False forces the
-        # local FastMCP toolset so CodeMode can wrap the tools; without it,
+        # (https://github.com/cyanheads/hn-mcp-server). native=False forces the
+        # local MCP toolset so CodeMode can wrap the tools; without it,
         # providers that natively support MCP server connectors execute the tools
         # server-side and bypass the sandbox.
-        MCP('https://hn.caseyjhand.com/mcp', builtin=False),
-        # Provider-adaptive web search; builtin=False routes through the local
+        MCP('https://hn.caseyjhand.com/mcp', native=False),
+        # Provider-adaptive web search; native=False routes through the local
         # DuckDuckGo fallback (the [duckduckgo] extra above) so CodeMode can batch
         # web searches alongside the HN calls in a single run_code.
-        WebSearch(builtin=False),
+        WebSearch(native=False),
     ],
 )
 
@@ -143,7 +143,7 @@ The Quick start above is deliberately small. Here's the other end of the spectru
 ```python
 import logfire
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, Thinking, WebSearch
+from pydantic_ai.capabilities import MCP, Thinking, ToolSearch, WebSearch
 from pydantic_ai_harness import CodeMode
 
 # Community packages, alphabetical:
@@ -162,9 +162,12 @@ logfire.instrument_pydantic_ai()
 agent = Agent(
     'anthropic:claude-opus-4-7',
     capabilities=[
-        # --- Execution ---
+        # --- Tool execution & discovery ---
         # Wraps every tool into a single run_code, sandboxed by Monty.
         CodeMode(),
+
+        # Progressive tool discovery for large tool sets; discovered tools fold into run_code.
+        ToolSearch(),
 
         # --- Reasoning ---
         # Provider-adaptive thinking; uses native extended thinking on supporting models.
