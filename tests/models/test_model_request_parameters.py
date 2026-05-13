@@ -75,7 +75,9 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_native': None,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }
@@ -83,15 +85,17 @@ def test_model_request_parameters_are_serializable():
             'native_tools': [
                 {
                     'kind': 'web_search',
+                    'optional': False,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution'},
+                {'kind': 'code_execution', 'optional': False},
                 {
                     'kind': 'web_fetch',
+                    'optional': False,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -100,6 +104,7 @@ def test_model_request_parameters_are_serializable():
                 },
                 {
                     'kind': 'image_generation',
+                    'optional': False,
                     'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
@@ -112,9 +117,10 @@ def test_model_request_parameters_are_serializable():
                     'size': '1024x1024',
                     'aspect_ratio': None,
                 },
-                {'kind': 'memory'},
+                {'kind': 'memory', 'optional': False},
                 {
                     'kind': 'mcp_server',
+                    'optional': False,
                     'id': 'deepwiki',
                     'url': 'https://mcp.deepwiki.com/mcp',
                     'authorization_token': None,
@@ -124,6 +130,7 @@ def test_model_request_parameters_are_serializable():
                 },
                 {
                     'kind': 'mcp_server',
+                    'optional': False,
                     'id': 'github',
                     'url': 'https://api.githubcopilot.com/mcp',
                     'authorization_token': None,
@@ -146,7 +153,9 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_native': None,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }

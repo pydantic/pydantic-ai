@@ -663,8 +663,9 @@ Instead of running the entire graph in a single process invocation, we run the g
     )
     from pydantic_ai import Agent, format_as_xml
     from pydantic_ai import ModelMessage
+    from pydantic_ai.capabilities import Instrumentation
 
-    ask_agent = Agent('openai:gpt-5.2', output_type=str, instrument=True)
+    ask_agent = Agent('openai:gpt-5.2', output_type=str, capabilities=[Instrumentation()])
 
 
     @dataclass
@@ -907,7 +908,7 @@ from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-ask_agent = Agent('openai:gpt-5.2', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5.2', output_type=str, capabilities=[Instrumentation()])
 
 
 @dataclass
