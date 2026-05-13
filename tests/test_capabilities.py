@@ -4645,18 +4645,18 @@ class TestWebSearchCapability:
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             WebSearch(native=False, allowed_domains=['example.com'], local='duckduckgo')
 
-    def test_websearch_builtin_false_with_dynamic_filtering_raises(self):
-        """WebSearch(builtin=False, dynamic_filtering=True) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebSearch(builtin=False, dynamic_filtering=True)
+    def test_websearch_native_false_with_dynamic_filtering_raises(self):
+        """WebSearch(native=False, dynamic_filtering=True) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            WebSearch(native=False, dynamic_filtering=True)
 
-    def test_websearch_dynamic_filtering_passed_to_builtin(self):
-        """WebSearch(dynamic_filtering=True) passes the field through to the builtin tool."""
+    def test_websearch_dynamic_filtering_passed_to_native(self):
+        """WebSearch(dynamic_filtering=True) passes the field through to the native tool."""
         cap = WebSearch(dynamic_filtering=True)
-        builtins = cap.get_builtin_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], WebSearchTool)
-        assert builtins[0].dynamic_filtering is True
+        native = cap.get_native_tools()
+        assert len(native) == 1
+        assert isinstance(native[0], WebSearchTool)
+        assert native[0].dynamic_filtering is True
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4727,13 +4727,13 @@ class TestWebFetchCapability:
         assert cap.local is not None
         assert cap.get_toolset() is not None
 
-    def test_webfetch_dynamic_filtering_passed_to_builtin(self):
-        """WebFetch(dynamic_filtering=True) passes the field through to the builtin tool."""
+    def test_webfetch_dynamic_filtering_passed_to_native(self):
+        """WebFetch(dynamic_filtering=True) passes the field through to the native tool."""
         cap = WebFetch(dynamic_filtering=True)
-        builtins = cap.get_builtin_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], WebFetchTool)
-        assert builtins[0].dynamic_filtering is True
+        native = cap.get_native_tools()
+        assert len(native) == 1
+        assert isinstance(native[0], WebFetchTool)
+        assert native[0].dynamic_filtering is True
 
     def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""

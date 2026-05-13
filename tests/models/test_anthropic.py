@@ -11449,7 +11449,7 @@ async def test_anthropic_service_tier_mapping(
 async def test_anthropic_web_search_dynamic_filtering(allow_model_requests: None, anthropic_api_key: str):
     """Auto-detect sends web_search_20260209 when model supports it and CodeExecutionTool is present."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebSearchTool(), CodeExecutionTool()])
 
     result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
     assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
@@ -11495,7 +11495,7 @@ async def test_anthropic_web_search_dynamic_filtering(allow_model_requests: None
 async def test_anthropic_web_fetch_dynamic_filtering(allow_model_requests: None, anthropic_api_key: str):
     """Auto-detect sends web_fetch_20260209 when model supports it and CodeExecutionTool is present."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebFetchTool(), CodeExecutionTool()])
 
     result = await agent.run('Fetch https://example.com and reply with only the page title.')
     assert 'example' in result.output.lower()
@@ -11510,7 +11510,7 @@ async def test_anthropic_web_fetch_dynamic_filtering(allow_model_requests: None,
 async def test_anthropic_web_search_dynamic_filtering_stream(allow_model_requests: None, anthropic_api_key: str):
     """Auto-detect sends web_search_20260209 via streaming when model supports it and CodeExecutionTool is present."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebSearchTool(), CodeExecutionTool()])
 
     async with agent.run_stream('What is the mass of the Sun in kilograms? Reply with only the number.') as result:
         output = await result.get_output()
@@ -11557,7 +11557,7 @@ async def test_anthropic_web_search_dynamic_filtering_stream(allow_model_request
 async def test_anthropic_web_search_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str):
     """Explicit dynamic_filtering=True sends web_search_20260209."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=True), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebSearchTool(dynamic_filtering=True), CodeExecutionTool()])
 
     result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
     assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
@@ -11603,7 +11603,7 @@ async def test_anthropic_web_search_dynamic_filtering_explicit_true(allow_model_
 async def test_anthropic_web_search_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str):
     """Explicit dynamic_filtering=False sends web_search_20250305 even on a supported model."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=False), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebSearchTool(dynamic_filtering=False), CodeExecutionTool()])
 
     result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
     assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
@@ -11649,7 +11649,7 @@ async def test_anthropic_web_search_dynamic_filtering_explicit_false(allow_model
 async def test_anthropic_web_fetch_dynamic_filtering_stream(allow_model_requests: None, anthropic_api_key: str):
     """Auto-detect sends web_fetch_20260209 via streaming when model supports it and CodeExecutionTool is present."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebFetchTool(), CodeExecutionTool()])
 
     async with agent.run_stream('Fetch https://example.com and reply with only the page title.') as result:
         output = await result.get_output()
@@ -11665,7 +11665,7 @@ async def test_anthropic_web_fetch_dynamic_filtering_stream(allow_model_requests
 async def test_anthropic_web_fetch_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str):
     """Explicit dynamic_filtering=True sends web_fetch_20260209."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=True), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebFetchTool(dynamic_filtering=True), CodeExecutionTool()])
 
     result = await agent.run('Fetch https://example.com and reply with only the page title.')
     assert 'example' in result.output.lower()
@@ -11680,7 +11680,7 @@ async def test_anthropic_web_fetch_dynamic_filtering_explicit_true(allow_model_r
 async def test_anthropic_web_fetch_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str):
     """Explicit dynamic_filtering=False sends web_fetch_20250910 even on a supported model."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()])
+    agent = Agent(m, native_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()])
 
     result = await agent.run('Fetch https://example.com and reply with only the page title.')
     assert 'example' in result.output.lower()
@@ -11704,11 +11704,11 @@ async def test_web_search_dynamic_filtering_auto_with_supported_model():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        native_tools=[WebSearchTool(), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11725,11 +11725,11 @@ async def test_web_search_dynamic_filtering_auto_without_code_execution():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool()],
+        native_tools=[WebSearchTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11746,11 +11746,11 @@ async def test_web_search_dynamic_filtering_auto_unsupported_model():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        native_tools=[WebSearchTool(), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11767,11 +11767,11 @@ async def test_web_search_dynamic_filtering_explicit_true():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool(dynamic_filtering=True), CodeExecutionTool()],
+        native_tools=[WebSearchTool(dynamic_filtering=True), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11788,12 +11788,12 @@ async def test_web_search_dynamic_filtering_explicit_true_no_code_execution():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool(dynamic_filtering=True)],
+        native_tools=[WebSearchTool(dynamic_filtering=True)],
         output_tools=[],
     )
 
     with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
-        m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
             [], model_request_parameters, AnthropicModelSettings()
         )
 
@@ -11807,11 +11807,11 @@ async def test_web_search_dynamic_filtering_explicit_false():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebSearchTool(dynamic_filtering=False), CodeExecutionTool()],
+        native_tools=[WebSearchTool(dynamic_filtering=False), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11828,11 +11828,11 @@ async def test_web_fetch_dynamic_filtering_auto_with_supported_model():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool(), CodeExecutionTool()],
+        native_tools=[WebFetchTool(), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, betas = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, betas = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11850,11 +11850,11 @@ async def test_web_fetch_dynamic_filtering_explicit_false():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()],
+        native_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, betas = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, betas = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11872,11 +11872,11 @@ async def test_web_fetch_dynamic_filtering_auto_with_citations():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool(enable_citations=True, max_content_tokens=5000), CodeExecutionTool()],
+        native_tools=[WebFetchTool(enable_citations=True, max_content_tokens=5000), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -11895,12 +11895,12 @@ async def test_web_fetch_dynamic_filtering_explicit_true_no_code_execution():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool(dynamic_filtering=True)],
+        native_tools=[WebFetchTool(dynamic_filtering=True)],
         output_tools=[],
     )
 
     with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
-        m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
             [], model_request_parameters, AnthropicModelSettings()
         )
 
@@ -11914,11 +11914,11 @@ async def test_web_fetch_dynamic_filtering_auto_unsupported_model():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool(), CodeExecutionTool()],
+        native_tools=[WebFetchTool(), CodeExecutionTool()],
         output_tools=[],
     )
 
-    tools, _, betas = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, betas = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
