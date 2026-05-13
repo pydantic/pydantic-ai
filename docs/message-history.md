@@ -398,6 +398,14 @@ custom processing logic.
 Pydantic AI provides the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability that allows
 you to intercept and modify the message history before each model request.
 
+!!! note "`ProcessHistory` is a thin wrapper over `before_model_request`"
+    [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a migration-friendly wrapper
+    around the [`before_model_request`](hooks.md) lifecycle hook. If you want richer control
+    over the message history — access to the full [`RunContext`][pydantic_ai.tools.RunContext]
+    and [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], the ability to short-circuit
+    the model call, etc. — hook the event directly via
+    `capabilities=[Hooks(before_model_request=fn)]`.
+
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.

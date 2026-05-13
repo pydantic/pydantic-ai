@@ -51,7 +51,6 @@ from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
-from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -248,7 +247,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -279,7 +277,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -308,7 +305,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -377,9 +373,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
                 [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
                 and is attached to the agent run span when instrumentation is enabled.
-            history_processors: Optional list of callables to process the message history before sending it to the model.
-                Each processor takes a list of messages and returns a modified list of messages.
-                Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
@@ -404,18 +397,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
-        self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
-        if history_processors:
-            warnings.warn(
-                '`Agent(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
-                'Replace with `Agent(capabilities=[ProcessHistory(fn), ...])`.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
+        legacy_history_processor_capabilities = _utils.consume_deprecated_history_processors_as_capabilities(
+            _deprecated_kwargs, 'Agent'
+        )
+        # `self.history_processors` stays for 1.x users who read it back off the agent (still
+        # part of the public surface even though the kwarg is gone from `__init__`); v2 drops it.
+        self.history_processors: list[HistoryProcessor[AgentDepsT]] = [
+            cap.processor for cap in legacy_history_processor_capabilities
+        ]
 
         capabilities = wrap_capability_funcs(capabilities)
-        for history_processor in self.history_processors:
-            capabilities.append(ProcessHistory(history_processor))
+        capabilities.extend(legacy_history_processor_capabilities)
 
         capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
 
@@ -571,7 +563,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -603,7 +594,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -634,7 +624,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -672,7 +661,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_model_check: Defer model evaluation until first run.
             end_strategy: Strategy for tool calls alongside a final result, overrides spec `end_strategy` if provided.
             metadata: Metadata to store with each run, overrides spec `metadata` if provided.
-            history_processors: Processors for message history.
             event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
 
@@ -684,6 +672,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -749,7 +740,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_model_check=defer_model_check,
             end_strategy=end_strategy if end_strategy is not None else validated_spec.end_strategy,
             metadata=metadata if metadata is not None else validated_spec.metadata,
-            history_processors=history_processors,
             event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
             max_concurrency=max_concurrency,
@@ -783,7 +773,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -816,7 +805,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -848,7 +836,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -867,6 +854,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -896,7 +886,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_model_check=defer_model_check,
             end_strategy=end_strategy,
             metadata=metadata,
-            history_processors=history_processors,
             event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
