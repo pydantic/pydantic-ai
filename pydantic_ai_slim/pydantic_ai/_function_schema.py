@@ -26,6 +26,8 @@ from ._griffe import doc_descriptions
 from ._run_context import RunContext
 from ._utils import (
     check_object_json_schema,
+    get_callable_name,
+    get_callable_qualname,
     is_async_callable,
     is_model_like,
     run_in_executor,
@@ -122,7 +124,9 @@ def function_schema(  # noqa: C901
     Returns:
         A `FunctionSchema` instance.
     """
-    config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
+    function_name = get_callable_name(function, 'function')
+    function_qualname = get_callable_qualname(function, function_name)
+    config = ConfigDict(title=function_name, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     errors: list[str] = []
@@ -133,7 +137,9 @@ def function_schema(  # noqa: C901
         errors.append(str(e))
         sig = signature(lambda: None)
     original_func = function.func if isinstance(function, partial) else function
-    function = cast(Callable[..., Any], function)  # cope with pyright changing the type from the isinstance() check.
+    function = cast(
+        Callable[..., Any], function
+    )  # pyright needs this after the partial narrowing.  # ty: ignore[redundant-cast]
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
@@ -212,7 +218,7 @@ def function_schema(  # noqa: C901
         from .exceptions import UserError
 
         error_details = '\n  '.join(errors)
-        raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
+        raise UserError(f'Error generating schema for {function_qualname}:\n  {error_details}')
 
     core_config = config_wrapper.core_config(None)
 
@@ -223,7 +229,7 @@ def function_schema(  # noqa: C901
         schema,
         function,
         function.__module__,
-        function.__qualname__,
+        function_qualname,
         'validate_call',
         core_config,
         config_wrapper.plugin_settings,
@@ -240,7 +246,7 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
-    name = tool_name or function.__name__
+    name = tool_name or function_name
     checked_json_schema = check_object_json_schema(json_schema)
 
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
@@ -251,8 +257,9 @@ def function_schema(  # noqa: C901
             schema_generator=schema_generator, mode='serialization'
         )
     except (PydanticSchemaGenerationError, PydanticUserError):
+        original_func_qualname = get_callable_qualname(original_func, function_qualname)
         warnings.warn(
-            f'Could not generate return schema for {original_func.__qualname__!r}: '
+            f'Could not generate return schema for {original_func_qualname!r}: '
             f'unsupported return type {return_annotation!r}. Falling back to unconstrained schema.',
             UserWarning,
             stacklevel=2,
@@ -313,7 +320,7 @@ def _build_schema(
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
         td_field = fields[name]
-        if td_field['metadata']['is_model_like']:  # type: ignore
+        if td_field['metadata']['is_model_like']:  # pyright: ignore[reportTypedDictNotRequiredAccess]
             # The JSON schema sent to the model is the model-like parameter's schema directly (unwrapped),
             # so the model generates its fields at the top level rather than inside a redundant wrapper.
             # The validator output is wrapped to `{name: value}` so validated args are always a dict

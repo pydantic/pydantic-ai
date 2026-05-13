@@ -14,6 +14,7 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
+from typing_extensions import Protocol, TypeVar
 
 from pydantic_ai import (
     AbstractToolset,
@@ -46,6 +47,33 @@ from ._toolset import TemporalWrapperToolset, temporalize_toolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
 
+TemporalAgentDepsT = TypeVar('TemporalAgentDepsT', default=None)
+
+
+class TemporalizeToolsetFunc(Protocol[TemporalAgentDepsT]):
+    @overload
+    def __call__(
+        self,
+        toolset: AbstractToolset[TemporalAgentDepsT],
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+        deps_type: type,
+        run_context_type: type[TemporalRunContext[TemporalAgentDepsT]],
+    ) -> AbstractToolset[TemporalAgentDepsT]: ...
+
+    @overload
+    def __call__(
+        self,
+        toolset: AbstractToolset[TemporalAgentDepsT],
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+        deps_type: type,
+        run_context_type: type[TemporalRunContext[TemporalAgentDepsT]],
+        agent: AbstractAgent[TemporalAgentDepsT, Any] | None,
+    ) -> AbstractToolset[TemporalAgentDepsT]: ...
+
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
@@ -68,18 +96,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        temporalize_toolset_func: Callable[
-            [
-                AbstractToolset[AgentDepsT],
-                str,
-                ActivityConfig,
-                dict[str, ActivityConfig | Literal[False]],
-                type[AgentDepsT],
-                type[TemporalRunContext[AgentDepsT]],
-                AbstractAgent[AgentDepsT, Any] | None,
-            ],
-            AbstractToolset[AgentDepsT],
-        ] = temporalize_toolset,
+        temporalize_toolset_func: TemporalizeToolsetFunc[AgentDepsT] = temporalize_toolset,
     ):
         """Wrap an agent to enable it to be used inside a Temporal workflow, by automatically offloading model requests, tool calls, and MCP server communication to Temporal activities.
 
@@ -189,22 +206,32 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            args: tuple[Any, ...] = (
-                toolset,
-                activity_name_prefix,
-                activity_config | toolset_activity_config.get(id, {}),
-                tool_activity_config.get(id, {}),
-                self.deps_type,
-                self.run_context_type,
-            )
+            toolset_activity_config_for_id = activity_config | toolset_activity_config.get(id, {})
+            tool_activity_config_for_id = tool_activity_config.get(id, {})
             # Pass agent if the function accepts it (backward compat with old 6-arg callables)
             positional_kinds = {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
             n_positional = sum(
                 1 for p in inspect.signature(temporalize_toolset_func).parameters.values() if p.kind in positional_kinds
             )
             if n_positional > 6:
-                args = (*args, self.wrapped)
-            toolset = temporalize_toolset_func(*args)
+                toolset = temporalize_toolset_func(
+                    toolset,
+                    activity_name_prefix,
+                    toolset_activity_config_for_id,
+                    tool_activity_config_for_id,
+                    self.deps_type,
+                    self.run_context_type,
+                    self.wrapped,
+                )
+            else:
+                toolset = temporalize_toolset_func(
+                    toolset,
+                    activity_name_prefix,
+                    toolset_activity_config_for_id,
+                    tool_activity_config_for_id,
+                    self.deps_type,
+                    self.run_context_type,
+                )
             if isinstance(toolset, TemporalWrapperToolset):
                 activities.extend(toolset.temporal_activities)
             return toolset

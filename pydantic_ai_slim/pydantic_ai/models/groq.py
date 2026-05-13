@@ -685,10 +685,11 @@ class GroqStreamedResponse(StreamedResponse):
 
                     # Handle the tool calls
                     for dtc in choice.delta.tool_calls or []:
+                        function = dtc.function
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc.index,
-                            tool_name=dtc.function and dtc.function.name,
-                            args=dtc.function and dtc.function.arguments,
+                            tool_name=function.name if function is not None else None,
+                            args=function.arguments if function is not None else None,
                             tool_call_id=dtc.id,
                         )
                         if maybe_event is not None:

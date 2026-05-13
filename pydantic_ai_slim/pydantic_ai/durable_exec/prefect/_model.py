@@ -17,7 +17,7 @@ from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
-from ._types import TaskConfig, default_task_config
+from ._types import TaskConfig, default_task_config, merge_task_configs
 
 
 class PrefectModel(WrapperModel):
@@ -31,7 +31,7 @@ class PrefectModel(WrapperModel):
         event_stream_handler: EventStreamHandler[Any] | None = None,
     ):
         super().__init__(model)
-        self.task_config = default_task_config | (task_config or {})
+        self.task_config = merge_task_configs(default_task_config, task_config)
         self.event_stream_handler = event_stream_handler
 
         @task

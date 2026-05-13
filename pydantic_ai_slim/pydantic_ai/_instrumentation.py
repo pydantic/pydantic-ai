@@ -112,12 +112,19 @@ def model_request_parameters_attributes(
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
     if not event.body:
-        body = {}  # pragma: no cover
+        body: Mapping[str, Any] = {}  # pragma: no cover
     elif isinstance(event.body, Mapping):
         body = event.body
     else:
         body = {'body': event.body}
-    return {**body, **(event.attributes or {})}
+    attributes: Mapping[str, Any] = event.attributes or {}
+    result: dict[str, Any] = {}
+    for key, value in body.items():
+        if isinstance(key, str):
+            result[key] = value
+    for key, value in attributes.items():
+        result[key] = value
+    return result
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:

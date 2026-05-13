@@ -200,8 +200,9 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         new_message_index = self._new_message_index
 
+        attrs: dict[str, str | int | float | bool]
         if settings.version == 1:
-            attrs: dict[str, Any] = {
+            attrs = {
                 'all_messages_events': to_json(
                     [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
                 ).decode()

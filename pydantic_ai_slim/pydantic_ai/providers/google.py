@@ -117,7 +117,8 @@ class GoogleProvider(Provider[Client]):
             # configured on the httpx client. We must set the timeout here to ensure
             # requests actually time out. Read the timeout from the http_client if set,
             # otherwise use the default. The value is converted from seconds to milliseconds.
-            timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
+            read_timeout = http_client.timeout.read
+            timeout_seconds = read_timeout if isinstance(read_timeout, int | float) else DEFAULT_HTTP_TIMEOUT
             timeout_ms = int(timeout_seconds * 1000)
             http_options = HttpOptions(
                 base_url=base_url,

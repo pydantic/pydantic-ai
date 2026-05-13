@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -17,7 +17,7 @@ from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
-from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
@@ -79,6 +79,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
@@ -255,7 +256,7 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 }
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
-_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -455,7 +456,7 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
     Used currently only by Cerebras
     """
     for setting in profile.openai_unsupported_model_settings:
-        model_settings.pop(setting, None)
+        model_settings.pop(setting, None)  # ty: ignore[no-matching-overload]
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1303,7 +1304,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # shouldn't merge multiple texts into one unless you switch models between runs:
             if self.thinkings:
                 for field_name, contents in self.thinkings.items():
-                    message_param[field_name] = '\n\n'.join(contents)
+                    message_param[field_name] = '\n\n'.join(contents)  # ty: ignore[invalid-key]
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -3189,10 +3190,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         for dtc in choice.delta.tool_calls or []:
+            function = dtc.function
             maybe_event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=dtc.index,
-                tool_name=dtc.function and dtc.function.name,
-                args=dtc.function and dtc.function.arguments,
+                tool_name=function.name if function is not None else None,
+                args=function.arguments if function is not None else None,
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:

@@ -8,7 +8,7 @@ from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import PrefectWrapperToolset
-from ._types import TaskConfig, default_task_config
+from ._types import TaskConfig, default_task_config, merge_task_configs
 
 
 class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
@@ -22,7 +22,7 @@ class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
         tool_task_config: dict[str, TaskConfig | None],
     ):
         super().__init__(wrapped)
-        self._task_config = default_task_config | (task_config or {})
+        self._task_config = merge_task_configs(default_task_config, task_config)
         self._tool_task_config = tool_task_config or {}
 
         @task
@@ -45,13 +45,16 @@ class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
     ) -> Any:
         """Call a tool, wrapped as a Prefect task with a descriptive name."""
         # Check if this specific tool has custom config or is disabled
-        tool_specific_config = self._tool_task_config.get(name, default_task_config)
-        if tool_specific_config is None:
-            # None means this tool should not be wrapped as a task
-            return await super().call_tool(name, tool_args, ctx, tool)
+        if name in self._tool_task_config:
+            tool_specific_config = self._tool_task_config[name]
+            if tool_specific_config is None:
+                # None means this tool should not be wrapped as a task
+                return await super().call_tool(name, tool_args, ctx, tool)
+        else:
+            tool_specific_config = None
 
         # Merge tool-specific config with default config
-        merged_config = self._task_config | tool_specific_config
+        merged_config = merge_task_configs(self._task_config, tool_specific_config)
 
         return await self._call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
             name, tool_args, ctx, tool

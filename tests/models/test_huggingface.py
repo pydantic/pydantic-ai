@@ -34,7 +34,8 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import PartStartEvent
+from pydantic_ai.models import DEFAULT_PROFILE, ModelRequestParameters
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -634,6 +635,52 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
         # double check usage matches stream count
         assert result.usage().output_tokens == len(stream)
+
+
+async def test_stream_structured_multiple_tool_deltas_in_chunk() -> None:
+    function_1_name = ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # type: ignore
+        {'name': 'first_tool', 'arguments': None}
+    )
+    function_1_args = ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # type: ignore
+        {'name': None, 'arguments': '{"value": 1}'}
+    )
+    function_2 = ChatCompletionStreamOutputFunction.parse_obj_as_instance(  # type: ignore
+        {'name': 'second_tool', 'arguments': '{}'}
+    )
+    stream = [
+        chunk(
+            [
+                ChatCompletionStreamOutputDelta(
+                    role='assistant',
+                    tool_calls=[
+                        ChatCompletionStreamOutputDeltaToolCall(
+                            id='0', type='function', index=0, function=function_1_name
+                        ),
+                        ChatCompletionStreamOutputDeltaToolCall(
+                            id='0', type='function', index=0, function=function_1_args
+                        ),
+                        ChatCompletionStreamOutputDeltaToolCall(id='1', type='function', index=1, function=function_2),
+                    ],
+                )
+            ]
+        )
+    ]
+    response = HuggingFaceStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='hf-model',
+        _model_profile=DEFAULT_PROFILE,
+        _response=PeekableAsyncStream(MockAsyncStream(iter(stream))),
+        _provider_name='huggingface',
+        _provider_url='https://api-inference.huggingface.co',
+    )
+
+    events = [event async for event in response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+    tool_names: list[str] = []
+    for event in events:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+            tool_names.append(event.part.tool_name)
+
+    assert tool_names == ['first_tool', 'second_tool']
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):

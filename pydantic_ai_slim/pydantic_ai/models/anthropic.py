@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias, cast, overload
 
 import pydantic_core
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
+from typing_extensions import TypeIs, assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -237,6 +237,16 @@ _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
+
+
+def _is_plain_text_media_type(media_type: str) -> TypeIs[Literal['text/plain']]:
+    """Narrow `text/plain` for the Anthropic plain-text source type.
+
+    Ty does not yet infer the literal after a string equality check. The other
+    media-type branches either pass literals already or use SDK types that accept
+    the original media-type string.
+    """
+    return media_type == 'text/plain'
 
 
 @contextmanager
@@ -631,7 +641,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             }
 
         for setting in _ANTHROPIC_SAMPLING_PARAMS:
-            model_settings.pop(setting, None)
+            model_settings.pop(setting, None)  # ty: ignore[no-matching-overload]
 
         if dropped:
             ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
@@ -1798,7 +1808,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 type='document',
             )
-        elif media_type == 'text/plain':
+        elif _is_plain_text_media_type(media_type):
             return BetaRequestDocumentBlockParam(
                 source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
                 type='document',
@@ -1815,15 +1825,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     async def _map_document_url(item: DocumentUrl) -> BetaRequestDocumentBlockParam:
-        if item.media_type == 'application/pdf':
+        media_type = item.media_type
+        if media_type == 'application/pdf':
             if item.force_download:
                 downloaded = await download_item(item, data_format='bytes')
-                return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+                return AnthropicModel._map_binary_data(downloaded['data'], media_type)  # pyright: ignore[reportReturnType]
             return BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
-        elif item.media_type == 'text/plain':
+        elif _is_plain_text_media_type(media_type):
             downloaded_item = await download_item(item, data_format='text')
             return BetaRequestDocumentBlockParam(
-                source=BetaPlainTextSourceParam(data=downloaded_item['data'], media_type=item.media_type, type='text'),
+                source=BetaPlainTextSourceParam(data=downloaded_item['data'], media_type=media_type, type='text'),
                 type='document',
             )
         else:  # pragma: no cover

@@ -62,7 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import resolve_tool_choice
+from ._tool_choice import is_restricted_tool_choice, resolve_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -667,7 +667,7 @@ class GoogleModel(Model[Client]):
         }
 
         allowed_function_names: list[str] = []
-        if isinstance(resolved_tool_choice, tuple):
+        if is_restricted_tool_choice(resolved_tool_choice):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
@@ -675,10 +675,12 @@ class GoogleModel(Model[Client]):
             else:
                 # Use ANY mode with allowed_function_names to force one of the specified tools
                 allowed_function_names = list(tool_names)
+            function_calling_mode = function_calling_config_modes[tool_choice_mode]
         else:
             tool_choice_mode = resolved_tool_choice
+            function_calling_mode = function_calling_config_modes[tool_choice_mode]
 
-        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
+        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_mode}
         if allowed_function_names:
             function_calling_config['allowed_function_names'] = allowed_function_names
         tool_config = ToolConfigDict(function_calling_config=function_calling_config)

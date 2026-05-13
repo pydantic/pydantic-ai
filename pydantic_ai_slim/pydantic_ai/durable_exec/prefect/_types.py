@@ -42,3 +42,11 @@ default_task_config = TaskConfig(
     log_prints=False,
     cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY,
 )
+
+
+def merge_task_configs(*configs: TaskConfig | None) -> TaskConfig:
+    merged = TaskConfig()
+    for config in configs:
+        if config is not None:
+            merged.update(config)
+    return merged

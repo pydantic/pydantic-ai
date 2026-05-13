@@ -512,7 +512,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
-        self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
+        self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]  # ty: ignore[invalid-assignment]
 
         # Capability-contributed toolsets (stored separately for per-run re-extraction)
         cap_toolset = self._root_capability.get_toolset()
@@ -740,7 +740,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         agent = Agent(
             model=effective_model,
-            output_type=effective_output_type,
+            output_type=effective_output_type,  # ty: ignore[invalid-argument-type]
             instructions=merged_instructions or None,
             system_prompt=system_prompt,
             deps_type=deps_type,
@@ -2062,7 +2062,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
                 if dynamic:  # pragma: lax no cover
-                    self._system_prompt_dynamic_functions[func_.__qualname__] = runner
+                    self._system_prompt_dynamic_functions[_utils.get_callable_qualname(func_)] = runner
                 return func_
 
             return decorator

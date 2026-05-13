@@ -365,7 +365,7 @@ def wait_retry_after(
                 except ValueError:
                     # Try parsing as HTTP date
                     try:
-                        retry_time = cast(datetime, parsedate_to_datetime(retry_after))
+                        retry_time = cast(datetime, parsedate_to_datetime(retry_after))  # ty: ignore[redundant-cast]
                         assert isinstance(retry_time, datetime)
                         now = datetime.now(timezone.utc)
                         wait_seconds = (retry_time - now).total_seconds()

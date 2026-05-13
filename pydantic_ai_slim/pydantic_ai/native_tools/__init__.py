@@ -97,8 +97,8 @@ class AbstractNativeTool(ABC):
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
-            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
-            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
+            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]  # ty: ignore[invalid-type-form]
+            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007  # ty: ignore[invalid-type-form]
 
         return handler(tools_type)
 
@@ -611,7 +611,7 @@ from . import _tool_search as _tool_search  # noqa: E402
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractNativeTool) -> str:
     if isinstance(tool_data, dict):
-        return tool_data.get('kind', AbstractNativeTool.kind)
+        return tool_data.get('kind', AbstractNativeTool.kind)  # ty: ignore[no-matching-overload]
     else:
         return tool_data.kind
 

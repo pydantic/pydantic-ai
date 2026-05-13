@@ -122,7 +122,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         inputs, settings = self.prepare_embed(inputs, settings)
-        settings = cast(OpenAIEmbeddingSettings, settings)
+        settings = cast(OpenAIEmbeddingSettings, settings)  # ty: ignore[redundant-cast]
 
         try:
             response = await self._client.embeddings.create(

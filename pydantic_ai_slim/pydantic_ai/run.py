@@ -222,7 +222,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
-            if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
+            if isinstance(first_task.inputs, BaseNode):  # pragma: no branch  # ty: ignore[unresolved-attribute]
                 base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
                     _agent_graph.GraphAgentState,
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
@@ -231,7 +231,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):
-            return End(task.value)
+            return End(task.value)  # ty: ignore[invalid-return-type]
         raise exceptions.AgentRunError(f'Unexpected node: {task}')  # pragma: no cover
 
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
@@ -245,7 +245,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         be updated so that `output` and `next_node` reflect the hook's decision.
         """
         if isinstance(result, End):
-            self._graph_run.override_next(EndMarker(result.data))
+            self._graph_run.override_next(EndMarker(result.data))  # ty: ignore[invalid-argument-type]
         else:
             self._graph_run.override_next([self._node_to_task(result)])
 

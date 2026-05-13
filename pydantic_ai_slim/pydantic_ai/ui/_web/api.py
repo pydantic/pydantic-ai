@@ -120,7 +120,11 @@ def create_api_app(
     all_models: list[tuple[str | None, Model | str]] = []
     if agent.model is not None:
         all_models.append((None, agent.model))
-    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
+    items: list[tuple[str | None, Model | str]]
+    if isinstance(models, Mapping):
+        items = list(models.items())  # ty: ignore[invalid-assignment]
+    else:
+        items = [(None, m) for m in (models or [])]
     all_models.extend(items)
 
     seen_model_ids: set[str] = set()

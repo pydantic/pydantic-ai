@@ -186,7 +186,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
                 )
                 return self.get_native_tools()
 
-            cls.get_builtin_tools = _get_builtin_tools_delegating
+            cls.get_builtin_tools = _get_builtin_tools_delegating  # ty: ignore[invalid-assignment]
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.

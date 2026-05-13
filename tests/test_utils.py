@@ -10,12 +10,16 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
 
 import pytest
+from opentelemetry._logs import LogRecord
 
 from pydantic_ai import UserError
+from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    get_callable_name,
+    get_callable_qualname,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -118,6 +122,31 @@ def test_check_object_json_schema():
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
     with pytest.raises(UserError, match='^Schema must be an object$'):
         check_object_json_schema(array_schema)
+
+
+def test_event_to_dict_keeps_string_body_keys_and_attributes() -> None:
+    body: dict[object, object] = {'body-key': 1, 2: 'ignored'}
+    event = LogRecord(  # pyright: ignore[reportCallIssue]
+        body=body,  # pyright: ignore[reportArgumentType]
+        attributes={'attr-1': 2, 'attr-2': 3},
+    )
+
+    assert event_to_dict(event) == {'body-key': 1, 'attr-1': 2, 'attr-2': 3}
+
+
+def test_callable_name_helpers_handle_partials_and_defaults() -> None:
+    def named_function() -> None:
+        pass
+
+    partial_function = functools.partial(named_function)
+    anonymous_object = object()
+    expected_qualname = 'test_callable_name_helpers_handle_partials_and_defaults.<locals>.named_function'
+
+    assert get_callable_name(partial_function, 'fallback') == 'named_function'
+    assert get_callable_name(anonymous_object, 'fallback') == 'fallback'
+    assert get_callable_qualname(partial_function) == expected_qualname
+    assert get_callable_qualname(anonymous_object, 'fallback') == 'fallback'
+    assert get_callable_qualname(anonymous_object) == 'object'
 
 
 @pytest.mark.parametrize('peek_first', [True, False])

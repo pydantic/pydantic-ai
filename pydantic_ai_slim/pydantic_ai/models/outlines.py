@@ -320,7 +320,7 @@ class OutlinesModel(Model):
 
     def format_inference_kwargs(self, model_settings: ModelSettings | None) -> dict[str, Any]:
         """Format the model settings for the inference kwargs."""
-        settings_dict: dict[str, Any] = dict(model_settings) if model_settings else {}
+        settings_dict: dict[str, Any] = {**model_settings} if model_settings else {}
 
         if isinstance(self.model, Transformers):
             settings_dict = self._format_transformers_inference_kwargs(settings_dict)

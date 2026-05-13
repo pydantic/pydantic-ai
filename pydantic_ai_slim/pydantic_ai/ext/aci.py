@@ -7,7 +7,7 @@ from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
 
 try:
-    from aci import ACI
+    from aci import ACI  # ty: ignore[unresolved-import]
 except ImportError as _import_error:
     raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
 

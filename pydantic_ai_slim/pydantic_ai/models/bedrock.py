@@ -940,7 +940,9 @@ class BedrockConverseModel(Model[BaseClient]):
                             and item.signature
                             and profile.bedrock_send_back_thinking_parts
                         ):
-                            reasoning_content: ReasoningContentBlockOutputTypeDef
+                            # Ty does not preserve the nested TypedDict shape across these branch
+                            # assignments.
+                            reasoning_content: ReasoningContentBlockOutputTypeDef  # ty: ignore[invalid-declaration]
                             if item.id == 'redacted_content':
                                 reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
@@ -950,9 +952,9 @@ class BedrockConverseModel(Model[BaseClient]):
                                     'reasoningText': {
                                         'text': item.content,
                                         'signature': item.signature,
-                                    }
+                                    },
                                 }
-                            content.append({'reasoningContent': reasoning_content})
+                            content.append({'reasoningContent': reasoning_content})  # ty: ignore[invalid-argument-type]
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})

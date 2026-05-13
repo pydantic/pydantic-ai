@@ -94,6 +94,22 @@ class ToolSearchArgs(TypedDict):
     """
 
 
+def _typed_tool_search_args(args: str | ToolSearchArgs | None) -> ToolSearchArgs | None:
+    if args is None:
+        return None
+    if isinstance(args, dict):
+        return args
+    if not isinstance(args, str):
+        return None
+    try:
+        parsed = pydantic_core.from_json(args)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return cast('ToolSearchArgs', parsed)
+
+
 class ToolSearchReturnContent(TypedDict):
     """Typed return value of the framework-managed tool-search builtin.
 
@@ -162,17 +178,7 @@ class NativeToolSearchCallPart(NativeToolCallPart):
         in-progress JSON string the model hasn't finished emitting. For raw
         string-tolerant access, use the inherited `args_as_dict()`.
         """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+        return _typed_tool_search_args(self.args)
 
     @property
     def queries(self) -> list[str]:
@@ -284,17 +290,7 @@ class ToolSearchCallPart(ToolCallPart):
         in-progress JSON string the model hasn't finished emitting. For raw
         string-tolerant access, use the inherited `args_as_dict()`.
         """
-        if self.args is None:
-            return None
-        if isinstance(self.args, dict):
-            return self.args
-        try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
+        return _typed_tool_search_args(self.args)
 
     @property
     def queries(self) -> list[str]:

@@ -981,7 +981,10 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
-        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+        content: Any = []
+        for part in self.otel_message_parts(settings):
+            part_content = dict(part)
+            content.append({'kind': part_content.pop('type'), **part_content})
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
