@@ -472,7 +472,7 @@ def _has_instrumentation_capability(agent: Agent[Any, Any]) -> bool:
 
 def test_agent_from_spec_instrument():
     """The deprecated spec `instrument` field bridges to an `Instrumentation` capability."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`instrument` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'instrument': True})
     assert _has_instrumentation_capability(agent)
 

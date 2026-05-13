@@ -3830,6 +3830,39 @@ def test_instrumentation_capability_explicit(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrument_all_skipped_when_capability_already_present(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """`Agent.instrument_all(...)` must not stack a second `Instrumentation` capability when the
+    user already added one via `capabilities=[...]` — otherwise spans would be emitted twice.
+
+    Guarded by the `has_capability_type(..., InstrumentationCap)` check in `Agent.iter`.
+    """
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+
+    Agent.instrument_all(True)
+    try:
+        agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+        result = agent.run_sync('Hello')
+        assert result.output == snapshot('success (no tool calls)')
+
+        summary = get_logfire_summary()
+        # One `agent run` span, not two.
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'agent run',
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                }
+            ]
+        )
+    finally:
+        Agent.instrument_all(False)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_agent_with_user_provided_instrumented_model(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:

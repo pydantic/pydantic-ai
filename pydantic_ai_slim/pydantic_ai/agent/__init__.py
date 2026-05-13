@@ -928,9 +928,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def instrument(self) -> InstrumentationSettings | bool | None:
-        """Deprecated: add an `Instrumentation` capability to `capabilities=[...]` instead."""
+        """Deprecated: use `capabilities=[Instrumentation(...)]` instead."""
         warnings.warn(
-            '`Agent.instrument` is deprecated, add an `Instrumentation` capability to `capabilities=[...]` instead.',
+            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )
@@ -939,7 +939,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     @instrument.setter
     def instrument(self, value: InstrumentationSettings | bool | None) -> None:
         warnings.warn(
-            '`Agent.instrument` is deprecated, add an `Instrumentation` capability to `capabilities=[...]` instead.',
+            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )

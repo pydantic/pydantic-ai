@@ -78,7 +78,7 @@ class AgentSpec(BaseModel):
     def _warn_instrument_deprecation(self) -> Self:
         if 'instrument' in self.model_fields_set:
             warnings.warn(
-                '`instrument` is deprecated. Add an `Instrumentation` entry to `capabilities` instead. '
+                '`AgentSpec.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead. '
                 'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,

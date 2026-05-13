@@ -55,8 +55,8 @@ __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
 
 @deprecated(
-    '`pydantic_ai.models.instrumented.instrument_model` is deprecated; '
-    "add `Instrumentation` to your agent's `capabilities=[...]` instead. "
+    '`pydantic_ai.models.instrumented.instrument_model` is deprecated, '
+    'use `capabilities=[Instrumentation(...)]` instead. '
     'This helper will be removed in v2.',
     category=PydanticAIDeprecationWarning,
 )
@@ -359,8 +359,8 @@ class InstrumentationSettings:
 
 
 @deprecated(
-    '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated; '
-    "add `Instrumentation` to your agent's `capabilities=[...]` instead. "
+    '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated, '
+    'use `capabilities=[Instrumentation(...)]` instead. '
     'The class will be removed in v2.',
     category=PydanticAIDeprecationWarning,
 )
