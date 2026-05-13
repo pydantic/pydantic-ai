@@ -148,7 +148,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         pass
                     except Exception as e:  # pragma: no cover
                         warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning,
+                            stacklevel=2,
                         )
 
                     if not span.is_recording():

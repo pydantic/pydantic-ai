@@ -442,6 +442,7 @@ def _drop_sampling_params_for_reasoning(
             f'Sampling parameters {dropped} are not supported when reasoning is enabled. '
             'These settings will be ignored.',
             UserWarning,
+            stacklevel=2,
         )
 
     for k in SAMPLING_PARAMS:
@@ -2249,6 +2250,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             warnings.warn(
                 '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
             reasoning_summary = reasoning_generate_summary
 
@@ -3430,6 +3432,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         warnings.warn(  # pragma: no cover
                             f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
                             UserWarning,
+                            stacklevel=2,
                         )
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
@@ -3738,6 +3741,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     warnings.warn(
                         f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                         UserWarning,
+                        stacklevel=2,
                     )
 
             if self._refusal_text:
