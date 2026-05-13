@@ -132,7 +132,7 @@ agent = Agent('openai-responses:gpt-5.2')
 ```
 
 !!! note "v2 default change"
-    In Pydantic AI v2, the bare `'openai:'` prefix will resolve to `OpenAIResponsesModel` instead of `OpenAIChatModel`. The 1.x line emits a `PydanticAIDeprecationWarning` whenever bare `'openai:'` is used; pick an explicit prefix to silence the warning and pin behavior:
+    In Pydantic AI v2, the bare `'openai:'` prefix will resolve to `OpenAIResponsesModel` instead of `OpenAIChatModel`. Before v2, `pydantic-ai` emits a `PydanticAIDeprecationWarning` whenever bare `'openai:'` is used; pick an explicit prefix to silence the warning and pin behavior:
 
     - `'openai-chat:gpt-5.2'` keeps the Chat Completions routing.
     - `'openai-responses:gpt-5.2'` opts in to the Responses API today (and matches the upcoming v2 default).
