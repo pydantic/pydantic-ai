@@ -39,8 +39,8 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch HTTP client creation in _ssrf to prevent real network calls.
 
     The wrapper configures the returned mock as an async context manager that yields
-    itself (matching ``httpx.AsyncClient`` behavior), so tests work regardless of
-    whether ``safe_download`` uses the client directly or via ``async with``.
+    itself (matching `httpx.AsyncClient` behavior), so tests work regardless of
+    whether `safe_download` uses the client directly or via `async with`.
     """
     mock = MagicMock()
 

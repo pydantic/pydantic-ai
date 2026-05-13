@@ -18,7 +18,6 @@ from opentelemetry._logs import (
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
-from typing_extensions import deprecated
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -40,7 +39,6 @@ from pydantic_ai._instrumentation import (
 
 from .. import _otel_messages
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -54,24 +52,13 @@ from .wrapper import WrapperModel
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
 
-@deprecated(
-    '`pydantic_ai.models.instrumented.instrument_model` is deprecated, '
-    'use `capabilities=[Instrumentation(...)]` instead. '
-    'This helper will be removed in v2.',
-    category=PydanticAIDeprecationWarning,
-)
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
-    """Instrument a model with OpenTelemetry/logfire."""
-    if instrument and not isinstance(model, InstrumentedModel):  # pyright: ignore[reportDeprecated]
+    """Wrap `model` in an `InstrumentedModel` so OTel/Logfire spans are emitted around requests."""
+    if instrument and not isinstance(model, InstrumentedModel):
         if instrument is True:
             instrument = InstrumentationSettings()
 
-        with warnings.catch_warnings():
-            # Suppress `InstrumentedModel`'s own deprecation warning — the user already saw
-            # the `instrument_model` warning above (or is on the internal `direct.py` path
-            # which suppresses both).
-            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-            model = InstrumentedModel(model, instrument)  # pyright: ignore[reportDeprecated]
+        model = InstrumentedModel(model, instrument)
 
     return model
 
@@ -358,19 +345,9 @@ class InstrumentationSettings:
             self.cost_histogram.record(cost, attributes)
 
 
-@deprecated(
-    '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated, '
-    'use `capabilities=[Instrumentation(...)]` instead. '
-    'The class will be removed in v2.',
-    category=PydanticAIDeprecationWarning,
-)
 @dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
-
-    Deprecated: add the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    capability to your agent's `capabilities=[...]` list instead of wrapping a model in
-    `InstrumentedModel`. The class will be removed in v2.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
