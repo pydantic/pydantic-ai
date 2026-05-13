@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -58,7 +58,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,
@@ -68,6 +68,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
@@ -96,7 +97,9 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for every
+                run handled by this app, merged with the agent's configured capabilities. Use
+                `capabilities=[NativeTool(...)]` to add provider-side native tools per app.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -118,6 +121,13 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
                 the other, not both.
         """
+        from ... import _utils
+
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'AGUIApp')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         super().__init__(
             debug=debug,
             routes=routes,
@@ -152,7 +162,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                capabilities=capabilities,
                 on_complete=on_complete,
             )
 

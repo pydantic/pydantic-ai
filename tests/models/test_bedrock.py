@@ -4,7 +4,7 @@ import os
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,8 +12,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -23,6 +21,10 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -40,7 +42,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -49,6 +51,8 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -73,10 +77,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -124,6 +128,16 @@ class _StubBedrockProvider(Provider[Any]):
 async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     assert model.client is bedrock_provider.client
+
+
+async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+    new_client = cast(Any, SimpleNamespace(meta=SimpleNamespace(endpoint_url='https://bedrock-runtime.example.com')))
+    model.client = new_client
+    assert model.client is new_client
+    assert model.base_url == 'https://bedrock-runtime.example.com'
 
 
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
@@ -355,7 +369,7 @@ async def test_stub_provider_properties():
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -503,6 +517,39 @@ The temperature in London on 1st January 2022 was 30°C.\
     )
 
 
+async def test_stream_cancel(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The')],
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
@@ -551,7 +598,11 @@ async def test_bedrock_model_anthropic_model_without_tools(
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(
-        model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model,
+        instructions='You are a helpful chatbot.',
+        model_settings={'temperature': 0.0},
+        tool_retries=2,
+        output_retries=2,
     )
 
     @agent.tool_plain
@@ -821,7 +872,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_temperature',
                     content='30°C',
                     tool_call_id=IsStr(),
@@ -1713,6 +1764,105 @@ Based on your location in Mexico, the largest city is Mexico City (Ciudad de Mé
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
 """
     )
+
+
+async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+
+    Uses the legacy `bedrock_additional_model_requests_fields` form. See
+    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_output_tool_with_unified_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+
+    `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
+    `_is_thinking_enabled` must inspect both pre-strip (settings) and post-strip (params) state to
+    catch the conflict regardless of which form the user picked.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_tool_choice_required_with_thinking(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Agent.run() blocks tool_choice='required' since it prevents final response.
+
+    When explicitly setting tool_choice='required', agent.run() raises UserError
+    before it reaches Bedrock's thinking mode validation.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            tool_choice='required',
+        ),
+    )
+
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match='prevents the agent from producing a final response',
+    ):
+        await agent.run('What is the weather in Paris?')
+
+
+async def test_bedrock_unified_thinking_with_tool_forcing_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Unified `thinking=True` (not the legacy `bedrock_additional_model_requests_fields` form) must
+    still trigger Bedrock's `tool_choice` + thinking incompatibility guard.
+
+    Goes via `model.request` so the agent baseline validator is bypassed and `_support_tool_forcing`
+    is the only thing that can catch the conflict. Before the A3 fix this silently passed because
+    `_is_thinking_enabled` only inspected the legacy field, but `Model.prepare_request` strips unified
+    `thinking` from `model_settings` into `model_request_parameters.thinking` before this check runs.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
+
+    with pytest.raises(UserError, match='Bedrock does not support forcing specific tools with thinking mode'):
+        await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
@@ -3458,59 +3608,59 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                # BuiltinToolCallPart (w/dict) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/dict) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args={'snippet': 'print("hello")'},
                     tool_call_id='call_1',
                 ),
-                # BuiltinToolReturnPart for bedrock with empty provider_details (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for bedrock with empty provider_details (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_1',
                     provider_details={},
                 ),
-                # BuiltinToolCallPart for the other provider (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the other provider (should NOT be included)
+                NativeToolCallPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     args={'code': 'print("other")'},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolReturnPart for the other provider (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the other provider (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'other', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolCallPart (w/str) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/str) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args='{"snippet": "10*5"}',
                     tool_call_id='call_3',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider with status (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider with status (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_3',
                     provider_details={'status': 'success'},
                 ),
-                # BuiltinToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     args={'snippet': 'print("unknown")'},
                     tool_call_id='call_4',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     content={'other': 'content'},
@@ -3526,7 +3676,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
         ModelRequestParameters(
             function_tools=[],
             allow_text_output=True,
-            builtin_tools=[CodeExecutionTool()],
+            native_tools=[CodeExecutionTool()],
         ),
         None,
     )
@@ -3575,7 +3725,9 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
 
 async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
 
     class Response(TypedDict):
         result: float
@@ -3596,13 +3748,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '1234 * 5678'},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
@@ -3655,13 +3807,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '7006652 * 2'},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
@@ -3704,7 +3856,9 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
 
 async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
 
     class Response(TypedDict):
         result: float
@@ -3732,13 +3886,13 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"snippet":"1234 * 5678"}',
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3781,8 +3935,10 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
                 ),
             ),
             PartDeltaEvent(
@@ -3793,7 +3949,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3803,7 +3959,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3832,7 +3988,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3840,13 +3996,27 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                     timestamp=IsDatetime(),
                     provider_name='bedrock',
                     provider_details={'status': 'success'},
+                )
+            ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    timestamp=IsDatetime(),
                 )
             ),
         ]

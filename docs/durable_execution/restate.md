@@ -53,7 +53,7 @@ Any Pydantic AI agent can be made durable by wrapping it with `RestateAgent` fro
 Install the Restate SDK:
 
 ```bash
-pip/uv-add pydantic-ai restate_sdk[serde]
+pip/uv-add pydantic-ai "restate_sdk[serde]"
 ```
 
 Here is a complete example of a durable Pydantic AI agent with Restate:

@@ -1,8 +1,8 @@
 <div align="center">
   <a href="https://ai.pydantic.dev/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://ai.pydantic.dev/img/pydantic-ai-dark.svg">
-      <img src="https://ai.pydantic.dev/img/pydantic-ai-light.svg" alt="Pydantic AI">
+      <source media="(prefers-color-scheme: dark)" srcset="https://pydantic.dev/docs/ai/img/pydantic-ai-dark.svg">
+      <img src="https://pydantic.dev/docs/ai/img/pydantic-ai-light.svg" alt="Pydantic AI">
     </picture>
   </a>
 </div>
