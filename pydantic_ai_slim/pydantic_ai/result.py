@@ -254,7 +254,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
@@ -331,7 +331,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield event.delta.content_delta, event.index
                 elif (
                     isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.BuiltinToolCallPart)
+                    and isinstance(event.part, _messages.NativeToolCallPart)
                     and last_text_index is not None
                 ):
                     # Text parts that are interrupted by a built-in tool call should not be joined together directly

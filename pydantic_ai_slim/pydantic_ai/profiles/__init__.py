@@ -1,13 +1,17 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
+from typing import Any, ClassVar
 
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
+from .._utils import install_deprecated_kwarg_alias
+from .._warnings import PydanticAIDeprecationWarning
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -19,9 +23,45 @@ __all__ = [
 ]
 
 
+# Maps deprecated kwarg/attribute names to their renamed targets for `ModelProfile`.
+# Used by `ModelProfile.__getattr__` for read access. Constructor aliasing is installed
+# lazily on first instantiation of each subclass via `ModelProfile.__new__`, since
+# `@dataclass` regenerates `__init__` on each subclass and overwrites a single base wrap.
+# Subclasses extend this map by declaring their own `_deprecated_kwarg_aliases` class
+# attribute; `__new__` walks the MRO to collect entries from every level.
+_MODEL_PROFILE_DEPRECATED_FIELD_ALIASES: dict[str, str] = {
+    'supported_builtin_tools': 'supported_native_tools',
+}
+
+# Tracks which subclasses have already had their deprecated-kwarg aliases installed,
+# so the `__new__` lazy-install runs exactly once per class.
+_DEPRECATED_KWARG_ALIASES_INSTALLED: set[type] = set()
+
+
 @dataclass(kw_only=True)
 class ModelProfile:
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
+
+    # Maps deprecated `__init__` kwarg names to their renamed targets. Subclasses can extend
+    # this by declaring their own `_deprecated_kwarg_aliases = {...}`; `__new__` walks the
+    # MRO at first instantiation to collect every level's entries.
+    _deprecated_kwarg_aliases: ClassVar[dict[str, str]] = {
+        'supported_builtin_tools': 'supported_native_tools',
+    }
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # Lazy install of deprecated-kwarg aliases on first instantiation of each subclass.
+        # `@dataclass` regenerates `__init__` on each subclass, so a base-level wrap is lost.
+        # `__new__` runs before `__init__` (via `type.__call__`), so we can wrap the
+        # subclass's `__init__` exactly once before the constructor receives the legacy kwarg.
+        if cls not in _DEPRECATED_KWARG_ALIASES_INSTALLED:
+            _DEPRECATED_KWARG_ALIASES_INSTALLED.add(cls)
+            collected: dict[str, str] = {}
+            for klass in reversed(cls.__mro__):
+                collected.update(getattr(klass, '_deprecated_kwarg_aliases', None) or {})
+            for old, new in collected.items():
+                install_deprecated_kwarg_alias(cls, old=old, new=new)
+        return super().__new__(cls)
 
     supports_tools: bool = True
     """Whether the model supports tools."""
@@ -87,12 +127,10 @@ class ModelProfile:
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
-    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(
-        default_factory=lambda: SUPPORTED_BUILTIN_TOOLS
-    )
-    """The set of builtin tool types that this model/profile supports.
+    supported_native_tools: frozenset[type[AbstractNativeTool]] = field(default_factory=lambda: SUPPORTED_NATIVE_TOOLS)
+    """The set of native tool types that this model/profile supports.
 
-    Defaults to ALL builtin tools. Profile functions should explicitly
+    Defaults to ALL native tools. Profile functions should explicitly
     restrict this based on model capabilities.
     """
 
@@ -114,6 +152,20 @@ class ModelProfile:
             if f.name in field_names and getattr(profile, f.name) != f.default
         }
         return replace(self, **non_default_attrs)
+
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated alias for read access to a renamed field. Only warns when the renamed
+        # target field actually exists on this class — otherwise raise `AttributeError` so
+        # genuine typos still surface clearly.
+        new_name = _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES.get(name)
+        if new_name is not None and new_name in {f.name for f in fields(type(self))}:
+            warnings.warn(
+                f'`{type(self).__name__}.{name}` is deprecated, use `.{new_name}` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return getattr(self, new_name)
+        raise AttributeError(name)
 
 
 ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]

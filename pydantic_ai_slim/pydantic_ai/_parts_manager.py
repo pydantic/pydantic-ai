@@ -15,13 +15,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable, Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartStartEvent,
     ProviderDetailsDelta,
@@ -31,9 +31,13 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolPartKind,
 )
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
+
+if TYPE_CHECKING:
+    from .models import ModelRequestParameters
 
 VendorId = Hashable
 """
@@ -57,10 +61,40 @@ class ModelResponsePartsManager:
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
     """
 
+    model_request_parameters: ModelRequestParameters
+    """Active request context. The manager promotes streamed tool call parts to their typed
+    subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
+    `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
+    than only after a post-stream pass.
+    """
+
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
+    _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
+    """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+
+    def __post_init__(self) -> None:
+        self._tool_kind_by_name = {
+            td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
+        }
+
+    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
+        return self._tool_kind_by_name.get(tool_name)
+
+    def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
+        """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
+
+        Safe no-op for unknown tool names (model hallucinations) and for tool defs
+        without a `tool_kind`.
+        """
+        if part.tool_kind is not None:
+            return part
+        kind = self._tool_kind_for(part.tool_name)
+        if kind is None:
+            return part
+        return ToolCallPart.narrow_type(part, tool_kind=kind)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -265,7 +299,7 @@ class ModelResponsePartsManager:
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent | None:
-        """Handle or update a tool call, creating or updating a `ToolCallPart`, `BuiltinToolCallPart`, or `ToolCallPartDelta`.
+        """Handle or update a tool call, creating or updating a `ToolCallPart`, `NativeToolCallPart`, or `ToolCallPartDelta`.
 
         Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
@@ -284,15 +318,15 @@ class ModelResponsePartsManager:
             provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
-            - A `PartStartEvent` if a new ToolCallPart or BuiltinToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart or NativeToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
-                a ToolCallPart, BuiltinToolCallPart, or ToolCallPartDelta.
+                a ToolCallPart, NativeToolCallPart, or ToolCallPartDelta.
         """
-        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart, int] | None = (
+        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart | NativeToolCallPart, int] | None = (
             None
         )
 
@@ -302,14 +336,14 @@ class ModelResponsePartsManager:
             # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
             if tool_name is None:
                 existing_matching_part_and_index = self._latest_part_if_of_type(
-                    ToolCallPart, BuiltinToolCallPart, ToolCallPartDelta
+                    ToolCallPart, NativeToolCallPart, ToolCallPartDelta
                 )
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
+                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart):
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 
@@ -323,9 +357,11 @@ class ModelResponsePartsManager:
                 provider_details=provider_details,
             )
             part = delta.as_part() or delta
+            if isinstance(part, ToolCallPart):
+                part = self._typed_call_part(part)
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
-            if isinstance(part, ToolCallPart | BuiltinToolCallPart):
+            if isinstance(part, ToolCallPart | NativeToolCallPart):
                 return PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing part or delta with the new information
@@ -338,8 +374,10 @@ class ModelResponsePartsManager:
                 provider_details=provider_details,
             )
             updated_part = delta.apply(existing_part)
+            if isinstance(updated_part, ToolCallPart):
+                updated_part = self._typed_call_part(updated_part)
             self._parts[part_index] = updated_part
-            if isinstance(updated_part, ToolCallPart | BuiltinToolCallPart):
+            if isinstance(updated_part, ToolCallPart | NativeToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
                     # We just upgraded a delta to a full part, so emit a PartStartEvent
                     return PartStartEvent(index=part_index, part=updated_part)
@@ -386,6 +424,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             provider_details=provider_details,
         )
+        new_part = self._typed_call_part(new_part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = self._append_part(new_part)

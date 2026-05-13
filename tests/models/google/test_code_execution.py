@@ -11,11 +11,11 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinalResultEvent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -23,11 +23,12 @@ from pydantic_ai import (
     TextPartDelta,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.usage import RequestUsage
 
 from ...conftest import IsDatetime, IsNow, IsStr, try_import
@@ -51,10 +52,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
@@ -69,7 +70,7 @@ async def test_code_execution_stream(
     agent = Agent(
         model=m,
         instructions='Be concise and always use Python to do calculations no matter how small.',
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
     )
 
     event_parts: list[AgentStreamEvent] = []
@@ -97,7 +98,7 @@ async def test_code_execution_stream(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -111,7 +112,7 @@ print(result)\
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                         tool_call_id=IsStr(),
@@ -150,7 +151,7 @@ print(result)\
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -167,7 +168,7 @@ print(result)\
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -185,7 +186,7 @@ print(result)\
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                     tool_call_id=IsStr(),
@@ -219,7 +220,7 @@ print(result)\
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -235,7 +236,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                     tool_call_id=IsStr(),
@@ -249,7 +250,7 @@ print(result)\
 
 async def test_code_execution(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('What day is today in Utrecht?')
     assert result.all_messages() == snapshot(
@@ -263,7 +264,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -285,7 +286,7 @@ print(f"Current day in Utrecht: {today_date}")
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
@@ -296,7 +297,7 @@ print(f"Current day in Utrecht: {today_date}")
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -310,7 +311,7 @@ print(datetime.datetime.now())
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '2026-05-05 20:40:33.367937\n', 'id': '7lr99y60'},
                         tool_call_id=IsStr(),
@@ -358,7 +359,7 @@ print(datetime.datetime.now())
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -372,7 +373,7 @@ print(datetime.datetime.now())
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
@@ -383,7 +384,7 @@ print(datetime.datetime.now())
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -401,7 +402,7 @@ print(f"Time in Utrecht: {now}")
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
@@ -448,19 +449,19 @@ async def test_receive_history_from_another_provider(
 ):
     anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     google_model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
-    agent = Agent(builtin_tools=[CodeExecutionTool()])
+    agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [NativeToolCallPart, NativeToolReturnPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )

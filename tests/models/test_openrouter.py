@@ -27,9 +27,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -955,9 +955,9 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-async def test_openrouter_supported_builtin_tools() -> None:
+async def test_openrouter_supported_native_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
-    supported = OpenRouterModel.supported_builtin_tools()
+    supported = OpenRouterModel.supported_native_tools()
     assert WebSearchTool in supported
 
 
@@ -968,7 +968,7 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     new_settings, _ = model.prepare_request(None, model_request_parameters)
@@ -1001,7 +1001,7 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
@@ -1024,7 +1024,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     web_tool = WebSearchTool(search_context_size='medium')
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[non_web_tool, web_tool],
+        native_tools=[non_web_tool, web_tool],
     )
 
     with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):

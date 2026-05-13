@@ -12,6 +12,8 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+    from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.models.test import TestModel
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
@@ -137,8 +139,10 @@ async def test_usage_metrics(capfire: CaptureLogfire):
 
     agent = Agent(
         TestModel(),
-        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
-        instrument=True,
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=config),
+            Instrumentation(settings=InstrumentationSettings()),
+        ],
     )
 
     await agent.run('hello')
@@ -438,8 +442,10 @@ async def test_span_reference_with_logfire(capfire: CaptureLogfire):
 
     agent = Agent(
         TestModel(),
-        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
-        instrument=True,
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=config),
+            Instrumentation(settings=InstrumentationSettings()),
+        ],
     )
 
     await agent.run('hello')

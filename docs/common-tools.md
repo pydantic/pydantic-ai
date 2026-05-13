@@ -116,7 +116,7 @@ print(result.output)
 !!! tip "Automatic fallback via WebFetch capability"
     You don't need to use [`web_fetch_tool`][pydantic_ai.common_tools.web_fetch.web_fetch_tool] directly — the
     [`WebFetch`][pydantic_ai.capabilities.WebFetch] capability automatically uses it
-    as a local fallback when the model doesn't support builtin URL fetching.
+    as a local fallback when the model doesn't support native URL fetching.
 
 ## Tavily Search Tool
 
