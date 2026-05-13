@@ -11356,7 +11356,273 @@ async def test_anthropic_service_tier_mapping(
         assert kwargs['service_tier'] == expected
 
 
-# --- Dynamic filtering tests ---
+# --- Dynamic filtering tests (integration) ---
+
+
+async def test_anthropic_web_search_dynamic_filtering(allow_model_requests: None, anthropic_api_key: str):
+    """Auto-detect sends web_search_20260209 when model supports it and CodeExecutionTool is present."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+
+    result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
+    assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the mass of the Sun in kilograms? Reply with only the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='1.989 × 1030 kg')],
+                usage=RequestUsage(
+                    input_tokens=4398,
+                    output_tokens=17,
+                    details={
+                        'input_tokens': 4398,
+                        'output_tokens': 17,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_web_fetch_dynamic_filtering(allow_model_requests: None, anthropic_api_key: str):
+    """Auto-detect sends web_fetch_20260209 when model supports it and CodeExecutionTool is present."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+    assert 'pydantic' in result.output.lower()
+
+    messages = result.all_messages()
+    assert len(messages) >= 2
+    assert isinstance(messages[0], ModelRequest)
+    assert messages[0].parts[0].content == (
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
+    assert 'web_fetch' in tool_call_names
+    assert 'code_execution' in tool_call_names
+    final_response = messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.model_name == 'claude-sonnet-4-6'
+
+
+async def test_anthropic_web_search_dynamic_filtering_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Auto-detect sends web_search_20260209 via streaming when model supports it and CodeExecutionTool is present."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+
+    async with agent.run_stream('What is the mass of the Sun in kilograms? Reply with only the number.') as result:
+        output = await result.get_output()
+    assert 'e' in output.lower() or '×' in output or '10' in output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the mass of the Sun in kilograms? Reply with only the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='1.989 × 10³⁰ kg')],
+                usage=RequestUsage(
+                    input_tokens=4398,
+                    output_tokens=17,
+                    details={
+                        'input_tokens': 4398,
+                        'output_tokens': 17,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_web_search_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str):
+    """Explicit dynamic_filtering=True sends web_search_20260209."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=True), CodeExecutionTool()])
+
+    result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
+    assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the mass of the Sun in kilograms? Reply with only the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='1.989 × 1030 kg')],
+                usage=RequestUsage(
+                    input_tokens=4398,
+                    output_tokens=17,
+                    details={
+                        'input_tokens': 4398,
+                        'output_tokens': 17,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_web_search_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str):
+    """Explicit dynamic_filtering=False sends web_search_20250305 even on a supported model."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=False), CodeExecutionTool()])
+
+    result = await agent.run('What is the mass of the Sun in kilograms? Reply with only the number.')
+    assert 'e' in result.output.lower() or '×' in result.output or '10' in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the mass of the Sun in kilograms? Reply with only the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='1.989 × 1030 kg')],
+                usage=RequestUsage(
+                    input_tokens=3972,
+                    output_tokens=17,
+                    details={
+                        'input_tokens': 3972,
+                        'output_tokens': 17,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_web_fetch_dynamic_filtering_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Auto-detect sends web_fetch_20260209 via streaming when model supports it and CodeExecutionTool is present."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebFetchTool(), CodeExecutionTool()])
+
+    async with agent.run_stream(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    ) as result:
+        output = await result.get_output()
+    assert 'pydantic' in output.lower()
+
+    messages = result.all_messages()
+    assert len(messages) >= 2
+    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
+    assert 'web_fetch' in tool_call_names
+    assert 'code_execution' in tool_call_names
+
+
+async def test_anthropic_web_fetch_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str):
+    """Explicit dynamic_filtering=True sends web_fetch_20260209."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=True), CodeExecutionTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+    assert 'pydantic' in result.output.lower()
+
+    messages = result.all_messages()
+    assert len(messages) >= 2
+    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
+    assert 'web_fetch' in tool_call_names
+
+
+async def test_anthropic_web_fetch_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str):
+    """Explicit dynamic_filtering=False sends web_fetch_20250910 even on a supported model."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebFetchTool(dynamic_filtering=False), CodeExecutionTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+    assert 'pydantic' in result.output.lower()
+
+    messages = result.all_messages()
+    assert len(messages) >= 2
+    all_parts = [p for m in messages if isinstance(m, ModelResponse) for p in m.parts]
+    tool_call_names = [p.tool_name for p in all_parts if isinstance(p, (BuiltinToolCallPart, BuiltinToolReturnPart))]
+    assert 'web_fetch' in tool_call_names
+
+
+# --- Dynamic filtering tests (unit) ---
 
 
 async def test_web_search_dynamic_filtering_auto_with_supported_model():
