@@ -21,7 +21,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
@@ -134,7 +134,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
 
-            toolsets.append(CapabilityScopedToolset(wrapped=cap_toolset, capability_id=capability.id))
+            toolsets.append(CapabilityOwnedToolset(wrapped=cap_toolset, capability_id=capability.id))
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:

@@ -1004,7 +1004,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
 
     Cap-level and tool-level deferral compose: the cap-level flag stays out of the way
     of the wire (cache stability) and gates only at execution via
-    `CapabilityScopedToolset.call_tool`; tool-level `defer_loading=True` still flows
+    `CapabilityOwnedToolset.call_tool`; tool-level `defer_loading=True` still flows
     through the regular tool-search corpus, filtered by `loaded_capability_ids` so
     nothing in the cap-scoped corpus is discoverable until the cap loads.
 
@@ -1090,7 +1090,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
 
     assert result.output == 'final: search-gated-result'
     # Step 1: cap is deferred — `inherited_tool` and `eager_tool` are on the wire from
-    # turn 1 (cache stability; execution-gated by `CapabilityScopedToolset.call_tool`).
+    # turn 1 (cache stability; execution-gated by `CapabilityOwnedToolset.call_tool`).
     # `search_gated_tool` is dropped by Rule 3 (tool-level defer_loading=True without
     # native support). `search_tools` stays on the wire even though the corpus is
     # filtered empty (cap not loaded yet), preserving prompt prefix stability across

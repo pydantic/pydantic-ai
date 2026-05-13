@@ -164,6 +164,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     by id when calling `load_capability`.
     """
 
+    # TODO: scope `defer_loading` and `description` onto a narrower base (tool/toolset-bearing
+    # capabilities only) instead of the universal `AbstractCapability`. Today they're inherited
+    # by tool-less caps like `Thinking` / `IncludeToolReturnSchemas` / `ReinjectSystemPrompt` /
+    # `SetToolMetadata`, where setting `defer_loading=True` either errors at runtime via the
+    # guards in `CombinedCapability.get_model_settings`/`get_native_tools` or is observationally
+    # a no-op (nothing to hide). The leak shows up in three places: (1) `get_description` only
+    # has one caller — `CapabilityLoader.get_instructions` building the load catalog; (2) the
+    # `AgentSpec` JSON schema bloats because every cap now has 3+ kwargs, flipping `Thinking` /
+    # `IncludeToolReturnSchemas` / `ReinjectSystemPrompt` from `short_spec_*` to `spec_*` form;
+    # (3) the `id` default-factory in `__new__` exists partly to support this universal field
+    # set even on subclasses with custom `__init__`. Moving the fields off the base lets us
+    # delete the per-cap `defer_loading` plumbing for tool-less caps and shrink the schema back.
     defer_loading: bool | None = field(default=None, kw_only=True)
     """If True, the capability's contributions (instructions, tools, settings) are hidden
     from the model until it explicitly loads them via `load_capability(id)`.

@@ -12,7 +12,7 @@ from .wrapper import WrapperToolset
 
 
 @dataclass
-class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
+class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     """Wraps a toolset contributed by a capability, binding it to that capability.
 
     Stamps `capability_id` onto every emitted tool definition (so downstream

@@ -2383,7 +2383,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     """A deferred capability's tools sit on the wire from turn 1 (cache stability) and become
     callable when the model invokes `load_capability`.
 
-    Wire visibility and call permission are orthogonal: `CapabilityScopedToolset` stamps
+    Wire visibility and call permission are orthogonal: `CapabilityOwnedToolset` stamps
     `capability_id` on each tool and appends a hint to the description, so the model sees
     the tool and learns the prerequisite — but `call_tool` raises `ModelRetry` until the
     cap is loaded. `load_capability`'s tool block drops once no deferred caps remain.
@@ -2570,7 +2570,7 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
     "unloaded" means is execution-gate-closed, not invisible. This test pins that a bad
     `load_capability` call does not flip the gate: `hidden_tool` stays visible (wire is
     stable across the failed load) but invoking it would raise `ModelRetry` via
-    `CapabilityScopedToolset.call_tool`. Verifies the wire shape and asserts the load
+    `CapabilityOwnedToolset.call_tool`. Verifies the wire shape and asserts the load
     return is the catalog-not-found error string.
     """
     toolset = FunctionToolset[None]()
@@ -2740,7 +2740,7 @@ async def test_deferred_capability_tool_called_before_load_raises_model_retry() 
 
     Cap-scoped tools are visible on the wire from turn 1 (cache stability) but the
     execution gate stays closed until `load_capability` runs. This test pins that the
-    gate inside `CapabilityScopedToolset.call_tool` actually trips: an early call
+    gate inside `CapabilityOwnedToolset.call_tool` actually trips: an early call
     becomes a `RetryPromptPart` instructing the model to load the cap first.
     """
     toolset = FunctionToolset[None]()
