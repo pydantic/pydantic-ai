@@ -1066,6 +1066,19 @@ else:
     )
 
 
+ToolPartKind: TypeAlias = Literal['tool-search']
+"""Discriminator value for the typed call/return-part subclass associated with a tool.
+
+Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
+[`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
+[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Extended as new
+typed-part families (e.g. web search) gain dedicated subclasses.
+
+Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
+`'function'`, `'output'`, `'external'`, `'unapproved'`).
+"""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1083,6 +1096,19 @@ class BaseToolReturnPart:
     """
 
     _: KW_ONLY
+
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
+
+    `None` for any part without a typed subclass — including all user-defined tools and all
+    native tools without a dedicated typed call/return shape. Subclasses that pin this to a
+    [`ToolPartKind`][pydantic_ai.messages.ToolPartKind] literal:
+
+    * [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
+      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool-search'`
+    * [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] /
+      [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart] — `'tool-search'`
+    """
 
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
@@ -1283,10 +1309,33 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @staticmethod
+    def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
+        """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
+
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone, dropping the need for an upstream
+        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
+        promotes automatically via the discriminated-union dispatch on
+        [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+        """
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
+            return part
+        narrower = _TOOL_RETURN_NARROWERS.get(kind)
+        return narrower(part) if narrower else part
+
 
 @dataclass(repr=False)
 class NativeToolReturnPart(BaseToolReturnPart):
-    """A tool return message from a native tool."""
+    """A tool return message from a native tool.
+
+    For native tools with a stable cross-provider shape (currently `tool_search`), a
+    `NativeToolReturnPart` may be promoted to a typed subclass like
+    [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
+    with a narrowed `content` `TypedDict`. See `NativeToolCallPart` for the pattern.
+    """
 
     _: KW_ONLY
 
@@ -1304,6 +1353,22 @@ class NativeToolReturnPart(BaseToolReturnPart):
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    @staticmethod
+    def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
+        """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
+
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
+        deserialization promotes automatically via the discriminated-union dispatch on
+        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        """
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
+            return part
+        narrower = _NATIVE_RETURN_NARROWERS.get(kind)
+        return narrower(part) if narrower else part
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1408,10 +1473,10 @@ class RetryPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelRequestPart = Annotated[
-    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart, pydantic.Discriminator('part_kind')
-]
-"""A message part sent by Pydantic AI to a model."""
+# `ModelRequestPart` is defined further down (after the typed `ToolSearchReturnPart`
+# subclass) so it can include the local `search_tools` return as a discriminated-union
+# member. The forward reference inside `ModelRequest.parts` works because of
+# `from __future__ import annotations` at the top of this module.
 
 
 @dataclass(repr=False)
@@ -1694,6 +1759,13 @@ class BaseToolCallPart:
 
     _: KW_ONLY
 
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
+
+    See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
+    the full semantics.
+    """
+
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
@@ -1775,20 +1847,206 @@ class ToolCallPart(BaseToolCallPart):
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
+    @staticmethod
+    def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
+        """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
+
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone, dropping the need for an upstream
+        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
+        promotes automatically via the discriminated-union dispatch on
+        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        """
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
+            return part
+        narrower = _TOOL_CALL_NARROWERS.get(kind)
+        return narrower(part) if narrower else part
+
 
 @dataclass(repr=False)
 class NativeToolCallPart(BaseToolCallPart):
-    """A tool call to a native tool."""
+    """A tool call to a native tool.
+
+    For native tools with a stable cross-provider shape (currently `tool_search`), this base
+    class can be promoted to a typed subclass with a narrowed `args` `TypedDict`. See
+    [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] for the
+    canonical example.
+
+    Adding a typed subclass for a future native tool (see `pydantic_ai._tool_search` for
+    a worked example):
+
+    1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
+       `TypedDict`s, the `NativeToolCallPart` / `NativeToolReturnPart` subclasses,
+       and registers their narrowers into `_NATIVE_CALL_NARROWERS` /
+       `_NATIVE_RETURN_NARROWERS` keyed by `tool_kind`. Subclass overrides
+       `tool_kind: Literal['<emitter>']` to match the emitting
+       [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind],
+       and shadows `args` / `content` with a narrower type.
+    2. Late-import the new module from this file (alongside the existing tool-search
+       import) so registration runs whenever `pydantic_ai.messages` is imported.
+    3. Add the subclass to `ModelResponsePart`'s discriminated union and to
+       `_model_response_part_discriminator` so Pydantic deserialization auto-promotes
+       on `model_validate` / `model_validate_json`.
+
+    Dispatch is by `tool_kind`, not `tool_name`. This protects users whose tools happen to
+    share a name with one of ours from accidentally getting their parts promoted (and
+    failing shape validation against the typed `args`/`content`).
+
+    The `provider_details` field carries genuinely non-portable provider extras
+    (e.g. Anthropic's `strategy: 'bm25' | 'regex'` for tool search). Promote a field
+    to a typed slot in `args` / `content` only when at least two of OpenAI, Anthropic,
+    and Google support it (cf. [issue #3885](https://github.com/pydantic/pydantic-ai/issues/3885)).
+
+    MCP server tools land here with `tool_kind='mcp_server'` (label stays in
+    `tool_name='mcp_server:<label>'`); typed-subclass work for MCP is tracked by
+    [issue #3561](https://github.com/pydantic/pydantic-ai/issues/3561).
+    """
 
     _: KW_ONLY
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @staticmethod
+    def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
+        """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
+
+        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
+        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
+        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
+        deserialization promotes automatically via the discriminated-union dispatch on
+        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        """
+        kind = tool_kind if tool_kind is not None else part.tool_kind
+        if kind is None:
+            return part
+        narrower = _NATIVE_CALL_NARROWERS.get(kind)
+        return narrower(part) if narrower else part
+
+
+# Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
+# Populated at import time by typed-subclass modules (see `pydantic_ai._tool_search`).
+_NATIVE_CALL_NARROWERS: dict[str, Callable[[NativeToolCallPart], NativeToolCallPart]] = {}
+_NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolReturnPart]] = {}
+
+
+# Registry of typed promoters for the local-execution `ToolCallPart` / `ToolReturnPart`
+# variants — applied to the regular function-call/return shape that flows on adapters
+# without native tool search.
+_TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
+_TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
+
+
+_TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
+"""Registry: (part_kind, tool_kind) → Tag string for the typed subclass.
+
+Populated by each typed-builtin module (e.g. `pydantic_ai._tool_search`) alongside its
+narrower registrations. The discriminator functions look up this dict to dispatch typed
+parts during deserialization without hard-coded if/elif chains.
+"""
+
+_TYPED_PART_TAGS_BY_TYPE: dict[type, str] = {}
+"""Registry: typed subclass → Tag string.
+
+Mirror of `_TYPED_PART_TAGS` for already-constructed Python instances (vs. dicts being
+deserialized). Same population pattern.
+"""
+
+
+# Typed subclasses + narrowers + cross-provider history translation live in their own
+# module to keep this file focused on the base part shapes. Imported here so the
+# discriminator unions below can reference them and so import-time registration of
+# narrowers happens whenever `pydantic_ai.messages` is imported.
+from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
+    NativeToolSearchCallPart as NativeToolSearchCallPart,
+    NativeToolSearchReturnPart as NativeToolSearchReturnPart,
+    ToolSearchArgs as ToolSearchArgs,
+    ToolSearchCallPart as ToolSearchCallPart,
+    ToolSearchMatch as ToolSearchMatch,
+    ToolSearchReturnContent as ToolSearchReturnContent,
+    ToolSearchReturnPart as ToolSearchReturnPart,
+)
+
+
+def _model_request_part_discriminator(v: Any) -> str | None:
+    """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+
+    Typed subclasses register their `(part_kind, tool_kind) → Tag` entries in
+    `_TYPED_PART_TAGS` (for dict-deserialization) and `_TYPED_PART_TAGS_BY_TYPE`
+    (for already-constructed instances). Falls through to the base `part_kind`
+    when no typed-subclass tag is registered.
+
+    Dispatching by `tool_kind` rather than `tool_name` means a user's regular tool
+    that happens to share a `tool_name` with a framework-emitted one deserializes
+    safely as a base part (no accidental promotion / shape-validation failure).
+    """
+    if isinstance(v, dict):
+        v_dict = cast(dict[str, Any], v)
+        kind = v_dict.get('part_kind')
+        tool_kind = v_dict.get('tool_kind')
+        if isinstance(kind, str) and isinstance(tool_kind, str):
+            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
+            if tag is not None:
+                return tag
+        return kind if isinstance(kind, str) else None
+    for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
+        if isinstance(v, cls):
+            return tag
+    return getattr(v, 'part_kind', None)
+
+
+ModelRequestPart = Annotated[
+    Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
+    | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
+    | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
+    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
+    pydantic.Discriminator(_model_request_part_discriminator),
+]
+"""A message part sent by Pydantic AI to a model."""
+
+
+def _model_response_part_discriminator(v: Any) -> str | None:
+    """Callable discriminator for [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+
+    Typed subclasses register their `(part_kind, tool_kind) → Tag` entries in
+    `_TYPED_PART_TAGS` (for dict-deserialization) and `_TYPED_PART_TAGS_BY_TYPE`
+    (for already-constructed instances). Falls through to the base `part_kind`
+    when no typed-subclass tag is registered.
+
+    Dispatching by `tool_kind` rather than `tool_name` means a user's regular tool
+    that happens to share a `tool_name` with a framework-emitted one deserializes
+    safely as a base part (no accidental promotion / shape-validation failure).
+    """
+    if isinstance(v, dict):
+        v_dict = cast(dict[str, Any], v)
+        kind = v_dict.get('part_kind')
+        tool_kind = v_dict.get('tool_kind')
+        if isinstance(kind, str) and isinstance(tool_kind, str):
+            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
+            if tag is not None:
+                return tag
+        return kind if isinstance(kind, str) else None
+    for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
+        if isinstance(v, cls):
+            return tag
+    return getattr(v, 'part_kind', None)
+
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | CompactionPart | FilePart,
-    pydantic.Discriminator('part_kind'),
+    Annotated[TextPart, pydantic.Tag('text')]
+    | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
+    | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
+    | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
+    | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
+    | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
+    | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[ThinkingPart, pydantic.Tag('thinking')]
+    | Annotated[CompactionPart, pydantic.Tag('compaction')]
+    | Annotated[FilePart, pydantic.Tag('file')],
+    pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
 

@@ -7454,9 +7454,7 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'secret data'},
-                        tool_call_id='tc_builtin_denied',
+                        tool_name='web_search', args={'query': 'secret data'}, tool_call_id='tc_builtin_denied'
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',

@@ -22,6 +22,7 @@ from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
@@ -501,6 +502,20 @@ async def _prepare_request_parameters(
                 if t is not None:
                     native_tools.append(t)
 
+    # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. Filtering
+    # here (at MRP-construction time) keeps the request shape honest before
+    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
+    # preserved so the request still fails loudly on unsupported models.
+    has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
+    if not has_tool_search_corpus:
+        # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
+        # (e.g. a hypothetical `WebSearchTool(optional=True)`) don't have a corpus and
+        # shouldn't be dropped here — they only get dropped on the unsupported-on-this-model
+        # path in `Model.prepare_request`.
+        native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
@@ -778,6 +793,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await req_ctx.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
+                response = _narrow_tool_call_parts(response, req_ctx.model_request_parameters)
                 _handler_response = response
                 return response
 
@@ -900,8 +916,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
-        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
+        #
+        # Run a first pass so `prepare_messages` sees a normalized history.
         messages = _clean_message_history(messages)
+
+        # Hand off to the model class for any history shapes the active provider can't
+        # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
+        # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
+        #
+        # Lives on `Model.prepare_messages` rather than inline here for two reasons:
+        # 1. The translation depends on `self.profile`, which is per-model state.
+        # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
+        #    each candidate runs `prepare_messages` itself with its own profile when chosen.
+        prepared = model.prepare_messages(messages)
+
+        # If `prepare_messages` produced a new list (e.g. tool-search synthesis split a
+        # `ModelResponse(call+return)` into `ModelResponse(call) + ModelRequest(return)`
+        # adjacent to an existing `ModelRequest`), re-run cleanup so consecutive same-role
+        # messages are merged. The default `prepare_messages` returns the input list
+        # unchanged, so the identity check skips the redundant second pass.
+        if prepared is not messages:
+            messages = _clean_message_history(prepared)
+        else:
+            messages = prepared
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -1957,12 +1995,19 @@ async def _call_tool(
     else:
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
+    # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
+    # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
+    # typed identity intact across multi-turn history: the next turn's discovery parser /
+    # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
+    tool_def = tool_manager.get_tool_def(call.tool_name)
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
         content=tool_return.return_value,
         metadata=tool_return.metadata,
+        tool_kind=tool_def.tool_kind if tool_def else None,
     )
+    return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
     return return_part, tool_return.content or None
 
@@ -2052,6 +2097,40 @@ def build_agent_graph(
         ),
     )
     return g.build(validate_graph_structure=False)
+
+
+def _narrow_tool_call_parts(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+
+    Lives here rather than in each model adapter so adapter authors emit base
+    `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
+    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    function handles the non-streaming `Model.request()` return path. Either path produces
+    the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
+    moment the call is emitted by the model.
+    """
+    tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
+        td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
+    }
+    if not tool_kind_by_name:
+        return response
+
+    changed = False
+    new_parts: list[_messages.ModelResponsePart] = []
+    for part in response.parts:
+        if (
+            isinstance(part, _messages.ToolCallPart)
+            and part.tool_kind is None
+            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
+        ):
+            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+            new_parts.append(promoted)
+            changed = True
+        else:
+            new_parts.append(part)
+    return replace(response, parts=new_parts) if changed else response
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
