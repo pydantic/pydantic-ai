@@ -18,6 +18,7 @@ from opentelemetry._logs import (
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
+from typing_extensions import deprecated
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -53,27 +54,24 @@ from .wrapper import WrapperModel
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
 
-def instrument_model(model: Model, instrument: InstrumentationSettings | bool, *, _internal_use: bool = False) -> Model:
-    """Instrument a model with OpenTelemetry/logfire.
-
-    .. deprecated::
-        Use the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability
-        directly via `Agent(instrument=…)` or `Agent(capabilities=[Instrumentation(...)])`.
-        This helper will be removed in v2.
-    """
-    if not _internal_use:
-        warnings.warn(
-            '`pydantic_ai.models.instrumented.instrument_model` is deprecated; use the `Instrumentation` '
-            'capability instead (e.g. `Agent(instrument=...)` or `capabilities=[Instrumentation(...)]`). '
-            'This helper will be removed in v2.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-    if instrument and not isinstance(model, InstrumentedModel):
+@deprecated(
+    '`pydantic_ai.models.instrumented.instrument_model` is deprecated; '
+    "add `Instrumentation` to your agent's `capabilities=[...]` instead. "
+    'This helper will be removed in v2.',
+    category=PydanticAIDeprecationWarning,
+)
+def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
+    """Instrument a model with OpenTelemetry/logfire."""
+    if instrument and not isinstance(model, InstrumentedModel):  # pyright: ignore[reportDeprecated]
         if instrument is True:
             instrument = InstrumentationSettings()
 
-        model = InstrumentedModel(model, instrument, _internal_use=_internal_use)
+        with warnings.catch_warnings():
+            # Suppress `InstrumentedModel`'s own deprecation warning — the user already saw
+            # the `instrument_model` warning above (or is on the internal `direct.py` path
+            # which suppresses both).
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            model = InstrumentedModel(model, instrument)  # pyright: ignore[reportDeprecated]
 
     return model
 
@@ -360,14 +358,19 @@ class InstrumentationSettings:
             self.cost_histogram.record(cost, attributes)
 
 
+@deprecated(
+    '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated; '
+    "add `Instrumentation` to your agent's `capabilities=[...]` instead. "
+    'The class will be removed in v2.',
+    category=PydanticAIDeprecationWarning,
+)
 @dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    .. deprecated::
-        Add the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability to
-        your agent (or pass `instrument=...` to `Agent(...)`) instead of wrapping a model
-        in `InstrumentedModel`. The class will be removed in v2.
+    Deprecated: add the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    capability to your agent's `capabilities=[...]` list instead of wrapping a model in
+    `InstrumentedModel`. The class will be removed in v2.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
@@ -379,17 +382,7 @@ class InstrumentedModel(WrapperModel):
         self,
         wrapped: Model | KnownModelName,
         options: InstrumentationSettings | None = None,
-        *,
-        _internal_use: bool = False,
     ) -> None:
-        if not _internal_use:
-            warnings.warn(
-                '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated; use the '
-                '`Instrumentation` capability instead (e.g. `Agent(instrument=...)` or '
-                '`capabilities=[Instrumentation(...)]`). The class will be removed in v2.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
         super().__init__(wrapped)
         self.instrumentation_settings = options or InstrumentationSettings()
 

@@ -54,9 +54,8 @@ if TYPE_CHECKING:
 class Instrumentation(AbstractCapability[Any]):
     """Capability that instruments agent runs with OpenTelemetry/Logfire tracing.
 
-    When added to an agent (either explicitly via `capabilities=[Instrumentation(...)]`
-    or implicitly via `Agent(instrument=True)`), this capability creates OpenTelemetry
-    spans for the agent run, model requests, and tool executions.
+    When added to an agent via `capabilities=[Instrumentation(...)]`, this capability
+    creates OpenTelemetry spans for the agent run, model requests, and tool executions.
 
     Other capabilities can add attributes to these spans using either the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`) or the Logfire SDK
@@ -87,10 +86,26 @@ class Instrumentation(AbstractCapability[Any]):
         return CapabilityOrdering(position='outermost')
 
     @classmethod
-    def get_serialization_name(cls) -> str | None:
-        # InstrumentationSettings takes non-serializable providers (TracerProvider, etc.),
-        # so this capability is not constructible from YAML/JSON specs.
-        return None
+    def from_spec(cls, **kwargs: Any) -> Instrumentation:
+        """Build an `Instrumentation` capability from a YAML/JSON spec.
+
+        Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+        kwargs (`include_binary_content`, `include_content`, `version`, `event_mode`,
+        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider`, `meter_provider`,
+        and `logger_provider` fields can't be expressed in YAML and default to the global
+        providers (typically configured via `logfire.configure()`).
+
+        YAML form:
+
+            capabilities:
+              - Instrumentation: {}                # default settings
+              - Instrumentation:
+                  version: 2
+                  include_content: false
+        """
+        from pydantic_ai.models.instrumented import InstrumentationSettings
+
+        return cls(settings=InstrumentationSettings(**kwargs))
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
         """Return a fresh copy for per-run state isolation."""

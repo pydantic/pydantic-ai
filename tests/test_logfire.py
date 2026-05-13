@@ -3780,11 +3780,23 @@ def test_instrumentation_capability_with_model_settings(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_instrumentation_capability_serialization_name() -> None:
-    """Instrumentation capability opts out of spec-based construction."""
+def test_instrumentation_capability_serialization() -> None:
+    """`Instrumentation` is constructible from a YAML/JSON spec via the serializable subset of
+    `InstrumentationSettings` kwargs; non-serializable OTel providers fall back to the globals."""
     from pydantic_ai.capabilities.instrumentation import Instrumentation
+    from pydantic_ai.models.instrumented import InstrumentationSettings
 
-    assert Instrumentation.get_serialization_name() is None
+    assert Instrumentation.get_serialization_name() == 'Instrumentation'
+
+    cap = Instrumentation.from_spec(version=2, include_content=False)
+    assert isinstance(cap, Instrumentation)
+    assert isinstance(cap.settings, InstrumentationSettings)
+    assert cap.settings.version == 2
+    assert cap.settings.include_content is False
+
+    # Empty kwargs form: `Instrumentation: {}` in YAML.
+    cap_default = Instrumentation.from_spec()
+    assert cap_default.settings.version == InstrumentationSettings().version
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3821,10 +3833,10 @@ def test_agent_with_user_provided_instrumented_model(
     settings drive the agent's instrumentation — the model is unwrapped and the
     `Instrumentation` capability emits the spans.
     """
-    from pydantic_ai.models.instrumented import InstrumentedModel
+    from pydantic_ai.models.instrumented import InstrumentedModel  # pyright: ignore[reportDeprecated]
 
     settings = InstrumentationSettings()
-    agent = Agent(model=InstrumentedModel(TestModel(), settings))
+    agent = Agent(model=InstrumentedModel(TestModel(), settings))  # pyright: ignore[reportDeprecated]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')

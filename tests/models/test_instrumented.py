@@ -1,3 +1,7 @@
+# pyright: reportDeprecated=false
+# This file's whole purpose is to exercise the deprecated `InstrumentedModel` /
+# `instrument_model` direct-construction path, so we silence the deprecation
+# warning at the file level rather than annotating every individual usage.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

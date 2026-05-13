@@ -63,6 +63,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         NativeTool,
         ImageGeneration,
         IncludeToolReturnSchemas,
+        Instrumentation,
         MCP,
         PrefixTools,
         PrepareTools,
