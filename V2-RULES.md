@@ -89,17 +89,17 @@ One topic per PR. If a PR title claims multiple cards, the body must explicitly 
 
 The card system is internal organization; the unit of review is the PR, and reviewers should be able to evaluate one coherent change at a time.
 
-### 8. Deprecation-warning links point to `changelog.md`
+### 8. Deprecation-warning links point to `changelog.md` (only when verbose migration warrants it)
 
-`DeprecationWarning` messages that include a doc link should point at the project's [`changelog.md`](docs/changelog.md) breaking-changes section, **not** at a per-page migration section that may be pruned after v2.
+Only deprecations with a **verbose, multi-step migration path** need a `changelog.md` entry + link from the warning text (e.g. AG-UI's move from `Agent.to_ag_ui()` / `AGUIApp` to `AGUIAdapter.dispatch_request()` composition, per [#5345](https://github.com/pydantic/pydantic-ai/pull/5345)). Small, mechanical changes — prefix renames, kwarg removals, method-to-property migrations — don't need a full guide; an inline before/after snippet in the warning text (rule 9) suffices.
 
-**Why:** the docs site only shows `main`. Once v2 ships and the per-page migration content is removed, every v1 user's warning still links to a page section that no longer exists. `changelog.md` is the stable breaking-changes anchor.
+When you do link from a warning, link to [`changelog.md`](docs/changelog.md) — **not** to a per-page migration section that may be pruned after v2 (the docs site only shows `main`). If `changelog.md` doesn't yet have a v2 deprecations section, add one as part of your PR with just the entries your warnings link to.
 
-If `changelog.md` doesn't yet have a v2 deprecations section, **add one as part of your PR** with the entries your warnings link to.
+**Removals (`v2:exec` leg):** the v2-exec PRs own the `changelog.md` updates for symbols being actually removed at the v2 cut. Don't pre-fill the v2-exec entries in `v2:prep` PRs.
 
 ### 9. Wordier warnings with embedded code snippets
 
-`DeprecationWarning` text should embed the migration path inline — a literal "before / after" code shape — instead of relying on a long external migration doc section. A user reading the warning at runtime should be able to fix their code from the warning text alone, only consulting `changelog.md` for context.
+`PydanticAIDeprecationWarning` text should embed the migration path inline — a literal "before / after" code shape — so a user reading the warning at runtime can fix their code from the warning text alone, only consulting `changelog.md` when the migration is too verbose for the warning (rule 8).
 
 Shape:
 
