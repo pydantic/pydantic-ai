@@ -334,7 +334,60 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
                 'type': 'image_generation',
                 'action': 'generate',
                 'background': 'opaque',
-                'input_fidelity': None,
+                'moderation': 'auto',
+                'output_compression': 100,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'auto',
+                'size': '1536x1024',
+                'model': 'gpt-image-2',
+            }
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    action='generate',
+                    model='gpt-image-2',
+                    background='opaque',
+                    output_format='jpeg',
+                    size='1536x1024',
+                    input_fidelity='high',
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('Generate an image.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'generate',
+                'background': 'opaque',
+                'input_fidelity': 'high',
                 'moderation': 'auto',
                 'output_compression': 100,
                 'output_format': 'jpeg',
