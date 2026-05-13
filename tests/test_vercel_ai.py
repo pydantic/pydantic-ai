@@ -2457,7 +2457,11 @@ async def test_run_stream_output_tool_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    # The output tool call must be closed with tool-output-error before the stream error
+    # The output tool's validator raised `UnexpectedModelBehavior` before
+    # `_emit_output_tool_events` could fire, so `_handle_tool_call` never ran.
+    # `_handle_tool_result` backfills `tool-input-available` from the part stashed at
+    # `handle_tool_call_end`, so the chunk lifecycle (input-streaming -> input-available
+    # -> output-error) stays complete for both v5 and v6 frontends.
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
     assert event_types == snapshot(
         [
@@ -2465,6 +2469,7 @@ async def test_run_stream_output_tool_error():
             'start-step',
             'tool-input-start',
             'tool-input-delta',
+            'tool-input-available',
             'tool-output-error',
             'error',
             'finish-step',
@@ -6611,6 +6616,71 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
             {'type': 'finish'},
             '[DONE]',
         ]
+    )
+
+
+async def test_event_stream_tool_call_end_backfills_input_available_when_call_event_skipped():
+    """If the agent raises before yielding the tool call event (e.g. output-tool
+    `UnexpectedModelBehavior` with no `final_result`), the base class synthesizes a
+    failed `ToolReturnPart` for the pending call. The adapter must backfill
+    `tool-input-available` from the part stashed at `handle_tool_call_end` before
+    emitting `tool-output-error`, so the chunk lifecycle stays complete."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_interrupted',
+            args={'value': 'x'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
+        # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
+        # The base class then synthesizes an error result for the pending call.
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Tool execution was interrupted by an error.',
+                tool_call_id='out_interrupted',
+                outcome='failed',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'finish',
+        ]
+    )
+    # The backfilled `tool-input-available` carries the raw args and provider metadata
+    # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
+    backfilled_available = next(e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-available')
+    assert backfilled_available == snapshot(
+        {
+            'type': 'tool-input-available',
+            'toolCallId': 'out_interrupted',
+            'toolName': 'final_result',
+            'input': {'value': 'x'},
+            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+        }
     )
 
 
