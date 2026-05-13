@@ -1,4 +1,4 @@
-from ._agent import PrefectAgent
+from ._agent import PrefectAgent  # pyright: ignore[reportDeprecated]
 from ._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY
 from ._durability import PrefectDurability
 from ._function_toolset import PrefectFunctionToolset

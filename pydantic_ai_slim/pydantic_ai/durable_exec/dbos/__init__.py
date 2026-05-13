@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._agent import DBOSAgent, DBOSParallelExecutionMode
+from ._agent import DBOSAgent, DBOSParallelExecutionMode  # pyright: ignore[reportDeprecated]
 from ._durability import DBOSDurability
 from ._model import DBOSModel
 from ._utils import StepConfig

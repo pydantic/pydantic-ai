@@ -8372,7 +8372,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == agent.description
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
-    assert wrapper_agent.render_description() == 'wrapped description'
+    # `render_description` is `Agent`-only; setting via `wrapper_agent.description` mutates the wrapped agent.
     assert agent.render_description() == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler

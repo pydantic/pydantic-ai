@@ -1,3 +1,8 @@
+# pyright: reportDeprecated=false
+# `DBOSAgent` (the wrapper-agent path) is deprecated in favor of the
+# `DBOSDurability` capability, but this file still exercises both paths in
+# parallel for parity. Silenced at file level rather than annotating every
+# individual usage.
 from __future__ import annotations
 
 import asyncio

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, overload
 from prefect import flow, task
 from prefect.context import FlowRunContext
 from prefect.utilities.asyncutils import run_coro_as_sync
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 from ._types import TaskConfig, default_task_config
 
 
+@deprecated('`PrefectAgent` is deprecated, use `capabilities=[PrefectDurability(...)]` on a regular `Agent` instead.')
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
@@ -443,7 +445,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 with self._prefect_overrides():
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
-                        super(PrefectAgent, self).run(
+                        super(PrefectAgent, self).run(  # pyright: ignore[reportDeprecated]
                             user_prompt,
                             output_type=output_type,
                             message_history=message_history,

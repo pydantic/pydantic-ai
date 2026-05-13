@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -48,6 +49,7 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """
 
 
+@deprecated('`DBOSAgent` is deprecated, use `capabilities=[DBOSDurability(...)]` on a regular `Agent` instead.')
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     _parallel_execution_mode: ParallelExecutionMode
@@ -216,7 +218,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             **_deprecated_kwargs: Any,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
-                return super(DBOSAgent, self).run_sync(
+                return super(DBOSAgent, self).run_sync(  # pyright: ignore[reportDeprecated]
                     user_prompt,
                     output_type=output_type,
                     message_history=message_history,

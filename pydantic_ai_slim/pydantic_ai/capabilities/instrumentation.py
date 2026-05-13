@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -67,6 +67,12 @@ class Instrumentation(AbstractCapability[Any]):
     Other capabilities can add attributes to these spans using either the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`) or the Logfire SDK
     (`logfire.current_span().set_attribute(key, value)`).
+    """
+
+    safe_at_runtime: ClassVar[bool] = True
+    """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
+    to attach per-run even when a durability capability is bound. See
+    [`AbstractCapability.safe_at_runtime`][pydantic_ai.capabilities.AbstractCapability.safe_at_runtime].
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())

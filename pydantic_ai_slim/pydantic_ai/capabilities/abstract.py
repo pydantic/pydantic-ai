@@ -4,7 +4,7 @@ import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -153,6 +153,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
     YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
     sensible defaults and typically don't need to be overridden.
+    """
+
+    safe_at_runtime: ClassVar[bool] = False
+    """Whether this capability can be added per-run when a durability capability is bound.
+
+    Durability capabilities (e.g.
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability])
+    need to register activities/steps/tasks with their workflow runner at agent
+    construction time, so per-run capability additions are normally rejected to
+    prevent a leaf capability's toolsets or model wrapping from silently running
+    in non-deterministic workflow code.
+
+    Capabilities that don't introduce new toolsets, native tools, or model
+    wrapping — and instead only contribute workflow-side hooks (instrumentation
+    spans, event-stream processing, etc.) — can set this to `True` to opt out of
+    that restriction.
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

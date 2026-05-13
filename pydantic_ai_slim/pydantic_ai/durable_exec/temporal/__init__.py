@@ -14,7 +14,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import UserError
-from ._agent import TemporalAgent
+from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
@@ -121,7 +121,7 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if isinstance(agent, TemporalAgent):
+                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
                     activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 elif isinstance(agent, AbstractAgent):
                     durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
@@ -145,7 +145,7 @@ class PydanticAIPlugin(SimplePlugin):
 class AgentPlugin(SimplePlugin):
     """Temporal worker plugin for a specific Pydantic AI agent."""
 
-    def __init__(self, agent: TemporalAgent[Any, Any]):
+    def __init__(self, agent: TemporalAgent[Any, Any]):  # pyright: ignore[reportDeprecated]
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=agent.temporal_activities,
