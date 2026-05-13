@@ -18,6 +18,7 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -105,6 +106,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
         traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
+        if traceparent is None:
+            # Fall back to the active OTel span, which is the agent run span
+            # when the Instrumentation capability is active.
+            traceparent = current_otel_traceparent()
         if traceparent is None and required:  # pragma: no cover
             raise AttributeError('No span was created for this agent run')
         return traceparent

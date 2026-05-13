@@ -55,6 +55,17 @@ class AbstractNativeTool(ABC):
     kind: str = 'unknown_native_tool'
     """Native tool identifier, this should be available on all native tools as a discriminator."""
 
+    optional: bool = False
+    """Whether this instance is a best-effort upgrade rather than a hard requirement.
+
+    When `True`, the instance is silently dropped from the request on a model that doesn't
+    support it natively, instead of raising when no local fallback is provided. Use for
+    native tools where a fallback path exists (e.g. a local function tool that takes over when
+    the native one isn't available). When `False` (the default), the request errors on
+    models that can't honor the native tool — the user explicitly asked for it, so fail loudly
+    rather than silently substituting different behavior.
+    """
+
     @property
     def unique_id(self) -> str:
         """A unique identifier for the native tool.
@@ -589,6 +600,15 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+# Imported after the base class is defined — `_tool_search.py` subclasses
+# `AbstractNativeTool`, so the import has to follow. Loading the submodule registers
+# `ToolSearchTool` in `NATIVE_TOOL_TYPES` via `__init_subclass__`. `ToolSearchTool` is
+# framework-internal (constructed exclusively by the
+# [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability) and intentionally not
+# re-exported here; user-facing strategy types live on `pydantic_ai.capabilities`.
+from . import _tool_search as _tool_search  # noqa: E402
+
+
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractNativeTool) -> str:
     if isinstance(tool_data, dict):
         return tool_data.get('kind', AbstractNativeTool.kind)
@@ -603,5 +623,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(cls for cls in NATIVE_TOOL_TYPES.values() if 
 """Get the set of all native tool types (excluding deprecated tools)."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}
 )

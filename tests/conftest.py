@@ -489,7 +489,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
-    companion ``close_httpx_clients`` fixture handles async cleanup first.
+    companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
     original = pydantic_ai.models.create_async_http_client
