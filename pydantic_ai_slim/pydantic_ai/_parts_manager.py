@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable, Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -31,9 +31,13 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolPartKind,
 )
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
+
+if TYPE_CHECKING:
+    from .models import ModelRequestParameters
 
 VendorId = Hashable
 """
@@ -57,10 +61,40 @@ class ModelResponsePartsManager:
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
     """
 
+    model_request_parameters: ModelRequestParameters
+    """Active request context. The manager promotes streamed tool call parts to their typed
+    subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
+    `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
+    than only after a post-stream pass.
+    """
+
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
+    _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
+    """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+
+    def __post_init__(self) -> None:
+        self._tool_kind_by_name = {
+            td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
+        }
+
+    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
+        return self._tool_kind_by_name.get(tool_name)
+
+    def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
+        """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
+
+        Safe no-op for unknown tool names (model hallucinations) and for tool defs
+        without a `tool_kind`.
+        """
+        if part.tool_kind is not None:
+            return part
+        kind = self._tool_kind_for(part.tool_name)
+        if kind is None:
+            return part
+        return ToolCallPart.narrow_type(part, tool_kind=kind)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -323,6 +357,8 @@ class ModelResponsePartsManager:
                 provider_details=provider_details,
             )
             part = delta.as_part() or delta
+            if isinstance(part, ToolCallPart):
+                part = self._typed_call_part(part)
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -338,6 +374,8 @@ class ModelResponsePartsManager:
                 provider_details=provider_details,
             )
             updated_part = delta.apply(existing_part)
+            if isinstance(updated_part, ToolCallPart):
+                updated_part = self._typed_call_part(updated_part)
             self._parts[part_index] = updated_part
             if isinstance(updated_part, ToolCallPart | NativeToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
@@ -386,6 +424,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             provider_details=provider_details,
         )
+        new_part = self._typed_call_part(new_part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = self._append_part(new_part)

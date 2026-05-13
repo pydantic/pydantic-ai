@@ -507,6 +507,19 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
+    """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
+
+    Construct a new dataclass instance from `src`'s fields, overriding selected ones.
+    Lets typed-part narrowers stay maintainable when fields are added to the base
+    class — base-class field changes flow through automatically instead of needing
+    every narrower to be updated by hand.
+    """
+    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
+    field_values.update(overrides)
+    return dst_cls(**field_values)
+
+
 _datetime_ta = TypeAdapter(datetime)
 
 

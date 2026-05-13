@@ -3936,7 +3936,9 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
-                    tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
+                    tool_name='code_execution',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
                 ),
             ),
             PartDeltaEvent(

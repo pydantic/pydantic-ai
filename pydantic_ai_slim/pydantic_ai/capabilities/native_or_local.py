@@ -103,7 +103,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         return None
 
     def _native_unique_id(self) -> str:
-        """The unique_id used for `prefer_native` on local tool definitions.
+        """The unique_id used for `unless_native` on local tool definitions.
 
         By default, derived from the native tool's `unique_id` property.
         Override in subclasses for custom behavior.
@@ -154,12 +154,12 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         if self.native is not False:
             uid = self._native_unique_id()
 
-            async def _add_prefer_native(
+            async def _add_unless_native(
                 ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [replace(d, prefer_native=uid) for d in tool_defs]
+                return [replace(d, unless_native=uid) for d in tool_defs]
 
-            return PreparedToolset(wrapped=toolset, prepare_func=_add_prefer_native)
+            return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
 
     def __getattr__(self, name: str) -> Any:
