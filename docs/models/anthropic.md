@@ -133,8 +133,6 @@ agent = Agent(model)
 ...
 ```
 
-The transport-specific model ID (e.g. `anthropic.claude-haiku-4-5` or `us.anthropic.claude-sonnet-4-5-20250929-v1:0`) is used as-is on the wire; the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (which capability flags it gets) is looked up from the underlying `claude-...` name.
-
 !!! note "Bedrock vs BedrockConverseModel"
     This approach uses Anthropic's SDK with AWS Bedrock credentials. For an alternative using AWS SDK (boto3) directly, see [`BedrockConverseModel`](bedrock.md).
 
@@ -158,9 +156,6 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 agent = Agent(model)
 ...
 ```
-
-!!! note "Vertex vs GoogleModel"
-    This approach uses Anthropic's SDK with Vertex AI credentials. For an alternative using Google's Vertex AI SDK directly, see [`GoogleModel`](google.md).
 
 ### Microsoft Foundry
 

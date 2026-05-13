@@ -100,6 +100,7 @@ try:
         APIConnectionError,
         APIStatusError,
         AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
@@ -216,12 +217,21 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+# `AsyncAnthropicBedrockMantle` uses the Messages API and supports automatic prompt caching (unlike the
+# legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast
+# mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_FAST_MODE_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex)
+_FAST_MODE_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
 # variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
-# — so we default to `regex` there. (`AsyncAnthropicBedrockMantle` uses the Messages API and is treated
-# like the direct API.)
+# — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
+# `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
+# keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
