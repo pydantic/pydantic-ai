@@ -1,5 +1,8 @@
 # Agent2Agent (A2A) Protocol
 
+!!! warning "Deprecated in 1.x, removed in 2.0"
+    `Agent.to_a2a()` and the `pydantic-ai-slim[a2a]` extra are deprecated and will be removed in 2.0. The `fasta2a` package is now maintained at [datalayer/fasta2a](https://github.com/datalayer/fasta2a) — install it from PyPI and use it directly. The pydantic-ai bridge (`agent_to_a2a` and `AgentWorker`) is being ported upstream in [datalayer/fasta2a#55](https://github.com/datalayer/fasta2a/pull/55).
+
 The [Agent2Agent (A2A) Protocol](https://google.github.io/A2A/) is an open standard introduced by Google that enables
 communication and interoperability between AI agents, regardless of the framework or vendor they are built on.
 

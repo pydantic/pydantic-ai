@@ -38,6 +38,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
@@ -1700,6 +1701,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             lifespan=lifespan,
         )
 
+    @deprecated(
+        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
+        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it and use it directly.',
+        category=PydanticAIDeprecationWarning,
+    )
     def to_a2a(
         self,
         *,

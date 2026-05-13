@@ -2,6 +2,7 @@ from __future__ import annotations, annotations as _annotations
 
 import base64
 import uuid
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 
+from ._warnings import PydanticAIDeprecationWarning
 from .agent import AbstractAgent, AgentDepsT, OutputDataT
 
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
@@ -92,6 +94,12 @@ def agent_to_a2a(
     lifespan: Lifespan[FastA2A] | None = None,
 ) -> FastA2A:
     """Create a FastA2A server from an agent."""
+    warnings.warn(
+        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
+        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it and use it directly.',
+        PydanticAIDeprecationWarning,
+        stacklevel=2,
+    )
     storage = storage or InMemoryStorage()
     broker = broker or InMemoryBroker()
     worker = AgentWorker(agent=agent, broker=broker, storage=storage)
