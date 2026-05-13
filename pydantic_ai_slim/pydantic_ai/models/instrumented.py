@@ -3,11 +3,10 @@ from __future__ import annotations
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
-from urllib.parse import urlparse
 
 from genai_prices.types import PriceCalculation
 from opentelemetry._logs import (
@@ -19,14 +18,30 @@ from opentelemetry._logs import (
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from typing_extensions import deprecated
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    GEN_AI_PROVIDER_NAME_ATTRIBUTE,
+    GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    GEN_AI_SYSTEM_ATTRIBUTE,
+    MODEL_SETTING_ATTRIBUTES,
+    TOKEN_HISTOGRAM_BOUNDARIES,
+    CostCalculationFailedWarning,
+    annotate_tool_call_otel_metadata,
+    build_tool_definitions,
+    event_to_dict,
+    get_agent_run_baggage_attributes,
+    get_instructions,
+    model_attributes,
+    model_request_parameters_attributes,
+    serialize_any,
+)
 
 from .. import _otel_messages
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
-    BaseToolCallPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,39 +53,25 @@ from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
-MODEL_SETTING_ATTRIBUTES: tuple[
-    Literal[
-        'max_tokens',
-        'top_p',
-        'seed',
-        'temperature',
-        'presence_penalty',
-        'frequency_penalty',
-    ],
-    ...,
-] = (
-    'max_tokens',
-    'top_p',
-    'seed',
-    'temperature',
-    'presence_penalty',
-    'frequency_penalty',
+
+@deprecated(
+    '`pydantic_ai.models.instrumented.instrument_model` is deprecated, '
+    'use `capabilities=[Instrumentation(...)]` instead. '
+    'This helper will be removed in v2.',
+    category=PydanticAIDeprecationWarning,
 )
-
-ANY_ADAPTER = TypeAdapter[Any](Any)
-
-# These are in the spec:
-# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
-TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
-
-
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
     """Instrument a model with OpenTelemetry/logfire."""
-    if instrument and not isinstance(model, InstrumentedModel):
+    if instrument and not isinstance(model, InstrumentedModel):  # pyright: ignore[reportDeprecated]
         if instrument is True:
             instrument = InstrumentationSettings()
 
-        model = InstrumentedModel(model, instrument)
+        with warnings.catch_warnings():
+            # Suppress `InstrumentedModel`'s own deprecation warning — the user already saw
+            # the `instrument_model` warning above (or is on the internal `direct.py` path
+            # which suppresses both).
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            model = InstrumentedModel(model, instrument)  # pyright: ignore[reportDeprecated]
 
     return model
 
@@ -209,7 +210,7 @@ class InstrumentationSettings:
             A list of OpenTelemetry events.
         """
         events: list[LogRecord] = []
-        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
+        instructions = get_instructions(messages, parameters)
         if instructions is not None:
             events.append(
                 LogRecord(
@@ -234,7 +235,7 @@ class InstrumentationSettings:
             events.extend(message_events)
 
         for event in events:
-            event.body = InstrumentedModel.serialize_any(event.body)
+            event.body = serialize_any(event.body)
         return events
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
@@ -288,7 +289,7 @@ class InstrumentationSettings:
             assert len(output_messages) == 1
             output_message = output_messages[0]
 
-            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
+            instructions = get_instructions(input_messages, parameters)
             system_instructions_attributes = self.system_instructions_attributes(instructions)
 
             attributes: dict[str, AttributeValue] = {
@@ -328,7 +329,7 @@ class InstrumentationSettings:
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: json.dumps([InstrumentedModel.event_to_dict(event) for event in events]),
+                    attr_name: json.dumps([event_to_dict(event) for event in events]),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
@@ -357,58 +358,19 @@ class InstrumentationSettings:
             self.cost_histogram.record(cost, attributes)
 
 
-GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
-GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
-GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
-
-
-def _annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
-    """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
-
-    This allows tool definition metadata (e.g. code language hints set by the code-mode toolset)
-    to flow through to OTel events on both the model request span and the agent run span.
-    """
-    tool_defs = parameters.tool_defs
-    if not tool_defs:
-        return
-    for part in response.parts:
-        if isinstance(part, BaseToolCallPart) and (tool_def := tool_defs.get(part.tool_name)):
-            if tool_def.metadata:
-                otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
-                if code_arg_name := tool_def.metadata.get('code_arg_name'):
-                    otel_metadata['code_arg_name'] = code_arg_name
-                if code_arg_language := tool_def.metadata.get('code_arg_language'):
-                    otel_metadata['code_arg_language'] = code_arg_language
-                if otel_metadata:
-                    part.otel_metadata = otel_metadata
-
-
-def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
-    """Build OTel-compliant tool definitions from model request parameters.
-
-    Extracts tool metadata from function_tools and output_tools into a list of
-    tool definition dicts following the OTel GenAI semantic conventions format.
-    """
-    all_tools = itertools.chain(
-        model_request_parameters.function_tools or [],
-        model_request_parameters.output_tools or [],
-    )
-
-    tool_definitions: list[dict[str, Any]] = []
-    for tool in all_tools:
-        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
-        if tool.description:
-            tool_def['description'] = tool.description
-        if tool.parameters_json_schema:
-            tool_def['parameters'] = tool.parameters_json_schema
-        tool_definitions.append(tool_def)
-
-    return tool_definitions
-
-
+@deprecated(
+    '`pydantic_ai.models.instrumented.InstrumentedModel` is deprecated, '
+    'use `capabilities=[Instrumentation(...)]` instead. '
+    'The class will be removed in v2.',
+    category=PydanticAIDeprecationWarning,
+)
 @dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
+
+    Deprecated: add the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    capability to your agent's `capabilities=[...]` list instead of wrapping a model in
+    `InstrumentedModel`. The class will be removed in v2.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
@@ -436,7 +398,7 @@ class InstrumentedModel(WrapperModel):
         )
         with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            _annotate_tool_call_otel_metadata(response, prepared_parameters)
+            annotate_tool_call_otel_metadata(response, prepared_parameters)
             finish(response, prepared_parameters)
             return response
 
@@ -462,7 +424,7 @@ class InstrumentedModel(WrapperModel):
             finally:
                 if response_stream:  # pragma: no branch
                     response = response_stream.get()
-                    _annotate_tool_call_otel_metadata(response, prepared_parameters)
+                    annotate_tool_call_otel_metadata(response, prepared_parameters)
                     finish(response, prepared_parameters)
 
     @contextmanager
@@ -479,8 +441,8 @@ class InstrumentedModel(WrapperModel):
         #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
-            **self.model_attributes(self.wrapped),
-            **self.model_request_parameters_attributes(model_request_parameters),
+            **model_attributes(self.wrapped),
+            **model_request_parameters_attributes(model_request_parameters),
             **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
@@ -490,7 +452,7 @@ class InstrumentedModel(WrapperModel):
             ),
         }
 
-        tool_definitions = _build_tool_definitions(model_request_parameters)
+        tool_definitions = build_tool_definitions(model_request_parameters)
         if tool_definitions:
             attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
 
@@ -563,53 +525,3 @@ class InstrumentedModel(WrapperModel):
                 # We only want to record metrics after the span is finished,
                 # to prevent them from being redundantly recorded in the span itself by logfire.
                 record_metrics()
-
-    @staticmethod
-    def model_attributes(model: Model) -> dict[str, AttributeValue]:
-        attributes: dict[str, AttributeValue] = {
-            GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-            GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-            GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
-        }
-        if base_url := model.base_url:
-            try:
-                parsed = urlparse(base_url)
-            except Exception:  # pragma: no cover
-                pass
-            else:
-                if parsed.hostname:  # pragma: no branch
-                    attributes['server.address'] = parsed.hostname
-                if parsed.port:  # pragma: no branch
-                    attributes['server.port'] = parsed.port
-
-        return attributes
-
-    @staticmethod
-    def model_request_parameters_attributes(
-        model_request_parameters: ModelRequestParameters,
-    ) -> dict[str, AttributeValue]:
-        return {'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters))}
-
-    @staticmethod
-    def event_to_dict(event: LogRecord) -> dict[str, Any]:
-        if not event.body:
-            body = {}  # pragma: no cover
-        elif isinstance(event.body, Mapping):
-            body = event.body
-        else:
-            body = {'body': event.body}
-        return {**body, **(event.attributes or {})}
-
-    @staticmethod
-    def serialize_any(value: Any) -> str:
-        try:
-            return ANY_ADAPTER.dump_python(value, mode='json')
-        except Exception:
-            try:
-                return str(value)
-            except Exception as e:
-                return f'Unable to serialize: {e}'
-
-
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""

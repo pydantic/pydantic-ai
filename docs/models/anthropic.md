@@ -117,24 +117,27 @@ You can use Anthropic models through cloud platforms by passing a custom client 
 
 ### AWS Bedrock
 
-To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock) on how to set up an `AsyncAnthropicBedrock` client and then pass it to `AnthropicProvider`:
+To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock) on how to set up a Bedrock client and then pass it to `AnthropicProvider`. Both the newer `AsyncAnthropicBedrockMantle` client (recommended by Anthropic, using the Messages API) and the legacy `AsyncAnthropicBedrock` client (using the `InvokeModel` API with ARN-versioned model IDs) are supported:
 
 ```python {test="skip"}
-from anthropic import AsyncAnthropicBedrock
+from anthropic import AsyncAnthropicBedrockMantle
 
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-bedrock_client = AsyncAnthropicBedrock()  # Uses AWS credentials from environment
+bedrock_client = AsyncAnthropicBedrockMantle()  # Uses AWS credentials from environment
 provider = AnthropicProvider(anthropic_client=bedrock_client)
-model = AnthropicModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+model = AnthropicModel('anthropic.claude-haiku-4-5', provider=provider)
 agent = Agent(model)
 ...
 ```
 
 !!! note "Bedrock vs BedrockConverseModel"
     This approach uses Anthropic's SDK with AWS Bedrock credentials. For an alternative using AWS SDK (boto3) directly, see [`BedrockConverseModel`](bedrock.md).
+
+!!! note "Tool search on the legacy `AsyncAnthropicBedrock` client"
+    The legacy `InvokeModel` API doesn't support the `bm25` [tool search](../tools-advanced.md#tool-search) variant, so [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] defaults to `'regex'` on the `AsyncAnthropicBedrock` client (instead of `'bm25'`), and passing `ToolSearch(strategy='bm25')` raises a `UserError`.
 
 ### Google Vertex AI
 
@@ -153,9 +156,6 @@ model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 agent = Agent(model)
 ...
 ```
-
-!!! note "Vertex vs GoogleModel"
-    This approach uses Anthropic's SDK with Vertex AI credentials. For an alternative using Google's Vertex AI SDK directly, see [`GoogleModel`](google.md).
 
 ### Microsoft Foundry
 

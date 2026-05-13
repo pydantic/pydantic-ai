@@ -290,6 +290,9 @@ class OutputContext:
     """The output object definition (schema, name, description), if structured output."""
     has_function: bool
     """Whether there's an output function to call in the execute step."""
+    function_name: str | None = None
+    """Name of the output function that will run, when known. `None` for union processors that dispatch
+    by output subtype, or when the schema has no function."""
     tool_call: ToolCallPart | None = None
     """The tool call part, for tool-based output. `None` when the current output did not arrive via a tool call (text or image)."""
     tool_def: ToolDefinition | None = None

@@ -149,17 +149,17 @@ def test_url_context_discriminated_union():
     assert results[1].max_uses == 2
 
 
-# --- prefer_native swap tests ---
+# --- unless_native swap tests ---
 
 
-def test_prefer_native_model_supports_builtin():
+def test_unless_native_model_supports_builtin():
     """When model supports the builtin, the fallback function tool is removed."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.tools import ToolDefinition
 
     model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
-    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_native='web_search')
+    fallback_tool = ToolDefinition(name='my_search', description='Search', unless_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
         native_tools=[WebSearchTool()],
@@ -171,7 +171,7 @@ def test_prefer_native_model_supports_builtin():
     assert len(result.function_tools) == 0
 
 
-def test_prefer_native_model_does_not_support():
+def test_unless_native_model_does_not_support():
     """When model doesn't support the builtin, the builtin is removed and fallback stays."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -179,7 +179,7 @@ def test_prefer_native_model_does_not_support():
     from pydantic_ai.tools import ToolDefinition
 
     model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
-    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_native='web_search')
+    fallback_tool = ToolDefinition(name='my_search', description='Search', unless_native='web_search')
     params = ModelRequestParameters(
         function_tools=[fallback_tool],
         native_tools=[WebSearchTool()],
@@ -191,7 +191,7 @@ def test_prefer_native_model_does_not_support():
     assert result.function_tools[0].name == 'my_search'
 
 
-def test_prefer_native_no_fallback_raises_error():
+def test_unless_native_no_fallback_raises_error():
     """Unsupported builtin without fallback still raises UserError."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -203,7 +203,7 @@ def test_prefer_native_no_fallback_raises_error():
         model.prepare_request(None, params)
 
 
-def test_prefer_native_multiple_fallbacks_for_same_builtin():
+def test_unless_native_multiple_fallbacks_for_same_builtin():
     """Multiple fallback tools for the same builtin are all removed when builtin is supported."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -212,8 +212,8 @@ def test_prefer_native_multiple_fallbacks_for_same_builtin():
     model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='search_a', description='A', prefer_native='web_search'),
-            ToolDefinition(name='search_b', description='B', prefer_native='web_search'),
+            ToolDefinition(name='search_a', description='A', unless_native='web_search'),
+            ToolDefinition(name='search_b', description='B', unless_native='web_search'),
             ToolDefinition(name='regular_tool', description='C'),
         ],
         native_tools=[WebSearchTool()],
@@ -224,7 +224,7 @@ def test_prefer_native_multiple_fallbacks_for_same_builtin():
     assert [t.name for t in result.function_tools] == ['regular_tool']
 
 
-def test_prefer_native_mixed_support():
+def test_unless_native_mixed_support():
     """Multiple builtins with mixed support — each resolved independently."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.function import FunctionModel
@@ -238,8 +238,8 @@ def test_prefer_native_mixed_support():
     )
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='local_search', description='Search', prefer_native='web_search'),
-            ToolDefinition(name='local_code', description='Code', prefer_native='code_execution'),
+            ToolDefinition(name='local_search', description='Search', unless_native='web_search'),
+            ToolDefinition(name='local_code', description='Code', unless_native='code_execution'),
         ],
         native_tools=[WebSearchTool(), CodeExecutionTool()],
     )
