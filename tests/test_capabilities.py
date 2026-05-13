@@ -17,7 +17,12 @@ from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
-from pydantic_ai._load_capability import LoadCapabilityCallPart, LoadCapabilityReturnPart
+from pydantic_ai._load_capability import (
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    _narrow_load_capability_call,  # pyright: ignore[reportPrivateUsage]
+    _narrow_load_capability_return,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -49,6 +54,7 @@ from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -64,6 +70,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
     FilePart,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -2686,6 +2693,141 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
     )
 
 
+async def test_deferred_capability_load_returns_wrapped_toolset_instructions() -> None:
+    """When a deferred capability's toolset carries its own instructions, the
+    `load_capability` return concatenates them with the capability-level instructions.
+
+    Also pins the defensive guard inside `_collect_scoped_toolset_instructions`: a
+    wrapper toolset emitting a whitespace-only string is dropped instead of polluting
+    the load return. Covers both legs of `if content and content.strip()` — the
+    truthy leg via the real toolset, the falsy leg via the whitespace wrapper.
+    """
+    from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+    inner = FunctionToolset[None](
+        instructions='Toolset-level instruction.',
+    )
+
+    @inner.tool_plain
+    def refund_status(order_id: str) -> str:
+        return f'{order_id}: pending'  # pragma: no cover
+
+    @dataclass
+    class WhitespaceInstructionWrapper(WrapperToolset[None]):
+        """Wraps a toolset and adds a whitespace-only string to its instructions."""
+
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart]:
+            inner_result = await self.wrapped.get_instructions(ctx)
+            inner_seq: list[str | InstructionPart]
+            if inner_result is None:
+                inner_seq = []
+            elif isinstance(inner_result, (str, InstructionPart)):
+                inner_seq = [inner_result]
+            else:
+                inner_seq = list(inner_result)
+            return ['   ', *inner_seq]
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Capability-level instruction.',
+        toolset=WhitespaceInstructionWrapper(wrapped=inner),
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('load refunds')
+
+    assert result.output == 'done'
+
+    load_return = next(
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    )
+    assert load_return.loaded == snapshot(
+        {
+            'capability_id': 'refunds',
+            'instructions': 'Capability-level instruction.\n\nToolset-level instruction.',
+        }
+    )
+
+
+async def test_deferred_capability_tool_called_before_load_raises_model_retry() -> None:
+    """Calling a cap-scoped tool before `load_capability` raises `ModelRetry`.
+
+    Cap-scoped tools are visible on the wire from turn 1 (cache stability) but the
+    execution gate stays closed until `load_capability` runs. This test pins that the
+    gate inside `CapabilityScopedToolset.call_tool` actually trips: an early call
+    becomes a `RetryPromptPart` instructing the model to load the cap first.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def refund_status(order_id: str) -> str:
+        """Look up the refund status for an order."""
+        return f'{order_id}: pending'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Skip load_capability entirely on turn 1.
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'order-7'}, tool_call_id='early')]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('look up early')
+
+    assert result.output == 'done'
+
+    retry_prompts = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(
+        [
+            RetryPromptPart(
+                content="Tool 'refund_status' belongs to capability 'refunds', which has not been loaded yet. "
+                "Call load_capability(id='refunds') first.",
+                tool_name='refund_status',
+                tool_call_id='early',
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_deferred_capability_wire_is_stable_across_load_capability() -> None:
     """The wire-level tool list and tool schemas are byte-identical across the
     `load_capability` boundary within a run.
@@ -2870,6 +3012,62 @@ def test_load_capability_typed_parts_round_trip() -> None:
         ),
     ]
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(original)) == original
+
+
+@pytest.mark.parametrize(
+    ('args', 'expected_typed_args', 'expected_capability_id'),
+    [
+        pytest.param({'id': 'refunds'}, {'id': 'refunds'}, 'refunds', id='dict-args'),
+        pytest.param('{"id": "refunds"}', {'id': 'refunds'}, 'refunds', id='json-string-args'),
+        pytest.param('{"id":', None, None, id='unparseable-streaming-partial'),
+        pytest.param('["id"]', None, None, id='non-dict-json'),
+        pytest.param(None, None, None, id='none-args'),
+    ],
+)
+def test_load_capability_call_part_typed_args_dispatch(
+    args: Any, expected_typed_args: Any, expected_capability_id: str | None
+) -> None:
+    """`typed_args` and `capability_id` accessors dispatch across each `args` shape.
+
+    Pins the streaming-partial path (returns `None` until JSON completes), the
+    pre-parsed dict path (passthrough), and the catalog-call path (JSON string parsed).
+    """
+    part = LoadCapabilityCallPart(args=args, tool_call_id='ok')
+    assert part.typed_args == expected_typed_args
+    assert part.capability_id == expected_capability_id
+
+
+def test_load_capability_return_part_accessors_dispatch_on_content_shape() -> None:
+    """`.loaded` extracts validated success payloads; `.error` surfaces catalog-miss strings."""
+    success = LoadCapabilityReturnPart(
+        content={'capability_id': 'refunds', 'instructions': 'Use refund_status.'},
+        tool_call_id='ok',
+    )
+    assert success.loaded == {'capability_id': 'refunds', 'instructions': 'Use refund_status.'}
+    assert success.error is None
+
+    miss = LoadCapabilityReturnPart(content="No capability found with id 'missing'.", tool_call_id='miss')
+    assert miss.loaded is None
+    assert miss.error == "No capability found with id 'missing'."
+
+
+def test_load_capability_narrowers_passthrough_when_already_typed() -> None:
+    """Narrowers short-circuit (return the same instance) when the input is already typed."""
+    call = LoadCapabilityCallPart(args={'id': 'x'}, tool_call_id='ok')
+    assert _narrow_load_capability_call(call) is call
+
+    ret = LoadCapabilityReturnPart(content={'capability_id': 'x', 'instructions': None}, tool_call_id='ok')
+    assert _narrow_load_capability_return(ret) is ret
+
+
+def test_capability_subclass_init_forwards_explicit_id() -> None:
+    """Subclasses that override `__init__` must forward an explicit `id=` instead of
+    silently keeping the auto-generated uuid4. Pins the `if id is not None: self.id = id`
+    forwarding added so `dataclasses.replace()` round-trips on deferred-loading capabilities.
+    """
+    assert WebFetch(id='explicit', local=False).id == 'explicit'
+    assert ImageGeneration(id='explicit').id == 'explicit'
+    assert NativeOrLocalTool(native=WebSearchTool(), id='explicit').id == 'explicit'
 
 
 def test_infer_fmt_explicit():
