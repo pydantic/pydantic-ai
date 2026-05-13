@@ -2743,96 +2743,133 @@ async def test_deferred_capability_wire_is_stable_across_load_capability() -> No
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
     await agent.run('check my refund')
 
-    # The cap-scoped tool's full serialized definition is identical at every turn the
-    # tool appears (here: every turn). Equality of the per-turn dict subset proves
-    # names, schemas, descriptions, defer_loading flags, and capability_id are all
-    # frozen across the load boundary — i.e. the part of the wire the provider caches.
-    refund_per_turn = [turn['refund_status'] for turn in per_turn_wire]
-    assert refund_per_turn[1:] == refund_per_turn[:-1]  # pairwise-equal === all-equal
-
-    # Per-turn tool-name set: load_capability is on the wire only while the cap is
-    # unloaded (turn 1). Anything else appearing here would mean the wire grew or
-    # shrank around a tool other than `load_capability` itself, which would defeat
-    # the cache-stability property.
-    assert [sorted(turn.keys()) for turn in per_turn_wire] == snapshot(
+    # `load_capability` only sits on the wire while a deferred cap is unloaded (turn 1);
+    # `refund_status` carries identical bytes every turn — that repetition IS the
+    # cache-stability invariant the provider's prompt cache relies on.
+    assert per_turn_wire == snapshot(
         [
-            ['load_capability', 'refund_status'],
-            ['refund_status'],
-            ['refund_status'],
+            {
+                LOAD_CAPABILITY_TOOL_NAME: {
+                    'name': LOAD_CAPABILITY_TOOL_NAME,
+                    'parameters_json_schema': IsInstance(dict),
+                    'description': 'Load a capability to access its full instructions and tools.',
+                    'outer_typed_dict_key': None,
+                    'tool_kind': 'capability-load',
+                    'sequential': False,
+                    'kind': 'function',
+                    'unless_native': None,
+                    'timeout': None,
+                    'with_native': None,
+                    'capability_id': None,
+                    'defer_loading': False,
+                    'strict': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'metadata': None,
+                },
+                'refund_status': {
+                    'name': 'refund_status',
+                    'parameters_json_schema': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
+                    'outer_typed_dict_key': None,
+                    'strict': None,
+                    'sequential': False,
+                    'kind': 'function',
+                    'metadata': None,
+                    'timeout': None,
+                    'defer_loading': False,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'capability_id': 'refunds',
+                },
+            },
+            {
+                'refund_status': {
+                    'name': 'refund_status',
+                    'parameters_json_schema': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
+                    'outer_typed_dict_key': None,
+                    'strict': None,
+                    'sequential': False,
+                    'kind': 'function',
+                    'metadata': None,
+                    'timeout': None,
+                    'defer_loading': False,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'capability_id': 'refunds',
+                }
+            },
+            {
+                'refund_status': {
+                    'name': 'refund_status',
+                    'parameters_json_schema': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
+                    'outer_typed_dict_key': None,
+                    'strict': None,
+                    'sequential': False,
+                    'kind': 'function',
+                    'metadata': None,
+                    'timeout': None,
+                    'defer_loading': False,
+                    'unless_native': None,
+                    'with_native': None,
+                    'tool_kind': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'capability_id': 'refunds',
+                }
+            },
         ]
     )
-
-    # Description hint is on the wire from turn 1 (before load) AND turn 3 (after
-    # load) — the "if you haven't" hedge lets the bytes stay stable across the
-    # boundary. Pin the exact string to catch unintended hint drift.
-    assert refund_per_turn[0]['description'] == snapshot(
-        'Look up the refund status for an order. '
-        "(This tool belongs to capability 'refunds'. "
-        "Call load_capability(id='refunds') first if you haven't.)"
-    )
-    assert refund_per_turn[0]['capability_id'] == 'refunds'
 
 
 def test_load_capability_typed_parts_round_trip() -> None:
     """`LoadCapabilityCallPart` / `LoadCapabilityReturnPart` survive JSON round-trips.
 
-    The registry-driven Pydantic discriminator (`_TYPED_PART_TAGS` +
-    `_TYPED_PART_TAGS_BY_TYPE`) promotes a serialized `tool-call` / `tool-return`
-    back to the typed subclass on `model_validate_json`, so a resumed run sees
-    typed parts in history exactly as the original run emitted them. The success
-    path carries a `LoadCapabilityReturn` dict; the catalog-miss path carries a
-    plain string — both shapes round-trip through the same `LoadCapabilityReturnPart`.
+    Equality on Python dataclasses requires both sides to be the same class, so this
+    single assertion pins both type preservation (a regression to the base
+    `ToolCallPart` / `ToolReturnPart` would fail equality) AND field-value fidelity
+    across success and catalog-miss return shapes.
     """
     from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 
     original = [
-        ModelResponse(
-            parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='ok')],
-        ),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='ok')]),
         ModelRequest(
             parts=[
                 LoadCapabilityReturnPart(
                     content={'capability_id': 'refunds', 'instructions': 'Use refund_status.'},
                     tool_call_id='ok',
                 )
-            ],
+            ]
         ),
         ModelRequest(
-            parts=[
-                LoadCapabilityReturnPart(
-                    content="No capability found with id 'missing'.",
-                    tool_call_id='miss',
-                )
-            ],
+            parts=[LoadCapabilityReturnPart(content="No capability found with id 'missing'.", tool_call_id='miss')]
         ),
     ]
-
-    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(original))
-
-    # Snapshotting `(type, accessor-derived view)` per part is enough to pin both type
-    # preservation AND the typed accessors' dispatch between success and error shapes.
-    [response, success_req, miss_req] = restored
-    assert isinstance(response, ModelResponse)
-    assert isinstance(success_req, ModelRequest) and isinstance(miss_req, ModelRequest)
-    call_part = response.parts[0]
-    success_return = success_req.parts[0]
-    miss_return = miss_req.parts[0]
-    assert isinstance(call_part, LoadCapabilityCallPart)
-    assert isinstance(success_return, LoadCapabilityReturnPart)
-    assert isinstance(miss_return, LoadCapabilityReturnPart)
-
-    summary = (
-        (type(call_part).__name__, call_part.capability_id),
-        (type(success_return).__name__, success_return.loaded, success_return.error),
-        (type(miss_return).__name__, miss_return.loaded, miss_return.error),
-    )
-    assert summary == snapshot(
-        (
-            ('LoadCapabilityCallPart', 'refunds'),
-            ('LoadCapabilityReturnPart', {'capability_id': 'refunds', 'instructions': 'Use refund_status.'}, None),
-            ('LoadCapabilityReturnPart', None, "No capability found with id 'missing'."),
-        )
-    )
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(original)) == original
 
 
 def test_infer_fmt_explicit():
