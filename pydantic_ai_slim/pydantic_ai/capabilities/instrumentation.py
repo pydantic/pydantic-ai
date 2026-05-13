@@ -50,6 +50,13 @@ if TYPE_CHECKING:
     from pydantic_ai.tools import AgentDepsT
 
 
+def _default_settings() -> InstrumentationSettings:
+    """Lazy import to avoid loading the OTel SDK eagerly at module import time."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    return InstrumentationSettings()
+
+
 @dataclass
 class Instrumentation(AbstractCapability[Any]):
     """Capability that instruments agent runs with OpenTelemetry/Logfire tracing.
@@ -62,7 +69,10 @@ class Instrumentation(AbstractCapability[Any]):
     (`logfire.current_span().set_attribute(key, value)`).
     """
 
-    settings: InstrumentationSettings
+    settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
+    """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
+    which uses the global `TracerProvider`/`LoggerProvider` (typically configured by
+    `logfire.configure()`)."""
 
     # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
     # returns a shallow copy via `replace(self)` for per-run isolation. These fields
