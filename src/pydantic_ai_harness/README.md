@@ -31,7 +31,7 @@ uv add "pydantic-ai-harness[codemode]"   # CodeMode (adds the Monty sandbox)
 
 The `code-mode` extra is also supported as an alias.
 
-Requires Python 3.10+ and `pydantic-ai-slim>=1.89.1`.
+Requires Python 3.10+ and `pydantic-ai-slim>=1.95.1`.
 
 ## Quick start
 
