@@ -602,19 +602,23 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     try:
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
     except NameError as exc:
-        # An annotation references a name that isn't resolvable at runtime — most often a class
-        # imported only under `if TYPE_CHECKING:` combined with `from __future__ import annotations`.
-        # Returning None silently here causes `takes_run_context` (and other callers) to misclassify
-        # the callable, leading to confusing runtime errors far from the real cause. See #5358.
-        callable_name = getattr(callable_obj, '__qualname__', None) or repr(callable_obj)
-        warnings.warn(
-            f'Could not resolve type hints for {callable_name}: {exc}. '
-            f'This usually means an annotation references a name imported only under '
-            f'`if TYPE_CHECKING:`. Move the import out of the `TYPE_CHECKING` block so it is '
-            f'available at runtime, otherwise pydantic-ai cannot detect `RunContext` parameters.',
-            UserWarning,
-            stacklevel=2,
-        )
+        # An annotation references a name that isn't resolvable at runtime. We only warn when the
+        # unresolved name looks like `RunContext`, which is the specific footgun reported in #5358:
+        # importing `RunContext` under `if TYPE_CHECKING:` combined with `from __future__ import
+        # annotations` makes `takes_run_context` silently return False, causing confusing runtime
+        # errors far from the real cause. For any other unresolvable name we stay silent to match
+        # the prior behavior and avoid surprising callers that intentionally have unresolvable hints.
+        if 'RunContext' in str(exc):
+            callable_name = getattr(callable_obj, '__qualname__', None) or repr(callable_obj)
+            warnings.warn(
+                f'Could not resolve `RunContext` annotation on {callable_name}: {exc}. '
+                f'This usually means `RunContext` is imported only under `if TYPE_CHECKING:`. '
+                f'Move the import out of the `TYPE_CHECKING` block so it is available at runtime, '
+                f'otherwise pydantic-ai cannot detect `RunContext` parameters and will call the '
+                f'function without one.',
+                UserWarning,
+                stacklevel=2,
+            )
         return None
     except (TypeError, AttributeError):
         return None
