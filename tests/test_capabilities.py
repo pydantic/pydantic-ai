@@ -8468,6 +8468,28 @@ async def test_wrapper_capability_has_wrap_node_run():
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
 
 
+async def test_wrapper_capability_delegates_resolve_model_id():
+    """WrapperCapability delegates `resolve_model_id` (and `has_resolve_model_id`) to the wrapped capability."""
+    resolved = TestModel()
+
+    @dataclass
+    class ResolverCap(AbstractCapability[None]):
+        def resolve_model_id(self, model_id: str, *, agent: Any) -> Any:
+            return resolved if model_id == 'magic' else None
+
+    wrapper = WrapperCapability(wrapped=ResolverCap())
+    assert wrapper.has_resolve_model_id is True
+
+    agent = Agent('test', capabilities=[wrapper])
+    assert wrapper.resolve_model_id('magic', agent=agent) is resolved
+    assert wrapper.resolve_model_id('other', agent=agent) is None
+
+    # Wrapping a capability without `resolve_model_id` is a no-op.
+    plain_wrapper = WrapperCapability(wrapped=CustomCapability())
+    assert plain_wrapper.has_resolve_model_id is False
+    assert plain_wrapper.resolve_model_id('any', agent=agent) is None
+
+
 async def test_wrapper_capability_delegates_model_request_hooks():
     """WrapperCapability delegates before/after model request hooks."""
     hook_calls: list[str] = []
