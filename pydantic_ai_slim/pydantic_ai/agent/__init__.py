@@ -424,7 +424,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
+        self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -678,7 +678,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
@@ -703,21 +702,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if extra_capabilities:
             all_capabilities.extend(extra_capabilities)
 
-        # Read the deprecated spec field only when set so we don't trigger its warning
-        # for users who didn't opt in. The kwarg takes precedence over the spec field.
-        legacy_instrument = (
-            instrument
-            if instrument is not None
-            else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
-        )
-
         effective_model = model or validated_spec.model
         if effective_model is None:
             raise exceptions.UserError(
                 '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
             )
 
-        agent = Agent(
+        return Agent(
             model=effective_model,
             output_type=effective_output_type,
             instructions=merged_instructions or None,
@@ -748,8 +739,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
-        agent._instrument = legacy_instrument
-        return agent
 
     @overload
     @classmethod
@@ -861,14 +850,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
         if extra_capabilities:
             merged_capabilities.extend(extra_capabilities)
 
         spec = AgentSpec.from_file(path, fmt=fmt)
-        agent = cls.from_spec(
+        return cls.from_spec(
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
@@ -895,10 +883,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
-        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
-        if instrument is not None:
-            agent._instrument = instrument
-        return agent
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -2794,7 +2778,6 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'retries',
     'tool_retries',
     'tool_timeout',
-    'instrument',
     'output_schema',
     'deps_schema',
 )
