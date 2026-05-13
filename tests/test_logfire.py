@@ -3892,6 +3892,33 @@ def test_agent_with_user_provided_instrumented_model(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_instrument_setter(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """`agent.instrument = settings` configures instrumentation post-construction.
+
+    This is the path `logfire.instrument_pydantic_ai(agent)` uses on its `Agent` branch.
+    """
+    agent = Agent(model=TestModel())
+    agent.instrument = InstrumentationSettings()
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'agent run',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_instrumentation_capability_template_description(
     capfire: CaptureLogfire,
 ) -> None:
