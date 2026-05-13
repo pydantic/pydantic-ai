@@ -494,7 +494,7 @@ def _build_run_context(
     run_step: int = 0,
     messages: list[ModelMessage] | None = None,
 ) -> RunContext[T]:
-    """Build a ``RunContext`` for unit tests using ``TestModel``."""
+    """Build a `RunContext` for unit tests using `TestModel`."""
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -538,7 +538,7 @@ def _create_function_toolset() -> FunctionToolset[None]:
 
 async def test_tool_search_toolset_filters_deferred_tools():
     """On the local path, deferred tools stay hidden until discovered — only the
-    visible tools and the ``search_tools`` function are exposed up front."""
+    visible tools and the `search_tools` function are exposed up front."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -785,9 +785,9 @@ async def test_tool_search_toolset_max_results():
 
 
 async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
-    """Discovered tools have ``defer_loading=False``; undiscovered ones still have
-    ``defer_loading=True``. Both stay in the toolset under their real names — the
-    wire-side filter in ``Model.prepare_request`` decides what reaches the model."""
+    """Discovered tools have `defer_loading=False`; undiscovered ones still have
+    `defer_loading=True`. Both stay in the toolset under their real names — the
+    wire-side filter in `Model.prepare_request` decides what reaches the model."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -809,7 +809,7 @@ async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
 
 
 async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
-    """``search_tools`` stays in the request even when every deferred tool is discovered.
+    """`search_tools` stays in the request even when every deferred tool is discovered.
 
     Dropping it would invalidate the cached request prefix on the next turn — keeping
     it preserves prompt caching across discovery steps. The local tool's body is a no-op
@@ -947,8 +947,8 @@ def test_tool_search_in_capability_registry():
 
 async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     """Every deferred tool appears once under its real name with
-    ``with_native='tool_search'``. Visible tools and ``search_tools`` round
-    out the dispatch dict. ``Model.prepare_request`` filters per-model to decide what
+    `with_native='tool_search'`. Visible tools and `search_tools` round
+    out the dispatch dict. `Model.prepare_request` filters per-model to decide what
     actually reaches the wire."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -997,7 +997,7 @@ async def test_tool_search_toolset_tool_with_none_description():
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
     """Discovery accumulates across search turns: tools surfaced in any past
-    ``search_tools`` return have `defer_loading=False` on the next step, and
+    `search_tools` return have `defer_loading=False` on the next step, and
     not-yet-found ones keep `defer_loading=True`."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -1051,10 +1051,10 @@ async def test_function_toolset_all_deferred():
 
 async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
     """Pre-typed-content versions of this toolset wrote discovered tool names to
-    ``ToolReturnPart.metadata['discovered_tools']`` instead of the typed
-    :class:`ToolSearchReturn` on ``content``. Persisted histories from those versions
+    `ToolReturnPart.metadata['discovered_tools']` instead of the typed
+    `ToolSearchReturn` on `content`. Persisted histories from those versions
     must still surface their discoveries on resume; otherwise an agent reloaded from
-    a saved transcript would re-emit ``search_tools`` and the user would see a
+    a saved transcript would re-emit `search_tools` and the user would see a
     duplicated discovery turn."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -1097,7 +1097,7 @@ async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
 
 
 async def test_deferred_loading_toolset_marks_all_tools():
-    """``DeferredLoadingToolset`` (with `tool_names=None`) flips `defer_loading=True`
+    """`DeferredLoadingToolset` (with `tool_names=None`) flips `defer_loading=True`
     on every tool. After wrapping with `ToolSearchToolset`, all of them appear under
     their real name with `defer_loading=True` (visibility hidden until discovered).
     `search_tools` is the only directly-callable tool up front."""
@@ -1124,7 +1124,7 @@ async def test_deferred_loading_toolset_marks_all_tools():
 
 
 async def test_deferred_loading_toolset_marks_specific_tools():
-    """``DeferredLoadingToolset`` with explicit names only flips `defer_loading=True`
+    """`DeferredLoadingToolset` with explicit names only flips `defer_loading=True`
     on the listed tools; others stay visible."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
@@ -1150,9 +1150,9 @@ async def test_deferred_loading_toolset_marks_specific_tools():
 
 async def test_tool_search_toolset_marks_corpus_with_native():
     """Every deferred tool keeps its real name in the toolset output and carries
-    ``with_native='tool_search'`` regardless of the current model — the adapter's
-    ``prepare_request`` decides what reaches the wire so the toolset can't commit early
-    (e.g. under ``FallbackModel``)."""
+    `with_native='tool_search'` regardless of the current model — the adapter's
+    `prepare_request` decides what reaches the wire so the toolset can't commit early
+    (e.g. under `FallbackModel`)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -1164,12 +1164,12 @@ async def test_tool_search_toolset_marks_corpus_with_native():
     for tool_def in managed.values():
         assert tool_def.with_native == 'tool_search'
         assert tool_def.defer_loading
-    # The local fallback is still present — dropped by the adapter via ``unless_native``.
+    # The local fallback is still present — dropped by the adapter via `unless_native`.
     assert _SEARCH_TOOLS_NAME in tools
 
 
 async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
-    """The provider calls a deferred tool by its plain name and ``ToolManager``
+    """The provider calls a deferred tool by its plain name and `ToolManager`
     dispatches directly via the dict key (also the plain name)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -1184,7 +1184,7 @@ async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
 
 
 async def test_tool_search_toolset_custom_search_fn_is_used():
-    """A custom ``search_fn`` replaces the default keyword-matching algorithm."""
+    """A custom `search_fn` replaces the default keyword-matching algorithm."""
     calls: list[Sequence[str]] = []
 
     def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
@@ -1208,12 +1208,12 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
 
 
 async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
-    """A custom ``search_fn`` handles local discovery, but the toolset still flags every
-    deferred tool with ``with_native='tool_search'`` — when the model supports
+    """A custom `search_fn` handles local discovery, but the toolset still flags every
+    deferred tool with `with_native='tool_search'` — when the model supports
     native tool search (including provider-side custom callable modes like Anthropic's
-    tool_reference mechanism or OpenAI's ``execution='client'``), the adapter keeps them
-    and applies ``defer_loading`` on the wire. Commitment to native-vs-local happens in
-    ``Model.prepare_request``, not here."""
+    tool_reference mechanism or OpenAI's `execution='client'`), the adapter keeps them
+    and applies `defer_loading` on the wire. Commitment to native-vs-local happens in
+    `Model.prepare_request`, not here."""
 
     def custom_search(
         ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
@@ -1318,10 +1318,10 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
 
 @pytest.mark.vcr
 async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
-    """End-to-end: a custom callable ``ToolSearch`` strategy runs locally but still
-    surfaces natively on Anthropic — deferred tools ship with ``defer_loading: true``,
-    the model invokes the regular ``search_tools`` function tool, and our
-    ``tool_result`` is formatted as ``tool_reference`` blocks so the discovered tool
+    """End-to-end: a custom callable `ToolSearch` strategy runs locally but still
+    surfaces natively on Anthropic — deferred tools ship with `defer_loading: true`,
+    the model invokes the regular `search_tools` function tool, and our
+    `tool_result` is formatted as `tool_reference` blocks so the discovered tool
     gets unlocked for the next turn."""
     pytest.importorskip('anthropic')
 
@@ -1414,12 +1414,12 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
 async def test_anthropic_promotes_local_search_history_round_trip(
     allow_model_requests: None, anthropic_api_key: str
 ) -> None:
-    """End-to-end against live Anthropic: a turn with local-shape ``ToolSearch*Part``
+    """End-to-end against live Anthropic: a turn with local-shape `ToolSearch*Part`
     history (from a prior cross-provider turn — e.g. on Google) runs cleanly on
-    Anthropic. The adapter promotes the local-shape return into a ``tool_result`` with
-    ``tool_reference`` content so Anthropic unlocks the discovered tool's schema, and
+    Anthropic. The adapter promotes the local-shape return into a `tool_result` with
+    `tool_reference` content so Anthropic unlocks the discovered tool's schema, and
     the model dispatches the discovered tool directly without issuing a fresh
-    ``tool_search_tool_*`` call.
+    `tool_search_tool_*` call.
     """
     pytest.importorskip('anthropic')
 
@@ -1512,10 +1512,10 @@ async def test_anthropic_promotes_local_search_history_round_trip(
 @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_openai_promotes_local_search_history_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
-    """End-to-end against live OpenAI: a turn with local-shape ``ToolSearch*Part``
+    """End-to-end against live OpenAI: a turn with local-shape `ToolSearch*Part`
     history runs cleanly on OpenAI Responses. The adapter promotes the local-shape
-    pair into ``tool_search_call`` + ``tool_search_output`` items with
-    ``execution='client'``, and the model dispatches the discovered tool directly.
+    pair into `tool_search_call` + `tool_search_output` items with
+    `execution='client'`, and the model dispatches the discovered tool directly.
     """
     pytest.importorskip('openai')
 
@@ -1627,7 +1627,7 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
 
 async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_requests: None):
     """History replay must re-emit the exact server-tool variant the provider used —
-    downgrading ``tool_search_tool_regex`` to ``tool_search_tool_bm25`` on a resend would
+    downgrading `tool_search_tool_regex` to `tool_search_tool_bm25` on a resend would
     silently run a different algorithm than the earlier turn."""
     pytest.importorskip('anthropic')
 
@@ -1726,7 +1726,7 @@ async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_r
     """Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a client
     `tool_use` and ends the turn without delivering the corresponding result block (see
     anthropics/anthropic-sdk-python#1325). Bedrock then 400s on the next request:
-    ``tool use ... was found without a corresponding tool_search_tool_*_tool_result block``.
+    `tool use ... was found without a corresponding tool_search_tool_*_tool_result block`.
     The adapter must drop unpaired tool-search calls from the wire payload. Reported by
     @kclisp on PR #5143.
     """
@@ -1777,8 +1777,8 @@ async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_r
 async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model_requests: None) -> None:
     """`anthropic_cache_tool_definitions=True` must apply `cache_control` to the last
     *non-deferred* tool. Anthropic rejects requests with `cache_control` and
-    `defer_loading=True` on the same tool: ``Tools with defer_loading cannot use prompt
-    caching``. Reported by @kclisp on PR #5143.
+    `defer_loading=True` on the same tool: `Tools with defer_loading cannot use prompt
+    caching`. Reported by @kclisp on PR #5143.
     """
     pytest.importorskip('anthropic')
 
@@ -1886,7 +1886,7 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
     part = _map_client_tool_search_call(call, 'azure')
     assert part.tool_name == _SEARCH_TOOLS_NAME
     # Provider name flows through from the model — important for OpenAI-compatible
-    # providers (Azure, gateways) where ``self.system`` differs from ``'openai'``.
+    # providers (Azure, gateways) where `self.system` differs from `'openai'`.
     assert part.provider_name == 'azure'
     # No envelope marker any more: replay derives intent from the current request's
     # builtin configuration + a `provider_name` match against `self.system`.
@@ -1955,7 +1955,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     item_types = [cast('dict[str, Any]', item).get('type') for item in kwargs['input']]
     assert 'tool_search_call' not in item_types
     # `get_weather` is visible on this turn because it was discovered in the prior turn's
-    # history — the local ``ToolSearchToolset`` emits its regular variant in the tool
+    # history — the local `ToolSearchToolset` emits its regular variant in the tool
     # list so the OpenAI request carries `get_weather` as a regular function tool.
     tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
     assert 'get_weather' in tool_names
@@ -1996,7 +1996,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
 
 def test_anthropic_build_tool_search_replay_block_error_branch():
     """Replay reconstruction must round-trip an error result that the parse-time
-    mapper stashed on ``provider_details`` back into the ``tool_search_tool_result_error``
+    mapper stashed on `provider_details` back into the `tool_search_tool_result_error`
     inner block — otherwise a transient provider error on turn N would silently
     flip into a fake successful empty-search on turn N+1's resend.
 
@@ -2167,11 +2167,11 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
 
 @pytest.mark.vcr
 async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
-    """End-to-end: a custom callable ``ToolSearch`` strategy surfaces natively on OpenAI
-    Responses as ``ToolSearchToolParam(execution='client')`` — the provider emits a
-    ``tool_search_call`` with ``execution='client'`` whose arguments we dispatch to the
-    local ``search_tools`` function, and the resulting ``ToolReturnPart`` is replayed
-    as a ``tool_search_output`` (execution='client') carrying the discovered tool defs."""
+    """End-to-end: a custom callable `ToolSearch` strategy surfaces natively on OpenAI
+    Responses as `ToolSearchToolParam(execution='client')` — the provider emits a
+    `tool_search_call` with `execution='client'` whose arguments we dispatch to the
+    local `search_tools` function, and the resulting `ToolReturnPart` is replayed
+    as a `tool_search_output` (execution='client') carrying the discovered tool defs."""
 
     def match_exchange_rate(
         ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
@@ -2221,7 +2221,7 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     assert 'get_exchange_rate' in tool_call_names
 
     # The local `search_tools` run recorded the discovered tool on `content` as a typed
-    # ``ToolSearchReturnContent`` — this is the same value read back by ``ToolSearchToolset``
+    # `ToolSearchReturnContent` — this is the same value read back by `ToolSearchToolset`
     # on later turns to unlock the deferred tool on the local path (and round-tripped as
     # `tool_search_output.tools` in the cassette's replay request body).
     search_returns = [
@@ -2260,7 +2260,7 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
 async def test_anthropic_native_tool_search_streaming(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end streaming against live Anthropic: native BM25 server-side tool search
     streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` through the part
-    manager during ``agent.iter`` + ``node.stream``, the model invokes the discovered
+    manager during `agent.iter` + `node.stream`, the model invokes the discovered
     deferred tool by its plain name, and the agent loop runs to a final text response."""
     pytest.importorskip('anthropic')
 
@@ -2325,7 +2325,7 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
 async def test_openai_native_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end streaming against live OpenAI Responses: native server-executed
     `tool_search` streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart`
-    through the part manager during ``agent.iter`` + ``node.stream``, the model invokes
+    through the part manager during `agent.iter` + `node.stream`, the model invokes
     the discovered deferred tool by its plain name, and the agent loop runs to a final
     text response."""
 
@@ -2375,10 +2375,10 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
 @pytest.mark.vcr
 async def test_openai_client_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end streaming against live OpenAI Responses with a custom callable
-    ``ToolSearch`` strategy. The provider emits a ``tool_search_call`` with
-    ``execution='client'`` whose arguments we dispatch to the local ``search_tools``
+    `ToolSearch` strategy. The provider emits a `tool_search_call` with
+    `execution='client'` whose arguments we dispatch to the local `search_tools`
     function — both events surface through the streaming part manager (the
-    ``tool_search_call`` as a regular ``ToolCallPart``), the agent loop runs the
+    `tool_search_call` as a regular `ToolCallPart`), the agent loop runs the
     callable strategy, the model follows up with the discovered deferred tool, and
     the run completes with a final text response."""
 
@@ -2501,7 +2501,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
 
 
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
-    """Names returned by ``search_fn`` that aren't in the deferred set are discarded."""
+    """Names returned by `search_fn` that aren't in the deferred set are discarded."""
 
     def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         return ['stock_price', 'not_a_real_tool', 'crypto_price']
@@ -2539,10 +2539,10 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
 
 
 async def test_tool_search_capability_strategy_callable_registers_custom_builtin():
-    """A callable strategy still registers a ``ToolSearchTool`` builtin with ``strategy='custom'``
+    """A callable strategy still registers a `ToolSearchTool` builtin with `strategy='custom'`
     so provider adapters that support a custom-callable native surface (e.g. Anthropic's
-    ``tool_reference`` result blocks, OpenAI's ``execution='client'``) can use it; models
-    without support drop it as optional and fall back to the local ``search_tools`` tool."""
+    `tool_reference` result blocks, OpenAI's `execution='client'`) can use it; models
+    without support drop it as optional and fall back to the local `search_tools` tool."""
 
     def noop(
         ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
@@ -2571,7 +2571,7 @@ async def test_tool_search_capability_strategy_named_registers_builtin():
 
 
 async def test_tool_search_capability_strategy_none_optional_builtin():
-    """The default (``None``) strategy registers an optional builtin so the local
+    """The default (`None`) strategy registers an optional builtin so the local
     token-matching fallback takes over on models without native support."""
     cap = ToolSearch()
     builtins = list(cap.get_native_tools())
@@ -2583,10 +2583,10 @@ async def test_tool_search_capability_strategy_none_optional_builtin():
 
 
 async def test_tool_search_capability_wraps_with_tool_search_toolset():
-    """``strategy='keywords'`` wraps with ``ToolSearchToolset`` so the corpus is
-    exposed and ``search_tools`` carries the user's customizations. The toolset's
-    ``search_fn`` is set to the built-in keyword-overlap algorithm so the local
-    dispatch routes through ``_run_search_fn`` (same path as a custom callable),
+    """`strategy='keywords'` wraps with `ToolSearchToolset` so the corpus is
+    exposed and `search_tools` carries the user's customizations. The toolset's
+    `search_fn` is set to the built-in keyword-overlap algorithm so the local
+    dispatch routes through `_run_search_fn` (same path as a custom callable),
     enabling client-executed-native wire on supporting providers."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy='keywords')
@@ -2596,9 +2596,9 @@ async def test_tool_search_capability_wraps_with_tool_search_toolset():
 
 
 async def test_tool_search_capability_named_strategy_wraps_with_tool_search_toolset():
-    """Named native strategies (bm25/regex) still wrap with ``ToolSearchToolset`` so
-    the corpus is exposed; ``prepare_request`` raises on unsupported models because the
-    builtin is registered with ``optional=False``."""
+    """Named native strategies (bm25/regex) still wrap with `ToolSearchToolset` so
+    the corpus is exposed; `prepare_request` raises on unsupported models because the
+    builtin is registered with `optional=False`."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy='bm25')
     wrapped = cap.get_wrapper_toolset(toolset)
@@ -2607,8 +2607,8 @@ async def test_tool_search_capability_named_strategy_wraps_with_tool_search_tool
 
 
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
-    """Named native strategies error on models that don't support ``ToolSearchTool``
-    — there's no legal fallback for ``strategy='bm25'`` on e.g. GPT-4."""
+    """Named native strategies error on models that don't support `ToolSearchTool`
+    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4."""
 
     m = TestModel()
     with pytest.raises(UserError, match='not supported by this model'):
@@ -2620,12 +2620,12 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
 async def test_tool_search_named_strategy_agent_run_raises_on_unsupported_model(strategy: str):
-    """End-to-end: ``ToolSearch(strategy='bm25'|'regex')`` on a model without native
-    tool-search support must raise ``UserError`` rather than silently substituting the
+    """End-to-end: `ToolSearch(strategy='bm25'|'regex')` on a model without native
+    tool-search support must raise `UserError` rather than silently substituting the
     local keyword-overlap algorithm. The capability promises that named-native strategies
     error on adapters that can't honor the choice; previously the toolset always
-    registered the local ``search_tools`` function as a fallback, which masked the
-    error by letting ``_resolve_builtin_tool_swap`` drop the optional-False builtin."""
+    registered the local `search_tools` function as a fallback, which masked the
+    error by letting `_resolve_builtin_tool_swap` drop the optional-False builtin."""
     agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy=cast(Any, strategy))])
 
     @agent.tool_plain(defer_loading=True)
@@ -2637,7 +2637,7 @@ async def test_tool_search_named_strategy_agent_run_raises_on_unsupported_model(
 
 
 async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
-    """Inverse of the named-strategy test: ``strategy='keywords'`` has a local
+    """Inverse of the named-strategy test: `strategy='keywords'` has a local
     implementation, so the request must fall back silently on a model without native
     tool-search support — running the agent should not raise."""
     agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy='keywords')])
@@ -2654,15 +2654,15 @@ async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
 async def test_tool_search_named_strategy_skips_local_search_tools_emission(strategy: str):
-    """Named-native strategies (``'bm25'``/``'regex'``) construct the toolset with
-    ``enable_fallback=False``; ``get_tools`` then skips emitting the local ``search_tools``
+    """Named-native strategies (`'bm25'`/`'regex'`) construct the toolset with
+    `enable_fallback=False`; `get_tools` then skips emitting the local `search_tools`
     function tool entirely. Two effects fall out:
 
     * On *supported* providers (Anthropic), the wire carries only the native
-      ``tool_search_tool_*`` builtin — no redundant local function tool that could
+      `tool_search_tool_*` builtin — no redundant local function tool that could
       confuse the model or waste a tool slot.
-    * On *unsupported* providers, ``_resolve_builtin_tool_swap`` has no fallback to count
-      against the (non-optional) builtin and raises ``UserError`` as promised."""
+    * On *unsupported* providers, `_resolve_builtin_tool_swap` has no fallback to count
+      against the (non-optional) builtin and raises `UserError` as promised."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy=cast(Any, strategy))
     wrapped = cap.get_wrapper_toolset(toolset)
@@ -2679,8 +2679,8 @@ async def test_tool_search_named_strategy_skips_local_search_tools_emission(stra
 
 
 async def test_tool_search_keywords_ignores_builtin_support():
-    """``strategy='keywords'`` never tries to use a native builtin — the swap is a
-    no-op even on models that support ``ToolSearchTool``."""
+    """`strategy='keywords'` never tries to use a native builtin — the swap is a
+    no-op even on models that support `ToolSearchTool`."""
 
     class ToolSearchTestModel(TestModel):
         @classmethod
@@ -2761,7 +2761,7 @@ def test_with_native_kept_on_supporting_model():
 
 
 def test_optional_builtin_dropped_with_empty_corpus():
-    """An ``optional`` builtin is silently dropped when no managed corpus is in the request."""
+    """An `optional` builtin is silently dropped when no managed corpus is in the request."""
 
     class ToolSearchTestModel(TestModel):
         @classmethod
@@ -3211,12 +3211,12 @@ async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
 def test_prepare_messages_translates_on_non_native_model() -> None:
     """`Model.prepare_messages` is the centralized hook that runs before the adapter's
     message-prep on every request. On a model whose profile doesn't include
-    ``ToolSearchTool`` in ``supported_native_tools``, the hook translates any prior
+    `ToolSearchTool` in `supported_native_tools`, the hook translates any prior
     server-side tool-search exchange into the local-shape typed parts so the adapter
-    sees a normal ``search_tools`` function-call exchange.
+    sees a normal `search_tools` function-call exchange.
 
-    The single ``ModelResponse(call+return)`` carrying the inline server-side result
-    splits into ``ModelResponse(call) + ModelRequest(return)``."""
+    The single `ModelResponse(call+return)` carrying the inline server-side result
+    splits into `ModelResponse(call) + ModelRequest(return)`."""
     # Default `TestModel` excludes `ToolSearchTool` from `supported_native_tools`.
     model = TestModel()
     assert ToolSearchTool not in model.profile.supported_native_tools
@@ -3264,8 +3264,8 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
 
 
 def test_prepare_messages_passes_through_on_native_model() -> None:
-    """A model whose profile *does* include ``ToolSearchTool`` in
-    ``supported_native_tools`` keeps the prior exchange as-is — the native adapter
+    """A model whose profile *does* include `ToolSearchTool` in
+    `supported_native_tools` keeps the prior exchange as-is — the native adapter
     knows how to ship the typed builtin parts back on the wire."""
 
     class NativeToolSearchTestModel(TestModel):
@@ -4139,20 +4139,20 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
 
 
 async def test_anthropic_promotes_local_search_history_with_default_native_strategy() -> None:
-    """Local-shape ``ToolSearch*Part`` from a prior cross-provider turn must render
+    """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into Anthropic's native tool_search wire when the current turn is the default
-    server-executed strategy (``ToolSearchTool()`` / `strategy=None`).
+    server-executed strategy (`ToolSearchTool()` / `strategy=None`).
 
     The wire shape uses Anthropic's "client-side flavor" of tool search per empirical
-    research: a standard ``tool_use`` for the local ``search_tools`` function tool
-    paired with a ``tool_result`` whose ``content`` is a ``tool_reference`` array
+    research: a standard `tool_use` for the local `search_tools` function tool
+    paired with a `tool_result` whose `content` is a `tool_reference` array
     (NOT a string of stringified discoveries). Anthropic's server unlocks the
-    discovered tools' schemas from ``defer_loading=true`` once it sees the
-    ``tool_reference`` block.
+    discovered tools' schemas from `defer_loading=true` once it sees the
+    `tool_reference` block.
 
-    Currently fails because ``_build_custom_tool_search_replay_blocks`` is gated on
-    ``strategy='custom'``, so the default-strategy case falls through and the return
-    is rendered as a plain ``tool_result`` carrying stringified content — the
+    Currently fails because `_build_custom_tool_search_replay_blocks` is gated on
+    `strategy='custom'`, so the default-strategy case falls through and the return
+    is rendered as a plain `tool_result` carrying stringified content — the
     discovered tools stay hidden and the model has to re-search.
     """
     pytest.importorskip('anthropic')
@@ -4205,7 +4205,7 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
 
 async def test_anthropic_promotes_local_search_history_with_named_native_strategy() -> None:
     """Same promotion as above but with an explicit named native strategy
-    (``strategy='bm25'``). Confirms the gate is "any tool search active", not "custom"
+    (`strategy='bm25'`). Confirms the gate is "any tool search active", not "custom"
     or "default" — whenever the provider supports native tool search and the current
     request carries it, the historical local-shape parts get the native wire.
     """
@@ -4252,18 +4252,18 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
 
 
 async def test_openai_promotes_local_search_history_with_default_native_strategy() -> None:
-    """Local-shape ``ToolSearch*Part`` from a prior cross-provider turn must render
+    """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into OpenAI's native tool_search wire when the current turn is the default
-    server-executed strategy (``ToolSearchTool()`` / `strategy=None`).
+    server-executed strategy (`ToolSearchTool()` / `strategy=None`).
 
-    The wire shape uses ``tool_search_call`` + ``tool_search_output`` items with
-    ``execution='client'`` per empirical research — even though the current turn is
-    server-executed, the historical replay must use ``execution='client'`` because
-    the prior turn was framework-executed locally and OpenAI accepts ``'client'`` as
+    The wire shape uses `tool_search_call` + `tool_search_output` items with
+    `execution='client'` per empirical research — even though the current turn is
+    server-executed, the historical replay must use `execution='client'` because
+    the prior turn was framework-executed locally and OpenAI accepts `'client'` as
     the historical-replay shape regardless of the current turn's mode.
 
-    Currently fails because both ``_get_tools`` and the ``_map_messages`` replay
-    branches are gated on ``_has_custom_tool_search`` (i.e. ``strategy='custom'`` on
+    Currently fails because both `_get_tools` and the `_map_messages` replay
+    branches are gated on `_has_custom_tool_search` (i.e. `strategy='custom'` on
     the active builtin), so the default-native case never activates the promotion.
     """
     pytest.importorskip('openai')
