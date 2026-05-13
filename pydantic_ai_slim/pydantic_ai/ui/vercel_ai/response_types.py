@@ -133,7 +133,10 @@ class ToolInputAvailableChunk(BaseChunk):
 
 
 class ToolInputErrorChunk(BaseChunk):
-    """Tool input error chunk."""
+    """Tool input error chunk.
+
+    Requires AI SDK UI v6 or later.
+    """
 
     type: Literal['tool-input-error'] = 'tool-input-error'
     tool_call_id: str

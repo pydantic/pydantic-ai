@@ -48,6 +48,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -757,37 +758,106 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check native tools and handle fallback swap
-        if params.native_tools or any(t.prefer_native for t in params.function_tools):
-            supported_types = self.profile.supported_native_tools
-
-            supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-            unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-            supported_ids = {t.unique_id for t in supported_natives}
-            unsupported_ids = {t.unique_id for t in unsupported_natives}
-            fallback_ids = {t.prefer_native for t in params.function_tools if t.prefer_native}
-
-            # Error only for unsupported native tools that have no local fallback
-            without_fallback = unsupported_ids - fallback_ids
-            if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Native tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
-                )
-
-            # Remove local fallback tools whose preferred native tool IS supported (model handles natively)
-            # Remove unsupported native tools (their local fallbacks stay)
-            function_tools = [
-                t for t in params.function_tools if not t.prefer_native or t.prefer_native not in supported_ids
-            ]
-            params = replace(params, native_tools=supported_natives, function_tools=function_tools)
+        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
+            params = self._resolve_native_tool_swap(params)
 
         return model_settings, params
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process the message history before it's handed to the adapter's message-prep step.
+
+        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
+        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
+        `ToolSearch*Part` instances when the active model's profile doesn't support
+        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
+        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
+        adapter sees a normal function-call exchange against `search_tools`.
+
+        Subclasses normally don't need to override this; the framework calls it on the
+        agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
+        sees a homogeneous shape regardless of which provider produced the prior turn.
+        """
+        if ToolSearchTool not in self.profile.supported_native_tools:
+            from .._tool_search import synthesize_local_tool_search_messages
+
+            return synthesize_local_tool_search_messages(messages)
+        return messages
+
+    def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Swap native tools and function-tool fallbacks/corpus based on profile support.
+
+        Four rules drive the per-tool filter:
+
+        1. `unless_native` matches a supported native tool → drop from wire.
+        2. `with_native` matches a supported native tool → keep on wire; the adapter
+           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
+           `defer_loading` flag for `ToolSearchTool`).
+        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
+           → drop from wire (the corpus member is currently undiscovered, so the model has
+           no way to call it on this provider).
+        4. Otherwise → keep.
+
+        On top of the four-rule filter, two narrower drops apply, kept independent:
+
+        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+          optional native tool is silently dropped (no error raised). It does NOT govern the
+          corpus-empty drop below.
+        * The corpus-empty drop is specific to the framework-managed tool-search native tool's
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
+          corpus ends up empty after filtering, since sending it with no deferred tools
+          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
+          the user asked explicitly. Other native tools don't have a corpus and aren't subject
+          to this drop, so making `optional` a base-class field doesn't accidentally cause
+          e.g. `WebSearchTool(optional=True)` to be dropped here.
+        """
+        supported_types = self.profile.supported_native_tools
+
+        supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+        unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_natives}
+        unsupported_ids = {t.unique_id for t in unsupported_natives}
+        optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+        without_fallback = unsupported_ids - fallback_ids - optional_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Native tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+                f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+                f'MCP(local=True), ImageGeneration(local=my_func)). '
+                f'Some capabilities require an optional install group for the local fallback '
+                f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+            )
+
+        function_tools: list[ToolDefinition] = []
+        for t in params.function_tools:
+            # Rule 1: drop local fallback when the native tool is supported.
+            if t.unless_native and t.unless_native in supported_ids:
+                continue
+            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
+            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
+                continue
+            # Rules 2 + 4: keep.
+            function_tools.append(t)
+
+        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
+        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
+        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
+        # so making `optional` a base-class field doesn't accidentally drop e.g.
+        # `WebSearchTool(optional=True)` here on absence of dependents.
+        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
+        supported_natives = [
+            t
+            for t in supported_natives
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+        ]
+        return replace(params, native_tools=supported_natives, function_tools=function_tools)
 
     @property
     @abstractmethod
@@ -883,66 +953,6 @@ class Model(ABC, Generic[InterfaceClient]):
         return None
 
     @staticmethod
-    def _get_instructions(
-        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> str | None:
-        """Get the joined instructions string for the current request.
-
-        When `model_request_parameters` is provided (normal model request flow), returns
-        the joined content of `instruction_parts` which already includes prompted output
-        instructions and is properly sorted.
-
-        Falls back to reading `ModelRequest.instructions` from message history when
-        `model_request_parameters` is not available (e.g. OTel span attributes).
-        """
-        if model_request_parameters:
-            parts = Model._get_instruction_parts(messages, model_request_parameters)
-            if parts:
-                return InstructionPart.join(parts)
-
-        # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
-        #
-        # Get instructions from the first ModelRequest found when iterating messages in reverse.
-        # In the case that a "mock" request was generated to include a tool-return part for a result tool,
-        # we want to use the instructions from the second-to-most-recent request (which should correspond to the
-        # original request that generated the response that resulted in the tool-return part).
-        instructions = None
-
-        last_two_requests: list[ModelRequest] = []
-        for message in reversed(messages):
-            if isinstance(message, ModelRequest):
-                last_two_requests.append(message)
-                if len(last_two_requests) == 2:
-                    break
-                if message.instructions is not None:
-                    instructions = message.instructions
-                    break
-
-        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if instructions is None and len(last_two_requests) == 2:
-            most_recent_request = last_two_requests[0]
-            second_most_recent_request = last_two_requests[1]
-
-            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt
-            # parts, we use the instructions from the second-to-most-recent request. This is necessary because when
-            # handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that
-            # ModelRequest will not have the relevant instructions from the agent.
-
-            # While it's possible that you could have a message history where the most recent request has only tool
-            # returns, I believe there is no way to achieve that would _change_ the instructions without manually
-            # crafting the most recent message. That might make sense in principle for some usage pattern, but it's
-            # enough of an edge case that I think it's not worth worrying about, since you can work around this by
-            # inserting another ModelRequest with no parts at all immediately before the request that has the tool
-            # calls (that works because we only look at the two most recent ModelRequests here).
-
-            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
-
-            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-                instructions = second_most_recent_request.instructions
-
-        return instructions
-
-    @staticmethod
     def _get_instruction_parts(
         messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[InstructionPart] | None:
@@ -956,9 +966,9 @@ class Model(ABC, Generic[InterfaceClient]):
             return model_request_parameters.instruction_parts or None
 
         # Fallback: synthesize from message history for direct model.request() callers.
-        # Mirrors the last-two-requests logic from _get_instructions: if the most recent
-        # request only has tool-return/retry-prompt parts (a "mock" request for result tools),
-        # use the instructions from the second-to-most-recent request.
+        # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
+        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
+        # for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -992,10 +1002,18 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+
+    @cached_property
+    def _parts_manager(self) -> ModelResponsePartsManager:
+        # Built lazily so subclasses don't need to remember `super().__post_init__()`.
+        # `model_request_parameters` is handed in so streamed `ToolCallPart`s auto-promote
+        # to their typed subclasses (via `ToolDefinition.tool_kind`) from the first
+        # `PartStartEvent` — consumers see typed parts throughout the stream rather than
+        # only after a post-stream pass.
+        return ModelResponsePartsManager(model_request_parameters=self.model_request_parameters)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
