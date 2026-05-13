@@ -134,13 +134,22 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            # Bedrock-Converse for OpenAI (gpt-oss) accepts `reasoning_effort` ∈
+            # `{minimal, low, medium, high}` — no `'none'` value is supported, so
+            # `thinking=False` cannot be expressed on the wire. Mark always-on so
+            # the unified setting is silently dropped via the standard gate path
+            # rather than the per-translator guard. See #5379.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
+                thinking_always_enabled=True,
             ),
+            # Bedrock-Converse for Qwen accepts `reasoning_config` ∈ `{low, high}`
+            # — no disable value. Same always-on treatment as the OpenAI variant.
             'qwen': lambda mn: BedrockModelProfile(
                 bedrock_thinking_variant='qwen',
                 supports_thinking='qwq' in mn or 'qwen3' in mn,
+                thinking_always_enabled='qwq' in mn or 'qwen3' in mn,
             ),
         }
 

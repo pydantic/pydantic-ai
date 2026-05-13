@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 import os
 from datetime import date, datetime, timezone
 from itertools import count
@@ -66,6 +67,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from vcr.cassette import Cassette
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -2167,6 +2169,66 @@ async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockPr
             },
         ]
     )
+
+
+# Regression tests for https://github.com/pydantic/pydantic-ai/issues/5379:
+# The Bedrock-Converse OpenAI (gpt-oss) and Qwen variants have no `reasoning_effort='none'`
+# / `reasoning_config='disabled'` value, so `thinking=False` is silently dropped via the
+# always-on profile flag. These tests pin (a) that `thinking='high'` still emits the
+# right field and (b) that `thinking=False` produces no reasoning field on the wire.
+
+
+async def test_bedrock_thinking_high_openai_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_effort`."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+    assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
+
+
+async def test_bedrock_thinking_false_openai_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on gpt-oss is silently dropped: Bedrock-Converse has no
+    `reasoning_effort='none'` value, so the profile is marked always-on and the
+    gate strips `thinking=False` before the transformer can emit anything."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+
+
+async def test_bedrock_thinking_high_qwen_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_config`."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+    assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
+
+
+async def test_bedrock_thinking_false_qwen_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on qwen3 is silently dropped: Bedrock-Converse exposes only
+    `reasoning_config ∈ {low, high}` with no disable, so the profile is always-on."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
 
 
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):

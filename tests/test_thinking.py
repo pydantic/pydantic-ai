@@ -21,6 +21,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
@@ -1107,6 +1108,45 @@ class TestProfileThinkingCapabilities:
         assert profile.supports_thinking is True
         assert profile.thinking_always_enabled is True
 
+    def test_grok_profile_thinking_always_enabled(self):
+        """grok-3-mini's API has no `'none'` value for reasoning_effort, so the
+        profile is marked always-on and `thinking=False` is silently dropped by
+        the gate. See pydantic/pydantic-ai#5379."""
+        profile = grok_model_profile('grok-3-mini')
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
+
+        # grok-4 reasoning models reject the `reasoning_effort` parameter outright,
+        # so `supports_thinking` stays False — confirms we don't accidentally
+        # promote them to always-on.
+        profile = grok_model_profile('grok-4')
+        assert profile is not None
+        assert profile.supports_thinking is False
+        assert profile.thinking_always_enabled is False
+
+    @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+    def test_bedrock_openai_variant_thinking_always_enabled(self):
+        """Bedrock-Converse for OpenAI gpt-oss has no `reasoning_effort='none'`; marked
+        always-on so `thinking=False` is silently dropped. Regression for #5379."""
+        from pydantic_ai.providers.bedrock import BedrockProvider
+
+        profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
+
+    @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+    def test_bedrock_qwen_variant_thinking_always_enabled(self):
+        """Bedrock-Converse for Qwen3 only exposes `reasoning_config` ∈ {low, high}
+        — no disable. Marked always-on for the same reason. Regression for #5379."""
+        from pydantic_ai.providers.bedrock import BedrockProvider
+
+        profile = BedrockProvider.model_profile('qwen.qwen3-32b-v1:0')
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
+
 
 class TestCrossProviderPortability:
     """Same unified settings produce sensible results across providers."""
@@ -1140,6 +1180,21 @@ class TestCrossProviderPortability:
         settings: ModelSettings = {'thinking': 'high'}
         _merged, params = model.prepare_request(settings, ModelRequestParameters())
         assert params.thinking is None
+
+    def test_thinking_false_silently_dropped_on_always_enabled_models(self):
+        """thinking=False on always-on models → not resolved by prepare_request.
+
+        Codifies the standard the docs document at docs/thinking.md:31 ("`False` — disable
+        thinking (silently ignored on always-on models)") for the providers we updated in
+        #5379 (xAI grok-3-mini, Bedrock-OpenAI variant, Bedrock-Qwen variant). All three
+        delegate their silent-drop to this exact gate path."""
+        model = _make_model(supports_thinking=True, thinking_always_enabled=True)
+        _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        assert params.thinking is None
+
+        # Non-False thinking values still flow through unchanged on always-on models.
+        _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
+        assert params.thinking == 'high'
 
 
 class TestPrepareRequestNoMutationDetailed:
