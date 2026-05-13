@@ -94,7 +94,9 @@ jobs:
       skip: ${{ steps.check-label.outputs.has_label }}
     steps:
       - name: Check for modified config files
-        if: github.event.pull_request.head.repo.fork
+        if: >-
+          github.event.pull_request.head.repo.fork &&
+          !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
@@ -226,7 +228,9 @@ jobs:
           persist-credentials: false
 
       - name: Check for modified config files
-        if: github.event.pull_request.head.repo.fork
+        if: >-
+          github.event.pull_request.head.repo.fork &&
+          !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
