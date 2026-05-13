@@ -3,8 +3,21 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
+from ..native_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+"""Builtin tool types Anthropic generally supports across the model line. Mirrors
+`AnthropicModel.supported_builtin_tools()` minus `ToolSearchTool`, which is gated
+per-model in the profile below."""
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
@@ -121,6 +134,23 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
+    # Native tool search requires the `tool_search_tool_bm25_20251119` /
+    # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
+    # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
+    supports_tool_search = model_name.startswith(
+        (
+            'claude-sonnet-4-5',
+            'claude-sonnet-4-6',
+            'claude-opus-4-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-haiku-4-5',
+        )
+    )
+    supported_native_tools = (
+        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
+    )
+
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
@@ -134,6 +164,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
+        supported_native_tools=supported_native_tools,
     )
 
 

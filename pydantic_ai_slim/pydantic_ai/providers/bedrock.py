@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
@@ -16,6 +15,11 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers._bedrock_model_names import (
+    BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
+    split_bedrock_model_id,
+)
 
 try:
     import boto3
@@ -76,26 +80,6 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
     return profile  # pragma: no cover
-
-
-# Known geo prefixes for cross-region inference profile IDs
-BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
-
-
-def remove_bedrock_geo_prefix(model_name: str) -> str:
-    """Remove inference geographic prefix from model ID if present.
-
-    Bedrock supports cross-region inference using geographic prefixes like
-    'us.', 'eu.', 'apac.', etc. This function strips those prefixes.
-
-    Example:
-        'us.amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-        'amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-    """
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if model_name.startswith(f'{prefix}.'):
-            return model_name.removeprefix(f'{prefix}.')
-    return model_name
 
 
 def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
@@ -160,27 +144,9 @@ class BedrockProvider(Provider[BaseClient]):
             ),
         }
 
-        # Split the model name into parts
-        parts = model_name.split('.', 2)
-
-        # Handle regional prefixes
-        if len(parts) > 2 and parts[0] in BEDROCK_GEO_PREFIXES:
-            parts = parts[1:]
-
-        # required format is provider.model-name-with-version
-        if len(parts) < 2:
-            return None
-
-        provider = parts[0]
-        model_name_with_version = parts[1]
-
-        # Remove version suffix if it matches the format (e.g. "-v1:0" or "-v14")
-        version_match = re.match(r'(.+)-v\d+(?::\d+)?$', model_name_with_version)
-        if version_match:
-            model_name = version_match.group(1)
-        else:
-            model_name = model_name_with_version
-
+        # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a
+        # cross-region inference geo prefix (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
+        provider, model_name = split_bedrock_model_id(model_name)
         if provider in provider_to_profile:
             return provider_to_profile[provider](model_name)
 
