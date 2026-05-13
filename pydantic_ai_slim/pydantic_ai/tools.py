@@ -766,13 +766,6 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    toolset_id: str | None = None
-    """The ID of the toolset that this tool belongs to.
-
-    Set automatically when tools are collected from toolsets. Can be used by capabilities
-    (e.g. durable execution) to apply per-toolset configuration to tool operations.
-    """
-
     unless_native: Annotated[
         str | None,
         # Old names were `prefer_builtin` and (after the builtin → native rename in #5338)
@@ -845,6 +838,13 @@ class ToolDefinition:
     When `False`, the `return_schema` will be cleared before sending.
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    toolset_id: str | None = None
+    """The ID of the toolset that this tool belongs to.
+
+    Set automatically when tools are collected from toolsets. Can be used by capabilities
+    (e.g. durable execution) to apply per-toolset configuration to tool operations.
     """
 
     @cached_property
