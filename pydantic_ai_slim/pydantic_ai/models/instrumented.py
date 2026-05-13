@@ -18,7 +18,6 @@ from opentelemetry._logs import (
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
-from typing_extensions import deprecated
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -40,7 +39,6 @@ from pydantic_ai._instrumentation import (
 
 from .. import _otel_messages
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -54,14 +52,8 @@ from .wrapper import WrapperModel
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
 
-@deprecated(
-    '`pydantic_ai.models.instrumented.instrument_model` is deprecated, '
-    'use `capabilities=[Instrumentation(...)]` instead. '
-    'This helper will be removed in v2.',
-    category=PydanticAIDeprecationWarning,
-)
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
-    """Instrument a model with OpenTelemetry/logfire."""
+    """Wrap `model` in an `InstrumentedModel` so OTel/Logfire spans are emitted around requests."""
     if instrument and not isinstance(model, InstrumentedModel):
         if instrument is True:
             instrument = InstrumentationSettings()
