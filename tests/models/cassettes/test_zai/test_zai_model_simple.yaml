@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '98'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '848'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '4'
+          reasoning_content: |-
+            1.  **Identify the user's question:** The user is asking "What is 2 + 2?".
+            2.  **Analyze the complexity:** This is a fundamental arithmetic question. It requires no external data, no complex reasoning, and is not ambiguous.
+            3.  **Calculate the answer:**
+                *   $2 + 2 = 4$.
+            4.  **Formulate the response:** A direct and concise answer is best.
+            5.  **Final Output:** "4."
+          role: assistant
+      created: 1771301445
+      id: 20260217121043e8de4e8178114889
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260217121043e8de4e8178114889
+      usage:
+        completion_tokens: 108
+        completion_tokens_details:
+          reasoning_tokens: 105
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 2
+        total_tokens: 121
+    status:
+      code: 200
+      message: OK
+version: 1
