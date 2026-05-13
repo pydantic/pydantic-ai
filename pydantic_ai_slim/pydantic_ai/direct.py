@@ -22,7 +22,6 @@ from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
 from ._deprecated_callable import deprecated_callable_property
-from ._warnings import PydanticAIDeprecationWarning
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
