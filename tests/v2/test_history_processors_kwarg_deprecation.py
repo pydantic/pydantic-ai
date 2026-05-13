@@ -98,7 +98,7 @@ async def test_history_processors_kwarg_exposed_on_agent_attribute(function_mode
     """`Agent.history_processors` attribute still reflects the legacy kwarg value for 1.x readers."""
 
     def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[1:]
+        return messages[1:]  # pragma: no cover
 
     with pytest.warns(PydanticAIDeprecationWarning):
         agent = Agent(function_model, history_processors=[drop_first])  # pyright: ignore[reportCallIssue]
