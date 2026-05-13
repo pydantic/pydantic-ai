@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     DocumentUrl,
     FilePart,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
@@ -27,6 +28,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -2258,6 +2261,8 @@ async def test_run_stream_response_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
+    # Default `sdk_version=5` — `tool-input-error` is v6-only, so v5 keeps the pre-PR
+    # lifecycle of `tool-input-available` followed by `tool-output-error` on validation failure.
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -2267,7 +2272,12 @@ async def test_run_stream_response_error():
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+                'input': {},
+            },
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
@@ -2284,13 +2294,21 @@ Fix the errors and try again.\
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+                'input': {},
+            },
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
                 'errorText': 'Tool execution was interrupted by an error.',
             },
-            {'type': 'error', 'errorText': "Tool 'unknown_tool' exceeded max retries count of 1"},
+            {
+                'type': 'error',
+                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1",
+            },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
@@ -2439,7 +2457,11 @@ async def test_run_stream_output_tool_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    # The output tool call must be closed with tool-output-error before the stream error
+    # The output tool's validator raised `UnexpectedModelBehavior` before
+    # `_emit_output_tool_events` could fire, so `_handle_tool_call` never ran.
+    # `_handle_tool_result` backfills `tool-input-available` from the part stashed at
+    # `handle_tool_call_end`, so the chunk lifecycle (input-streaming -> input-available
+    # -> output-error) stays complete for both v5 and v6 frontends.
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
     assert event_types == snapshot(
         [
@@ -2808,15 +2830,20 @@ async def test_tool_output_denied_chunk_emission():
     assert events == snapshot(
         [
             {'type': 'start'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'delete_approved',
+                'toolName': 'delete_file',
+                'input': {'path': 'approved.txt'},
+            },
             {'type': 'tool-output-denied', 'toolCallId': 'delete_1'},
             {'type': 'tool-output-available', 'toolCallId': 'delete_approved', 'output': 'Deleted approved.txt'},
             {'type': 'start-step'},
-            {'type': 'text-start', 'id': IsStr()},
             {
-                'type': 'text-delta',
-                'delta': 'The file deletion was cancelled as requested.',
+                'type': 'text-start',
                 'id': IsStr(),
             },
+            {'type': 'text-delta', 'delta': 'The file deletion was cancelled as requested.', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3127,6 +3154,12 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     assert events == snapshot(
         [
             {'type': 'start'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'delete_1',
+                'toolName': 'delete_file',
+                'input': {'path': 'test.txt'},
+            },
             {'type': 'tool-output-available', 'toolCallId': 'delete_1', 'output': 'Deleted test.txt'},
             {'type': 'start-step'},
             {'type': 'text-start', 'id': IsStr()},
@@ -6241,6 +6274,421 @@ async def test_event_stream_text_with_provider_metadata():
     )
 
 
+async def test_event_stream_tool_input_error_with_provider_metadata():
+    """`FunctionToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `FunctionToolResultEvent(RetryPromptPart)` then produces a `tool-input-error` chunk
+    carrying the part's raw args, provider metadata, and the retry prompt as `errorText`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_err',
+            args={'key': 'value'},
+            id='tool_call_id_err',
+            provider_name='anthropic',
+            provider_details={'tool_index': 0},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'tc_err',
+                'toolName': 'my_tool',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_err',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'tc_err', 'inputTextDelta': '{"key":"value"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'tc_err',
+                'toolName': 'my_tool',
+                'input': {'key': 'value'},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_err',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+                'errorText': 'Validation failed: bad arg\n\nFix the errors and try again.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_input_error_sdk_v5_falls_back_to_input_available():
+    """`tool-input-error` is v6-only. For v5, validation failure must keep the pre-PR lifecycle:
+    `tool-input-available` (emitted regardless of `args_valid`) followed by `tool-output-error`
+    from the result handler — so v5 frontends never see an unrecognized chunk."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_v5_err', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_v5_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-error' not in chunk_types
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'finish',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_part_end_does_not_emit_input_available():
+    """`ToolInputAvailableChunk` must be driven by `FunctionToolCallEvent` (post-validation),
+    not by `PartEndEvent` of a `ToolCallPart`. Streaming a `ToolCallPart` without a following
+    `FunctionToolCallEvent` should produce only the start/delta chunks, never `tool-input-available`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_no_func_event',
+            args={'key': 'value'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')]),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-available' not in chunk_types
+    assert 'tool-input-error' not in chunk_types
+    assert chunk_types == snapshot(
+        ['start', 'start-step', 'tool-input-start', 'tool-input-delta', 'finish-step', 'finish']
+    )
+
+
+async def test_event_stream_function_tool_args_valid_none_does_not_emit_input_chunk():
+    """A `FunctionToolCallEvent` with `args_valid=None` (resume of `ToolDenied` / `ModelRetry` /
+    direct return deferred result) must not emit `tool-input-available` — the chunk already
+    fired on the original agent run, and re-announcing it on resume would be misleading."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_none', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-available' not in chunk_types
+    assert 'tool-input-error' not in chunk_types
+
+
+async def test_event_stream_output_tool_input_available():
+    """An `OutputToolCallEvent` with `args_valid=True` produces `tool-input-available` post-validation,
+    matching the function-tool path so output tools surface uniformly to the frontend."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_ok',
+            args={'value': 'hello'},
+            id='output_tool_id',
+            provider_name='openai',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=True)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_ok', 'inputTextDelta': '{"value":"hello"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'input': {'value': 'hello'},
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_output_tool_input_error():
+    """An `OutputToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `OutputToolResultEvent(RetryPromptPart)` produces `tool-input-error` (not
+    `tool-output-error`) so the chunk type reflects the actual cause (validation, not execution)."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_err',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            RetryPromptPart(content='Output validation failed', tool_name='final_result', tool_call_id='out_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_err', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output validation failed\n\nFix the errors and try again.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_output_tool_input_error_with_status_return_part():
+    """Exhaustive output-strategy skip path: a final result already exists, so a second
+    output tool that fails validation is recorded as a status `ToolReturnPart` (not a
+    `RetryPromptPart`). The v6 lifecycle must still complete with `tool-input-error`
+    — not `tool-output-available` — since the call never actually executed.
+
+    Mirrors the `_make_output_status_part` + `_emit_output_tool_events(args_valid=False)`
+    sequence in `_agent_graph.py`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_skipped',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Output tool not used - output failed validation.',
+                tool_call_id='out_skipped',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    # Crucially: no `tool-output-available` for a call that never executed.
+    assert 'tool-output-available' not in chunk_types
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_skipped', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output tool not used - output failed validation.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_end_backfills_input_available_when_call_event_skipped():
+    """If the agent raises before yielding the tool call event (e.g. output-tool
+    `UnexpectedModelBehavior` with no `final_result`), the base class synthesizes a
+    failed `ToolReturnPart` for the pending call. The adapter must backfill
+    `tool-input-available` from the part stashed at `handle_tool_call_end` before
+    emitting `tool-output-error`, so the chunk lifecycle stays complete."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_interrupted',
+            args={'value': 'x'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
+        # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
+        # The base class then synthesizes an error result for the pending call.
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Tool execution was interrupted by an error.',
+                tool_call_id='out_interrupted',
+                outcome='failed',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # The backfilled `tool-input-available` carries the raw args and provider metadata
+    # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'input': {'value': 'x'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'out_interrupted',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_tool_call_end_with_provider_metadata_v5():
     """Test that tool-input-start events exclude provider_metadata for SDK v5."""
 
@@ -6255,6 +6703,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v5():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -6312,6 +6761,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v6():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -7454,9 +7904,7 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'secret data'},
-                        tool_call_id='tc_builtin_denied',
+                        tool_name='web_search', args={'query': 'secret data'}, tool_call_id='tc_builtin_denied'
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',

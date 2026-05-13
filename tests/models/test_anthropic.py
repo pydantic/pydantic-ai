@@ -61,6 +61,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -78,6 +79,7 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
@@ -137,7 +139,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
+    AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -570,6 +572,86 @@ def test_build_cache_control_includes_ttl():
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+def _mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
+    from unittest.mock import MagicMock
+
+    client = MagicMock(spec=client_cls)
+    client.base_url = base_url
+    return client
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic.claude-haiku-4-5',
+        'anthropic.claude-haiku-4-5-20251001-v1:0',
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    ],
+)
+@pytest.mark.parametrize(
+    'client_cls,base_url',
+    [
+        pytest.param(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', id='bedrock'),
+        pytest.param(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', id='bedrock-mantle'),
+    ],
+)
+def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str, client_cls: Any, base_url: str):
+    """A Bedrock-shaped model id resolves to the right capability profile, while the full id still goes on the wire."""
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.model_name == model_name
+    assert m.profile.supports_json_schema_output is True
+    assert ToolSearchTool in m.profile.supported_native_tools
+
+
+def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
+    m = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
+    )
+    return cast('dict[str, Any]', next(t for t in tools if str(t.get('name', '')).startswith('tool_search_tool_')))
+
+
+def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
+    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+    # An explicit `regex` is honored.
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool(strategy='regex'))
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+
+
+def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
+    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
+    m = AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+    with pytest.raises(
+        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
+    ):
+        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
+        )
+
+
+def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
+    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
+    param = _tool_search_param(
+        AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
+    )
+    assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,7 @@
+# pyright: reportDeprecated=false
+# This file's whole purpose is to exercise the deprecated `InstrumentedModel` /
+# `instrument_model` direct-construction path, so we silence the deprecation
+# warning at the file level rather than annotating every individual usage.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -9,6 +13,9 @@ import pytest
 from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
+# These tests legitimately exercise the (now-deprecated) `InstrumentedModel` /
+# `instrument_model` direct construction path. The corresponding deprecation
+# warning is silenced project-wide via the `filterwarnings` config in `pyproject.toml`.
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
@@ -37,9 +44,11 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -1006,7 +1015,7 @@ def test_messages_to_otel_events_serialization_errors():
     ]
 
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
         {
             'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
             'gen_ai.message.index': 0,
@@ -1045,7 +1054,7 @@ def test_messages_to_otel_events_instructions():
         ModelResponse(parts=[TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -1072,7 +1081,7 @@ def test_messages_to_otel_events_instructions_multiple_messages():
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -1105,7 +1114,7 @@ def test_messages_to_otel_events_compaction_part():
     ]
     settings = InstrumentationSettings()
     # CompactionPart is skipped; only the TextPart appears
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'assistant',
@@ -1167,7 +1176,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
@@ -1504,7 +1513,7 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
     ]
     settings = InstrumentationSettings(include_binary_content=False)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
@@ -1537,9 +1546,7 @@ def test_messages_to_otel_events_with_text_content():
         ModelResponse(parts=[TextPart('text1')]),
     ]
     settings_with_content = InstrumentationSettings()
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)
-    ] == snapshot(
+    assert [event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {
@@ -1569,9 +1576,7 @@ def test_messages_to_otel_events_with_text_content():
         ]
     )
     settings_without_content = InstrumentationSettings(include_content=False)
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)
-    ] == snapshot(
+    assert [event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)] == snapshot(
         [
             {'role': 'system', 'event.name': 'gen_ai.system.message'},
             {
@@ -1626,7 +1631,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'system',
@@ -1737,7 +1742,7 @@ def test_message_with_thinking_parts():
         ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
     ]
     settings = InstrumentationSettings()
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'assistant',
@@ -2033,8 +2038,8 @@ def test_cache_point_in_user_prompt():
 
 
 def test_build_tool_definitions():
-    """Test _build_tool_definitions with various tool configurations."""
-    from pydantic_ai.models.instrumented import _build_tool_definitions  # pyright: ignore[reportPrivateUsage]
+    """Test build_tool_definitions with various tool configurations."""
+    from pydantic_ai._instrumentation import build_tool_definitions
     from pydantic_ai.tools import ToolDefinition
 
     tool_without_params = ToolDefinition(
@@ -2066,7 +2071,7 @@ def test_build_tool_definitions():
         allow_image_output=False,
     )
 
-    result = _build_tool_definitions(params)
+    result = build_tool_definitions(params)
 
     assert result == [
         {'type': 'function', 'name': 'no_params_tool', 'description': 'A tool without parameters'},
@@ -2085,14 +2090,15 @@ def test_build_tool_definitions():
 
 
 def test_annotate_tool_call_otel_metadata():
-    """`_annotate_tool_call_otel_metadata` copies metadata from tool defs onto matching tool call parts."""
-    from pydantic_ai.models.instrumented import _annotate_tool_call_otel_metadata  # pyright: ignore[reportPrivateUsage]
+    """`annotate_tool_call_otel_metadata` copies metadata from tool defs onto matching tool call parts."""
+    from pydantic_ai._instrumentation import annotate_tool_call_otel_metadata
     from pydantic_ai.tools import ToolDefinition
 
     response = ModelResponse(
         parts=[
             ToolCallPart(tool_name='run_code_with_tools', args={'code': 'print("hi")'}, tool_call_id='call_1'),
             ToolCallPart(tool_name='other_tool', args={'x': 1}, tool_call_id='call_2'),
+            ToolCallPart(tool_name='unrelated_metadata_tool', args={'y': 1}, tool_call_id='call_3'),
             TextPart('some text'),
         ]
     )
@@ -2108,6 +2114,13 @@ def test_annotate_tool_call_otel_metadata():
                 name='other_tool',
                 parameters_json_schema={'type': 'object', 'properties': {}},
             ),
+            # Truthy metadata without `code_arg_*` keys exercises the branches that skip each
+            # individual `if code_arg_name`/`if code_arg_language`/`if otel_metadata` check.
+            ToolDefinition(
+                name='unrelated_metadata_tool',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                metadata={'foo': 'bar'},
+            ),
         ],
         native_tools=[],
         output_tools=[],
@@ -2118,7 +2131,7 @@ def test_annotate_tool_call_otel_metadata():
         allow_image_output=False,
     )
 
-    _annotate_tool_call_otel_metadata(response, params)
+    annotate_tool_call_otel_metadata(response, params)
 
     code_part = response.parts[0]
     assert isinstance(code_part, ToolCallPart)
@@ -2127,6 +2140,10 @@ def test_annotate_tool_call_otel_metadata():
     other_part = response.parts[1]
     assert isinstance(other_part, ToolCallPart)
     assert other_part.otel_metadata is None
+
+    unrelated_part = response.parts[2]
+    assert isinstance(unrelated_part, ToolCallPart)
+    assert unrelated_part.otel_metadata is None
 
 
 def test_builtin_code_execution_otel_metadata_in_otel_messages():
@@ -2518,3 +2535,109 @@ async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
         messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
     )
     assert usage == RequestUsage(input_tokens=10)
+
+
+async def test_instrumented_model_with_tools_and_finish_reason(capfire: CaptureLogfire):
+    """Test _instrument() with tool definitions and a response that has finish_reason."""
+    from pydantic_ai.tools import ToolDefinition
+
+    class FinishReasonModel(MyModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='gpt-4o-2024-11-20',
+                provider_response_id='resp-123',
+                finish_reason='stop',
+            )
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+    )
+
+    model = InstrumentedModel(FinishReasonModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[tool_def],
+            allow_text_output=True,
+            output_tools=[],
+            output_mode='text',
+            output_object=None,
+        ),
+    )
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert len(spans) == 1
+    attrs = spans[0]['attributes']
+    # Tool definitions should be set
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'get_weather',
+                'description': 'Get the weather',
+                'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            }
+        ]
+    )
+    # finish_reason should be set
+    assert attrs['gen_ai.response.finish_reasons'] == ('stop',)
+    assert attrs['gen_ai.response.id'] == 'resp-123'
+
+
+async def test_instrumented_model_request_error(capfire: CaptureLogfire):
+    """Test _instrument() when the wrapped model raises before finish() is called."""
+
+    class ErrorModel(MyModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            raise RuntimeError('model error')
+
+    model = InstrumentedModel(ErrorModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+
+    with pytest.raises(RuntimeError, match='model error'):
+        await model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    # Span should still be created, but without finish()-specific attributes
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['gen_ai.request.model'] == 'gpt-4o'
+    # finish() was never called, so response-specific attributes are absent
+    assert 'gen_ai.response.id' not in spans[0]['attributes']
+    assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+def test_instrumented_model_constructor_emits_deprecation_warning():
+    """User-facing `InstrumentedModel(...)` construction emits a deprecation warning."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.InstrumentedModel` is deprecated'
+    ):
+        InstrumentedModel(MyModel(), InstrumentationSettings())
+
+
+def test_instrument_model_helper_emits_deprecation_warning():
+    """User-facing `instrument_model(...)` helper emits a deprecation warning."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`pydantic_ai\.models\.instrumented\.instrument_model` is deprecated',
+    ):
+        instrument_model(MyModel(), True)

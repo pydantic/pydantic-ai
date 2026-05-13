@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -49,11 +49,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - A callable (`NativeToolFunc`): dynamically create the native tool per-run via `RunContext`.
     """
 
-    local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None
+    local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
     """Configure the local fallback tool.
 
     - `None` (default): auto-detect a local fallback via `_default_local`.
+    - `True`: opt in to the default local fallback (resolved via `_resolve_local_strategy`).
     - `False`: disable the local fallback; only use the native tool.
+    - A named strategy (e.g. `'duckduckgo'`): resolved via `_resolve_local_strategy` in subclasses.
     - A `Tool` or `AbstractToolset` instance: use this specific local tool.
     - A bare callable: automatically wrapped in a `Tool`.
     """
@@ -62,7 +64,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         self,
         *,
         native: AgentNativeTool[AgentDepsT] | bool = True,
-        local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None,
+        local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None,
     ) -> None:
         self.native = native
         self.local = local
@@ -82,9 +84,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
                 )
             self.native = default
 
-        # Resolve local: None → default, callable → Tool
+        # Resolve local: None → default, True/str → named strategy, callable → Tool
         if self.local is None:
             self.local = self._default_local()
+        elif self.local is True or isinstance(self.local, str):
+            self.local = self._resolve_local_strategy(self.local)
+        elif self.local is False:
+            pass
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
 
@@ -103,7 +109,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         return None
 
     def _native_unique_id(self) -> str:
-        """The unique_id used for `prefer_native` on local tool definitions.
+        """The unique_id used for `unless_native` on local tool definitions.
 
         By default, derived from the native tool's `unique_id` property.
         Override in subclasses for custom behavior.
@@ -118,6 +124,17 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         """Auto-detect a local fallback. Override in subclasses that have one."""
         return None
+
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        """Resolve a named local strategy (e.g. `'duckduckgo'`) or `local=True` to a concrete tool.
+
+        Override in subclasses that expose named strategies. The default implementation raises
+        `UserError`.
+        """
+        raise UserError(
+            f'{type(self).__name__}: `local={name!r}` is not supported. '
+            'Pass a `Tool`, `AbstractToolset`, or callable directly.'
+        )
 
     def _requires_native(self) -> bool:
         """Return True if capability-level constraint fields require the native tool.
@@ -154,12 +171,12 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         if self.native is not False:
             uid = self._native_unique_id()
 
-            async def _add_prefer_native(
+            async def _add_unless_native(
                 ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [replace(d, prefer_native=uid) for d in tool_defs]
+                return [replace(d, unless_native=uid) for d in tool_defs]
 
-            return PreparedToolset(wrapped=toolset, prepare_func=_add_prefer_native)
+            return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
 
     def __getattr__(self, name: str) -> Any:
