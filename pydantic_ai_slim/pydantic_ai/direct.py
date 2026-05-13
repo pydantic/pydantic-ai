@@ -11,7 +11,6 @@ from __future__ import annotations as _annotations
 import dataclasses
 import queue
 import threading
-import warnings
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -303,12 +302,7 @@ def _prepare_model(
     if instrument is None:
         instrument = agent.Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
 
-    # `instrument_model` (and the `InstrumentedModel` it constructs) are deprecated, but the
-    # `direct.model_request*` API still uses them internally. Suppress the warning here; a
-    # follow-up PR will route this through the `Instrumentation` capability instead.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-        return instrumented_models.instrument_model(model_instance, instrument)  # pyright: ignore[reportDeprecated]
+    return instrumented_models.instrument_model(model_instance, instrument)
 
 
 @dataclass
