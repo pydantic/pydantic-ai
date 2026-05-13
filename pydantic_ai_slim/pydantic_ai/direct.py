@@ -11,7 +11,6 @@ from __future__ import annotations as _annotations
 import dataclasses
 import queue
 import threading
-import warnings
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -22,7 +21,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
-from ._warnings import PydanticAIDeprecationWarning
+from ._deprecated_callable import deprecated_callable_property
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
@@ -302,12 +301,7 @@ def _prepare_model(
     if instrument is None:
         instrument = agent.Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
 
-    # `instrument_model` (and the `InstrumentedModel` it constructs) are deprecated, but the
-    # `direct.model_request*` API still uses them internally. Suppress the warning here; a
-    # follow-up PR will route this through the `Instrumentation` capability instead.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-        return instrumented_models.instrument_model(model_instance, instrument)  # pyright: ignore[reportDeprecated]
+    return instrumented_models.instrument_model(model_instance, instrument)
 
 
 @dataclass
@@ -407,7 +401,7 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
-    # TODO (v2): Drop in favor of `response` property
+    @deprecated_callable_property('`StreamedResponseSync.get` is deprecated; use the `response` property instead.')
     def get(self) -> messages.ModelResponse:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
@@ -415,9 +409,11 @@ class StreamedResponseSync:
     @property
     def response(self) -> messages.ModelResponse:
         """Get the current state of the response."""
-        return self.get()
+        return self._ensure_stream_ready().get()
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponseSync.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage()

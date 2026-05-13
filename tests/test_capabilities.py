@@ -42,7 +42,6 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -468,22 +467,18 @@ def test_agent_from_spec_tool_timeout_override():
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
 
 
-def _has_instrumentation_capability(agent: Agent[Any, Any]) -> bool:
-    return has_capability_type([agent._root_capability], Instrumentation)  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field bridges to an `Instrumentation` capability."""
+    """The deprecated spec `instrument` field configures `agent.instrument`."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert _has_instrumentation_capability(agent)
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
@@ -492,25 +487,14 @@ def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
     spec_path.write_text('model: test\n')
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_init_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)
-
-
-def test_agent_instrument_reader_deprecated():
-    """Reading/writing `agent.instrument` is deprecated."""
-    agent = Agent(model='test')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        _ = agent.instrument
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        agent.instrument = True
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        assert agent.instrument is True
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_metadata():
@@ -1044,6 +1028,83 @@ def test_model_json_schema_with_capabilities():
                         'openai:o4-mini-deep-research-2025-06-26',
                         'openai:o4-mini-deep-research',
                         'openai:o4-mini',
+                        'openai-chat:computer-use-preview-2025-03-11',
+                        'openai-chat:computer-use-preview',
+                        'openai-chat:gpt-3.5-turbo-0125',
+                        'openai-chat:gpt-3.5-turbo-0301',
+                        'openai-chat:gpt-3.5-turbo-0613',
+                        'openai-chat:gpt-3.5-turbo-1106',
+                        'openai-chat:gpt-3.5-turbo-16k-0613',
+                        'openai-chat:gpt-3.5-turbo-16k',
+                        'openai-chat:gpt-3.5-turbo',
+                        'openai-chat:gpt-4-0314',
+                        'openai-chat:gpt-4-0613',
+                        'openai-chat:gpt-4-turbo-2024-04-09',
+                        'openai-chat:gpt-4-turbo',
+                        'openai-chat:gpt-4.1-2025-04-14',
+                        'openai-chat:gpt-4.1-mini-2025-04-14',
+                        'openai-chat:gpt-4.1-mini',
+                        'openai-chat:gpt-4.1-nano-2025-04-14',
+                        'openai-chat:gpt-4.1-nano',
+                        'openai-chat:gpt-4.1',
+                        'openai-chat:gpt-4',
+                        'openai-chat:gpt-4o-2024-05-13',
+                        'openai-chat:gpt-4o-2024-08-06',
+                        'openai-chat:gpt-4o-2024-11-20',
+                        'openai-chat:gpt-4o-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-audio-preview-2025-06-03',
+                        'openai-chat:gpt-4o-audio-preview',
+                        'openai-chat:gpt-4o-mini-2024-07-18',
+                        'openai-chat:gpt-4o-mini-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-mini-audio-preview',
+                        'openai-chat:gpt-4o-mini-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-mini-search-preview',
+                        'openai-chat:gpt-4o-mini',
+                        'openai-chat:gpt-4o-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-search-preview',
+                        'openai-chat:gpt-4o',
+                        'openai-chat:gpt-5-2025-08-07',
+                        'openai-chat:gpt-5-chat-latest',
+                        'openai-chat:gpt-5-codex',
+                        'openai-chat:gpt-5-mini-2025-08-07',
+                        'openai-chat:gpt-5-mini',
+                        'openai-chat:gpt-5-nano-2025-08-07',
+                        'openai-chat:gpt-5-nano',
+                        'openai-chat:gpt-5-pro-2025-10-06',
+                        'openai-chat:gpt-5-pro',
+                        'openai-chat:gpt-5.1-2025-11-13',
+                        'openai-chat:gpt-5.1-chat-latest',
+                        'openai-chat:gpt-5.1-codex-max',
+                        'openai-chat:gpt-5.1-codex',
+                        'openai-chat:gpt-5.1',
+                        'openai-chat:gpt-5.2-2025-12-11',
+                        'openai-chat:gpt-5.2-chat-latest',
+                        'openai-chat:gpt-5.2-pro-2025-12-11',
+                        'openai-chat:gpt-5.2-pro',
+                        'openai-chat:gpt-5.2',
+                        'openai-chat:gpt-5.3-chat-latest',
+                        'openai-chat:gpt-5.4-mini-2026-03-17',
+                        'openai-chat:gpt-5.4-mini',
+                        'openai-chat:gpt-5.4-nano-2026-03-17',
+                        'openai-chat:gpt-5.4-nano',
+                        'openai-chat:gpt-5.4',
+                        'openai-chat:gpt-5',
+                        'openai-chat:o1-2024-12-17',
+                        'openai-chat:o1-pro-2025-03-19',
+                        'openai-chat:o1-pro',
+                        'openai-chat:o1',
+                        'openai-chat:o3-2025-04-16',
+                        'openai-chat:o3-deep-research-2025-06-26',
+                        'openai-chat:o3-deep-research',
+                        'openai-chat:o3-mini-2025-01-31',
+                        'openai-chat:o3-mini',
+                        'openai-chat:o3-pro-2025-06-10',
+                        'openai-chat:o3-pro',
+                        'openai-chat:o3',
+                        'openai-chat:o4-mini-2025-04-16',
+                        'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-chat:o4-mini-deep-research',
+                        'openai-chat:o4-mini',
                         'test',
                     ],
                     'type': 'string',
