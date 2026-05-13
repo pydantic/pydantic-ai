@@ -55,7 +55,6 @@ from pydantic_ai.messages import (
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestParameters, infer_model
-from pydantic_ai.native_tools._tool_search import ToolSearchTool  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -256,9 +255,13 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     model = infer_model(model_name)
     # Override the cached profile to drop ToolSearchTool — forces the local path
     # uniformly across providers with and without native tool-search support.
-    model.__dict__['profile'] = replace(
-        model.profile,
-        supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+    setattr(
+        model,
+        'profile',
+        replace(
+            model.profile,
+            supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+        ),
     )
     agent: Agent[None, str] = Agent(model=model)
 
