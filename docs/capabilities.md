@@ -46,7 +46,7 @@ agent = Agent(
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
-        WebSearch(),
+        WebSearch(local='duckduckgo'),
     ],
 )
 ```
@@ -129,15 +129,15 @@ from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        # Auto-detects DuckDuckGo as local fallback
-        WebSearch(),
-        # Auto-detects markdownify-based fetch as local fallback
-        WebFetch(),
-        # Native when the model supports it; falls back to a subagent
-        # running the specified LLM with image generation support
+        # Native when supported; falls back to DuckDuckGo locally
+        WebSearch(local='duckduckgo'),
+        # Native when supported; falls back to the markdownify-based local tool
+        WebFetch(local=True),
+        # Native when supported; falls back to a subagent running an
+        # image-generation-capable model
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
-        # Auto-detects transport from URL
-        MCP(url='https://mcp.example.com/api'),
+        # Native when supported; falls back to a local MCP transport derived from the URL
+        MCP(url='https://mcp.example.com/api', native=True),
     ],
 )
 ```
@@ -218,8 +218,8 @@ from pydantic_ai.capabilities import MCP, PrefixTools
 agent = Agent(
     'openai:gpt-5.2',
     capabilities=[
-        PrefixTools(MCP(url='https://api1.example.com'), prefix='api1'),
-        PrefixTools(MCP(url='https://api2.example.com'), prefix='api2'),
+        PrefixTools(MCP(url='https://api1.example.com', native=True), prefix='api1'),
+        PrefixTools(MCP(url='https://api2.example.com', native=True), prefix='api2'),
     ],
 )
 ```
@@ -227,7 +227,7 @@ agent = Agent(
 Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a convenience method [`prefix_tools`][pydantic_ai.capabilities.AbstractCapability.prefix_tools] that returns a [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] wrapper:
 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
+MCP(url='https://mcp.example.com/api', native=True).prefix_tools('mcp')
 ```
 
 ### IncludeToolReturnSchemas

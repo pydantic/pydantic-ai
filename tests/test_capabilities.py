@@ -126,7 +126,7 @@ def test_agent_from_spec_basic():
             'instructions': 'You are a helpful agent.',
             'model_settings': {'max_tokens': 4096},
             'capabilities': [
-                'WebSearch',
+                {'WebSearch': {'local': 'duckduckgo'}},
             ],
         }
     )
@@ -155,7 +155,7 @@ def test_agent_from_spec_web_fetch():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5}}],
+            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5, 'local': True}}],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
@@ -169,7 +169,9 @@ def test_agent_from_spec_mcp():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search']}}],
+            'capabilities': [
+                {'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search'], 'native': True}}
+            ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
@@ -237,7 +239,7 @@ def test_agent_from_spec_with_agent_spec_object():
         model='test',
         instructions='You are helpful.',
         capabilities=[
-            CapabilitySpec(name='WebSearch', arguments=None),
+            CapabilitySpec(name='WebSearch', arguments={'local': 'duckduckgo'}),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -491,7 +493,7 @@ def test_agent_from_spec_capabilities_merged():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': ['WebSearch'],
+            'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
         },
         capabilities=[ExtraCap()],
     )
@@ -2303,7 +2305,7 @@ def test_apply_prefix_tools():
 def test_apply_finds_capability_by_type():
     """Realistic usage: use apply() to check if a specific capability type is present."""
     thinking = Thinking()
-    web_search = WebSearch()
+    web_search = WebSearch(local='duckduckgo')
     combined = CombinedCapability([thinking, web_search])
 
     visited: list[AbstractCapability[None]] = []
@@ -2318,7 +2320,7 @@ def test_apply_finds_wrapped_capability_by_type():
     """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
-    combined = CombinedCapability([prefixed, WebSearch()])
+    combined = CombinedCapability([prefixed, WebSearch(local='duckduckgo')])
 
     visited: list[AbstractCapability[None]] = []
     combined.apply(visited.append)
@@ -4446,8 +4448,8 @@ class TestWrapNodeRunHook:
 
 class TestWebSearchCapability:
     def test_websearch_default_with_supporting_model(self):
-        """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
-        cap = WebSearch()
+        """WebSearch(local='duckduckgo') with a supporting model → native used, local removed."""
+        cap = WebSearch(local='duckduckgo')
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
@@ -4457,7 +4459,7 @@ class TestWebSearchCapability:
         assert toolset is not None
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebSearch() with a model that doesn't support builtin → DuckDuckGo fallback used."""
+        """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4474,7 +4476,7 @@ class TestWebSearchCapability:
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebSearch()])
+        agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
         result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
@@ -4487,8 +4489,8 @@ class TestWebSearchCapability:
             agent.run_sync('search')
 
     def test_websearch_native_false(self):
-        """WebSearch(native=False) → only local, no native tool registered."""
-        cap = WebSearch(native=False)
+        """WebSearch(native=False, local='duckduckgo') → only local, no native tool registered."""
+        cap = WebSearch(native=False, local='duckduckgo')
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         # Should have a plain toolset (no PreparedToolset wrapping)
@@ -4497,7 +4499,7 @@ class TestWebSearchCapability:
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
+        agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
@@ -4509,7 +4511,7 @@ class TestWebSearchCapability:
     def test_websearch_native_false_with_constraints_raises(self):
         """WebSearch(native=False, allowed_domains=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebSearch(native=False, allowed_domains=['example.com'])
+            WebSearch(native=False, allowed_domains=['example.com'], local='duckduckgo')
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4571,8 +4573,8 @@ class TestXSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin and default local fallback."""
-        cap = WebFetch()
+        """WebFetch(local=True) provides native and the default local fallback."""
+        cap = WebFetch(local=True)
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
@@ -4581,7 +4583,7 @@ class TestWebFetchCapability:
         assert cap.get_toolset() is not None
 
     def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4611,7 +4613,7 @@ class TestWebFetchCapability:
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch()])
+        agent = Agent(model, capabilities=[WebFetch(local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
@@ -4635,8 +4637,8 @@ class TestWebFetchCapability:
             agent.run_sync('fetch')
 
     def test_webfetch_native_false(self):
-        """WebFetch(native=False) → only local, no native tool registered."""
-        cap = WebFetch(native=False)
+        """WebFetch(native=False, local=True) → only local, no native tool registered."""
+        cap = WebFetch(native=False, local=True)
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         assert toolset is not None
@@ -4644,7 +4646,7 @@ class TestWebFetchCapability:
     def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
@@ -4679,7 +4681,7 @@ class TestWebFetchCapability:
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'], local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
@@ -4703,7 +4705,7 @@ class TestWebFetchCapability:
     def test_webfetch_native_false_with_max_uses_raises(self):
         """WebFetch(native=False, max_uses=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebFetch(native=False, max_uses=5)
+            WebFetch(native=False, max_uses=5, local=True)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -5171,8 +5173,8 @@ except ImportError:
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
     def test_mcp_default(self):
-        """MCP(url=...) provides builtin + local fallback."""
-        cap = MCP(url='https://mcp.example.com/api')
+        """MCP(url=..., native=True) provides native + local fallback."""
+        cap = MCP(url='https://mcp.example.com/api', native=True)
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], MCPServerTool)
@@ -5181,13 +5183,13 @@ class TestMCPCapability:
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
-        cap = MCP(url='https://mcp.example.com/api')
+        cap = MCP(url='https://mcp.example.com/api', native=True)
         builtin = cap.get_native_tools()[0]
         assert isinstance(builtin, MCPServerTool)
         assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
-        cap_sse = MCP(url='https://server1.example.com/sse')
+        cap_sse = MCP(url='https://server1.example.com/sse', native=True)
         builtin_sse = cap_sse.get_native_tools()[0]
         assert isinstance(builtin_sse, MCPServerTool)
         assert builtin_sse.id == 'server1.example.com-sse'
@@ -5196,21 +5198,21 @@ class TestMCPCapability:
         """MCP with /sse URL uses MCPServerSSE for local."""
         from pydantic_ai.mcp import MCPServerSSE
 
-        cap = MCP(url='https://mcp.example.com/sse')
+        cap = MCP(url='https://mcp.example.com/sse', native=True)
         assert isinstance(cap.local, MCPServerSSE)
 
     def test_mcp_streamable_transport(self):
         """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
         from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-        cap = MCP(url='https://mcp.example.com/api')
+        cap = MCP(url='https://mcp.example.com/api', native=True)
         assert isinstance(cap.local, MCPServerStreamableHTTP)
 
     def test_mcp_authorization_token_in_local_headers(self):
         """MCP passes authorization_token as Authorization header to local."""
         from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz')
+        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
         assert isinstance(cap.local, MCPServerStreamableHTTP)
         assert cap.local.headers == {'Authorization': 'Bearer xyz'}
 
@@ -5218,7 +5220,7 @@ class TestMCPCapability:
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
         from pydantic_ai.toolsets.filtered import FilteredToolset
 
-        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])
+        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'], native=True)
         toolset = cap.get_toolset()
         assert toolset is not None
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
@@ -6313,8 +6315,9 @@ class TestOverrideWithSpecAdditional:
 
 
 def test_web_fetch_with_constraints():
-    """WebFetch capability populates builtin tool with all constraint kwargs."""
+    """WebFetch capability populates native tool with all constraint kwargs."""
     cap = WebFetch(
+        local=True,
         allowed_domains=['example.com'],
         blocked_domains=['bad.com'],
         max_uses=5,
@@ -6335,8 +6338,8 @@ def test_web_fetch_with_constraints():
 
 
 def test_web_fetch_unique_id():
-    """WebFetch returns the correct builtin unique_id."""
-    cap = WebFetch()
+    """WebFetch returns the correct native unique_id."""
+    cap = WebFetch(local=True)
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
@@ -6348,10 +6351,11 @@ def test_xsearch_unique_id():
 
 
 def test_web_search_with_constraints():
-    """WebSearch capability populates builtin tool with all constraint kwargs."""
+    """WebSearch capability populates native tool with all constraint kwargs."""
     from pydantic_ai.native_tools import WebSearchUserLocation
 
     cap = WebSearch(
+        local='duckduckgo',
         search_context_size='high',
         user_location=WebSearchUserLocation(city='NYC', country='US'),
         blocked_domains=['bad.com'],
@@ -6410,9 +6414,9 @@ def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.Monk
 
 
 def test_mcp_default_builtin():
-    """MCP capability constructs the default builtin MCPServerTool."""
+    """MCP capability constructs the default native MCPServerTool."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    cap = MCP(url='http://example.com/mcp', id='my-mcp')
+    cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
     builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
@@ -8139,7 +8143,7 @@ async def test_prefix_tools_from_spec():
 
 async def test_prefix_tools_from_spec_direct():
     """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
-    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')  # pyright: ignore[reportArgumentType]
+    cap = PrefixTools.from_spec(prefix='ws', capability={'WebSearch': {'local': 'duckduckgo'}})  # pyright: ignore[reportArgumentType]
     assert isinstance(cap, PrefixTools)
     assert cap.prefix == 'ws'
 

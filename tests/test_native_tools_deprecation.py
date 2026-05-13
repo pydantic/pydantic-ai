@@ -280,7 +280,7 @@ def test_model_request_parameters_builtin_tools_property_deprecated():
 
 def test_native_or_local_tool_builtin_attr_alias_deprecated():
     """Reading `cap.builtin` warns and returns `cap.native`."""
-    cap = WebSearch()
+    cap = WebSearch(local='duckduckgo')
     with pytest.warns(
         PydanticAIDeprecationWarning,
         match=r'`WebSearch\.builtin` is deprecated, use `\.native`',

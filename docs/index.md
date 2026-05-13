@@ -107,7 +107,7 @@ from pydantic_ai.capabilities import Thinking, WebSearch
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='Be concise, reply with one sentence.',
-    capabilities=[Thinking(), WebSearch()],
+    capabilities=[Thinking(), WebSearch(local='duckduckgo')],
 )
 
 result = agent.run_sync('What was the mass of the largest meteorite found this year?')

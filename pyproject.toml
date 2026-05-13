@@ -280,11 +280,6 @@ filterwarnings = [
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
     "ignore:Found propagated trace context:RuntimeWarning",
-    # v2 capability default-flip deprecation warnings — most tests construct WebSearch/WebFetch/MCP
-    # with the v1 defaults, which is fine; tests that need to verify the warning use pytest.warns().
-    "ignore:WebSearch will stop auto-selecting:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    "ignore:WebFetch will stop auto-selecting:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    "ignore:MCP\\(\\) defaults will change:pydantic_ai._warnings.PydanticAIDeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
