@@ -21,8 +21,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FilePart,
@@ -34,6 +32,8 @@ from pydantic_ai import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -56,7 +56,6 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -68,6 +67,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
 
@@ -125,10 +125,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -1060,6 +1060,63 @@ async def test_tool_local_parts() -> None:
     )
 
 
+async def test_output_tool() -> None:
+    """Output tool calls emit `TOOL_CALL_RESULT` via `handle_output_tool_result`."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"query":"hello"}', tool_call_id='out_1')}
+
+    def web_search(query: str) -> dict[str, str]:
+        return {'result': f'Searched for {query}'}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Tell me about hello'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"query":"hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
 async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1449,7 +1506,7 @@ def test_activity_message_file_part_missing_url() -> None:
         )
 
 
-_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
+_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, NativeToolReturnPart, SystemPromptPart)
 
 
 def _sync_part_timestamps(
@@ -1630,20 +1687,20 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
     Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
     has separate content and tool_calls fields. TextPart comes first (from content), then
-    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    NativeToolCallPart (from tool_calls), then NativeToolReturnPart (from subsequent ToolMessage).
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
                 TextPart(content='Based on the search...'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     args='{"query": "test"}',
                     provider_name='anthropic',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     content='Search results here',
@@ -1661,12 +1718,12 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
 
 def test_dump_builtin_tool_call_without_return() -> None:
-    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    """Test that NativeToolCallPart without a matching NativeToolReturnPart still dumps correctly."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_orphan',
                     args='{"query": "test"}',
@@ -2639,13 +2696,13 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "Hello, world!"}',
                         tool_call_id='search_1',
                         provider_name='function',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'results': [
@@ -2723,7 +2780,7 @@ async def test_builtin_tool_return_json_string_content_parsed() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.tool_name == 'web_fetch'
     assert return_part.tool_call_id == 'srvtoolu_abc123'
     assert return_part.provider_name == 'anthropic'
@@ -2758,7 +2815,7 @@ async def test_builtin_tool_return_plain_string_content_preserved() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == 'just a plain string, not JSON'
 
 
@@ -2790,7 +2847,7 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
 
 
@@ -2818,7 +2875,7 @@ async def test_builtin_tool_call() -> None:
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -2832,7 +2889,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -2847,7 +2904,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            2: BuiltinToolCallPart(
+            2: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query": "Hello world history"}',
                 tool_call_id='search_2',
@@ -2855,7 +2912,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            3: BuiltinToolReturnPart(
+            3: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -3058,10 +3115,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+            part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
         yield PartStartEvent(
@@ -3102,10 +3159,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+            part=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+            part=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
         )
 
     run_input = create_input(
@@ -3271,7 +3328,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_status',
                 content='Status retrieved',
                 tool_call_id='call_1',
@@ -3640,18 +3697,18 @@ def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> N
 
 
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
-    """Test multimodal `BuiltinToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
+    """Test multimodal `NativeToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_1',
                     args='{"q": "test"}',
                     provider_name='anthropic',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_1',
                     content=['Search results', tiny_image],
@@ -3687,11 +3744,11 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
     ]
     assert returns == snapshot(
         [
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='call_1',
                 content=['Search results', tiny_image],
@@ -3733,11 +3790,11 @@ def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(t
 
     reloaded = AGUIAdapter.load_messages(raw, preserve_file_data=True)
     returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
     ]
     assert returns == snapshot(
         [
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='call_1',
                 content=[{'a': 1}, {'b': 2}, tiny_image],
@@ -3798,7 +3855,7 @@ async def test_tool_return_with_files():
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_image',
                 content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
                 tool_call_id='call_1',
@@ -3806,7 +3863,7 @@ async def test_tool_return_with_files():
         )
         # Content with only a FileUrl - files property returns [ImageUrl]
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_url',
                 content=ImageUrl(url='https://example.com/image.jpg'),
                 tool_call_id='call_2',

@@ -44,6 +44,14 @@ repos:
 
   - repo: local
     hooks:
+      - id: no-rst-syntax
+        name: No RST syntax (use Markdown in docstrings and docs)
+        description: |
+          Bans RST-only constructs that mkdocstrings/Markdown won't render:
+          `` ``foo`` `` (use single backticks) and trailing `::` (use ```` ```python ```` fences).
+        language: pygrep
+        entry: '(?<!`)``(?!`)|::\s*$'
+        types_or: [python, markdown]
       - id: clai-help
         name: clai help output
         entry: uv

@@ -14,7 +14,7 @@ Each case follows this flow:
 2. **Task runs**
 3. **`prepare_context()`** — called after task, before evaluators
 4. **Evaluators run**
-5. **`teardown()`** — called after evaluators complete
+5. **`teardown()`** — called after evaluators complete, or during cleanup if the case is interrupted
 
 ## Per-Case Setup and Teardown
 
@@ -40,7 +40,7 @@ class SetupFromMetadata(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         pass  # Clean up resources here
 
@@ -66,7 +66,7 @@ The case metadata drives per-case behavior without needing custom [`Case`][pydan
 
 ### Conditional Teardown
 
-The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails:
+The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails. The `result` can be `None` if evaluation is interrupted before the case produces a report result, so handle that branch when your cleanup depends on the case outcome:
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -82,12 +82,17 @@ class ConditionalCleanup(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         keep_on_failure = (self.case.metadata or {}).get('keep_on_failure', False)
-        if isinstance(result, ReportCaseFailure) and keep_on_failure:
+        if result is None:
+            # abnormal exit
+            cleaned_up.append(self.resource_id)
+        elif isinstance(result, ReportCaseFailure) and keep_on_failure:
+            # case failed
             pass  # Keep resource for inspection
         else:
+            # case succeeded
             cleaned_up.append(self.resource_id)
 
 

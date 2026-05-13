@@ -1,7 +1,7 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, cast, get_args
 
 import pytest
 from pydantic import TypeAdapter
@@ -10,8 +10,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -22,6 +20,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RequestUsage,
     RetryPromptPart,
     TextContent,
@@ -562,7 +562,7 @@ def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     ],
 )
 def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert part.has_content()
 
 
@@ -574,7 +574,7 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
     ],
 )
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
 
 
@@ -623,6 +623,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )
@@ -706,7 +707,7 @@ def test_model_response_convenience_methods():
     assert response.files == snapshot([])
     assert response.images == snapshot([])
     assert response.tool_calls == snapshot([])
-    assert response.builtin_tool_calls == snapshot([])
+    assert response.native_tool_calls == snapshot([])
 
     response = ModelResponse(
         parts=[
@@ -714,9 +715,9 @@ def test_model_response_convenience_methods():
             ThinkingPart(content="And then, call the 'hello_world' tool"),
             TextPart(content="I'm going to"),
             TextPart(content=' generate an image'),
-            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
             FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
-            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            NativeToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
             TextPart(content="I'm going to call"),
             TextPart(content=" the 'hello_world' tool"),
             ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
@@ -735,11 +736,11 @@ And then, call the 'hello_world' tool\
     assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
-    assert response.builtin_tool_calls == snapshot(
+    assert response.native_tool_calls == snapshot(
         [
             (
-                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                NativeToolReturnPart(
                     tool_name='image_generation',
                     content={},
                     tool_call_id='123',
@@ -1202,7 +1203,9 @@ def test_tool_return_content_nested_multimodal():
     tool_return_part = deserialized[0].parts[0]
     assert isinstance(tool_return_part, ToolReturnPart)
 
-    content = tool_return_part.content
+    # `ToolReturnPart`'s typed `ToolSearchReturnPart` subclass narrows `content` to a
+    # `TypedDict`; cast back to a plain dict so we can probe arbitrary keys here.
+    content = cast('dict[str, Any]', tool_return_part.content)
     assert isinstance(content, dict)
 
     # Items with kind: "image-url" should be ImageUrl
@@ -1220,7 +1223,7 @@ def test_tool_return_content_nested_multimodal():
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
     reloaded_tool_return = reloaded[0].parts[0]
     assert isinstance(reloaded_tool_return, ToolReturnPart)
-    reloaded_content = reloaded_tool_return.content
+    reloaded_content = cast('dict[str, Any]', reloaded_tool_return.content)
     assert isinstance(reloaded_content, dict)
 
     assert isinstance(reloaded_content['images'][0], ImageUrl)

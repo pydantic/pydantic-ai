@@ -22,8 +22,6 @@ from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -33,6 +31,8 @@ from ...messages import (
     ModelRequest,
     ModelResponse,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -261,7 +261,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """Whether to preserve agent-generated files, uploaded files, and multimodal tool returns in AG-UI message conversion.
 
     When `True`, agent-generated files, uploaded files, and `MultiModalContent` items
-    inside `ToolReturnPart`/`BuiltinToolReturnPart.content` are stored as
+    inside `ToolReturnPart`/`NativeToolReturnPart.content` are stored as
     [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
     and restored during `load_messages`, enabling full round-trip fidelity.
     When `False` (default), they are silently dropped.
@@ -407,7 +407,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
-                                    BuiltinToolCallPart(
+                                    NativeToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
                                         tool_call_id=original_id,
@@ -439,7 +439,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             except json.JSONDecodeError:
                                 pass
                         builder.add(
-                            BuiltinToolReturnPart(
+                            NativeToolReturnPart(
                                 tool_name=tool_name,
                                 content=_merge_tool_files(content, files),
                                 tool_call_id=original_id,
@@ -643,7 +643,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[Message] = []
 
-        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
         def flush() -> None:
             nonlocal text_content, tool_calls_list, tool_messages
@@ -686,7 +686,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
                     )
                 )
-            elif isinstance(part, BuiltinToolCallPart):
+            elif isinstance(part, NativeToolCallPart):
                 prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
                 tool_calls_list.append(
                     ToolCall(
@@ -704,8 +704,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_call_id=prefixed_id,
                         )
                     )
-            elif isinstance(part, BuiltinToolReturnPart):
-                # Emitted when matching BuiltinToolCallPart is processed above.
+            elif isinstance(part, NativeToolReturnPart):
+                # Emitted when matching NativeToolCallPart is processed above.
                 pass
             elif isinstance(part, FilePart):
                 if preserve_file_data:
@@ -752,16 +752,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
-        - `BuiltinToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
+        - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
-        - `BuiltinToolReturnPart.provider_details` is lost.
+        - `NativeToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
-        - `MultiModalContent` items in `ToolReturnPart`/`BuiltinToolReturnPart.content` are dropped unless
+        - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` are dropped unless
           `preserve_file_data=True`. With it, files round-trip via a sidecar `ActivityMessage` and reload
           as a list `[text, *files]` (text-then-files; original interleaving order between text and files is lost).
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
