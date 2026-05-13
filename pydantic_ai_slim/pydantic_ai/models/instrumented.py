@@ -23,7 +23,6 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     GEN_AI_SYSTEM_ATTRIBUTE,
     TOKEN_HISTOGRAM_BOUNDARIES,
-    annotate_tool_call_otel_metadata,
     event_to_dict,
     get_instructions,
     open_model_request_span,
@@ -39,7 +38,7 @@ from ..messages import (
     SystemPromptPart,
 )
 from ..settings import ModelSettings
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
@@ -362,15 +361,14 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(
-            self.instrumentation_settings, self.wrapped, messages, prepared_settings, prepared_parameters
-        ) as finish:
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            annotate_tool_call_otel_metadata(response, prepared_parameters)
             finish(response)
             return response
 
@@ -382,13 +380,13 @@ class InstrumentedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(
-            self.instrumentation_settings, self.wrapped, messages, prepared_settings, prepared_parameters
-        ) as finish:
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response_stream: StreamedResponse | None = None
             try:
                 async with self.wrapped.request_stream(
@@ -397,6 +395,4 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    response = response_stream.get()
-                    annotate_tool_call_otel_metadata(response, prepared_parameters)
-                    finish(response)
+                    finish(response_stream.get())

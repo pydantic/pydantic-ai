@@ -13,7 +13,6 @@ from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     InstrumentationNames,
-    annotate_tool_call_otel_metadata,
     event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
@@ -252,27 +251,18 @@ class Instrumentation(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        model = request_context.model
-
         # Track the latest messages so _run_span_end_attributes has them on error paths
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        prepared_settings, prepared_parameters = model.prepare_request(
-            request_context.model_settings,
-            request_context.model_request_parameters,
-        )
-        # Stash for `_run_span_end_attributes`: feeding the parameters into
-        # `get_instructions` lets it use the canonical `instruction_parts` source
-        # (which includes prompted-output template instructions and is properly sorted)
-        # instead of falling back to reading `ModelRequest.instructions` from history.
-        self._last_model_request_parameters = prepared_parameters
+        with open_model_request_span(self.settings, request_context) as (finish, prepared_parameters):
+            # Stash for `_run_span_end_attributes`: feeding the parameters into
+            # `get_instructions` lets it use the canonical `instruction_parts` source
+            # (which includes prompted-output template instructions and is properly sorted)
+            # instead of falling back to reading `ModelRequest.instructions` from history.
+            self._last_model_request_parameters = prepared_parameters
 
-        with open_model_request_span(
-            self.settings, model, request_context.messages, prepared_settings, prepared_parameters
-        ) as finish:
             response = await handler(request_context)
-            annotate_tool_call_otel_metadata(response, prepared_parameters)
             finish(response)
             return response
 

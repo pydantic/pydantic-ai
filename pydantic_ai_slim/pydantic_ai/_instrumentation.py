@@ -21,9 +21,8 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
-    from pydantic_ai.models import Model, ModelRequestParameters
+    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
-    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -177,23 +176,26 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
-    model: Model,
-    messages: list[ModelMessage],
-    prepared_settings: ModelSettings | None,
-    prepared_parameters: ModelRequestParameters,
-) -> Iterator[Callable[[ModelResponse], None]]:
-    """Open a `chat <model>` CLIENT span and yield a `finish(response)` callback for outcome attrs.
+    request_context: ModelRequestContext,
+) -> Iterator[tuple[Callable[[ModelResponse], None], ModelRequestParameters]]:
+    """Open a `chat <model>` CLIENT span; yield `(finish, prepared_parameters)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
     `InstrumentedModel.request`/`request_stream` (standalone / `direct.model_request*`).
-    Caller passes `model.prepare_request(...)` output as `prepared_settings`/`prepared_parameters`
-    so attributes reflect what the provider will actually receive. Token/cost metrics are
-    recorded *after* the span closes so backends that aggregate from span attributes don't
-    double-count.
+    Calls `model.prepare_request(...)` internally and exposes `prepared_parameters` to the
+    caller (the agent-flow capability uses it for end-of-run span attributes). `finish(response)`
+    annotates the response with OTel tool-call metadata and records outcome attributes. Token/cost
+    metrics are recorded *after* the span closes so backends that aggregate from span attributes
+    don't double-count.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
     #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
+    model = request_context.model
+    messages = request_context.messages
+    prepared_settings, prepared_parameters = model.prepare_request(
+        request_context.model_settings, request_context.model_request_parameters
+    )
     operation = 'chat'
     span_name = f'{operation} {model.model_name}'
     attributes: dict[str, AttributeValue] = {
@@ -228,6 +230,8 @@ def open_model_request_span(
             # don't double-count.
             def finish(response: ModelResponse) -> None:
                 nonlocal record_metrics
+
+                annotate_tool_call_otel_metadata(response, prepared_parameters)
 
                 # FallbackModel updates these span attributes via get_current_span().
                 attributes.update(getattr(span, 'attributes', {}))
@@ -279,7 +283,7 @@ def open_model_request_span(
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
-            yield finish
+            yield finish, prepared_parameters
     finally:
         if record_metrics:
             record_metrics()
