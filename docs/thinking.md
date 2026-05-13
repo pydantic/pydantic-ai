@@ -45,7 +45,7 @@ The unified `thinking` setting maps to each provider's native format:
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
-| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
+| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | `thinking=False` → `reasoning.enabled=False`; via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
@@ -270,6 +270,9 @@ settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note "Disabling reasoning"
+    Setting [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] via the unified setting sends `reasoning={'enabled': False}` in the request body, which OpenRouter forwards as the disable signal to the underlying model. This is honored across providers that expose a way to turn reasoning off (e.g. hybrid models like `anthropic/claude-sonnet-4.5` or `moonshotai/kimi-k2.6` whose default is to reason); for models without a disable mechanism, OpenRouter silently no-ops.
 
 ## Mistral
 

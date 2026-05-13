@@ -686,12 +686,34 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'high'}
 
-    def test_thinking_false_no_reasoning(self):
+    def test_thinking_false_emits_enabled_false(self):
+        """`thinking=False` must be forwarded to OpenRouter as `reasoning.enabled=False`
+        so the routing layer can disable reasoning on hybrid models whose default is on
+        (e.g. moonshotai/kimi-k2.6, claude-sonnet-4.5). See pydantic/pydantic-ai#5379."""
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert 'reasoning' not in extra_body
+        assert extra_body.get('reasoning') == {'enabled': False}
+
+    def test_provider_profile_passes_thinking_through_gate(self):
+        """`OpenRouterProvider.model_profile()` must set `supports_thinking=True` so
+        `Model.prepare_request` doesn't strip `thinking` based on the underlying
+        model's profile — OpenRouter accepts the reasoning passthrough universally.
+        Regression for #5379."""
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        # Models whose intrinsic profiles report `supports_thinking=False`, but for
+        # which the user can still meaningfully request `thinking=False` via OpenRouter.
+        for model_name in (
+            'moonshotai/kimi-k2.6',
+            'qwen/qwen3-235b-a22b',
+            'z-ai/glm-4.6',
+            'openai/gpt-oss-120b',
+        ):
+            profile = OpenRouterProvider.model_profile(model_name)
+            assert profile is not None
+            assert profile.supports_thinking is True, model_name
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
