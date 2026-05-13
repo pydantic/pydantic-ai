@@ -8339,7 +8339,7 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(
+    agent = Agent(  # pyright: ignore[reportCallIssue]
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
