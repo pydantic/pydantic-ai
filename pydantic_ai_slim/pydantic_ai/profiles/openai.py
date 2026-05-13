@@ -8,8 +8,23 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_OPENAI_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+)
+"""Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
+`OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
+profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
@@ -92,6 +107,14 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    openai_chat_supports_multiple_system_messages: bool = True
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
+
+    OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
+    Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
+    exactly one initial system message; consecutive system messages at the start will be merged into one
+    (joined with two newlines) before being sent."""
+
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
@@ -130,6 +153,25 @@ class OpenAIModelProfile(ModelProfile):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_supports_phase: bool = False
+    """Whether the Responses API supports the `phase` field on assistant messages.
+
+    `phase` labels an assistant message as intermediate `commentary` or the `final_answer`. When the model
+    supports it, OpenAI recommends preserving and sending it back unchanged on every assistant message in
+    follow-up requests; dropping it can cause preambles to be interpreted as final answers and degrade
+    behavior in long-running or tool-heavy flows.
+
+    Supported by `gpt-5.3-codex`, `gpt-5.4` and later mainline models. The official OpenAI Responses API
+    silently ignores the field on older models, but defaults to `False` so we don't risk sending an
+    unrecognized field to OpenAI-compatible APIs (vLLM, Bifrost, ...) that haven't been verified to accept it.
+    """
+
+    openai_chat_supports_document_input: bool = True
+    """Whether the Chat Completions API supports document content parts (`type='file'`).
+
+    Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -148,11 +190,15 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
     is_gpt_5 = model_name.startswith('gpt-5') and not is_gpt_5_1_plus
+
+    # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models.
+    # See https://developers.openai.com/api/docs/guides/prompt-guidance.
+    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5'))
 
     # always reasoning
     is_o_series = model_name.startswith('o')
@@ -174,6 +220,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on
+    # GPT-5.4 and later mainline models.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -190,6 +241,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        openai_supports_phase=supports_phase,
+        supported_native_tools=supported_native_tools,
     )
 
 

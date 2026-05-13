@@ -3,9 +3,10 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -22,6 +23,7 @@ with try_import() as imports_successful:
         OnlineEvalConfig,
         OnlineEvaluator,
         SamplingContext,
+        SinkPayload,
         SpanReference,
         configure,
         disable_evaluation,
@@ -31,7 +33,12 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel.span_tree import SpanTree
 
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -151,7 +158,9 @@ async def test_callback_sink_sync():
     ctx = _make_context(output='hello')
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
-    await sink.submit(results=results, failures=[], context=ctx, span_reference=None)
+    await sink.submit(
+        SinkPayload(results=results, failures=[], context=ctx, span_reference=None, target='t'),
+    )
 
     assert len(collected) == 1
     assert collected[0][0] == results
@@ -167,7 +176,9 @@ async def test_callback_sink_async():
     ctx = _make_context(output='hello')
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
-    await sink.submit(results=results, failures=[], context=ctx, span_reference=None)
+    await sink.submit(
+        SinkPayload(results=results, failures=[], context=ctx, span_reference=None, target='t'),
+    )
     assert len(collector.calls) == 1
 
 
@@ -179,9 +190,157 @@ async def test_callback_sink_ignores_span_reference():
     ctx = _make_context(output='hello')
     span_ref = SpanReference(trace_id='abc', span_id='def')
 
-    await sink.submit(results=[], failures=[], context=ctx, span_reference=span_ref)
+    await sink.submit(
+        SinkPayload(results=[], failures=[], context=ctx, span_reference=span_ref, target='t'),
+    )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
+
+
+@pytest.mark.anyio
+async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warning():
+    """Sinks using the four-kwarg (pre-`target`) signature still work via the back-compat shim.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
+    calls: list[dict[str, Any]] = []
+
+    class LegacySink:
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            calls.append(
+                {
+                    'results': list(results),
+                    'failures': list(failures),
+                    'context': context,
+                    'span_reference': span_reference,
+                }
+            )
+
+    @dataclass
+    class LegacyEvaluator(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True
+
+    # Cast: the point of this test is that LegacySink intentionally doesn't
+    # satisfy the current EvaluationSink protocol (uses the old kwargs shape).
+    config = OnlineEvalConfig(default_sink=cast(Any, LegacySink()), emit_otel_events=False)
+
+    @config.evaluate(LegacyEvaluator())
+    async def run(x: int) -> int:
+        return x
+
+    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
+        await run(1)
+        await wait_for_evaluations()
+
+    assert len(calls) == 1
+    # The pre-`target` legacy sink receives the original four kwargs.
+    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
+
+
+async def test_legacy_sink_warning_fires_once_per_class():
+    """The back-compat shim warns the first time it wraps a given class, not every time.
+
+    Exercises the compat shim directly rather than the full dispatch pipeline,
+    so parallel tests touching the module-level `_warned_legacy_sink_ids` set
+    can't flake this assertion via `id()` reuse.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
+    from pydantic_evals._online import (
+        _ensure_payload_compat,  # pyright: ignore[reportPrivateUsage]
+        _warned_legacy_sink_ids,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    class OnceLegacySink:
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            pass
+
+    # Defensive: drop any stale id(cls) collision from an earlier GC'd class.
+    _warned_legacy_sink_ids.discard(id(OnceLegacySink))
+
+    sink = cast(Any, OnceLegacySink())
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', DeprecationWarning)
+        _ensure_payload_compat(sink)
+        _ensure_payload_compat(sink)
+
+    legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(legacy_warnings) == 1
+
+
+@pytest.mark.anyio
+async def test_sink_with_var_keyword_only_is_shimmed():
+    """A sink whose `submit` uses only **kwargs is treated as legacy — shim unpacks the payload.
+
+    The modern API is called positionally as `submit(payload)`, which a **kwargs-only
+    signature can't receive. The shim routes around this by forwarding the unpacked
+    kwargs; a deprecation warning nudges the user to the new signature.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
+    from pydantic_evals._online import _warned_legacy_sink_ids  # pyright: ignore[reportPrivateUsage]
+
+    calls: list[dict[str, Any]] = []
+
+    class KwargsSink:
+        async def submit(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    @dataclass
+    class E(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True
+
+    # Defensive: drop any stale `id(cls)` collision from an earlier GC'd class so the
+    # first-use-per-class warning fires deterministically under parallel test runners.
+    _warned_legacy_sink_ids.discard(id(KwargsSink))
+
+    # Cast: KwargsSink intentionally uses the pre-`SinkPayload` signature to exercise the shim.
+    config = OnlineEvalConfig(default_sink=cast(Any, KwargsSink()), emit_otel_events=False)
+
+    @config.evaluate(E(), target='my_target')
+    async def run(x: int) -> int:
+        return x
+
+    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
+        await run(1)
+        await wait_for_evaluations()
+
+    assert len(calls) == 1
+    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
+
+
+def test_sink_with_keyword_only_payload_is_not_classified_as_legacy():
+    """A sink with a single keyword-only `payload` parameter routes to the modern path.
+
+    Arity is what distinguishes legacy from modern — not whether the single
+    parameter is positional-or-keyword vs keyword-only. Without this, a
+    `submit(self, *, payload)` sink would be misclassified as legacy and
+    trigger a spurious deprecation warning.
+    """
+    from pydantic_evals._online import _is_legacy_submit  # pyright: ignore[reportPrivateUsage]
+
+    class KeywordOnlyPayloadSink:
+        async def submit(self, *, payload: SinkPayload) -> None:
+            pass
+
+    assert _is_legacy_submit(cast(Any, KeywordOnlyPayloadSink())) is False
 
 
 @pytest.mark.anyio
@@ -505,9 +664,14 @@ async def test_per_evaluator_sink_override():
 
 
 @pytest.mark.anyio
-async def test_no_sink_skips_evaluators():
-    """When no sink is configured, evaluators are skipped entirely."""
-    config = OnlineEvalConfig()  # no sink
+@needs_logfire
+async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
+    """When no sink is configured, evaluators still run and emit OTel events.
+
+    Out-of-the-box OTel event emission matches how offline evals produce spans
+    via `logfire_span` — users don't need to register a sink to see results.
+    """
+    config = OnlineEvalConfig()  # no user sinks
 
     @config.evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
@@ -516,6 +680,40 @@ async def test_no_sink_skips_evaluators():
     result = await my_func(42)
     assert result == 42
     await wait_for_evaluations()
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    attrs = dict(finished[0].log_record.attributes or {})
+    assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
+    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+
+
+@pytest.mark.anyio
+@needs_logfire
+async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire):
+    """`emit_otel_events=False` suppresses the default OTel emission."""
+    calls: list[int] = []
+
+    def sink_cb(
+        results: Sequence[EvaluationResult],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        calls.append(len(results))
+
+    config = OnlineEvalConfig(default_sink=sink_cb, emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    # User sink still ran.
+    assert calls == [1]
+    # But no OTel events were emitted.
+    assert list(capfire.log_exporter.get_finished_logs()) == []
 
 
 @pytest.mark.anyio
@@ -526,6 +724,7 @@ async def test_configure_updates_default_config():
     original_rate = DEFAULT_CONFIG.default_sample_rate
 
     original_on_max = DEFAULT_CONFIG.on_max_concurrency
+    original_emit = DEFAULT_CONFIG.emit_otel_events
 
     try:
         configure(enabled=False, default_sample_rate=0.5)
@@ -538,11 +737,20 @@ async def test_configure_updates_default_config():
 
         configure(on_max_concurrency=handler)
         assert DEFAULT_CONFIG.on_max_concurrency is handler
+
+        configure(emit_otel_events=False)
+        assert DEFAULT_CONFIG.emit_otel_events is False
+
+        configure(include_baggage=False)
+        assert DEFAULT_CONFIG.include_baggage is False
+
     finally:
         DEFAULT_CONFIG.enabled = original_enabled
         DEFAULT_CONFIG.default_sink = original_sink
         DEFAULT_CONFIG.default_sample_rate = original_rate
         DEFAULT_CONFIG.on_max_concurrency = original_on_max
+        DEFAULT_CONFIG.emit_otel_events = original_emit
+        DEFAULT_CONFIG.include_baggage = True
 
 
 @pytest.mark.anyio
@@ -722,15 +930,8 @@ async def test_custom_sink_protocol():
         def __init__(self) -> None:
             self.submissions: list[tuple[list[EvaluationResult[Any]], SpanReference | None]] = []
 
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            self.submissions.append((list(results), span_reference))
+        async def submit(self, payload: SinkPayload) -> None:
+            self.submissions.append((list(payload.results), payload.span_reference))
 
     sink = MySink()
     config = OnlineEvalConfig(default_sink=sink)
@@ -908,7 +1109,7 @@ async def test_sink_exception_does_not_propagate():
     """Exception in a sink is logged but does not break other sinks."""
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink error')
 
     collector = Collector()
@@ -924,6 +1125,114 @@ async def test_sink_exception_does_not_propagate():
     await wait_for_evaluations()
     # The second sink should still have received results despite the first failing
     assert len(collector.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_on_max_concurrency_exception_suppressed_when_no_on_error():
+    """`on_max_concurrency` raising with no `on_error` configured is silently swallowed."""
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    def bad_callback(ctx: EvaluatorContext[Any, Any, Any]) -> None:
+        raise ValueError('callback boom')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)  # no on_error
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=bad_callback,
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    # Fire enough concurrent calls to force drops; callback raises on every drop but no
+    # exceptions propagate because `on_error` is None (`_call_on_error` early-returns).
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+    await wait_for_evaluations()
+
+
+@pytest.mark.anyio
+async def test_sink_exception_suppressed_when_no_on_error():
+    """A sink raising with no `on_error` configured is silently swallowed."""
+
+    class FailingSink:
+        async def submit(self, payload: SinkPayload) -> None:
+            raise ValueError('sink boom')
+
+    config = OnlineEvalConfig(default_sink=FailingSink())  # no on_error
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    # Completes cleanly — the sink exception is absorbed by the no-op `on_error=None` path.
+    result = await my_func(42)
+    assert result == 42
+    await wait_for_evaluations()
+
+
+@pytest.mark.anyio
+async def test_shared_on_error_across_evaluators_fires_once_per_sink_failure():
+    """When multiple evaluators in a group share the same `on_error` handler, a single
+    sink failure still only fires it once — dedup by handler identity."""
+    fires: list[OnErrorLocation] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        fires.append(location)
+
+    class FailingSink:
+        async def submit(self, payload: SinkPayload) -> None:
+            raise ValueError('sink boom')
+
+    config = OnlineEvalConfig(default_sink=FailingSink(), on_error=on_error)
+
+    # Two evaluators → both land in the default-sink group. Sink raises once; dedup
+    # ensures the shared on_error fires exactly once, not twice.
+    @config.evaluate(AlwaysTrue(), OutputEquals(value=42))
+    async def my_func(x: int) -> int:
+        return x * 2
+
+    await my_func(21)
+    await wait_for_evaluations()
+
+    assert fires == ['sink']
+
+
+@pytest.mark.anyio
+async def test_evaluator_returning_empty_mapping_emits_nothing():
+    """An evaluator returning `{}` produces no results — the empty-batch branch skips the submit."""
+    collector = Collector()
+
+    @dataclass
+    class EmptyEvaluator(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return {}
+
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(EmptyEvaluator())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    assert collector.calls == []
 
 
 @pytest.mark.anyio
@@ -948,21 +1257,15 @@ async def test_sync_function_from_async_context():
     assert ctx.output == 42
 
 
+@needs_logfire
 @pytest.mark.anyio
-async def test_span_reference_with_configured_logfire(capfire: Any):
+async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
     """Decorator produces valid SpanReference when logfire is configured."""
     span_refs: list[SpanReference | None] = []
 
     class SpanCaptureSink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            span_refs.append(span_reference)
+        async def submit(self, payload: SinkPayload) -> None:
+            span_refs.append(payload.span_reference)
 
     config = OnlineEvalConfig(default_sink=SpanCaptureSink())
 
@@ -1249,7 +1552,7 @@ async def test_on_error_sink_exception():
         errors.append((exc, location))
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     good_collector = Collector()
@@ -1318,7 +1621,7 @@ async def test_on_error_handler_exception_suppressed():
     """on_error handler that raises is silently suppressed."""
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     good_collector = Collector()
@@ -1352,7 +1655,7 @@ async def test_on_error_per_evaluator_overrides_config():
     evaluator_errors: list[OnErrorLocation] = []
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     def config_on_error(
@@ -1392,7 +1695,7 @@ async def test_on_error_async_callback():
     errors: list[OnErrorLocation] = []
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     async def async_on_error(
@@ -1746,8 +2049,8 @@ async def test_attributes_and_metrics_empty_by_default():
 
 @pytest.mark.anyio
 async def test_online_eval_suppressed_inside_task_run():
-    """Online evaluation is suppressed when already inside a _CURRENT_TASK_RUN (e.g. Dataset.evaluate)."""
-    from pydantic_evals.dataset import _CURRENT_TASK_RUN, _TaskRun  # pyright: ignore[reportPrivateUsage]
+    """Online evaluation is suppressed when already inside `CURRENT_TASK_RUN`."""
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, TaskRun
 
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
@@ -1756,14 +2059,14 @@ async def test_online_eval_suppressed_inside_task_run():
     async def my_func(x: int) -> int:
         return x
 
-    # Simulate being inside Dataset.evaluate by setting _CURRENT_TASK_RUN
-    outer_task_run = _TaskRun()
-    token = _CURRENT_TASK_RUN.set(outer_task_run)
+    # Simulate being inside Dataset.evaluate by setting CURRENT_TASK_RUN.
+    outer_task_run = TaskRun()
+    token = CURRENT_TASK_RUN.set(outer_task_run)
     try:
         result = await my_func(42)
         assert result == 42
     finally:
-        _CURRENT_TASK_RUN.reset(token)
+        CURRENT_TASK_RUN.reset(token)
 
     await wait_for_evaluations()
     # Online evaluation should have been suppressed
@@ -1805,3 +2108,325 @@ async def test_metadata_not_shared_between_contexts():
     assert collected_contexts[1].metadata == {'service': 'test', 'injected': True}
     # But config metadata should be untouched — the copies are independent
     assert config.metadata == {'service': 'test'}
+
+
+# --- Call span / instrument-style recording ---------------------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_default_name_and_no_args(capfire: CaptureLogfire):
+    """Each decorated call opens a span named after the function; args/return are not recorded by default."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert 'x' not in attrs
+    assert 'return' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_extract_args_true_records_all(capfire: CaptureLogfire):
+    """`extract_args=True` records every bound argument."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=True)
+    async def my_func(x: int, label: str = 'default') -> int:
+        return x
+
+    await my_func(42, label='hello')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 42
+    assert attrs['label'] == 'hello'
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_extract_args_subset(capfire: CaptureLogfire):
+    """Passing a list to `extract_args` records only the named arguments."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=['x'])
+    async def my_func(x: int, secret: str) -> int:
+        return x
+
+    await my_func(42, secret='shh')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 42
+    assert 'secret' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_record_return(capfire: CaptureLogfire):
+    """`record_return=True` records the function's return value on the span."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), record_return=True)
+    async def my_func(x: int) -> int:
+        return x * 2
+
+    await my_func(21)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    assert call_spans[0]['attributes']['return'] == 42
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_msg_template_and_span_name(capfire: CaptureLogfire):
+    """`msg_template` formats against call args (logfire convention); `span_name` overrides the span name."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), msg_template='run task with {x=}', span_name='task.run', extract_args=True)
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(7)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    task_spans = [s for s in spans if s['name'] == 'task.run']
+    assert len(task_spans) == 1
+    attrs = task_spans[0]['attributes']
+    # `msg_template` keeps its raw template on the span; `logfire.msg` is the rendered form.
+    assert attrs['logfire.msg_template'] == 'run task with {x=}'
+    assert attrs['logfire.msg'] == 'run task with x=7'
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluation_events_parented_to_call_span(capfire: CaptureLogfire):
+    """Emitted `gen_ai.evaluation.result` events parent to the decorated call's span."""
+    config = OnlineEvalConfig()  # default emit_otel_events=True
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    call_span_id = call_spans[0]['context']['span_id']
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    # Event's span_context points back to the decorated call's span id,
+    # so the evaluator event appears nested under the function call in traces.
+    assert finished[0].log_record.span_id == call_span_id
+
+
+def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
+    """Opting into arg/return recording without logfire installed raises at decoration time."""
+    from pydantic_evals import online as online_module
+
+    monkeypatch.setattr(online_module, '_LOGFIRE_INSTALLED', False)
+
+    with pytest.raises(RuntimeError, match='logfire'):
+
+        @online_module.evaluate(AlwaysTrue(), extract_args=True)
+        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+            return x
+
+    with pytest.raises(RuntimeError, match='logfire'):
+
+        @online_module.evaluate(AlwaysTrue(), record_return=True)
+        async def g(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+            return x
+
+
+@needs_logfire
+def test_extract_args_unknown_parameter_raises():
+    """Naming an unknown parameter in `extract_args` fails at decoration time."""
+    with pytest.raises(ValueError, match='not in'):
+
+        @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
+        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
+            return x
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_extract_args_accepts_single_string(capfire: CaptureLogfire):
+    """A bare string is treated as a one-element list of arg names."""
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args='x')
+    async def my_func(x: int, secret: str) -> int:
+        return x
+
+    await my_func(7, secret='shh')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 7
+    assert 'secret' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_extract_args_empty_iterable_records_nothing(capfire: CaptureLogfire):
+    """An empty iterable for `extract_args` is treated as `False`."""
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    assert 'x' not in call_spans[0]['attributes']
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
+    """Sync decorated functions also open a span and honour `extract_args`."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=True, record_return=True)
+    def my_func(x: int) -> int:
+        return x * 2
+
+    assert my_func(21) == 42
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 21
+    assert attrs['return'] == 42
+
+
+# --- Evaluator span: parenting and result attributes -----------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_dispatch_skipped_when_emit_off_and_no_sinks(capfire: CaptureLogfire):
+    """Skip evaluator dispatch entirely when results would have nowhere to go."""
+    config = OnlineEvalConfig(emit_otel_events=False)  # no sinks either
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    # The call span is still created (it wraps the function), but the evaluator
+    # never runs because results would be discarded.
+    assert any('my_func' in s['name'] for s in spans)
+    assert not any(s['name'] == 'evaluator: {evaluator_name}' for s in spans)
+    assert list(capfire.log_exporter.get_finished_logs()) == []
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
+    """The `evaluator: {name}` span created in `run_evaluator` parents to the call span."""
+    # Need a sink (or `emit_otel_events=True`) to keep dispatch active — see
+    # `dispatch_evaluators` skip-when-no-output short-circuit.
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    evaluator_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    assert len(call_spans) == 1
+    assert len(evaluator_spans) == 1
+    assert evaluator_spans[0]['parent']['span_id'] == call_spans[0]['context']['span_id']
+
+
+# --- Baggage propagation ---------------------------------------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_baggage_attached_to_evaluation_event(capfire: CaptureLogfire):
+    """Baggage set in the calling context propagates onto emitted evaluation events."""
+    from opentelemetry import baggage as ot_baggage, context as ot_context
+
+    config = OnlineEvalConfig()  # emit_otel_events=True
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    bag_ctx = ot_baggage.set_baggage('tenant', 'acme')
+    token = ot_context.attach(bag_ctx)
+    try:
+        await my_func(1)
+        await wait_for_evaluations()
+    finally:
+        ot_context.detach(token)
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    attrs = dict(finished[0].log_record.attributes or {})
+    assert attrs['tenant'] == 'acme'
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
+    """`include_baggage=False` keeps baggage out of emitted events."""
+    from opentelemetry import baggage as ot_baggage, context as ot_context
+
+    config = OnlineEvalConfig(include_baggage=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    bag_ctx = ot_baggage.set_baggage('tenant', 'acme')
+    token = ot_context.attach(bag_ctx)
+    try:
+        await my_func(1)
+        await wait_for_evaluations()
+    finally:
+        ot_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'tenant' not in attrs

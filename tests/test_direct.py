@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentedModel  # pyright: ignore[reportDeprecated]
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -285,11 +285,11 @@ def test_prepare_model():
         assert isinstance(model, TestModel)
 
         model = _prepare_model('test', True)
-        assert isinstance(model, InstrumentedModel)
+        assert isinstance(model, InstrumentedModel)  # pyright: ignore[reportDeprecated]
 
     with set_instrument_default(True):
         model = _prepare_model('test', None)
-        assert isinstance(model, InstrumentedModel)
+        assert isinstance(model, InstrumentedModel)  # pyright: ignore[reportDeprecated]
 
         model = _prepare_model('test', False)
         assert isinstance(model, TestModel)

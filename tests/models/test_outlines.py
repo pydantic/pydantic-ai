@@ -16,7 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -257,7 +258,7 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
 
 
@@ -317,7 +318,7 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
 
 
@@ -337,8 +338,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
     result = await agent.run('What is the capital of Germany?', message_history=result.all_messages())
@@ -354,8 +358,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -366,8 +373,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -387,8 +397,11 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -418,8 +431,11 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -454,7 +470,7 @@ async def test_output_type_async_model(mock_async_model: OutlinesModel) -> None:
 
     agent = Agent(mock_async_model, output_type=Box)
     # Mock returns 'test' which isn't valid JSON, so validation fails
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries .* for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         await agent.run('dimensions')
 
 
@@ -470,8 +486,11 @@ async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None
                 instructions='Be brief.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -529,8 +548,11 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -561,17 +583,20 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
 
 @skip_if_llama_cpp_imports_unsuccessful
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
-    # builtin tools
-    agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
+    # native tools
+    agent = Agent(llamacpp_model, capabilities=[NativeTool(WebSearchTool())])
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
     # function tools
@@ -618,8 +643,11 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no c
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 

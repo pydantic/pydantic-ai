@@ -1,12 +1,15 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
+import anyio
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
 
@@ -17,9 +20,11 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    run_image_process_hooks,
+    run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import ModelResponseStreamEvent
+from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
@@ -29,7 +34,8 @@ from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from .run import AgentRunResult
+    from .capabilities.abstract import AbstractCapability
+    from .run import AgentRunResult, AgentRunResultEvent
 
 __all__ = (
     'OutputDataT',
@@ -53,11 +59,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+
+    _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -136,11 +145,31 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
 
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection."""
+        await self._raw_stream_response.cancel()
+
+    async def drain(self) -> None:
+        """Consume all remaining events from the stream, discarding them."""
+        async for _ in self:
+            pass
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        return self._raw_stream_response.cancelled
+
     @property
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         assert self._run_ctx.run_id is not None
         return self._run_ctx.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        assert self._run_ctx.conversation_id is not None
+        return self._run_ctx.conversation_id
 
     @property
     def metadata(self) -> dict[str, Any] | None:
@@ -206,8 +235,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_call(
-                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                return await self._tool_manager.handle_output_tool_call(
+                    tool_call,
+                    schema=self._output_schema,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -216,33 +248,28 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
-                result_data = cast(OutputDataT, message.images[0])
-                for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
-                    )
-                return result_data
+                return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
 
-                result_data = await text_processor.process(
-                    text,
-                    run_context=replace(self._run_ctx, partial_output=allow_partial),
+                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+                return await run_output_with_hooks(
+                    text_processor,
+                    text=text,
+                    run_context=run_ctx,
+                    capability=self._root_capability,
+                    schema=self._output_schema,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
+                    output_validators=self._output_validators,
                 )
-                for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial)
-                    )
-                return result_data
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     'Invalid response, unable to process text output'
@@ -253,6 +280,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
             raise
+
+    async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
+        """Run process hooks (including output validators) for image output."""
+        run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+        return cast(
+            OutputDataT,
+            await run_image_process_hooks(
+                image,
+                capability=self._root_capability,
+                run_context=run_ctx,
+                schema=self._output_schema,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            ),
+        )
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
@@ -272,7 +314,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield part.content, i
 
             last_text_index: int | None = None
-            async for event in self._raw_stream_response:
+            async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
@@ -289,7 +331,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield event.delta.content_delta, event.index
                 elif (
                     isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.BuiltinToolCallPart)
+                    and isinstance(event.part, _messages.NativeToolCallPart)
                     and last_text_index is not None
                 ):
                     # Text parts that are interrupted by a built-in tool call should not be joined together directly
@@ -321,7 +363,25 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._raw_stream_response, self._usage_limits, self.usage
             )
 
-        return self._agent_stream_iterator
+        base_iter = self._agent_stream_iterator
+
+        return self._events_iter(base_iter)
+
+    async def _events_iter(
+        self, base_iter: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Serialize access to the shared base iterator. An early break from
+        # stream_text() can leave a pending `anext()` task in group_by_temporal
+        # while cleanup/drain starts iterating the same stream.
+        while True:
+            async with self._anext_lock:
+                try:
+                    event = await anext(base_iter)
+
+                except StopAsyncIteration:
+                    return
+
+            yield event
 
 
 @dataclass(init=False)
@@ -413,9 +473,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -604,6 +664,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        if self._run_result is not None:
+            return self._run_result.conversation_id
+        elif self._stream_response is not None:
+            return self._stream_response.conversation_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -621,16 +691,43 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    def _record_response(self, message: _messages.ModelResponse) -> None:
+        """Append a model response to the message history with the correct run and conversation IDs."""
+        if self._stream_response:  # pragma: no branch
+            message.run_id = self._stream_response.run_id
+            message.conversation_id = self._stream_response.conversation_id
+        self._all_messages.append(message)
+
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         if self.is_complete:
             return
         self.is_complete = True
         if message is not None:
-            if self._stream_response:  # pragma: no branch
-                message.run_id = self._stream_response.run_id
-            self._all_messages.append(message)
+            self._record_response(message)
         if self._on_complete is not None:
             await self._on_complete()
+
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection.
+
+        The interrupted response state is recorded in the message history so that
+        `all_messages()` includes it.
+        """
+        if self._stream_response is not None:  # pragma: no branch
+            await self._stream_response.cancel()
+            # Record the interrupted response in _all_messages so all_messages()
+            # includes it. is_complete guard prevents double-append if the stream
+            # was already fully consumed before cancel was called.
+            if not self.is_complete:
+                self.is_complete = True
+                self._record_response(self.response)
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        if self._stream_response is not None:
+            return self._stream_response.cancelled
+        return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
 
 
 @dataclass(init=False)
@@ -671,9 +768,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -772,6 +869,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.run_id
 
     @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._streamed_run_result.conversation_id
+
+    @property
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
@@ -793,6 +895,89 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
+
+
+class AgentEventStream(Generic[OutputDataT]):
+    """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+    Wraps the underlying async generator to support deterministic cleanup via the async context manager protocol.
+
+    Usage:
+
+    ```python {lint="skip"}
+    async def stream_events_example():
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:
+                ...
+    # cleanup is automatic on __aexit__
+    ```
+
+    Direct iteration with `async for event in stream:` (without `async with`)
+    is deprecated and will be removed in v2.
+    """
+
+    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
+        self._generator = generator
+        self._managed = False
+        self._closed = False
+
+    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
+        self._managed = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        await self.aclose()
+        return False
+
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
+        # TODO(v2): remove standalone iteration support and require `async with`
+        if self._managed:
+            return self
+
+        warnings.warn(
+            'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
+            'Use `async with agent.run_stream_events(...) as stream:` and '
+            '`async for event in stream:` instead '
+            'to ensure proper cleanup.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        return self._standalone_iterator()
+
+    async def _standalone_iterator(
+        self,
+    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT], None]:
+        # `async for` only closes async generators on early exit. Wrapping the deprecated
+        # standalone path in an async generator preserves cleanup on `break`.
+        try:
+            async for event in self._generator:
+                yield event
+        finally:
+            await self.aclose()
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            return await self._generator.__anext__()
+        except StopAsyncIteration:
+            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
+            # but keeps _closed accurate after natural exhaustion so __aexit__()
+            # doesn't call aclose() unnecessarily.
+            self._closed = True
+            raise
+
+    async def aclose(self) -> None:
+        """Close the stream and trigger any pending cleanup."""
+        if not self._closed:
+            self._closed = True
+            await self._generator.aclose()
 
 
 @dataclass(repr=False)

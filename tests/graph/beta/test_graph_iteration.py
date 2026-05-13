@@ -464,3 +464,135 @@ async def test_iter_turn_tasks_into_end_marker():
     assert result == 'early_exit'
     # Only step1 should have run
     assert state.counter == 1
+
+
+async def test_iter_error_recovery_with_override_next():
+    """Test that a node error can be recovered from using override_next."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    call_count = 0
+
+    @g.step
+    async def flaky_step(ctx: StepContext[IterState, None, None]) -> int:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('first call fails')
+        ctx.state.counter = 42
+        return ctx.state.counter
+
+    g.add_edge(g.start_node, flaky_step)
+    g.add_edge(flaky_step, g.end_node)
+
+    graph = g.build()
+    state = IterState()
+
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+            except ValueError:
+                # Recover by re-running the same node
+                retry_task = GraphTaskRequest(
+                    node_id=NodeID('flaky_step'),
+                    inputs=None,
+                    fork_stack=(),
+                )
+                run.override_next([retry_task])
+                continue
+            except StopAsyncIteration:  # pragma: no cover
+                break
+            if isinstance(event, EndMarker):
+                break
+
+    assert run.output == 42
+    assert call_count == 2
+
+
+async def test_iter_error_recovery_with_different_node():
+    """Test that error recovery can redirect to a different node."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def failing_step(ctx: StepContext[IterState, None, None]) -> int:
+        raise RuntimeError('always fails')
+
+    @g.step
+    async def fallback_step(ctx: StepContext[IterState, None, None]) -> int:
+        ctx.state.counter = 99
+        return ctx.state.counter
+
+    g.add_edge(g.start_node, failing_step)
+    g.add_edge(failing_step, g.end_node)
+    g.add_edge(fallback_step, g.end_node)
+
+    graph = g.build(validate_graph_structure=False)
+    state = IterState()
+
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+            except RuntimeError:
+                # Redirect to fallback
+                fallback_task = GraphTaskRequest(
+                    node_id=NodeID('fallback_step'),
+                    inputs=None,
+                    fork_stack=(),
+                )
+                run.override_next([fallback_task])
+                continue
+            except StopAsyncIteration:  # pragma: no cover
+                break
+            if isinstance(event, EndMarker):
+                break
+
+    assert run.output == 99
+    assert state.counter == 99
+
+
+async def test_iter_error_without_recovery_still_raises():
+    """Test that errors still raise when not recovered."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def bad_step(ctx: StepContext[IterState, None, None]) -> int:
+        raise ValueError('intentional error')
+
+    g.add_edge(g.start_node, bad_step)
+    g.add_edge(bad_step, g.end_node)
+
+    graph = g.build()
+    state = IterState()
+
+    with pytest.raises(ValueError, match='intentional error'):
+        async with graph.iter(state=state) as run:
+            while True:
+                event = await run.next()
+                if isinstance(event, EndMarker):  # pragma: no cover
+                    break
+
+
+async def test_iter_error_caught_without_override_re_raises_on_continue():
+    """When an error is caught but override_next is NOT called, the next iteration re-raises."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def bad_step(ctx: StepContext[IterState, None, None]) -> int:
+        raise ValueError('intentional error')
+
+    g.add_edge(g.start_node, bad_step)
+    g.add_edge(bad_step, g.end_node)
+
+    graph = g.build()
+    state = IterState()
+
+    async with graph.iter(state=state) as run:
+        # First call raises the error from the node
+        with pytest.raises(ValueError, match='intentional error'):
+            await run.next()
+
+        # Second call without override_next echoes the ErrorMarker back,
+        # causing the generator to re-raise the original error
+        with pytest.raises(ValueError, match='intentional error'):
+            await run.next()

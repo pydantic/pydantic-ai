@@ -131,9 +131,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self._client = provider.client
 
         super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> Client:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:

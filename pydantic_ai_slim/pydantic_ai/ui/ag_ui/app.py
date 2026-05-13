@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -21,6 +21,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .. import OnCompleteFunc, StateHandler
 from ._adapter import AGUIAdapter
+from ._utils import DEFAULT_AG_UI_VERSION
 
 try:
     from starlette.applications import Starlette
@@ -44,9 +45,12 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         # AGUIAdapter.dispatch_request parameters
+        ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+        preserve_file_data: bool = False,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -54,7 +58,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,
@@ -64,6 +68,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
@@ -75,12 +80,16 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
         Args:
             agent: The agent to run.
+            ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
+            preserve_file_data: Whether to preserve agent-generated files and uploaded files
+                in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
                 output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -88,7 +97,9 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for every
+                run handled by this app, merged with the agent's configured capabilities. Use
+                `capabilities=[NativeTool(...)]` to add provider-side native tools per app.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -110,6 +121,13 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
                 the other, not both.
         """
+        from ... import _utils
+
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'AGUIApp')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         super().__init__(
             debug=debug,
             routes=routes,
@@ -131,9 +149,12 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             return await AGUIAdapter[AgentDepsT, OutputDataT].dispatch_request(
                 request,
                 agent=agent,
+                ag_ui_version=ag_ui_version,
+                preserve_file_data=preserve_file_data,
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -141,7 +162,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                capabilities=capabilities,
                 on_complete=on_complete,
             )
 

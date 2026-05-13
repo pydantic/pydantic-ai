@@ -20,8 +20,7 @@ from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ImageUrl,
     ModelMessage,
@@ -29,6 +28,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -232,6 +233,10 @@ class OutlinesModel(Model):
         """
         outlines_model: OutlinesBaseModel | OutlinesAsyncBaseModel = from_vllm_offline(vllm_model)
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
+
+    @property
+    def provider(self) -> None:
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> str:
@@ -479,7 +484,7 @@ class OutlinesModel(Model):
                     elif isinstance(part, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet.
                         pass
-                    elif isinstance(part, ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart):
+                    elif isinstance(part, ToolCallPart | NativeToolCallPart | NativeToolReturnPart):
                         raise UserError('Tool calls are not supported for Outlines models yet.')
                     elif isinstance(part, FilePart):
                         if isinstance(part.content, BinaryContent) and part.content.is_image:
@@ -489,6 +494,9 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
+                    elif isinstance(part, CompactionPart):  # pragma: no cover
+                        # Compaction parts are not sent back to models that don't support compaction.
+                        pass
                     else:
                         assert_never(part)
                 if len(text_parts) == 1 and len(image_parts) == 0:
@@ -517,7 +525,7 @@ class OutlinesModel(Model):
         self, response: AsyncIterable[str], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Turn the Outlines text response into a Pydantic AI streamed response instance."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[str, AsyncIterable[str]] = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -537,7 +545,7 @@ class OutlinesStreamedResponse(StreamedResponse):
 
     _model_name: str
     _model_profile: ModelProfile
-    _response: AsyncIterable[str]
+    _response: _utils.PeekableAsyncStream[str, AsyncIterable[str]]
     _provider_name: str
     _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)

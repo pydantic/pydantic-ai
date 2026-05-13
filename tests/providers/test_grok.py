@@ -38,7 +38,7 @@ def test_grok_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `GROK_API_KEY` environment variable or pass it via `GrokProvider(api_key=...)`'
-            'to use the Grok provider.'
+            ' to use the Grok provider.'
         ),
     ):
         GrokProvider()
