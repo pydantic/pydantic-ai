@@ -6672,8 +6672,9 @@ async def test_event_stream_tool_call_end_backfills_input_available_when_call_ev
     )
     # The backfilled `tool-input-available` carries the raw args and provider metadata
     # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
-    backfilled_available: dict[str, Any] = next(
-        e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-available'
+    backfilled_available = cast(
+        'dict[str, Any]',
+        next(e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-available'),
     )
     assert backfilled_available == snapshot(
         {
