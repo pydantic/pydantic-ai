@@ -11,7 +11,7 @@ if [[ -z "${TY_BIN:-}" ]]; then
 fi
 
 TY_OUTPUT_FORMAT="${TY_OUTPUT_FORMAT:-concise}"
-TY_PATHS="${TY_PATHS:-pydantic_ai_slim/pydantic_ai}"
+TY_PATHS="${TY_PATHS:-pydantic_ai_slim}"
 read -r -a ty_paths <<< "$TY_PATHS"
 
 "$TY_BIN" check \

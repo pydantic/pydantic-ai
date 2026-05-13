@@ -60,5 +60,5 @@ jobs:
         env:
           TY_BIN: ${{ github.workspace }}/.ty/ruff/target/release/ty
           TY_OUTPUT_FORMAT: github
-          TY_PATHS: pydantic_ai_slim/pydantic_ai
+          TY_PATHS: pydantic_ai_slim
         run: uvx pre-commit run typecheck-ty --hook-stage manual --all-files --verbose
