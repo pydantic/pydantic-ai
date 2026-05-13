@@ -203,7 +203,7 @@ See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for th
 
 ### Google
 
-[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini developer API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
 
 #### Install
 
@@ -215,7 +215,7 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 #### Configuration
 
-To use `GoogleEmbeddingModel` with the Gemini developer API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
+To use `GoogleEmbeddingModel` with the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
 
 ```bash
 export GOOGLE_API_KEY='your-api-key'
@@ -241,7 +241,7 @@ See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/
 
 ##### Google Cloud
 
-To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini developer API, use the `google-cloud:` provider prefix:
+To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
 
 ```python {title="google_cloud_embeddings.py"}
 from pydantic_ai import Embedder

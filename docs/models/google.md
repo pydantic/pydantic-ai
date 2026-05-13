@@ -1,11 +1,11 @@
 # Google
 
 The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
-access Google's Gemini models via both the Gemini developer API and Google Cloud (formerly known as Vertex AI).
+access Google's Gemini models via both the Gemini API and Google Cloud (formerly known as Vertex AI).
 
 Two providers wrap those endpoints:
 
-- [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini developer API (Google AI Studio), surfaced under the `'google:'` prefix.
+- [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini API (Google AI Studio), surfaced under the `'google:'` prefix.
 - [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] — Google Cloud (formerly known as Vertex AI), surfaced under the `'google-cloud:'` prefix.
 
 !!! note "Renamed prefixes (1.x → v2)"
@@ -22,11 +22,11 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 ## Configuration
 
-`GoogleModel` lets you use Google's Gemini models through their [Gemini developer API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`, formerly known as Vertex AI).
+`GoogleModel` lets you use Google's Gemini models through their [Gemini API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`, formerly known as Vertex AI).
 
-### API Key (Gemini developer API)
+### API Key (Gemini API)
 
-To use Gemini via the Gemini developer API, go to [aistudio.google.com](https://aistudio.google.com/apikey) and create an API key.
+To use Gemini via the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/apikey) and create an API key.
 
 Once you have the API key, set it as an environment variable:
 
@@ -60,7 +60,7 @@ agent = Agent(model)
 
 If you are an enterprise user, you can also use `GoogleModel` to access Gemini via Google Cloud (formerly known as Vertex AI).
 
-This interface has a number of advantages over the Gemini developer API:
+This interface has a number of advantages over the Gemini API:
 
 1. The Google Cloud API comes with more enterprise readiness guarantees.
 2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with Google Cloud to guarantee capacity.
@@ -164,11 +164,11 @@ agent = Agent(model)
 ...
 ```
 
-#### Service tier (`service_tier`, `google_vertex_service_tier`)
+#### Service tier (`service_tier`, `google_cloud_service_tier`)
 
-The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] available for finer Google Cloud routing control. The provider-specific field wins when both are set.
+The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] available for finer Google Cloud routing control. The provider-specific field wins when both are set.
 
-**Gemini developer API** — sent as the request's `service_tier` field:
+**Gemini API** — sent as the request's `service_tier` field:
 
 | `service_tier` | Sent to Gemini API |
 |---|---|
@@ -185,11 +185,11 @@ The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] fi
 | `'flex'` | `X-Vertex-AI-LLM-Shared-Request-Type: flex` | PT first, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover |
 | `'priority'` | `X-Vertex-AI-LLM-Shared-Request-Type: priority` | PT first, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover |
 
-To bypass PT entirely (or use it exclusively, or any of the other Google Cloud-specific routing combinations) set [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] directly — the unified field is intentionally limited to the safe PT-with-spillover variants.
+To bypass PT entirely (or use it exclusively, or any of the other Google Cloud-specific routing combinations) set [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] directly — the unified field is intentionally limited to the safe PT-with-spillover variants.
 
 **Google Cloud — full set of routing values**
 
-The full [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] values map to these HTTP headers:
+The full [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] values map to these HTTP headers:
 
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`).
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
@@ -211,11 +211,11 @@ agent = Agent(model)
 
 result = agent.run_sync(
     'Hello!',
-    model_settings=GoogleModelSettings(google_vertex_service_tier='pt_then_flex'),
+    model_settings=GoogleModelSettings(google_cloud_service_tier='pt_then_flex'),
 )
 ```
 
-Swap `'pt_then_flex'` for any [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] value — e.g. `'pt_then_priority'` for [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover, or `'flex_only'` / `'priority_only'` to bypass PT entirely.
+Swap `'pt_then_flex'` for any [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] value — e.g. `'pt_then_priority'` for [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover, or `'flex_only'` / `'priority_only'` to bypass PT entirely.
 
 The [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field is deprecated in favor of these more specific fields.
 

@@ -2547,7 +2547,7 @@ async def test_google_unified_service_tier_maps_to_vertex_spillover(
 
     Both set only the single spillover header so Provisioned Throughput quota is still
     used first when available; users who want to bypass PT entirely need
-    `google_vertex_service_tier='flex_only'`/`'priority_only'` explicitly.
+    `google_cloud_service_tier='flex_only'`/`'priority_only'` explicitly.
     """
     m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project', location='us-central1'))
     model_settings = GoogleModelSettings(service_tier=tier)
@@ -6248,10 +6248,10 @@ async def test_google_service_tier_streamed_response_extraction(
         )
 
 
-async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
-    """Test that the new `google_vertex_service_tier` field works."""
+async def test_google_cloud_service_tier_new_field(allow_model_requests: None):
+    """Test that the new `google_cloud_service_tier` field works."""
     m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
-    model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
+    model_settings = GoogleModelSettings(google_cloud_service_tier='pt_only')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6264,7 +6264,7 @@ async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
     assert headers['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
 
 
-async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_requests: None):
+async def test_google_cloud_service_tier_auto_maps_to_default(allow_model_requests: None):
     """Test that unified `service_tier='auto'` works with Vertex (sets no headers)."""
     m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
     model_settings = GoogleModelSettings(service_tier='auto')
@@ -6332,9 +6332,9 @@ async def test_google_service_tier_vertex_headers(
     service_tier: GoogleVertexServiceTier,
     expected_headers: dict[str, str],
 ):
-    """Test that Vertex `google_vertex_service_tier` values set the expected HTTP headers."""
+    """Test that Google Cloud `google_cloud_service_tier` values set the expected HTTP headers."""
     m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
-    model_settings = GoogleModelSettings(google_vertex_service_tier=service_tier)
+    model_settings = GoogleModelSettings(google_cloud_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6395,7 +6395,7 @@ async def test_google_vertex_service_tier_flex(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_cloud_service_tier='pt_then_flex')
     result = await agent.run('Reply with exactly: OK', model_settings=settings)
 
     assert result.output == snapshot('OK')
@@ -6441,7 +6441,7 @@ async def test_google_vertex_service_tier_flex_stream(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_cloud_service_tier='pt_then_flex')
     async with agent.run_stream('Reply with exactly: OK', model_settings=settings) as result:
         output = await result.get_output()
         assert output == snapshot('OK')

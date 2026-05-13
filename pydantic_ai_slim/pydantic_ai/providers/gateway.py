@@ -73,7 +73,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini', 'google-vertex'],
+    upstream_provider: Literal['gemini', 'google-cloud', 'google-vertex'],
     /,
     *,
     route: str | None = None,
@@ -99,6 +99,7 @@ ModelProvider = Literal[
     'groq',
     'anthropic',
     'bedrock',
+    'google-cloud',
     'google-vertex',
 ]
 
@@ -199,11 +200,11 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google-vertex', 'gemini'):
+    elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
         from .google import GoogleProvider
 
         with warnings.catch_warnings():
-            # Internal forward; the gateway-vertex path is reworked in v2.
+            # Internal forward; the gateway-google-cloud path is reworked in v2.
             warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             return _with_http_client(
                 GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
@@ -255,7 +256,9 @@ def normalize_gateway_provider(provider: str) -> str:
         return 'openai'
     elif provider in ('openai-responses', 'responses'):
         return 'openai-responses'
-    elif provider in ('gemini', 'google-vertex'):
+    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
+        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
+        # When the Gateway team renames their side, flip this to `google-cloud`.
         return 'google-vertex'
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'

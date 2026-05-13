@@ -100,7 +100,7 @@ class GoogleProvider(Provider[Client]):
                 (for example, GOOGLE_CLOUD_PROJECT). Applies to Google Cloud only.
             location: The location to send API requests to (for example, us-central1). Can be obtained from environment variables.
                 Applies to Google Cloud only.
-            vertexai: Force the use of Google Cloud (formerly known as Vertex AI). If `False`, the Gemini developer API
+            vertexai: Force the use of Google Cloud (formerly known as Vertex AI). If `False`, the Gemini API
                 will be used. Defaults to `False` unless `location`, `project`, or `credentials` are provided.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
@@ -156,7 +156,7 @@ class GoogleProvider(Provider[Client]):
                 if api_key is None:
                     raise UserError(
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                        ' to use the Gemini developer API.'
+                        ' to use the Gemini API.'
                     )
                 self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
             else:
@@ -182,7 +182,7 @@ class GoogleProvider(Provider[Client]):
                 )
         else:
             # Custom client overrides everything — we can't reliably tell whether it points at Google Cloud
-            # or the Gemini developer API, so suppress the deprecation. The user picked their own client.
+            # or the Gemini API, so suppress the deprecation. The user picked their own client.
             self._client = client
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:

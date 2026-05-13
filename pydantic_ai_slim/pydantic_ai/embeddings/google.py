@@ -21,7 +21,7 @@ except ImportError as _import_error:
 
 
 LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']
-"""Latest Gemini developer API embedding models.
+"""Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
 for available models and their capabilities.
@@ -40,7 +40,7 @@ for available models and their capabilities.
 """
 
 LatestGoogleEmbeddingModelNames = LatestGoogleGLAEmbeddingModelNames | LatestGoogleVertexEmbeddingModelNames
-"""All latest Google embedding models (union of Gemini developer API and Google Cloud models)."""
+"""All latest Google embedding models (union of Gemini API and Google Cloud models)."""
 
 GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
@@ -83,7 +83,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     """Google embedding model implementation.
 
     This model works with Google's embeddings API via the `google-genai` SDK,
-    supporting both the Gemini developer API (Google AI Studio) and Google Cloud (formerly known as Vertex AI).
+    supporting both the Gemini API (Google AI Studio) and Google Cloud (formerly known as Vertex AI).
 
     Example:
     ```python
@@ -91,7 +91,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-    # Using the Gemini developer API (requires GOOGLE_API_KEY env var)
+    # Using the Gemini API (requires GOOGLE_API_KEY env var)
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider())
 
     # Using Google Cloud
@@ -120,7 +120,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 for available models.
             provider: The provider to use for authentication and API access. Can be:
 
-                - `'google'` (default): Uses the Gemini developer API (Google AI Studio)
+                - `'google'` (default): Uses the Gemini API (Google AI Studio)
                 - `'google-cloud'`: Uses Google Cloud (formerly known as Vertex AI)
                 - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] or
                   [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance
@@ -229,7 +229,7 @@ def _map_usage(
 ) -> RequestUsage:
     """Map Google embedding response to RequestUsage.
 
-    Note: The Gemini developer API doesn't return token usage information.
+    Note: The Gemini API doesn't return token usage information.
     Google Cloud (formerly known as Vertex AI) returns token_count in embedding statistics.
     """
     total_tokens = 0

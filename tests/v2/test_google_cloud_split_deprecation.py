@@ -4,6 +4,8 @@ Covers the 1.x deprecation paths:
 
 - `'google-gla:'` prefix → `'google:'`
 - `'google-vertex:'` prefix → `'google-cloud:'`
+- `'gateway/google-vertex:'` prefix → `'gateway/google-cloud:'`
+- `GoogleModelSettings(google_vertex_service_tier=...)` → `google_cloud_service_tier`
 - `GoogleProvider(vertexai=True, ...)` and the Google Cloud-only kwargs
   (`location`, `project`, `credentials`) on `GoogleProvider` → `GoogleCloudProvider(...)`
 - `GoogleProvider(vertexai=False, ...)` → drop the redundant kwarg
@@ -12,6 +14,7 @@ Plus the new shapes that should NOT warn:
 
 - `'google:gemini-...'` resolves to `GoogleProvider`
 - `'google-cloud:gemini-...'` resolves to `GoogleCloudProvider`
+- `'gateway/google-cloud:'` routes through the gateway without warning
 - `GoogleCloudProvider(...)` does not re-emit the warning when forwarding internally
 - `GoogleProvider(client=...)` (user-supplied client) does not warn
 """
@@ -29,7 +32,12 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from google.genai.client import Client
 
+    from pydantic_ai.models.google import (  # pyright: ignore[reportPrivateUsage]
+        GoogleModelSettings,
+        _resolve_google_cloud_service_tier,
+    )
     from pydantic_ai.providers import infer_provider, infer_provider_class
+    from pydantic_ai.providers.gateway import normalize_gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -39,7 +47,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai n
 
 @pytest.fixture(autouse=True)
 def _set_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`GoogleProvider()` defaults to the Gemini developer API and requires an API key on construction."""
+    """`GoogleProvider()` defaults to the Gemini API and requires an API key on construction."""
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
 
 
@@ -117,3 +125,61 @@ def test_google_cloud_provider_no_warning_on_construction() -> None:
 def test_google_cloud_provider_is_google_provider() -> None:
     provider = GoogleCloudProvider(project='p', location='us-central1')
     assert isinstance(provider, GoogleProvider)
+
+
+def test_gateway_google_vertex_prefix_warns_and_routes_to_google_cloud_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`gateway/google-vertex` is a user-facing alias that warns + routes to the Google Cloud path."""
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-key')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/google-vertex.' prefix is deprecated"):
+        assert infer_provider_class('gateway/google-vertex') is GoogleCloudProvider
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/google-vertex.' prefix is deprecated"):
+        provider = infer_provider('gateway/google-vertex')
+    assert isinstance(provider, GoogleProvider)
+
+
+def test_gateway_google_cloud_prefix_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`gateway/google-cloud` is the new canonical user-facing prefix — no deprecation warning."""
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-key')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert infer_provider_class('gateway/google-cloud') is GoogleCloudProvider
+        provider = infer_provider('gateway/google-cloud')
+    assert isinstance(provider, GoogleProvider)
+
+
+def test_gateway_google_cloud_maps_to_legacy_gateway_wire_value() -> None:
+    """Rule 17: the user-facing rename ships ahead of the Gateway API rename.
+
+    Both `gateway/google-cloud` and `gateway/google-vertex` must still serialize to
+    `'google-vertex'` on the wire until Daniel renames the Gateway side.
+    """
+    assert normalize_gateway_provider('gateway/google-cloud') == 'google-vertex'
+    assert normalize_gateway_provider('gateway/google-vertex') == 'google-vertex'
+
+
+def test_google_vertex_service_tier_warns_and_routes_to_google_cloud_service_tier() -> None:
+    """Old `google_vertex_service_tier` key still routes correctly + emits the rename warning."""
+    settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`google_vertex_service_tier` is deprecated'):
+        assert _resolve_google_cloud_service_tier(settings) == 'pt_only'
+
+
+def test_google_cloud_service_tier_no_warning() -> None:
+    """New `google_cloud_service_tier` key is the canonical name — must not warn."""
+    settings = GoogleModelSettings(google_cloud_service_tier='pt_only')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert _resolve_google_cloud_service_tier(settings) == 'pt_only'
+
+
+def test_google_cloud_service_tier_wins_over_deprecated_google_vertex_service_tier() -> None:
+    """When both are set, the new name takes precedence (and the old still warns when read)."""
+    settings = GoogleModelSettings(
+        google_cloud_service_tier='pt_only',
+        google_vertex_service_tier='flex_only',
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert _resolve_google_cloud_service_tier(settings) == 'pt_only'

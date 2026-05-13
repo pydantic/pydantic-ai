@@ -732,7 +732,7 @@ class UploadedFile:
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini developer API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -741,7 +741,7 @@ class UploadedFile:
 
     For most providers, this is the file ID returned by the provider's upload API.
     For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
-    For GoogleModel (Gemini developer API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 

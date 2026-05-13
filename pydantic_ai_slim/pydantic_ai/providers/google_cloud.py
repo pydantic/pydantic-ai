@@ -6,11 +6,12 @@ from typing import Literal
 import httpx
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
 
 try:
     from google.auth.credentials import Credentials
     from google.genai.client import Client
+
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google Cloud provider, '

@@ -68,13 +68,13 @@ Per-provider mapping:
 
 On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
-[`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
+[`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Vertex's PT routing tiers) are reachable
+(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
 only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
-`google_vertex_service_tier`) always take precedence over this unified field when set.
+`google_cloud_service_tier`) always take precedence over this unified field when set.
 """
 
 
@@ -311,7 +311,7 @@ class ModelSettings(TypedDict, total=False):
 
     See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
     the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
-    `anthropic_service_tier`, `bedrock_service_tier`, `google_vertex_service_tier`)
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_cloud_service_tier`)
     take precedence over this unified field when set.
 
     Supported by:
@@ -319,7 +319,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Bedrock
-    * Google (Gemini developer API and Google Cloud)
+    * Google (Gemini API and Google Cloud)
     """
 
     extra_body: object

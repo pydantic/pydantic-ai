@@ -182,6 +182,18 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+        'gateway/google-cloud:gemini-2.5-flash-image',
+        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-cloud:gemini-2.5-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash',
+        'gateway/google-cloud:gemini-2.5-pro',
+        'gateway/google-cloud:gemini-3-flash-preview',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+        'gateway/google-cloud:gemini-3.1-pro-preview',
+        # Legacy `gateway/google-vertex:` literals kept for `ModelMessage` deserialization
+        # (rule 23). User-facing prefix is `gateway/google-cloud:`; emits a deprecation warning.
         'gateway/google-vertex:gemini-2.5-flash-image',
         'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash-lite',
