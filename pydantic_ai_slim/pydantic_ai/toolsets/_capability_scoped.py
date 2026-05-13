@@ -37,7 +37,12 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
         cap = ctx.capabilities.get(self.capability_id)
-        hint = _build_cap_hint(self.capability_id) if cap is not None and cap.defer_loading is True else None
+        hint = (
+            f" (This tool belongs to capability '{self.capability_id}'. "
+            f"Call load_capability(id='{self.capability_id}') first if you haven't.)"
+            if cap is not None and cap.defer_loading is True
+            else None
+        )
         return {
             name: replace(
                 tool,
@@ -46,7 +51,7 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
                     capability_id=tool.tool_def.capability_id
                     if tool.tool_def.capability_id is not None
                     else self.capability_id,
-                    description=_append_hint(tool.tool_def.description, hint)
+                    description=(f'{tool.tool_def.description}{hint}' if tool.tool_def.description else hint.lstrip())
                     if hint is not None
                     else tool.tool_def.description,
                 ),
@@ -84,14 +89,3 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
         # this node.
         visitor(self)
         self.wrapped.apply(visitor)
-
-
-def _build_cap_hint(capability_id: str) -> str:
-    return (
-        f" (This tool belongs to capability '{capability_id}'. "
-        f"Call load_capability(id='{capability_id}') first if you haven't.)"
-    )
-
-
-def _append_hint(description: str | None, hint: str) -> str:
-    return f'{description}{hint}' if description else hint.lstrip()

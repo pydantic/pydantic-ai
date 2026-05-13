@@ -2271,30 +2271,6 @@ def test_deferred_capability_catalog_entries_require_description() -> None:
     )
 
 
-def test_deferred_capability_requires_loadable_content() -> None:
-    """A `defer_loading=True` capability with no instructions, no toolset, no settings, and
-    no native tools is a no-op load — reject at construction rather than letting the
-    model spend a `load_capability` round-trip for no effect.
-    """
-
-    with pytest.raises(UserError) as no_content:
-        agent = Agent(
-            TestModel(),
-            capabilities=[
-                Capability[None](
-                    id='ghost',
-                    description='A capability that contributes nothing.',
-                    defer_loading=True,
-                )
-            ],
-        )
-        _ = agent.run_sync('Go.')
-
-    assert str(no_content.value) == snapshot(
-        "Capability 'ghost' has defer_loading=True but contributes nothing — no instructions or toolset. A deferred capability that loads nothing would cost the model a `load_capability` round-trip for no effect; either drop `defer_loading=True` or add content to it."
-    )
-
-
 def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
     """Deferred loading currently supports instructions and function tools only."""
 

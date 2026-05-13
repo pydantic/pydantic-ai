@@ -34,6 +34,13 @@ _load_capability_args_ta = TypeAdapter(_LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
+_LOAD_CAPABILITY_TOOL_DEF = ToolDefinition(
+    name=LOAD_CAPABILITY_TOOL_NAME,
+    description='Load a capability to access its full instructions and tools.',
+    parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
+    tool_kind='capability-load',
+)
+
 
 @dataclass
 class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
@@ -63,16 +70,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                 'Rename your tool to avoid conflicts.'
             )
 
-        load_tool_def = ToolDefinition(
-            name=LOAD_CAPABILITY_TOOL_NAME,
-            description=('Load a capability to access its full instructions and tools.'),
-            parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            tool_kind='capability-load',
-        )
-
         load_tool = ToolsetTool(
             toolset=self,
-            tool_def=load_tool_def,
+            tool_def=_LOAD_CAPABILITY_TOOL_DEF,
             max_retries=1,
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )

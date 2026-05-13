@@ -81,7 +81,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if capability.defer_loading is True:
                 continue
             instructions.extend(normalize_instructions(capability.get_instructions()))
-
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
@@ -128,7 +127,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if toolset is None:
                 continue
             elif isinstance(toolset, AbstractToolset):
-                # Pyright can't narrow Callable type aliases out of unions after isinstance check
+                # `AgentToolset[T]` aliases `AbstractToolset[T] | ToolsetFunc[T]`; pyright
+                # narrows `ToolsetFunc` to `Callable[...]` and loses the `T` binding, so the
+                # post-isinstance branch is typed as `AbstractToolset[T] | AbstractToolset[Unknown]`.
                 cap_toolset = cast(AbstractToolset[AgentDepsT], toolset)
             else:
                 cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)

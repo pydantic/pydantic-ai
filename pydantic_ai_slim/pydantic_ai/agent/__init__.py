@@ -1487,13 +1487,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         '(via the `description` field or by overriding `get_description`) '
                         'so the model can decide whether to load them from the `load_capability` catalog.'
                     )
-                if cap.defer_loading and not _has_loadable_content(cap):
-                    raise exceptions.UserError(
-                        f'Capability {cap.id!r} has defer_loading=True but contributes nothing — no '
-                        'instructions or toolset. A deferred capability that loads nothing would cost '
-                        'the model a `load_capability` round-trip for no effect; either drop '
-                        '`defer_loading=True` or add content to it.'
-                    )
                 if cap.id in capabilities:
                     raise exceptions.UserError(
                         f'Capability id {cap.id!r} is used by multiple capabilities. '
@@ -2551,6 +2544,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
         Toolset instructions are collected separately during run execution.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+            cap_instructions: Instructions from capabilities, resolved at run time.
         """
         override_instructions = self._override_instructions.get()
         if override_instructions:
@@ -2876,30 +2873,6 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
 """Infrastructure capabilities auto-injected when not already present."""
-
-
-def _has_loadable_content(cap: AbstractCapability[Any]) -> bool:
-    """Whether a `defer_loading=True` capability has anything to surface on load.
-
-    A deferred cap is meant to deliver instructions or a toolset to the run after
-    `load_capability` is called. If both are empty, the cap is a no-op load —
-    flagging it at construction is friendlier than letting the model spend a
-    round-trip discovering it does nothing.
-
-    Model settings and native tools aren't checked here: `CombinedCapability` rejects
-    deferred caps that contribute either of those during agent construction (lazy-loading
-    them isn't supported yet), so they can't reach this check. When lazy-loading lands,
-    add the corresponding `get_model_settings` / `get_native_tools` checks back.
-
-    Honors `get_*` accessor overrides rather than reading raw fields, so dynamic
-    capabilities (e.g. ones that compute their toolset from `__init__` state) still
-    register as having content.
-    """
-    if cap.get_instructions() is not None:
-        return True
-    if cap.get_toolset() is not None:
-        return True
-    return False
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
