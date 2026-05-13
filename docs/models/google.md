@@ -69,7 +69,7 @@ This interface has a number of advantages over the Gemini developer API:
 
 You can authenticate using [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials), a service account, or an [API key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode).
 
-Whichever way you authenticate, you'll need to have the Vertex AI API enabled in your Google Cloud account.
+Whichever way you authenticate, you'll need to have the Vertex AI API (now branded as Google Cloud AI) enabled in your Google Cloud account.
 
 #### Application Default Credentials
 

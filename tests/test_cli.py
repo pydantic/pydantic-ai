@@ -163,6 +163,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'bedrock',
         'cerebras',
         'google',
+        'google-cloud',
         'groq',
         'mistral',
         'cohere',

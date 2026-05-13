@@ -13,12 +13,13 @@ import base64
 
 import pytest
 
+from pydantic_ai import ModelResponse, NativeToolCallPart, NativeToolReturnPart, TextPart, ThinkingPart
+from pydantic_ai.native_tools import CodeExecutionTool
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai import ModelResponse, NativeToolCallPart, NativeToolReturnPart, TextPart, ThinkingPart
     from pydantic_ai.models.google import GoogleModel, _content_model_response  # pyright: ignore[reportPrivateUsage]
-    from pydantic_ai.native_tools import CodeExecutionTool
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
