@@ -36,12 +36,25 @@ def extract_load_capability_return(content: Any) -> LoadCapabilityReturn | None:
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via ``load_capability``."""
+    """Parse message history to find capabilities loaded via ``load_capability``.
+
+    Dispatches on the typed `LoadCapabilityReturnPart` subclass first (the normal path
+    once a part has flowed through the narrower), and falls back to a `tool_name` check
+    for pre-typed-parts histories so existing serialized runs keep loading correctly.
+    Both paths re-validate the payload via `extract_load_capability_return` so a
+    malformed dict can't sneak a `capability_id` into `loaded`.
+    """
+    # Lazy import to avoid a cycle with `messages.py` (which late-imports `_load_capability`,
+    # which depends on `_deferred`).
+    from ._load_capability import LoadCapabilityReturnPart
+
     loaded: set[str] = set()
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME:
+                if isinstance(part, LoadCapabilityReturnPart) or (
+                    isinstance(part, ToolReturnPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME
+                ):
                     parsed = extract_load_capability_return(part.content)
                     if parsed is not None:
                         loaded.add(parsed['capability_id'])

@@ -24,7 +24,7 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
+from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME, parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -70,6 +70,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
+    _SearchTool,  # pyright: ignore[reportPrivateUsage]
     keywords_search_fn,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -903,6 +904,18 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     assert tool_names == snapshot(['get_weather', 'get_time'])
 
 
+class _NoNativeToolSearchFunctionModel(FunctionModel):
+    """`FunctionModel` that drops `ToolSearchTool` from supported native tools.
+
+    Routes deferred-tool discovery through the local `search_tools` function tool so the
+    test exercises the local-fallback path (the native path is covered by other tests).
+    """
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
+
 async def test_tool_search_handles_search_gated_tools_from_eager_capability():
     """Search-gated tool from an eager capability is hidden until the model searches for it.
 
@@ -941,7 +954,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
                 parts=[
                     ToolCallPart(
                         tool_name=_SEARCH_TOOLS_NAME,
-                        args={'keywords': 'eager'},
+                        args={'queries': ['eager']},
                         tool_call_id='search-1',
                     )
                 ]
@@ -961,26 +974,39 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
         gated_result = next(part.content for part in tool_returns if part.tool_name == 'capability_search_tool')
         return ModelResponse(parts=[TextPart(content=f'final: {gated_result}')])
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    agent = Agent(_NoNativeToolSearchFunctionModel(model_fn), capabilities=[capability])
 
     result = await agent.run('find the gated tool')
 
     assert result.output == 'final: search-gated-result'
-    # Step 1: only the search facade is visible.
-    # Step 2: search has unlocked the gated tool; the facade is dropped because no
-    # deferred tools remain.
-    # Step 3: same toolset; model returns final text.
+    # Step 1: only the search facade is visible — the gated tool carries
+    # `with_native='tool_search'` and `defer_loading=True`, so `_resolve_native_tool_swap`
+    # Rule 3 drops it from the wire on this profile (which doesn't support `ToolSearchTool`).
+    # Step 2: search has flipped the gated tool's `defer_loading` to False, so Rule 3 no
+    # longer drops it. `search_tools` stays on the wire across the discovery boundary —
+    # dropping it once the corpus drains would invalidate the request prefix on every
+    # discovery, and the design trades a small redundant tool slot for prompt-cache
+    # stability.
+    # Step 3: same wire as step 2; model returns final text.
     assert seen_tool_names == snapshot(
         [
             ['search_tools'],
-            ['capability_search_tool'],
-            ['capability_search_tool'],
+            ['capability_search_tool', 'search_tools'],
+            ['capability_search_tool', 'search_tools'],
         ]
     )
 
 
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
-    """A deferred capability gates inherited tools; explicit `defer_loading` per tool still applies after loading.
+    """A deferred capability shows its tools on the wire turn 1 (gated at execution),
+    while tool-level `defer_loading=True` still requires a separate `search_tools` step
+    after the capability loads.
+
+    Cap-level and tool-level deferral compose: the cap-level flag stays out of the way
+    of the wire (cache stability) and gates only at execution via
+    `CapabilityScopedToolset.call_tool`; tool-level `defer_loading=True` still flows
+    through the regular tool-search corpus, filtered by `loaded_capability_ids` so
+    nothing in the cap-scoped corpus is discoverable until the cap loads.
 
     Drives through `Agent` so message-history → `loaded_capability_ids` translation
     happens via the real `Agent.run` setup. Tools the model sees at each step are
@@ -1038,7 +1064,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
                 parts=[
                     ToolCallPart(
                         tool_name=_SEARCH_TOOLS_NAME,
-                        args={'keywords': 'special'},
+                        args={'queries': ['special']},
                         tool_call_id='search-special',
                     )
                 ]
@@ -1058,37 +1084,50 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
         gated_result = next(part.content for part in tool_returns if part.tool_name == 'search_gated_tool')
         return ModelResponse(parts=[TextPart(content=f'final: {gated_result}')])
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    agent = Agent(_NoNativeToolSearchFunctionModel(model_fn), capabilities=[capability])
 
     result = await agent.run('use the special tool')
 
     assert result.output == 'final: search-gated-result'
-    # Step 1: capability deferred — only `eager_tool` (explicit defer_loading=False) is visible
-    # alongside the search facade and load_capability.
-    # Step 2: capability loaded — `inherited_tool` becomes visible; `search_gated_tool`
-    # stays hidden behind tool-level defer_loading; load_capability disappears (no
-    # remaining unloaded capabilities).
-    # Step 3: search has unlocked `search_gated_tool`; the search facade is dropped
-    # because no deferred tools remain.
-    # Step 4: same toolset; model returns final text.
+    # Step 1: cap is deferred — `inherited_tool` and `eager_tool` are on the wire from
+    # turn 1 (cache stability; execution-gated by `CapabilityScopedToolset.call_tool`).
+    # `search_gated_tool` is dropped by Rule 3 (tool-level defer_loading=True without
+    # native support). `search_tools` stays on the wire even though the corpus is
+    # filtered empty (cap not loaded yet), preserving prompt prefix stability across
+    # the load boundary. `load_capability` is present because a deferred cap is unloaded.
+    # Step 2: cap loaded — `load_capability` drops (no more unloaded caps).
+    # `search_gated_tool` still hidden behind tool-level defer; corpus now contains it
+    # because the cap-load filter passes.
+    # Step 3: search flipped `search_gated_tool`'s defer_loading to False; it joins the
+    # wire. `search_tools` stays (cache stability across the discovery boundary).
+    # Step 4: same wire as step 3; model returns final text.
     assert seen_tool_names == snapshot(
         [
-            ['search_tools', 'load_capability', 'eager_tool'],
-            ['search_tools', 'inherited_tool', 'eager_tool'],
-            ['inherited_tool', 'eager_tool', 'search_gated_tool'],
-            ['inherited_tool', 'eager_tool', 'search_gated_tool'],
+            ['load_capability', 'inherited_tool', 'eager_tool', 'search_tools'],
+            ['inherited_tool', 'eager_tool', 'search_tools'],
+            ['inherited_tool', 'eager_tool', 'search_gated_tool', 'search_tools'],
+            ['inherited_tool', 'eager_tool', 'search_gated_tool', 'search_tools'],
         ]
     )
 
 
 async def test_tool_search_ignores_malformed_loaded_capability_history():
-    """Malformed `load_capability` results must not unlock capability-scoped tools."""
+    """Malformed `load_capability` returns in history must not let cap-scoped corpus members
+    become discoverable through `search_tools`.
+
+    The wire shape of a cap-scoped tool is stable across cap state (model B), but the
+    search corpus is filtered by `loaded_capability_ids` at every turn: a cap-scoped
+    tool-level-deferred tool only enters the corpus once its cap has been loaded via a
+    well-formed `load_capability` return. `extract_load_capability_return` rejects
+    payloads that are not a dict, or whose `capability_id` is missing / non-string, or
+    whose `instructions` is non-string; this test pins each of those rejections.
+    """
     toolset: FunctionToolset[None] = FunctionToolset()
 
-    @toolset.tool_plain
-    def inherited_tool() -> str:  # pragma: no cover
-        """Inherited deferred tool."""
-        return 'inherited'
+    @toolset.tool_plain(defer_loading=True)
+    def report_search_tool() -> str:  # pragma: no cover
+        """Tool-level deferred tool inside a deferred capability."""
+        return 'report'
 
     capability = Capability[None](
         id='reports',
@@ -1107,24 +1146,55 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         'non_string_capability_id': {'capability_id': 123, 'instructions': None},
         'non_string_instructions': {'capability_id': 'reports', 'instructions': ['bad']},
     }
-    visible_tools: dict[str, list[str]] = {}
+    corpus_by_case: dict[str, list[str]] = {}
 
     for case_name, content in cases.items():
         messages: list[ModelMessage] = [
             ModelRequest(parts=[ToolReturnPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, content=content)])
         ]
+        # Mirror the parse-then-filter that `Agent.run` does at run setup
+        # (`_agent_graph.py` calls `parse_loaded_capabilities` and stores the result
+        # on `RunContext.loaded_capability_ids`). The test exercises both halves: the
+        # parser strictness against malformed payloads AND the corpus filter that
+        # consumes the parsed set.
+        loaded = parse_loaded_capabilities(messages)
         ctx = _build_run_context(None, messages=messages, capabilities={'reports': capability})
+        ctx.loaded_capability_ids.update(loaded)
         tools = await searchable.get_tools(ctx)
-        visible_tools[case_name] = list(tools)
+        search_tool = tools[_SEARCH_TOOLS_NAME]
+        assert isinstance(search_tool, _SearchTool)
+        corpus_by_case[case_name] = [td.name for td in search_tool.corpus]
 
-    assert visible_tools == snapshot(
+    # Every malformed payload leaves the cap-scoped corpus empty.
+    assert corpus_by_case == snapshot(
         {
-            'not_a_dict': ['search_tools'],
-            'missing_capability_id': ['search_tools'],
-            'non_string_capability_id': ['search_tools'],
-            'non_string_instructions': ['search_tools'],
+            'not_a_dict': [],
+            'missing_capability_id': [],
+            'non_string_capability_id': [],
+            'non_string_instructions': [],
         }
     )
+
+    # Sanity-check the well-formed case: when `load_capability` returns the expected
+    # shape, the cap enters `loaded_capability_ids` and its tool-level deferred tool
+    # joins the corpus.
+    well_formed: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    content={'capability_id': 'reports', 'instructions': None},
+                )
+            ]
+        )
+    ]
+    loaded = parse_loaded_capabilities(well_formed)
+    ctx = _build_run_context(None, messages=well_formed, capabilities={'reports': capability})
+    ctx.loaded_capability_ids.update(loaded)
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+    assert isinstance(search_tool, _SearchTool)
+    assert [td.name for td in search_tool.corpus] == snapshot(['report_search_tool'])
 
 
 async def test_agent_auto_injects_tool_search_capability():

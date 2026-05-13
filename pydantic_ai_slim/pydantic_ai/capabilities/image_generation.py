@@ -132,12 +132,19 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
+        id: str | None = None,
+        defer_loading: bool | None = None,
+        description: str | None = None,
     ) -> None:
         if fallback_model is not None and local is not None:
             raise UserError(
                 'ImageGeneration: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
+        if id is not None:
+            self.id = id
+        self.defer_loading = defer_loading
+        self.description = description
         self.native = native
         self.local = local
         self.fallback_model = fallback_model

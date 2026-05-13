@@ -1487,6 +1487,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         '(via the `description` field or by overriding `get_description`) '
                         'so the model can decide whether to load them from the `load_capability` catalog.'
                     )
+                if cap.defer_loading and not _has_loadable_content(cap):
+                    raise exceptions.UserError(
+                        f'Capability {cap.id!r} has defer_loading=True but contributes nothing — no '
+                        'instructions, toolset, model settings, or native tools. A deferred capability '
+                        'that loads nothing would cost the model a `load_capability` round-trip for no '
+                        'effect; either drop `defer_loading=True` or add content to it.'
+                    )
                 if cap.id in capabilities:
                     raise exceptions.UserError(
                         f'Capability id {cap.id!r} is used by multiple capabilities. '
@@ -2869,6 +2876,29 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+def _has_loadable_content(cap: AbstractCapability[Any]) -> bool:
+    """Whether a `defer_loading=True` capability has anything to surface on load.
+
+    A deferred cap is meant to deliver instructions, tools (toolset or native), or model
+    settings to the run after `load_capability` is called. If all of those are empty, the
+    cap is a no-op load — flagging it at construction is friendlier than letting the model
+    spend a round-trip discovering it does nothing.
+
+    Honors `get_*` accessor overrides rather than reading raw fields, so dynamic
+    capabilities (e.g. ones that compute their toolset from `__init__` state) still
+    register as having content.
+    """
+    if cap.get_instructions() is not None:
+        return True
+    if cap.get_toolset() is not None:
+        return True
+    if cap.get_model_settings() is not None:
+        return True
+    if cap.get_native_tools():
+        return True
+    return False
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:

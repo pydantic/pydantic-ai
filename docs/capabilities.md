@@ -418,12 +418,22 @@ seen_tool_names: list[list[str]] = []
 
 def support_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     seen_tool_names.append([tool.name for tool in info.function_tools])
-    last_part = messages[-1].parts[-1]
+    tool_returns = [
+        part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
 
-    if isinstance(last_part, ToolReturnPart) and last_part.tool_name == 'lookup_refund_policy':
-        return ModelResponse(parts=[TextPart(str(last_part.content))])
+    if not any(part.tool_name == 'load_capability' for part in tool_returns):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability',
+                    args={'id': 'refunds'},
+                    tool_call_id='load-refunds',
+                )
+            ]
+        )
 
-    if any(tool.name == 'lookup_refund_policy' for tool in info.function_tools):
+    if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -434,15 +444,8 @@ def support_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
             ]
         )
 
-    return ModelResponse(
-        parts=[
-            ToolCallPart(
-                tool_name='load_capability',
-                args={'id': 'refunds'},
-                tool_call_id='load-refunds',
-            )
-        ]
-    )
+    refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+    return ModelResponse(parts=[TextPart(str(refund_result))])
 
 
 agent = Agent(
@@ -465,7 +468,7 @@ print(result.output)
 print(seen_tool_names)
 """
 [
-    ['search_tools', 'load_capability'],
+    ['load_capability', 'lookup_refund_policy'],
     ['lookup_refund_policy'],
     ['lookup_refund_policy'],
 ]
@@ -474,7 +477,7 @@ print(seen_tool_names)
 
 _(This example is complete, it can be run "as is")_
 
-The first tool list only includes `search_tools` and `load_capability`; `lookup_refund_policy` is hidden. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool is available.
+The model can see `lookup_refund_policy` from the start, but it can only call it after loading the `refunds` capability — the tool's description tells it so. Once loaded, the refund instructions are returned as the tool result, the refund tool is callable, and `load_capability` drops off the tool list.
 
 ### Dynamic descriptions and load-time instructions
 
