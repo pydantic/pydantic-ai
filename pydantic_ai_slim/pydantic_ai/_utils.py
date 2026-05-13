@@ -609,7 +609,7 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
         # errors far from the real cause. For any other unresolvable name we stay silent to match
         # the prior behavior and avoid surprising callers that intentionally have unresolvable hints.
         if 'RunContext' in str(exc):
-            callable_name = getattr(callable_obj, '__qualname__', None) or repr(callable_obj)
+            callable_name = getattr(callable_obj, '__qualname__', None) or repr(callable_obj)  # pyright: ignore[reportUnknownArgumentType]
             warnings.warn(
                 f'Could not resolve `RunContext` annotation on {callable_name}: {exc}. '
                 f'This usually means `RunContext` is imported only under `if TYPE_CHECKING:`. '
