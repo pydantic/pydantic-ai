@@ -15,13 +15,10 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -33,6 +30,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -45,6 +44,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
@@ -198,7 +198,7 @@ class GroqModel(Model[AsyncGroq]):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
@@ -305,7 +305,7 @@ class GroqModel(Model[AsyncGroq]):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
-        tools += self._get_builtin_tools(model_request_parameters)
+        tools += self._get_native_tools(model_request_parameters)
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -445,11 +445,9 @@ class GroqModel(Model[AsyncGroq]):
 
         return tools, tool_choice
 
-    def _get_builtin_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[chat.ChatCompletionToolParam]:
+    def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools: list[chat.ChatCompletionToolParam] = []
-        for tool in model_request_parameters.builtin_tools:
+        for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
@@ -479,7 +477,7 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ThinkingPart):
                         start_tag, end_tag = self.profile.thinking_tags
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
                         pass
                     elif isinstance(item, FilePart):  # pragma: no cover
@@ -821,7 +819,7 @@ def _parse_tool_use_failed_error(body: Any) -> _GroqToolUseFailedGeneration | st
 
 def _map_executed_tool(
     tool: ExecutedTool, provider_name: str, streaming: bool = False, tool_call_id: str | None = None
-) -> tuple[BuiltinToolCallPart | None, BuiltinToolReturnPart | None]:
+) -> tuple[NativeToolCallPart | None, NativeToolReturnPart | None]:
     if tool.type == 'search':
         if tool.search_results and (tool.search_results.images or tool.search_results.results):
             results = tool.search_results.model_dump(mode='json')
@@ -829,13 +827,13 @@ def _map_executed_tool(
             results = tool.output
 
         tool_call_id = tool_call_id or generate_tool_call_id()
-        call_part = BuiltinToolCallPart(
+        call_part = NativeToolCallPart(
             tool_name=WebSearchTool.kind,
             args=from_json(tool.arguments),
             provider_name=provider_name,
             tool_call_id=tool_call_id,
         )
-        return_part = BuiltinToolReturnPart(
+        return_part = NativeToolReturnPart(
             tool_name=WebSearchTool.kind,
             content=results,
             provider_name=provider_name,

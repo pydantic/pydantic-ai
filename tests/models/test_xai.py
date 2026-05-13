@@ -29,8 +29,6 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CodeExecutionTool,
     DocumentUrl,
     FilePart,
@@ -41,6 +39,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -61,6 +61,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -117,10 +118,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -1792,7 +1793,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted reasoning and tool calls
             xai_include_web_search_output=True,
@@ -1823,7 +1824,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'what day of the week is January 1, 2026'},
                         tool_call_id=IsStr(),
@@ -1835,7 +1836,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
@@ -1878,7 +1879,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     # Create an agent that includes encrypted content and web search output
     agent = Agent(
         m,
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted tool calls
             xai_include_web_search_output=True,
@@ -1915,28 +1916,28 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today Celsius'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'browse_page'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
@@ -1990,7 +1991,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
@@ -2001,7 +2002,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
@@ -2012,7 +2013,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
                     tool_call_id=IsStr(),
@@ -2029,7 +2030,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
@@ -2040,7 +2041,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartEndEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
@@ -2051,7 +2052,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
                     tool_call_id=IsStr(),
@@ -2107,7 +2108,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
@@ -2116,7 +2117,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
                     tool_call_id=IsStr(),
@@ -2125,7 +2126,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
@@ -2134,7 +2135,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
                     tool_call_id=IsStr(),
@@ -2151,7 +2152,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=False,
             xai_include_code_execution_output=True,
@@ -2183,14 +2184,14 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'stdout': '-428330955.97745\n',
@@ -2232,7 +2233,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(xai_include_code_execution_output=True),
     )
 
@@ -2263,14 +2264,14 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print(2 + 2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                         tool_call_id=IsStr(),
@@ -2300,7 +2301,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
@@ -2310,7 +2311,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
@@ -2321,7 +2322,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                     tool_call_id=IsStr(),
@@ -2334,7 +2335,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
@@ -2343,7 +2344,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                     tool_call_id=IsStr(),
@@ -2361,7 +2362,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_provid
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        capabilities=[NativeTool(WebSearchTool()), NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_web_search_output=True,
@@ -2398,7 +2399,7 @@ Return just the final number with no other text.\
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'release year of Python 3.0'},
                         tool_call_id=IsStr(),
@@ -2410,21 +2411,21 @@ Return just the final number with no other text.\
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print(2008 + 1)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '2009\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                         tool_call_id=IsStr(),
@@ -2467,7 +2468,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
         instructions=(
             'Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
         ),
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted tool calls
             xai_include_web_search_output=True,
@@ -2553,7 +2554,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'famous landmarks in Chicago', 'num_results': 5},
                         tool_call_id=IsStr(),
@@ -2565,7 +2566,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
@@ -2608,13 +2609,15 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
         model_settings=XaiModelSettings(
@@ -2648,7 +2651,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -2662,7 +2665,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                         provider_name='xai',
                         provider_details={'function_name': 'deepwiki.ask_question'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content="""\
 This repository, `pydantic/pydantic-ai`, is a Python agent framework designed for building production-grade applications with Large Language Models (LLMs) . It emphasizes type safety, structured outputs, dependency injection, and observability, providing a model-agnostic interface for over 20 LLM providers . The framework also includes comprehensive evaluation and testing infrastructure .
@@ -2750,13 +2753,15 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
         model_settings=XaiModelSettings(
@@ -2800,7 +2805,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -2814,7 +2819,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         provider_name='xai',
                         provider_details={'function_name': 'deepwiki.ask_question'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content="""\
 This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
@@ -2883,7 +2888,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
                         'action': 'call_tool',
@@ -2901,7 +2906,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
                         'action': 'call_tool',
@@ -2919,7 +2924,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content="""\
 This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
@@ -3048,7 +3053,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     args={
                         'action': 'call_tool',
@@ -3064,7 +3069,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content="""\
 This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
@@ -3585,7 +3590,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
     response = create_code_execution_response(code='print(2+2)', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('Calculate 2+2')
     messages = result.all_messages()
@@ -3599,14 +3604,14 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print(2+2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                         tool_call_id=IsStr(),
@@ -3634,7 +3639,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
     response = create_web_search_response(query='test query', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('Search for test')
     messages = result.all_messages()
@@ -3648,14 +3653,14 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test query'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={},
                         tool_call_id=IsStr(),
@@ -3687,7 +3692,9 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[MCPServerTool(id='linear', url='https://mcp.linear.app/mcp', description='Linear MCP server')],
+        capabilities=[
+            NativeTool(MCPServerTool(id='linear', url='https://mcp.linear.app/mcp', description='Linear MCP server'))
+        ],
     )
 
     result = await agent.run('List issues')
@@ -3702,14 +3709,14 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:linear',
                         args={'action': 'call_tool', 'tool_name': 'list_issues', 'tool_args': {}},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'linear.list_issues'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:linear',
                         content=[
                             {
@@ -4140,7 +4147,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
 
 
 async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
-    """Test that BuiltinToolCallPart and BuiltinToolReturnPart in history are mapped."""
+    """Test that NativeToolCallPart and NativeToolReturnPart in history are mapped."""
     # First response with code execution
     response1 = create_code_execution_response(code='print(2+2)', assistant_text='Tool completed successfully.')
     # Second response
@@ -4148,7 +4155,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Run once, then continue with history
     result1 = await agent.run('Calculate 2+2')
@@ -4207,14 +4214,14 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print(2+2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
                         tool_call_id=IsStr(),
@@ -4281,7 +4288,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     TextPart(content='tool failed'),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name=CodeExecutionTool.kind,
                         content='tool failed',
                         tool_call_id='code_exec_1',
@@ -4304,9 +4311,9 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
 
 
 async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
-    """Test that failed BuiltinToolReturnPart in history updates call status.
+    """Test that failed NativeToolReturnPart in history updates call status.
 
-    This test creates a message history with BOTH BuiltinToolCallPart AND BuiltinToolReturnPart
+    This test creates a message history with BOTH NativeToolCallPart AND NativeToolReturnPart
     with matching tool_call_id, where the return part has status='failed'.
     where the call status is updated to FAILED.
     """
@@ -4314,25 +4321,25 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
     response = create_response(content='I understand the tool failed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Manually construct a message history with:
-    # 1. BuiltinToolCallPart (populates builtin_calls dict in _map_response_parts)
-    # 2. BuiltinToolReturnPart with status='failed'
+    # 1. NativeToolCallPart (populates builtin_calls dict in _map_response_parts)
+    # 2. NativeToolReturnPart with status='failed'
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Run some code')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='code_execution',
                     args={'code': 'print("test")'},
                     tool_call_id='code_fail_1',
                     provider_name='xai',  # Must match self.system
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='code_execution',
                     content='Error: execution failed',
-                    tool_call_id='code_fail_1',  # Same ID as BuiltinToolCallPart
+                    tool_call_id='code_fail_1',  # Same ID as NativeToolCallPart
                     provider_name='xai',  # Must match self.system
                     provider_details={'status': 'failed', 'error': 'Execution timeout'},
                 ),
@@ -4378,13 +4385,13 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='Run some code', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'code': 'print("test")'},
                         tool_call_id='code_fail_1',
                         provider_name='xai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content='Error: execution failed',
                         tool_call_id='code_fail_1',
@@ -4515,8 +4522,8 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
                 final_response = response
 
     assert final_response is not None
-    builtin_calls = [p for p in final_response.parts if isinstance(p, BuiltinToolCallPart)]
-    builtin_returns = [p for p in final_response.parts if isinstance(p, BuiltinToolReturnPart)]
+    builtin_calls = [p for p in final_response.parts if isinstance(p, NativeToolCallPart)]
+    builtin_returns = [p for p in final_response.parts if isinstance(p, NativeToolReturnPart)]
     assert len(builtin_calls) == 1
     assert builtin_calls[0].tool_name == 'web_search'
     assert builtin_calls[0].args == {'query': 'x'}
@@ -4560,8 +4567,8 @@ async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_m
                 final_response = response
 
     assert final_response is not None
-    assert not any(isinstance(p, BuiltinToolCallPart) for p in final_response.parts)
-    assert not any(isinstance(p, BuiltinToolReturnPart) for p in final_response.parts)
+    assert not any(isinstance(p, NativeToolCallPart) for p in final_response.parts)
+    assert not any(isinstance(p, NativeToolReturnPart) for p in final_response.parts)
 
 
 async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: None):
@@ -4715,7 +4722,7 @@ async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_mo
     message_history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='unknown_builtin_tool',
                     args={'x': 1},
                     tool_call_id='unknown_tool_1',
@@ -4989,7 +4996,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={},  # Empty due to JSON parse failure
                         tool_call_id=IsStr(),
@@ -5100,7 +5107,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     # Run once, then continue with history
     result1 = await agent.run('Search for test')
@@ -5156,14 +5163,14 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test query'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Search results',
                         tool_call_id=IsStr(),
@@ -5218,7 +5225,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[MCPServerTool(id='my-server', url='https://example.com/mcp')])
+    agent = Agent(m, capabilities=[NativeTool(MCPServerTool(id='my-server', url='https://example.com/mcp'))])
 
     # Run once, then continue with history
     result1 = await agent.run('Get MCP data')
@@ -5274,14 +5281,14 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:my-server',
                         args={'action': 'call_tool', 'tool_name': 'get_data', 'tool_args': {'param': 'value'}},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'my-server.get_data'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:my-server',
                         content={'data': 'MCP result'},
                         tool_call_id=IsStr(),
@@ -5322,20 +5329,20 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
 
 
 async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None):
-    """Test that BuiltinToolCallPart without tool_call_id returns None."""
+    """Test that NativeToolCallPart without tool_call_id returns None."""
     # Create a response for the call
     response = create_response(content='Done')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
-    # Manually construct message history with BuiltinToolCallPart that has empty tool_call_id
+    # Manually construct message history with NativeToolCallPart that has empty tool_call_id
     # This directly tests the case when tool_call_id is empty
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Run code')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='code_execution',
                     args={},
                     tool_call_id='',  # Empty - should be skipped
@@ -5356,7 +5363,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [
                     {'content': [{'text': 'Run code'}], 'role': 'ROLE_USER'},
-                    # BuiltinToolCallPart with empty tool_call_id is skipped
+                    # NativeToolCallPart with empty tool_call_id is skipped
                     {'content': [{'text': 'Code ran'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What happened?'}], 'role': 'ROLE_USER'},
                 ],
@@ -5374,7 +5381,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
             ModelRequest(parts=[UserPromptPart(content='Run code', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(tool_name='code_execution', args={}, tool_call_id='', provider_name='xai'),
+                    NativeToolCallPart(tool_name='code_execution', args={}, tool_call_id='', provider_name='xai'),
                     TextPart(content='Code ran'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
@@ -5456,11 +5463,11 @@ async def test_xai_thinking_part_content_only_with_provider_in_history(allow_mod
 
 
 async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requests: None):
-    """Test failed BuiltinToolReturnPart without error message in history."""
+    """Test failed NativeToolReturnPart without error message in history."""
     response = create_response(content='I see it failed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Construct history with failed builtin tool but NO 'error' key in provider_details
     # This triggers the branch where error_msg is falsy
@@ -5468,13 +5475,13 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
         ModelRequest(parts=[UserPromptPart(content='Run code')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='code_execution',
                     args={},
                     tool_call_id='fail_no_error_1',
                     provider_name='xai',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='code_execution',
                     content='Failed',
                     tool_call_id='fail_no_error_1',
@@ -5646,7 +5653,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='attachment_search',
                         args={'query': 'my attachments'},
                         tool_call_id=IsStr(),
