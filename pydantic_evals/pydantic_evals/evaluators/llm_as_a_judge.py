@@ -25,11 +25,40 @@ _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
-    """The output of a grading operation."""
+    """The output of a grading operation.
+
+    `reason` is intended to be short and stable enough to be fed back to the
+    judged model as repair feedback (for example through `ModelRetry`). See
+    `_REASON_FIELD_GUIDANCE` for the contract that judge prompts impose on
+    this field.
+    """
 
     reason: str
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
+
+
+# Rules appended to every judge system prompt. The `reason` field is
+# frequently fed back into a retry loop (`ModelRetry(grading.reason)`), so
+# we constrain it to be concise, stable, and free of visible thinking. We
+# don't try to suppress *internal* reasoning — reasoning models can still
+# think; we just don't want their scratchpad leaking into the public
+# `reason` text that callers use as repair feedback.
+_REASON_FIELD_GUIDANCE = dedent(
+    """
+    Rules for the `reason` field:
+
+    - One or two short sentences. Plain prose. No markdown, no lists, no
+      step-by-step narration.
+    - State the rule(s) that were violated (or the rule(s) that were
+      satisfied) and stop. Treat it like a commit message for a failing
+      test, not a thought log.
+    - Do not re-check, retract, hedge, or contradict yourself inside the
+      field. Whatever value you assign to `pass` must agree with `reason`.
+    - Do not echo internal reasoning or chain-of-thought into `reason`. If
+      you reasoned to reach the verdict, summarise the conclusion only.
+    """
+).strip()
 
 
 _judge_output_agent = Agent(
@@ -48,7 +77,9 @@ _judge_output_agent = Agent(
         <Rubric>Does not speak like a pirate</Rubric>
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + '\n'
+    + _REASON_FIELD_GUIDANCE,
     output_type=GradingOutput,
 )
 
@@ -88,7 +119,9 @@ _judge_input_output_agent = Agent(
         <Rubric>Does not speak in the style described by the input</Rubric>
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + '\n'
+    + _REASON_FIELD_GUIDANCE,
     output_type=GradingOutput,
 )
 
@@ -132,7 +165,9 @@ _judge_input_output_expected_agent = Agent(
         <Rubric>The output is factually consistent with the expected output</Rubric>
         {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + '\n'
+    + _REASON_FIELD_GUIDANCE,
     output_type=GradingOutput,
 )
 
@@ -177,7 +212,9 @@ _judge_output_expected_agent = Agent(
         <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
         {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + '\n'
+    + _REASON_FIELD_GUIDANCE,
     output_type=GradingOutput,
 )
 
