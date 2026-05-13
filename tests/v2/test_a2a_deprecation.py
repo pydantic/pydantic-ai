@@ -14,6 +14,8 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import fasta2a  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
     from pydantic_ai.agent import Agent
     from pydantic_ai.models.test import TestModel
 
