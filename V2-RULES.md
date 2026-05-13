@@ -117,6 +117,166 @@ Some v2 changes are technically not deprecations — they're "behavior will chan
 "'openai:' will resolve to the OpenAI Responses API in v2.0. Pick 'openai-chat:' (current behavior) or 'openai-responses:' (v2 default) to pin."
 ```
 
+### 11. Factor deprecation-warning logic into reusable utilities (v2:prep)
+
+When the same deprecation shape (warn + remap + delegate) repeats across two or more sites, extract it into a small helper in `pydantic_ai_slim/pydantic_ai/_utils.py` (or a module-local `_deprecation.py`) rather than copy-pasting the `warnings.warn(...)` + remap block at every call site.
+
+**Why:** the warning text, the version target, and the migration snippet must stay in lockstep across sites. A helper centralizes that contract; copy-paste invites drift.
+
+**How to apply:** if your PR introduces a second instance of the same warn-and-remap shape, extract before merging. Surfaced on AG-UI [#5345](https://github.com/pydantic/pydantic-ai/pull/5345); applies across all v2:prep PRs.
+
+### 12. `**deprecated_kwargs` is the standard pattern for kwarg deprecations (v2:prep)
+
+For deprecating an `Agent.__init__`-style kwarg (or any keyword on a public callable), **remove the deprecated key from the visible signature** and catch it via a trailing `**deprecated_kwargs: Unpack[...]` (or plain `**deprecated_kwargs`) parameter. Inside the body, pop the old key, emit the warning, and remap to the new kwarg.
+
+```python
+def __init__(self, *, new_kwarg: T | None = None, **deprecated_kwargs: Unpack[_DeprecatedKwargs]) -> None:
+    new_kwarg = consume_deprecated_old_kwarg(deprecated_kwargs, new_kwarg)
+    ...
+```
+
+**Why:** the deprecated key no longer surfaces in IDE autocomplete (the main win) while still working at runtime. The helper centralizes the warning text per rule 11.
+
+**How to apply:** use on every v2:prep PR that touches an `Agent.__init__`-style kwarg. Pattern introduced in the instrumentation PR merged 2026-05-12.
+
+### 13. Tests for the `**deprecated_kwargs` path are required (v2:prep)
+
+Every `**deprecated_kwargs` consumer ships with a test that:
+
+1. Calls the public API with the old kwarg name.
+2. Asserts `pytest.warns(DeprecationWarning, match=...)` fires with the expected text.
+3. Asserts the new kwarg / behavior is wired correctly (the remap actually took effect).
+
+These tests live under `tests/v2/` per rule 6 — the whole directory gets reviewed and pruned at v2-cut, which makes "dropping all deprecation tests" a trivial `git rm tests/v2/`.
+
+### 14. No verbose changelog paragraphs for niche-feature deprecations (v2:prep)
+
+When a deprecation covers a niche feature (low user surface) or a path that has had a documented replacement for months, don't generate multi-paragraph changelog sections. An inline before/after snippet in the warning text (rule 9) plus a one-line changelog entry is enough.
+
+**Why:** verbose changelog sections for niche features bloat the release notes and crowd out higher-impact changes. The warning carries the migration; the changelog needs only an anchor.
+
+**Example:** the AG-UI shim deprec ([#5345](https://github.com/pydantic/pydantic-ai/pull/5345)) initially generated 5 paragraphs — Douwe cut the section because the new path has been the documented one since Oct 2025.
+
+### 15. Deprecation-warning links target existing docs pages first, `changelog.md` second (both)
+
+When a warning links out for migration context, prefer **an existing stable docs page** that already has working examples of the new path (e.g. the AG-UI page for the `AGUIAdapter` migration). Fall back to `changelog.md` only when no such page exists or the migration crosses multiple docs sections.
+
+This sharpens rule 8: "link to `changelog.md`" was a stable-anchor rule; this refines it to "link to whatever stable docs page best teaches the migration, with `changelog.md` as the fallback." Both targets satisfy the no-stale-link constraint from rule 8.
+
+(see also rule 8)
+
+### 16. Repeat full symbol names in changelog entries (both)
+
+When a changelog entry covers multiple renames or method-to-property migrations, write out **every full old → new pair**, not an abbreviated collective form.
+
+```
+# Good
+Deprecate method-style accessors in favor of property style: `usage()` → `usage`, `timestamp()` → `timestamp`, `get()` → `response`.
+
+# Bad
+Deprecate method-style accessors in favor of property style.
+```
+
+**Why:** `get()` → `response` doesn't match the "property style" abbreviation — readers skim the changelog and an abbreviated form misleads them. Surfaced on [#5263](https://github.com/pydantic/pydantic-ai/pull/5263).
+
+### 17. User-facing renames can ship ahead of upstream API renames (both)
+
+When the user-facing string (provider prefix, capability name, etc.) needs to rename but the underlying upstream/internal value is owned by another team, **ship the user-facing rename now and keep the upstream value internally**. The mapping layer absorbs the gap until upstream catches up.
+
+**Example:** `gateway/google-vertex` → `gateway/google-cloud` deprecates the old user-facing string in v1, makes `google-cloud` the v2 default, but still maps to the Gateway team's old API value internally until they rename their side.
+
+**Why:** decouples our release cadence from upstream's. Users see a consistent name; the bridge is one line of internal mapping.
+
+### 18. Provider-name constants live at file top-level (both)
+
+Constants like provider names go at module top-level, not inside the provider class. Coding agents tend to inline these as class attributes because the immediate diff is smaller — push back and lift them out.
+
+Consider making them **public** (exported via `__init__.py`) when users may need to import them for their own backward-compat shims around stored message history.
+
+**Why:** top-of-file is the canonical repo pattern; class-internal hides them from reuse and from import paths.
+
+### 19. Provider `name` is assigned explicitly on every provider (both)
+
+Don't derive `name` via inheritance from a shared base or a decorator. Each provider sets its own `name` literal, with the rule 3 comment above it.
+
+**Why:** the comment from rule 3 is the load-bearing piece — an inherited or decorated `name` strips the comment from the call site, which is exactly where future agents need to see it. Four lines of explicit assignment per provider is cheap insurance.
+
+(reconfirms rule 3)
+
+### 20. Module-level constant renames use `__init__.py` `__getattr__` (v2:prep)
+
+When deprecating a renamed module-level constant (or any importable symbol), add a `__getattr__` to the relevant `__init__.py` that emits the warning and returns the new symbol. This is the canonical pattern used in the built-in-tools PR and the instrumentation PR.
+
+```python
+def __getattr__(name: str) -> Any:
+    if name == 'OldConstant':
+        warnings.warn('`OldConstant` is deprecated, use `NewConstant`...', DeprecationWarning, stacklevel=2)
+        return NewConstant
+    raise AttributeError(name)
+```
+
+**When to skip:** very obscure constants with near-zero user surface (e.g. the `VertexAI` location literal in [#5336](https://github.com/pydantic/pydantic-ai/pull/5336)) — a hard rename is acceptable. Document the skip on the card.
+
+### 21. History-replay coverage will graduate to a dedicated test file (both)
+
+Rule 4's cross-history-replay tests are currently added per-PR for the provider being touched. The end state is a dedicated test file (e.g. `tests/v2/test_history_replay.py`) that exercises every model class against hardcoded old `provider_name` values across the full provider matrix.
+
+**Status:** **not in any current PR** — scoped as its own feature folder. Continue adding the per-PR tests required by rule 4; the consolidation pass comes later.
+
+(see also rule 4)
+
+### 22. Don't ship a rename and a yield-shape change in two separate PRs (both)
+
+When redesigning a streaming yield from a scalar (e.g. `is_last: bool`) into a structured value (e.g. `state: Literal['incomplete', 'complete']`), the **shape change is breaking** — there's no `DeprecationWarning` path for "your callback now receives a different type." Hold the rename until the structured field is in place so the breaking change happens once.
+
+**Why:** users who migrated to the renamed-but-still-scalar version would break a second time when the shape flips. The forcing function is to merge them together (or hold the rename).
+
+**Example:** [#5296](https://github.com/pydantic/pydantic-ai/pull/5296) — `is_last` → `state=incomplete` held in one shot.
+
+### 23. Keep legacy literal values in `Literal[...]` aliases for serialized fields (both)
+
+Any field that ends up serialized into `ModelMessage` (or any other dataclass users persist) and is typed `Literal['a', 'b', ...]` **must retain old values** when renaming. Pydantic fails validation on deserialization otherwise — old stored histories no longer load.
+
+```python
+# Renaming 'google-vertex' → 'google-cloud':
+ProviderName = Literal['google-cloud', 'google-vertex', ...]  # keep both
+```
+
+**Alternative (not adopted):** drop the old value from the alias and add a `model_validator(mode='before')` to coerce old → new. More invasive; avoid unless the alias bloat becomes unmanageable.
+
+**Why:** rule 4 (cross-history-replay) tests catch the missing-literal case; this rule is the fix.
+
+### 24. Conditional imports inside provider files (both)
+
+In any provider file whose base SDK is an optional dep (e.g. anything importing `google.genai`, `anthropic`, `openai`), module-level imports of sibling provider classes must go inside the existing `try/except ImportError:` block — not at the top of the file.
+
+```python
+try:
+    from google.genai import ...
+    from .google import GoogleProvider  # also here, not at top
+except ImportError as _import_error:
+    raise ImportError(...) from _import_error
+```
+
+**Why:** users without the optional dep installed should hit our friendly "install `pydantic-ai-slim[google]`" error, not an opaque `ModuleNotFoundError` from a sibling-class import. Caught on [#5336](https://github.com/pydantic/pydantic-ai/pull/5336).
+
+### 25. Docs anchor-link CI is an error (both)
+
+Broken anchor links in docs CI must fail the build, not warn. Renames silently break deep-links otherwise.
+
+**Status:** CI-tightening task on the harness side (David SF / harness). Listed here so PR authors who add anchors know to verify their links resolve locally.
+
+## v2:exec phase — what's different
+
+The rules above are written from the perspective of a `v2:prep` PR (add deprecation, keep both paths). The `v2:exec` phase removes the deprecated paths and ships the breaking changes. A few rules invert or drop:
+
+- **`v2:exec` PRs DELETE the prep scaffolding.** Every `consume_deprecated_*` helper (rule 11), every `**deprecated_kwargs` catch-all on a signature (rule 12), and every `@deprecated` decorator added during prep gets removed. The `_deprecation.py` utilities are 1.x-only.
+- **`tests/v2/` gets DELETED at v2-cut.** Rule 6 puts deprecation tests under `tests/v2/` precisely so this is a one-command cleanup: `git rm -r tests/v2/`. Don't add anything to `tests/v2/` that's meant to survive v2 — it's a 1.x-only directory by construction.
+- **Changelog entries describe REMOVALS, not deprecations.** Rule 8's "link to `changelog.md`" still applies; rule 14's "no verbose paragraphs for niche features" still applies; rule 16's "repeat full symbol names" still applies. What flips is the voice: from "X will be removed in v2.0, use Y" to "X has been removed; use Y".
+- **Default-behavior flips happen here.** Examples queued for `v2:exec`: `openai:` prefix → Responses API default (deferred from [#5334](https://github.com/pydantic/pydantic-ai/pull/5334)), `End.data` → `End.output` (per Slack thread). Rule 10's forward-compat warnings stop firing because the default has actually changed.
+- **Legacy `Literal[...]` values stay forever.** Rule 23 doesn't relax in `v2:exec` — old `provider_name` values in stored `ModelMessage` histories still need to validate. Removing them from the alias is a v3 conversation at the earliest.
+- **Target branch is a future `v2-master` on upstream.** That branch doesn't exist yet — DouweM creates it when the first `v2:exec` PR is ready. Until then, `v2:exec` PRs target `main` and get retargeted/rebased.
+
 ## Process
 
 - Until the V2-RULES.md PR lands on `main`, the canonical copy lives in this file in the `v2-prep-rules` branch and is mirrored to `pydantic-ai-notes/david/v2-cards/V2-RULES.md` so all agents (David's + Douwe's + others') read from one source.
