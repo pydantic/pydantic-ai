@@ -372,7 +372,7 @@ class ModelCase:
 
 _CASES = [
     ModelCase(
-        model_name='openai:gpt-5.4-mini',
+        model_name='openai-chat:gpt-5.4-mini',
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
