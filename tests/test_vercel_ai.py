@@ -6657,33 +6657,35 @@ async def test_event_stream_tool_call_end_backfills_input_available_when_call_ev
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
 
-    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
-    assert chunk_types == snapshot(
-        [
-            'start',
-            'start-step',
-            'tool-input-start',
-            'tool-input-delta',
-            'tool-input-available',
-            'tool-output-error',
-            'finish-step',
-            'finish',
-        ]
-    )
     # The backfilled `tool-input-available` carries the raw args and provider metadata
     # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
-    backfilled_available = cast(
-        'dict[str, Any]',
-        next(e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-available'),
-    )
-    assert backfilled_available == snapshot(
-        {
-            'type': 'tool-input-available',
-            'toolCallId': 'out_interrupted',
-            'toolName': 'final_result',
-            'input': {'value': 'x'},
-            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
-        }
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'input': {'value': 'x'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'out_interrupted',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
     )
 
 
