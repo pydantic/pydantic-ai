@@ -12,6 +12,7 @@ from typing import Any, TypeAlias
 from typing_extensions import assert_never, overload
 
 from .. import _utils, usage
+from .._instrumentation import get_instructions
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..messages import (
@@ -139,7 +140,7 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=get_instructions(messages, model_request_parameters),
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -174,7 +175,7 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=get_instructions(messages, model_request_parameters),
         )
 
         assert self.stream_function is not None, (
