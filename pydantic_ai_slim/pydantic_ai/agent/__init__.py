@@ -53,7 +53,7 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
-from ..models.instrumented import InstrumentationSettings, InstrumentedModel  # pyright: ignore[reportDeprecated]
+from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -188,9 +188,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _output_type: OutputSpec[OutputDataT]
 
     _instrument: InstrumentationSettings | bool | None
-    """Backing store for the deprecated `instrument` attribute. Read internally by
-    `_resolve_instrumentation_settings()`; reads/writes through `agent.instrument` go through
-    the deprecated property below."""
+    """Backing store for the `instrument` attribute. Read internally by
+    `_resolve_instrumentation_settings()`; the public `agent.instrument` property reads/writes
+    this field directly."""
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
     _metadata: AgentMetadata[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -413,17 +413,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
 
-        # Bridge the deprecated `instrument=` kwarg into an `Instrumentation` capability so the
-        # rest of the flow goes through the same capability path.
-        legacy_instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
-        if legacy_instrument:
-            legacy_settings = (
-                legacy_instrument
-                if isinstance(legacy_instrument, InstrumentationSettings)
-                else InstrumentationSettings()
-            )
-            capabilities.append(InstrumentationCap(settings=legacy_settings))
-
         if prepare_tools is not None:
             warnings.warn(
                 '`Agent(prepare_tools=...)` is deprecated and will be removed in v2.0. '
@@ -462,7 +451,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = None
+        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -741,22 +730,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if extra_capabilities:
             all_capabilities.extend(extra_capabilities)
 
-        # Bridge the deprecated `instrument=` kwarg and the deprecated `spec.instrument` field
-        # into an `Instrumentation` capability so the rest of the flow goes through the same
-        # capability path. Read the spec field only when set so we don't trigger its
-        # deprecation warning for users who didn't opt in.
+        # Read the deprecated spec field only when set so we don't trigger its warning
+        # for users who didn't opt in. The kwarg takes precedence over the spec field.
         legacy_instrument = (
             instrument
             if instrument is not None
             else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
         )
-        if legacy_instrument:
-            legacy_settings = (
-                legacy_instrument
-                if isinstance(legacy_instrument, InstrumentationSettings)
-                else InstrumentationSettings()
-            )
-            all_capabilities.append(InstrumentationCap(settings=legacy_settings))
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -795,6 +775,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
+        agent._instrument = legacy_instrument
         return agent
 
     @overload
@@ -912,14 +893,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
         if extra_capabilities:
             merged_capabilities.extend(extra_capabilities)
-        if instrument:
-            legacy_settings = (
-                instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()
-            )
-            merged_capabilities.append(InstrumentationCap(settings=legacy_settings))
 
         spec = AgentSpec.from_file(path, fmt=fmt)
-        return cls.from_spec(
+        agent = cls.from_spec(
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
@@ -946,6 +922,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
+        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
+        if instrument is not None:
+            agent._instrument = instrument
+        return agent
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -954,21 +934,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def instrument(self) -> InstrumentationSettings | bool | None:
-        """Deprecated: use `capabilities=[Instrumentation(...)]` instead."""
-        warnings.warn(
-            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
+        """Instrumentation settings applied to this agent."""
         return self._instrument
 
     @instrument.setter
     def instrument(self, value: InstrumentationSettings | bool | None) -> None:
-        warnings.warn(
-            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
         self._instrument = value
 
     @property
@@ -1333,16 +1303,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        # TODO(v2): drop this whole detect-and-unwrap-and-reinject block. In v2 we'll only
-        # support `capabilities=[Instrumentation(...)]` as the way to enable instrumentation,
-        # so all the legacy bridges below — `model=InstrumentedModel(...)`,
-        # `Agent.instrument_all(...)` (via `_resolve_instrumentation_settings`) — go away.
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
-        # to `Agent(model=...)`) wins, then `Agent.instrument_all()` / the legacy
-        # `agent.instrument = ...` setter (read via `_resolve_instrumentation_settings`).
-        # When detected, unwrap so the rest of the run uses the plain model — the
-        # `Instrumentation` capability injected below provides the spans.
-        if isinstance(model_used, InstrumentedModel):  # pyright: ignore[reportDeprecated]
+        # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
+        # then `Agent.instrument_all()` / `agent.instrument = ...` (read via
+        # `_resolve_instrumentation_settings`). When detected, unwrap so the rest of the
+        # run uses the plain model — the `Instrumentation` capability injected below
+        # provides the spans.
+        if isinstance(model_used, InstrumentedModel):
             instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
             model_used = model_used.wrapped
         else:
@@ -2502,9 +2469,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return model_
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
-        """Resolve effective `InstrumentationSettings` for the legacy `Agent.instrument_all` path."""
-        # Reads the private `_instrument` backing field directly so this internal access
-        # doesn't trigger the deprecated property's warning.
+        """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
         instrument = self._instrument if self._instrument is not None else self._instrument_default
         if not instrument:
             return None

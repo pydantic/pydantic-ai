@@ -43,7 +43,6 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -469,22 +468,18 @@ def test_agent_from_spec_tool_timeout_override():
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
 
 
-def _has_instrumentation_capability(agent: Agent[Any, Any]) -> bool:
-    return has_capability_type([agent._root_capability], Instrumentation)  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field bridges to an `Instrumentation` capability."""
+    """The deprecated spec `instrument` field configures `agent.instrument`."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert _has_instrumentation_capability(agent)
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
@@ -493,25 +488,14 @@ def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
     spec_path.write_text('model: test\n')
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_init_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)
-
-
-def test_agent_instrument_reader_deprecated():
-    """Reading/writing `agent.instrument` is deprecated."""
-    agent = Agent(model='test')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        _ = agent.instrument
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        agent.instrument = True
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        assert agent.instrument is True
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_metadata():
