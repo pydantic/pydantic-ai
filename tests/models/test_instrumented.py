@@ -1,7 +1,7 @@
 # pyright: reportDeprecated=false
-# This file's whole purpose is to exercise the deprecated `InstrumentedModel` /
-# `instrument_model` direct-construction path, so we silence the deprecation
-# warning at the file level rather than annotating every individual usage.
+# This file exercises both `InstrumentedModel` (not deprecated) and the deprecated
+# `instrument_model` helper, so we silence `reportDeprecated` at the file level
+# rather than annotating individual usages.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -13,9 +13,6 @@ import pytest
 from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
-# These tests legitimately exercise the (now-deprecated) `InstrumentedModel` /
-# `instrument_model` direct construction path. The corresponding deprecation
-# warning is silenced project-wide via the `filterwarnings` config in `pyproject.toml`.
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
@@ -2624,14 +2621,6 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
-
-
-def test_instrumented_model_constructor_emits_deprecation_warning():
-    """User-facing `InstrumentedModel(...)` construction emits a deprecation warning."""
-    with pytest.warns(
-        PydanticAIDeprecationWarning, match=r'`pydantic_ai\.models\.instrumented\.InstrumentedModel` is deprecated'
-    ):
-        InstrumentedModel(MyModel(), InstrumentationSettings())
 
 
 def test_instrument_model_helper_emits_deprecation_warning():

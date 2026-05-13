@@ -3870,10 +3870,10 @@ def test_agent_with_user_provided_instrumented_model(
     settings drive the agent's instrumentation — the model is unwrapped and the
     `Instrumentation` capability emits the spans.
     """
-    from pydantic_ai.models.instrumented import InstrumentedModel  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.models.instrumented import InstrumentedModel
 
     settings = InstrumentationSettings()
-    agent = Agent(model=InstrumentedModel(TestModel(), settings))  # pyright: ignore[reportDeprecated]
+    agent = Agent(model=InstrumentedModel(TestModel(), settings))
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')

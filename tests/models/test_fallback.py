@@ -30,10 +30,7 @@ from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import (
-    InstrumentationSettings,
-    InstrumentedModel,  # pyright: ignore[reportDeprecated]
-)
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -1679,7 +1676,7 @@ async def test_fallback_model_instrumented_lifecycle():
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
 
     fallback = FallbackModel(model1, model2)
-    instrumented = InstrumentedModel(fallback, InstrumentationSettings())  # pyright: ignore[reportDeprecated]
+    instrumented = InstrumentedModel(fallback, InstrumentationSettings())
 
     async with instrumented:
         assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
