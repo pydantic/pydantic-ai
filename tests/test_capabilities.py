@@ -70,7 +70,6 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
     FilePart,
-    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -2292,7 +2291,7 @@ def test_deferred_capability_requires_loadable_content() -> None:
         _ = agent.run_sync('Go.')
 
     assert str(no_content.value) == snapshot(
-        "Capability 'ghost' has defer_loading=True but contributes nothing — no instructions, toolset, model settings, or native tools. A deferred capability that loads nothing would cost the model a `load_capability` round-trip for no effect; either drop `defer_loading=True` or add content to it."
+        "Capability 'ghost' has defer_loading=True but contributes nothing — no instructions or toolset. A deferred capability that loads nothing would cost the model a `load_capability` round-trip for no effect; either drop `defer_loading=True` or add content to it."
     )
 
 
@@ -2704,9 +2703,7 @@ async def test_deferred_capability_load_returns_wrapped_toolset_instructions() -
     """
     from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-    inner = FunctionToolset[None](
-        instructions='Toolset-level instruction.',
-    )
+    inner = FunctionToolset[None]()
 
     @inner.tool_plain
     def refund_status(order_id: str) -> str:
@@ -2714,18 +2711,11 @@ async def test_deferred_capability_load_returns_wrapped_toolset_instructions() -
 
     @dataclass
     class WhitespaceInstructionWrapper(WrapperToolset[None]):
-        """Wraps a toolset and adds a whitespace-only string to its instructions."""
+        """Returns a mix of whitespace-only and real instructions to exercise both legs
+        of `if content and content.strip()` inside `_collect_scoped_toolset_instructions`."""
 
-        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart]:
-            inner_result = await self.wrapped.get_instructions(ctx)
-            inner_seq: list[str | InstructionPart]
-            if inner_result is None:
-                inner_seq = []
-            elif isinstance(inner_result, (str, InstructionPart)):
-                inner_seq = [inner_result]
-            else:
-                inner_seq = list(inner_result)
-            return ['   ', *inner_seq]
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str]:
+            return ['   ', 'Toolset-level instruction.']
 
     refunds = Capability[None](
         id='refunds',
@@ -2782,7 +2772,7 @@ async def test_deferred_capability_tool_called_before_load_raises_model_retry() 
     @toolset.tool_plain
     def refund_status(order_id: str) -> str:
         """Look up the refund status for an order."""
-        return f'{order_id}: pending'
+        return f'{order_id}: pending'  # pragma: no cover
 
     refunds = Capability[None](
         id='refunds',

@@ -1490,9 +1490,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if cap.defer_loading and not _has_loadable_content(cap):
                     raise exceptions.UserError(
                         f'Capability {cap.id!r} has defer_loading=True but contributes nothing — no '
-                        'instructions, toolset, model settings, or native tools. A deferred capability '
-                        'that loads nothing would cost the model a `load_capability` round-trip for no '
-                        'effect; either drop `defer_loading=True` or add content to it.'
+                        'instructions or toolset. A deferred capability that loads nothing would cost '
+                        'the model a `load_capability` round-trip for no effect; either drop '
+                        '`defer_loading=True` or add content to it.'
                     )
                 if cap.id in capabilities:
                     raise exceptions.UserError(
@@ -2881,10 +2881,15 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (Tool
 def _has_loadable_content(cap: AbstractCapability[Any]) -> bool:
     """Whether a `defer_loading=True` capability has anything to surface on load.
 
-    A deferred cap is meant to deliver instructions, tools (toolset or native), or model
-    settings to the run after `load_capability` is called. If all of those are empty, the
-    cap is a no-op load — flagging it at construction is friendlier than letting the model
-    spend a round-trip discovering it does nothing.
+    A deferred cap is meant to deliver instructions or a toolset to the run after
+    `load_capability` is called. If both are empty, the cap is a no-op load —
+    flagging it at construction is friendlier than letting the model spend a
+    round-trip discovering it does nothing.
+
+    Model settings and native tools aren't checked here: `CombinedCapability` rejects
+    deferred caps that contribute either of those during agent construction (lazy-loading
+    them isn't supported yet), so they can't reach this check. When lazy-loading lands,
+    add the corresponding `get_model_settings` / `get_native_tools` checks back.
 
     Honors `get_*` accessor overrides rather than reading raw fields, so dynamic
     capabilities (e.g. ones that compute their toolset from `__init__` state) still
@@ -2893,10 +2898,6 @@ def _has_loadable_content(cap: AbstractCapability[Any]) -> bool:
     if cap.get_instructions() is not None:
         return True
     if cap.get_toolset() is not None:
-        return True
-    if cap.get_model_settings() is not None:
-        return True
-    if cap.get_native_tools():
         return True
     return False
 

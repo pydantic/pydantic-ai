@@ -1017,7 +1017,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     @toolset.tool_plain
     def inherited_tool() -> str:
         """Inherited deferred tool."""
-        return 'inherited-result'
+        return 'inherited-result'  # pragma: no cover
 
     @toolset.tool_plain(defer_loading=True)
     def search_gated_tool() -> str:
