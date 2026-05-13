@@ -1307,10 +1307,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
+        # TODO(v2): drop this whole detect-and-unwrap-and-reinject block. In v2 we'll only
+        # support `capabilities=[Instrumentation(...)]` as the way to enable instrumentation,
+        # so all the legacy bridges below — `model=InstrumentedModel(...)`,
+        # `Agent.instrument_all(...)` (via `_resolve_instrumentation_settings`) — go away.
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
-        # to `Agent(model=...)`) wins, then `self.instrument`/`Agent.instrument_all()`.
+        # to `Agent(model=...)`) wins, then `Agent.instrument_all()` / the legacy
+        # `agent.instrument = ...` setter (read via `_resolve_instrumentation_settings`).
         # When detected, unwrap so the rest of the run uses the plain model — the
-        # `Instrumentation` capability now provides the spans.
+        # `Instrumentation` capability injected below provides the spans.
         if isinstance(model_used, InstrumentedModel):  # pyright: ignore[reportDeprecated]
             instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
             model_used = model_used.wrapped
