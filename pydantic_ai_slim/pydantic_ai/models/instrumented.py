@@ -3,10 +3,10 @@ from __future__ import annotations
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
 from opentelemetry._logs import (
@@ -16,24 +16,17 @@ from opentelemetry._logs import (
     get_logger_provider,
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
-    GEN_AI_PROVIDER_NAME_ATTRIBUTE,
-    GEN_AI_REQUEST_MODEL_ATTRIBUTE,
     GEN_AI_SYSTEM_ATTRIBUTE,
-    MODEL_SETTING_ATTRIBUTES,
     TOKEN_HISTOGRAM_BOUNDARIES,
-    CostCalculationFailedWarning,
     annotate_tool_call_otel_metadata,
-    build_tool_definitions,
     event_to_dict,
-    get_agent_run_baggage_attributes,
     get_instructions,
-    model_attributes,
-    model_request_parameters_attributes,
+    open_model_request_span,
     serialize_any,
 )
 
@@ -373,10 +366,12 @@ class InstrumentedModel(WrapperModel):
             model_settings,
             model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        with open_model_request_span(
+            self.instrumentation_settings, self.wrapped, messages, prepared_settings, prepared_parameters
+        ) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             annotate_tool_call_otel_metadata(response, prepared_parameters)
-            finish(response, prepared_parameters)
+            finish(response)
             return response
 
     @asynccontextmanager
@@ -391,7 +386,9 @@ class InstrumentedModel(WrapperModel):
             model_settings,
             model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        with open_model_request_span(
+            self.instrumentation_settings, self.wrapped, messages, prepared_settings, prepared_parameters
+        ) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with self.wrapped.request_stream(
@@ -402,103 +399,4 @@ class InstrumentedModel(WrapperModel):
                 if response_stream:  # pragma: no branch
                     response = response_stream.get()
                     annotate_tool_call_otel_metadata(response, prepared_parameters)
-                    finish(response, prepared_parameters)
-
-    @contextmanager
-    def _instrument(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
-        operation = 'chat'
-        span_name = f'{operation} {self.model_name}'
-        # TODO Missing attributes:
-        #  - error.type: unclear if we should do something here or just always rely on span exceptions
-        #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, AttributeValue] = {
-            'gen_ai.operation.name': operation,
-            **model_attributes(self.wrapped),
-            **model_request_parameters_attributes(model_request_parameters),
-            **get_agent_run_baggage_attributes(),
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {'model_request_parameters': {'type': 'object'}},
-                }
-            ),
-        }
-
-        tool_definitions = build_tool_definitions(model_request_parameters)
-        if tool_definitions:
-            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
-
-        if model_settings:
-            for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), float | int):
-                    attributes[f'gen_ai.request.{key}'] = value
-
-        record_metrics: Callable[[], None] | None = None
-        try:
-            with self.instrumentation_settings.tracer.start_as_current_span(
-                span_name, attributes=attributes, kind=SpanKind.CLIENT
-            ) as span:
-
-                def finish(response: ModelResponse, parameters: ModelRequestParameters):
-                    # FallbackModel updates these span attributes.
-                    attributes.update(getattr(span, 'attributes', {}))
-                    request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
-                    system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
-
-                    response_model = response.model_name or request_model
-                    price_calculation = None
-
-                    def _record_metrics():
-                        metric_attributes = {
-                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
-                            'gen_ai.operation.name': operation,
-                            'gen_ai.request.model': request_model,
-                            'gen_ai.response.model': response_model,
-                        }
-                        self.instrumentation_settings.record_metrics(response, price_calculation, metric_attributes)
-
-                    nonlocal record_metrics
-                    record_metrics = _record_metrics
-
-                    try:
-                        price_calculation = response.cost()
-                    except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
-                    except Exception as e:
-                        warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
-                        )
-
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
-
-                    if price_calculation:
-                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-
-                    if response.provider_response_id is not None:
-                        attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                    if response.finish_reason is not None:
-                        attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
-                    span.set_attributes(attributes_to_set)
-                    span.update_name(f'{operation} {request_model}')
-
-                yield finish
-        finally:
-            if record_metrics:
-                # We only want to record metrics after the span is finished,
-                # to prevent them from being redundantly recorded in the span itself by logfire.
-                record_metrics()
+                    finish(response)

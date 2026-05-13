@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Mapping, Sequence
+import warnings
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, get_current_span
+from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 from pydantic_core import to_json
@@ -20,6 +22,8 @@ if TYPE_CHECKING:
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestParameters
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -168,6 +172,117 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
         tool_definitions.append(tool_def)
 
     return tool_definitions
+
+
+@contextmanager
+def open_model_request_span(
+    settings: InstrumentationSettings,
+    model: Model,
+    messages: list[ModelMessage],
+    prepared_settings: ModelSettings | None,
+    prepared_parameters: ModelRequestParameters,
+) -> Iterator[Callable[[ModelResponse], None]]:
+    """Open a `chat <model>` CLIENT span and yield a `finish(response)` callback for outcome attrs.
+
+    Shared between `Instrumentation.wrap_model_request` (agent flow) and
+    `InstrumentedModel.request`/`request_stream` (standalone / `direct.model_request*`).
+    Caller passes `model.prepare_request(...)` output as `prepared_settings`/`prepared_parameters`
+    so attributes reflect what the provider will actually receive. Token/cost metrics are
+    recorded *after* the span closes so backends that aggregate from span attributes don't
+    double-count.
+    """
+    # TODO Missing attributes:
+    #  - error.type: unclear if we should do something here or just always rely on span exceptions
+    #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
+    operation = 'chat'
+    span_name = f'{operation} {model.model_name}'
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.operation.name': operation,
+        **model_attributes(model),
+        **model_request_parameters_attributes(prepared_parameters),
+        **get_agent_run_baggage_attributes(),
+        'logfire.json_schema': to_json(
+            {
+                'type': 'object',
+                'properties': {'model_request_parameters': {'type': 'object'}},
+            }
+        ).decode(),
+    }
+
+    tool_definitions = build_tool_definitions(prepared_parameters)
+    if tool_definitions:
+        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+
+    if prepared_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := prepared_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+
+    record_metrics: Callable[[], None] | None = None
+    try:
+        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+            # `finish` is a closure rather than inline so we can (a) set result attributes
+            # inside the `with span:` block — they attach to the span — and (b) call the
+            # captured `record_metrics` in the outer `finally` AFTER the span closes,
+            # so observability backends that aggregate metrics from span attributes
+            # don't double-count.
+            def finish(response: ModelResponse) -> None:
+                nonlocal record_metrics
+
+                # FallbackModel updates these span attributes via get_current_span().
+                attributes.update(getattr(span, 'attributes', {}))
+                request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
+                system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
+
+                response_model = response.model_name or request_model
+                price_calculation = None
+
+                def _record_metrics() -> None:
+                    metric_attributes = {
+                        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
+                        GEN_AI_SYSTEM_ATTRIBUTE: system,
+                        'gen_ai.operation.name': operation,
+                        'gen_ai.request.model': request_model,
+                        'gen_ai.response.model': response_model,
+                    }
+                    settings.record_metrics(response, price_calculation, metric_attributes)
+
+                record_metrics = _record_metrics
+
+                # Compute cost before the `is_recording()` gate so `_record_metrics`
+                # always emits cost data, even when the span is dropped by sampling.
+                try:
+                    price_calculation = response.cost()
+                except LookupError:
+                    pass
+                except Exception as e:  # pragma: no cover — safety net for unexpected genai_prices errors
+                    warnings.warn(
+                        f'Failed to get cost from response: {type(e).__name__}: {e}',
+                        CostCalculationFailedWarning,
+                    )
+
+                if not span.is_recording():
+                    return
+
+                settings.handle_messages(messages, response, system, span, prepared_parameters)
+
+                attributes_to_set: dict[str, Any] = {
+                    **response.usage.opentelemetry_attributes(),
+                    'gen_ai.response.model': response_model,
+                }
+                if price_calculation is not None:
+                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+                if response.provider_response_id is not None:
+                    attributes_to_set['gen_ai.response.id'] = response.provider_response_id
+                if response.finish_reason is not None:
+                    attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                span.set_attributes(attributes_to_set)
+                span.update_name(f'{operation} {request_model}')
+
+            yield finish
+    finally:
+        if record_metrics:
+            record_metrics()
 
 
 def get_instructions(
