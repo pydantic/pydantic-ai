@@ -8,7 +8,7 @@ team that standardises how frontend applications communicate with AI agents, wit
     The AG-UI integration was originally built by the team at [Rocket Science](https://www.rocketscience.gg/) and contributed in collaboration with the Pydantic AI and CopilotKit teams. Thanks Rocket Science!
 
 !!! warning "On 1.x and migrating to 2.0?"
-    [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Skip to [Migrating from deprecated APIs](#migrating-from-deprecated-apis) at the bottom for before/after examples, or see the canonical [AG-UI deprecations](../changelog.md#ag-ui-deprecations) section in the upgrade guide.
+    [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Skip to [Migrating from deprecated APIs](#migrating-from-deprecated-apis) at the bottom for before/after examples.
 
 ## Installation
 
@@ -368,8 +368,6 @@ which includes a server for use with the
 ## Migrating from deprecated APIs
 
 [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Each maps directly to [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] composition shown in [Usage](#usage). The migrations below also work in 1.x today.
-
-The canonical reference is the [AG-UI deprecations](../changelog.md#ag-ui-deprecations) section in the upgrade guide — that page has a stable anchor that survives the 2.0 cut. This section repeats the same migrations in a side-by-side format.
 
 ### `pydantic_ai.ag_ui` → `pydantic_ai.ui.ag_ui` + `pydantic_ai.ui`
 

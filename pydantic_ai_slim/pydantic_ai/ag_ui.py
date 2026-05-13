@@ -46,7 +46,7 @@ warnings.warn(
     '    from pydantic_ai.ui import SSE_CONTENT_TYPE, StateDeps\n'
     '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
     '(`handle_ag_ui_request` and `run_ag_ui` are removed in 2.0 — call `AGUIAdapter.dispatch_request()` directly.) '
-    'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.',
+    'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
     PydanticAIDeprecationWarning,
     stacklevel=2,
 )

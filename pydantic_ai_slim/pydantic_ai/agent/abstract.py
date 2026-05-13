@@ -1597,7 +1597,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         '    @app.post("/")\n'
         '    async def run_agent(request):\n'
         '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
-        'See <https://ai.pydantic.dev/changelog/#ag-ui-deprecations> for the full migration.',
+        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
         category=PydanticAIDeprecationWarning,
     )
     def to_ag_ui(
