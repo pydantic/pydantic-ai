@@ -587,7 +587,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The tool call part.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
