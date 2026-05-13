@@ -92,12 +92,13 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
         self.url = url
         self.native = native
-        # Wide `local=` inputs (URL, Path, transport, FastMCP server, pre-built `fastmcp.Client`,
-        # etc.) are wrapped into an `MCPToolset` here. Pre-built toolsets, callables, bools, and
-        # `None` pass through to `NativeOrLocalTool` unchanged.
+        # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
+        # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
+        # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
+        # toolsets, callables, bools, and `None` pass through to `NativeOrLocalTool` unchanged.
         if (
             local is not None
-            and not isinstance(local, bool)
+            and not isinstance(local, (bool, str))
             and not isinstance(local, AbstractToolset)
             and not callable(local)
         ):
@@ -145,17 +146,18 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return None
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        if name is True:
-            try:
+        # MCP has no named string strategies — strings are treated as fastmcp connect specs
+        # (URL/path/etc.) and wrapped in `MCPToolset`. `local=True` uses the URL from `MCP(url=...)`.
+        try:
+            if name is True:
                 return self._build_local()
-            except ImportError as e:
-                raise UserError(
-                    'MCP(local=True) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
-                ) from e
-        raise UserError(
-            f'MCP(local={name!r}) is not a known strategy. '
-            'Pass `local=True` for the default local MCP transport, or a Tool/callable directly.'
-        )
+            from pydantic_ai.mcp import MCPToolset as _MCPToolset
+
+            return _MCPToolset(name, include_instructions=True)
+        except ImportError as e:
+            raise UserError(
+                'MCP(local=...) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
+            ) from e
 
     def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Merge authorization_token into headers for local connection.

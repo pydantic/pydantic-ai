@@ -6579,6 +6579,22 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
         MCP(url='http://example.com/mcp', local=True, native=True)
 
 
+def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
 @pytest.mark.filterwarnings(
     'ignore::RuntimeWarning'
 )  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
