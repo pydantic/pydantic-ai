@@ -19,7 +19,8 @@ instructions: You are a helpful research assistant.
 model_settings:
   max_tokens: 8192
 capabilities:
-  - WebSearch
+  - WebSearch:
+      local: duckduckgo
   - Thinking:
       effort: high
 ```
@@ -51,7 +52,7 @@ agent = Agent.from_spec(
     {
         'model': 'anthropic:claude-opus-4-6',
         'instructions': 'You are helping {{user_name}}.',
-        'capabilities': ['WebSearch'],
+        'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     },
     deps_type=UserContext,
 )
@@ -165,7 +166,8 @@ output_schema:
   required: [answer, confidence]
 instructions: "You are helping {{user_name}}. Always include a confidence score."
 capabilities:
-  - WebSearch
+  - WebSearch:
+      local: duckduckgo
 ```
 
 ## Saving specs
@@ -178,7 +180,7 @@ from pydantic_ai import AgentSpec
 spec = AgentSpec(
     model='anthropic:claude-opus-4-6',
     instructions='You are a helpful assistant.',
-    capabilities=['WebSearch'],
+    capabilities=[{'WebSearch': {'local': 'duckduckgo'}}],
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

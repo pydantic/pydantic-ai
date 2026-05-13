@@ -18,6 +18,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai.models import ModelRequestParameters
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr
@@ -25,7 +26,7 @@ from .conftest import IsStr
 
 @pytest.mark.parametrize('vendor_part_id', [None, 'content'])
 def test_handle_text_deltas(vendor_part_id: str | None):
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     assert manager.get_parts() == []
 
     event = next(manager.handle_text_delta(vendor_part_id=vendor_part_id, content='hello '))
@@ -44,7 +45,7 @@ def test_handle_text_deltas(vendor_part_id: str | None):
 
 
 def test_handle_dovetailed_text_deltas():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = next(manager.handle_text_delta(vendor_part_id='first', content='hello '))
     assert event == snapshot(
@@ -82,7 +83,7 @@ def test_handle_dovetailed_text_deltas():
 
 
 def test_handle_text_deltas_with_think_tags():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     thinking_tags = ('<think>', '</think>')
 
     event = next(manager.handle_text_delta(vendor_part_id='content', content='pre-', thinking_tags=thinking_tags))
@@ -163,7 +164,7 @@ def test_handle_text_deltas_with_think_tags():
 
 
 def test_handle_tool_call_deltas():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='{"arg1":', tool_call_id=None)
     # Not enough information to produce a part, so no event and no part
@@ -266,7 +267,7 @@ def test_handle_tool_call_deltas():
 
 
 def test_handle_tool_call_deltas_without_args():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Test None args followed by a string
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='tool', args=None, tool_call_id=None)
@@ -315,7 +316,7 @@ def test_handle_tool_call_deltas_without_args():
 
 def test_handle_tool_call_deltas_without_vendor_id():
     # Note, tool_name should not be specified in subsequent deltas when the vendor_part_id is None
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(vendor_part_id=None, tool_name='tool1', args='{"arg1":', tool_call_id=None)
     manager.handle_tool_call_delta(vendor_part_id=None, tool_name=None, args='"value1"}', tool_call_id=None)
     assert manager.get_parts() == snapshot(
@@ -330,7 +331,7 @@ def test_handle_tool_call_deltas_without_vendor_id():
     )
 
     # This test is included just to document/demonstrate what happens if you do repeat the tool name
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(vendor_part_id=None, tool_name='tool2', args='{"arg1":', tool_call_id=None)
     manager.handle_tool_call_delta(vendor_part_id=None, tool_name='tool2', args='"value1"}', tool_call_id=None)
     assert manager.get_parts() == snapshot(
@@ -342,7 +343,7 @@ def test_handle_tool_call_deltas_without_vendor_id():
 
 
 def test_handle_tool_call_part():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Basic use of this API
     event = manager.handle_tool_call_part(vendor_part_id='first', tool_name='tool1', args='{"arg1":', tool_call_id=None)
@@ -420,7 +421,7 @@ def test_handle_tool_call_part():
 @pytest.mark.parametrize('text_vendor_part_id', [None, 'content'])
 @pytest.mark.parametrize('tool_vendor_part_id', [None, 'tool'])
 def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | None, tool_vendor_part_id: str | None):
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = next(manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='hello '))
     assert event == snapshot(
@@ -470,7 +471,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
 
 
 def test_cannot_convert_from_text_to_tool_call():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     list(manager.handle_text_delta(vendor_part_id=1, content='hello'))
     with pytest.raises(
         UnexpectedModelBehavior, match=re.escape('Cannot apply a tool call delta to existing_part=TextPart(')
@@ -479,7 +480,7 @@ def test_cannot_convert_from_text_to_tool_call():
 
 
 def test_cannot_convert_from_tool_call_to_text():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(vendor_part_id=1, tool_name='tool1', args='{"arg1":', tool_call_id=None)
     with pytest.raises(
         UnexpectedModelBehavior, match=re.escape('Cannot apply a text delta to existing_part=ToolCallPart(')
@@ -488,7 +489,7 @@ def test_cannot_convert_from_tool_call_to_text():
 
 
 def test_tool_call_id_delta():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(vendor_part_id=1, tool_name='tool1', args='{"arg1":', tool_call_id=None)
     assert manager.get_parts() == snapshot(
         [
@@ -517,7 +518,7 @@ def test_tool_call_id_delta():
 @pytest.mark.parametrize('apply_to_delta', [True, False])
 def test_tool_call_id_delta_failure(apply_to_delta: bool):
     tool_name = 'tool1'
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(
         vendor_part_id=1, tool_name=None if apply_to_delta else tool_name, args='{"arg1":', tool_call_id='id1'
     )
@@ -553,7 +554,7 @@ def test_apply_tool_delta_variants(
 ):
     tool_name = 'tool1'
 
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     manager.handle_tool_call_delta(
         vendor_part_id=1, tool_name=None if apply_to_delta else tool_name, args=args1, tool_call_id=None
     )
@@ -572,7 +573,7 @@ def test_apply_tool_delta_variants(
 
 
 def test_handle_thinking_delta_no_vendor_id_with_existing_thinking_part():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Add a thinking part first
     event = next(manager.handle_thinking_delta(vendor_part_id='first', content='initial thought', signature=None))
@@ -589,7 +590,7 @@ def test_handle_thinking_delta_no_vendor_id_with_existing_thinking_part():
 
 
 def test_handle_thinking_delta_wrong_part_type():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Add a text part first
     list(manager.handle_text_delta(vendor_part_id='text', content='hello'))
@@ -600,7 +601,7 @@ def test_handle_thinking_delta_wrong_part_type():
 
 
 def test_handle_thinking_delta_new_part_with_vendor_id():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = next(manager.handle_thinking_delta(vendor_part_id='thinking', content='new thought', signature=None))
     assert isinstance(event, PartStartEvent)
@@ -611,14 +612,14 @@ def test_handle_thinking_delta_new_part_with_vendor_id():
 
 
 def test_handle_thinking_delta_no_content():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     with pytest.raises(UnexpectedModelBehavior, match='Cannot create a ThinkingPart with no content'):
         list(manager.handle_thinking_delta(vendor_part_id=None, content=None, signature=None))
 
 
 def test_handle_thinking_delta_no_content_or_signature():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Add a thinking part first
     list(manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None))
@@ -630,7 +631,7 @@ def test_handle_thinking_delta_no_content_or_signature():
 
 def test_handle_thinking_delta_provider_details_callback():
     """Test that provider_details can be a callback function."""
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Create initial part with provider_details
     list(manager.handle_thinking_delta(vendor_part_id='t', content='initial', provider_details={'count': 1}))
@@ -648,7 +649,7 @@ def test_handle_thinking_delta_provider_details_callback():
 
 def test_handle_thinking_delta_provider_details_callback_from_none():
     """Test callback when existing provider_details is None."""
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     # Create initial part without provider_details
     list(manager.handle_thinking_delta(vendor_part_id='t', content='initial'))
@@ -667,7 +668,7 @@ def test_handle_thinking_delta_provider_details_callback_from_none():
 
 
 def test_handle_part():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     part = NativeToolCallPart(tool_name='tool1', args='{"arg1": ')
 
@@ -698,7 +699,7 @@ def test_handle_part():
 
 
 def test_get_part_by_vendor_id():
-    manager = ModelResponsePartsManager()
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     event = next(manager.handle_text_delta(vendor_part_id='content', content='hello'))
     assert isinstance(event, PartStartEvent)

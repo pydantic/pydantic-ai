@@ -11,6 +11,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from ..conftest import TestEnv, try_import
 
@@ -178,6 +179,24 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 )
 def test_remove_inference_geo_prefix(model_name: str, expected: str):
     assert remove_bedrock_geo_prefix(model_name) == expected
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'expected'),
+    [
+        ('us.anthropic.claude-haiku-4-5-20251001-v1:0', ('anthropic', 'claude-haiku-4-5-20251001')),
+        ('anthropic.claude-haiku-4-5-20251001-v1:0', ('anthropic', 'claude-haiku-4-5-20251001')),
+        ('anthropic.claude-haiku-4-5', ('anthropic', 'claude-haiku-4-5')),
+        ('eu.amazon.nova-micro-v1:0', ('amazon', 'nova-micro')),
+        ('cohere.command-r-v1:0', ('cohere', 'command-r')),
+        ('meta.llama3-8b-instruct-v14', ('meta', 'llama3-8b-instruct')),
+        # Not a `<provider>.<name>` shape — returned unchanged.
+        ('claude-haiku-4-5', (None, 'claude-haiku-4-5')),
+        ('claude-haiku-4-5@20251001', (None, 'claude-haiku-4-5@20251001')),
+    ],
+)
+def test_split_bedrock_model_id(model_id: str, expected: tuple[str | None, str]):
+    assert split_bedrock_model_id(model_id) == expected
 
 
 @pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
