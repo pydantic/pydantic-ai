@@ -103,8 +103,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage])
     """Queue of messages waiting to be injected into the conversation.
 
-    Messages are drained automatically: `'steering'` messages before the next model
-    request, `'follow_up'` messages when the agent would otherwise end.
+    Messages are drained automatically: `'asap'` messages at the earliest opportunity
+    (next model request, or redirecting the run if the agent would otherwise end);
+    `'when_idle'` messages only when the agent would otherwise end and no `'asap'`
+    messages remain.
 
     Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages.
     """
@@ -128,25 +130,24 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def enqueue(
         self,
         *content: EnqueueContent,
-        priority: PendingMessagePriority = 'steering',
+        priority: PendingMessagePriority = 'asap',
     ) -> None:
         """Enqueue content to be injected into the conversation.
 
         Args:
             *content: One or more items. Each is coerced:
                 a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
-                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart];
-                an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]
-                (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is used as-is.
+                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
                 Adjacent parts-style enqueues of the same priority are merged into one synthesized
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] at drain time, matching what
                 the model sees on the wire.
                 Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue
                 it verbatim (preserving `instructions`, `metadata`, etc.) as its own message —
                 it cannot be mixed with other items.
-            priority: When to inject:
-                `'steering'` (default) — before the next model request.
-                `'follow_up'` — when the agent would otherwise end.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
         """
         payload = build_enqueue_payload(content)
         self.pending_messages.append(PendingMessage(payload=payload, priority=priority))

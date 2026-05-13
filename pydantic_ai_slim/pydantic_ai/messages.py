@@ -2336,52 +2336,53 @@ ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('k
 """Any message sent to or returned by a model."""
 
 
-PendingMessagePriority = Literal['steering', 'follow_up']
-"""Priority level for a pending message.
+PendingMessagePriority = Literal['asap', 'when_idle']
+"""When to deliver a pending message.
 
-- `'steering'`: Drained into the next model request (before the model call).
-- `'follow_up'`: Drained only when the agent would otherwise end, preventing
-    premature termination while follow-up work is pending.
+- `'asap'`: Delivered at the earliest opportunity — either prepended to the next
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest], or, if the agent would
+    otherwise terminate before another request, used to redirect the run into one
+    more request.
+- `'when_idle'`: Delivered only when the agent would otherwise terminate, after
+    any `'asap'` messages. Doesn't interrupt in-flight work.
 """
 
 
-EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequestPart | ModelRequest'
+EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequest'
 """A single item accepted by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
 and [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
 
 - `str` or `Sequence[UserContent]`: wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]
     (matching the shape of `Agent.run(user_prompt=...)`).
-- [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]: used as-is — pass an explicit part
-    (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when wrapping in `UserPromptPart`
-    isn't what you want.
 - [`ModelRequest`][pydantic_ai.messages.ModelRequest]: emitted verbatim as its own message at
     drain time — pass a complete request when you need to control `instructions`, `metadata`,
-    or other request-level fields. Must be the only positional argument to `enqueue`.
+    or other request-level fields, or when you need a part type other than
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Must be the only positional argument to `enqueue`.
+
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is intentionally excluded:
+Anthropic and Google hoist any `SystemPromptPart` (regardless of position) to their
+top-level system parameter, which invalidates prefix cache and loses positional intent.
+If you really need to inject a `SystemPromptPart` mid-run, wrap it in a `ModelRequest` and
+pass that as the payload — but be aware of the cross-provider behavior.
 """
 
 
-_MODEL_REQUEST_PART_TYPES = (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart)
+def coerce_enqueue_item(item: 'str | Sequence[UserContent]') -> 'UserPromptPart':
+    """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item (other than a [`ModelRequest`][pydantic_ai.messages.ModelRequest]) to a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
 
-
-def coerce_enqueue_item(item: EnqueueContent) -> ModelRequestPart:
-    """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item to a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
-
-    Raises [`ValueError`][] if a [`ModelRequest`][pydantic_ai.messages.ModelRequest] is passed —
-    those go through [`build_enqueue_payload`][pydantic_ai.messages.build_enqueue_payload] instead.
+    Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
+    [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
     """
-    if isinstance(item, _MODEL_REQUEST_PART_TYPES):
-        return item
-    if isinstance(item, ModelRequest):
-        raise ValueError('ModelRequest must be enqueued alone, not mixed with strings or parts')
     return UserPromptPart(content=item)
 
 
-def build_enqueue_payload(items: Sequence[EnqueueContent]) -> 'tuple[ModelRequestPart, ...] | ModelRequest':
+def build_enqueue_payload(items: 'Sequence[EnqueueContent]') -> 'tuple[ModelRequestPart, ...] | ModelRequest':
     """Build the payload that will be stored on a [`PendingMessage`][pydantic_ai.messages.PendingMessage] from the args to `enqueue`.
 
     Returns the original [`ModelRequest`][pydantic_ai.messages.ModelRequest] when a single one was passed (passthrough);
-    otherwise returns a tuple of coerced parts (which the drainer merges with adjacent parts-style
-    payloads of the same priority into one synthesized request, matching what the model sees).
+    otherwise returns a tuple of coerced [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s (which the drainer
+    merges with adjacent parts-style payloads of the same priority into one synthesized request, matching what
+    the model sees).
 
     Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
@@ -2390,7 +2391,10 @@ def build_enqueue_payload(items: Sequence[EnqueueContent]) -> 'tuple[ModelReques
         raise ValueError('enqueue requires at least one item')
     if len(items) == 1 and isinstance(items[0], ModelRequest):
         return items[0]
-    return tuple(coerce_enqueue_item(item) for item in items)
+    if any(isinstance(item, ModelRequest) for item in items):
+        raise ValueError('ModelRequest must be enqueued alone, not mixed with strings or `Sequence[UserContent]` items')
+    parts: list[ModelRequestPart] = [coerce_enqueue_item(item) for item in items]  # type: ignore[arg-type]
+    return tuple(parts)
 
 
 @dataclass
@@ -2418,11 +2422,12 @@ class PendingMessage:
 
     _: KW_ONLY
 
-    priority: PendingMessagePriority = 'steering'
-    """When to drain this message:
+    priority: PendingMessagePriority = 'asap'
+    """When to deliver this message:
 
-    - `'steering'`: injected before the next model request.
-    - `'follow_up'`: injected only when the agent would otherwise finish.
+    - `'asap'`: at the earliest opportunity (next model request, or redirect if the agent
+        would otherwise terminate).
+    - `'when_idle'`: only when the agent would otherwise terminate, after `'asap'` messages.
     """
 
     def __post_init__(self) -> None:

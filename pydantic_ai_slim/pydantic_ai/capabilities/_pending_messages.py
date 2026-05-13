@@ -72,20 +72,24 @@ def _flatten_drained(
 class PendingMessageDrainCapability(AbstractCapability[Any]):
     """Drains the pending message queue at appropriate times.
 
-    - Steering messages are injected before each model request.
-    - Follow-up messages are injected when the agent would otherwise end,
-      redirecting to a new ModelRequestNode to continue the conversation.
+    - `'asap'` messages drain at the earliest opportunity: into the next
+      [`ModelRequest`][pydantic_ai.messages.ModelRequest] via `before_model_request`,
+      or — if the agent would otherwise terminate — redirected through a new
+      `ModelRequestNode` from `after_node_run`.
+    - `'when_idle'` messages drain only when the agent would otherwise terminate
+      and no `'asap'` messages remain, after any `'asap'` redirect.
 
     This capability is always auto-injected and placed outermost via
     [`CapabilityOrdering`][pydantic_ai.capabilities.abstract.CapabilityOrdering]
-    so it wraps around other capabilities. This ensures steering messages are
-    drained into the model request before user capabilities see it, and follow-up
-    redirection runs after all other `after_node_run` hooks (which run in reverse).
+    so it wraps around other capabilities. This ensures `'asap'` messages are
+    drained into the model request before user capabilities see it, and the
+    end-of-run redirection runs after all other `after_node_run` hooks (which
+    run in reverse).
     """
 
     def get_ordering(self) -> CapabilityOrdering:
-        # Outermost so steering messages are drained into the request before other
-        # capabilities see it, and follow-up redirection runs after all other
+        # Outermost so `'asap'` messages are drained into the request before other
+        # capabilities see it, and the end-of-run redirection runs after all other
         # after_node_run hooks (which run in reverse order).
         return CapabilityOrdering(position='outermost')
 
@@ -98,7 +102,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         ctx: RunContext[Any],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Drain steering messages into the model request.
+        """Drain `'asap'` messages into the upcoming model request.
 
         Adjacent parts-style payloads merge into one synthesized
         [`ModelRequest`][pydantic_ai.messages.ModelRequest]; each passthrough
@@ -106,7 +110,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         appended to both `request_context.messages` (so the model sees it this
         step) and `ctx.messages` (so it persists in the agent's message history).
         """
-        drained = _drain_by_priority(ctx.pending_messages, 'steering')
+        drained = _drain_by_priority(ctx.pending_messages, 'asap')
         # Stamp explicitly here: ModelRequestNode.run() only stamps `self.request`
         # (the current node's request). The agent graph fixes up `messages[-1]`
         # before calling the model, but relying on that is fragile — another
@@ -123,14 +127,16 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         node: _agent_graph.AgentNode[Any, Any],
         result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
-        """Drain follow-up messages when the agent would otherwise end.
+        """Drain remaining `'asap'` and `'when_idle'` messages if the agent would terminate.
 
-        Adjacent parts-style payloads merge into one synthesized
-        [`ModelRequest`][pydantic_ai.messages.ModelRequest]; each passthrough
-        `ModelRequest` payload becomes its own message. The last resulting request
-        becomes the redirect [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s
-        request; any earlier ones are appended to `ctx.messages` so they appear
-        in history before the redirect.
+        If the run is about to end, drain `'asap'` messages first (anything that arrived
+        after the most recent `before_model_request` and would otherwise be lost), then
+        `'when_idle'` messages. Adjacent parts-style payloads merge into one synthesized
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest]; each passthrough `ModelRequest`
+        payload becomes its own message. The last resulting request becomes the redirect
+        [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
+        earlier ones are appended to `ctx.messages` so they appear in history before the
+        redirect.
         """
         from pydantic_ai._agent_graph import ModelRequestNode
         from pydantic_graph import End
@@ -138,11 +144,18 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
-        follow_ups = _drain_by_priority(ctx.pending_messages, 'follow_up')
-        if not follow_ups:
+        # Pi-mono parity: drain `'asap'` first so anything that arrived during the
+        # final step (e.g. a background task completing while the model produced
+        # its final response) gets delivered before `'when_idle'` messages, and the
+        # agent gets another turn rather than terminating with the message lost.
+        leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
+        when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
+        if not leftover_asap and not when_idle:
             return result
 
-        requests = _flatten_drained(follow_ups, fallback_run_id=ctx.run_id)
+        requests = _flatten_drained(
+            [*leftover_asap, *when_idle], fallback_run_id=ctx.run_id
+        )
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
         # will re-stamp it during the graph lifecycle. `_flatten_drained` already
         # stamped it, which is harmless (the lifecycle stamp overwrites).

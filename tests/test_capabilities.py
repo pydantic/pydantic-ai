@@ -65,7 +65,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -10827,8 +10826,8 @@ async def test_after_node_run_node_to_end():
 # ===== Pending Message Queue Tests =====
 
 
-async def test_enqueue_steering_message_from_tool():
-    """Steering messages enqueued from a tool are injected before the next model request."""
+async def test_enqueue_asap_message_from_tool():
+    """`'asap'` messages enqueued from a tool are injected before the next model request."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -10845,7 +10844,7 @@ async def test_enqueue_steering_message_from_tool():
 
     @agent.tool
     def inject_msg(ctx: RunContext[None]) -> str:
-        ctx.enqueue(SystemPromptPart('Injected steering message'))
+        ctx.enqueue('Injected asap message')
         return 'ok'
 
     result = await agent.run('Hello')
@@ -10880,7 +10879,7 @@ async def test_enqueue_steering_message_from_tool():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[SystemPromptPart(content='Injected steering message', timestamp=IsDatetime())],
+                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10897,8 +10896,8 @@ async def test_enqueue_steering_message_from_tool():
     )
 
 
-async def test_enqueue_follow_up_message_prevents_end():
-    """Follow-up messages prevent the agent from ending and are drained into a new ModelRequest."""
+async def test_enqueue_when_idle_message_prevents_end():
+    """`'when_idle'` messages prevent the agent from ending and are drained into a new ModelRequest."""
     call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -10926,7 +10925,7 @@ async def test_enqueue_follow_up_message_prevents_end():
 
     @agent.tool
     def inject_follow_up(ctx: RunContext[None]) -> str:
-        ctx.enqueue(UserPromptPart('Follow-up context'), priority='follow_up')
+        ctx.enqueue('Follow-up context', priority='when_idle')
         return 'ok'
 
     result = await agent.run('Hello')
@@ -11003,8 +11002,8 @@ async def test_enqueue_from_agent_run():
 
     async with agent.iter('Hello') as agent_run:
         assert agent_run.pending_messages == []
-        # Enqueue a follow-up message from external code before iteration
-        agent_run.enqueue(UserPromptPart('External follow-up'), priority='follow_up')
+        # Enqueue a when_idle message from external code before iteration
+        agent_run.enqueue('External follow-up', priority='when_idle')
         assert len(agent_run.pending_messages) == 1
         # Use next() to drive iteration so after_node_run fires
         node = agent_run.next_node
@@ -11067,7 +11066,7 @@ async def test_pending_messages_accessible_on_run_context():
     def check_queue(ctx: RunContext[None]) -> str:
         # The queue must be live (mutations from inside a tool reach the drain).
         assert len(ctx.pending_messages) == 0
-        ctx.enqueue(SystemPromptPart('observed'), priority='steering')
+        ctx.enqueue('observed', priority='asap')
         assert len(ctx.pending_messages) == 1
         return 'done'
 
@@ -11102,7 +11101,7 @@ async def test_pending_messages_accessible_on_run_context():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[SystemPromptPart(content='observed', timestamp=IsDatetime())],
+                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11142,7 +11141,7 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
     `ReinjectSystemPrompt` re-resolves system-prompt callbacks on every model request via
     `Agent.system_prompt_parts`, which builds a synthetic `RunContext`. The synthetic ctx
     must share the live `pending_messages` list so enqueues from inside the callback
-    aren't silently dropped — using `follow_up` here so the drain (which runs after
+    aren't silently dropped — using `when_idle` here so the drain (which runs after
     end-of-run, by design after the current step's `before_model_request` has fired)
     actually delivers what the callback enqueued.
     """
@@ -11166,7 +11165,7 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
         # Only enqueue once so we don't loop. ReinjectSystemPrompt re-runs us
         # for every model request; if we kept enqueueing follow-ups we'd never end.
         if not enqueued:
-            ctx.enqueue(SystemPromptPart('from system prompt callback'), priority='follow_up')
+            ctx.enqueue('from system prompt callback', priority='when_idle')
             enqueued = True
         return 'extra prompt'
 
@@ -11179,16 +11178,16 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
     result = await agent.run('hi', message_history=history)
 
     assert enqueued
-    # The enqueued follow-up should appear in the persisted history as a
+    # The enqueued when_idle message should appear in the persisted history as a
     # ModelRequest before the second model response — proving the threading
     # through Agent.system_prompt_parts → synthetic RunContext → live queue.
     found = any(
-        isinstance(part, SystemPromptPart) and part.content == 'from system prompt callback'
+        isinstance(part, UserPromptPart) and part.content == 'from system prompt callback'
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
     )
-    assert found, 'enqueued follow-up did not reach the conversation'
+    assert found, 'enqueued when_idle message did not reach the conversation'
 
 
 async def test_enqueue_coerces_string_to_user_prompt():
@@ -11223,8 +11222,8 @@ async def test_enqueue_coerces_string_to_user_prompt():
     assert len(injected) == 1, 'string-coerced enqueue did not land as a UserPromptPart'
 
 
-async def test_enqueue_accepts_mixed_strings_and_parts():
-    """Mixed positional args — strings and explicit parts — are coerced item-by-item."""
+async def test_enqueue_accepts_multimodal_user_content():
+    """A `Sequence[UserContent]` (matching `Agent.run(user_prompt=...)`) is wrapped in one `UserPromptPart`."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -11241,21 +11240,18 @@ async def test_enqueue_accepts_mixed_strings_and_parts():
 
     @agent.tool
     def inject_msg(ctx: RunContext[None]) -> str:
-        ctx.enqueue('user-style update', SystemPromptPart(content='system-style update'))
+        ctx.enqueue(['part one', 'part two'])
         return 'ok'
 
     result = await agent.run('Hello')
-    steering_request = next(
-        msg
+    injected = [
+        part
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
-        and any(
-            isinstance(p, SystemPromptPart) and p.content == 'system-style update'
-            for p in msg.parts
-        )
-    )
-    kinds = [type(p).__name__ for p in steering_request.parts]
-    assert kinds == ['UserPromptPart', 'SystemPromptPart']
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == ['part one', 'part two']
+    ]
+    assert len(injected) == 1
 
 
 async def test_enqueue_accepts_model_request_passthrough():
@@ -11384,8 +11380,8 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
     assert drained[2].instructions is None
 
 
-async def test_enqueue_rejects_model_request_mixed_with_parts():
-    """Mixing a `ModelRequest` with strings or parts in one `enqueue` call is rejected."""
+async def test_enqueue_rejects_model_request_mixed_with_other_items():
+    """Mixing a `ModelRequest` with strings/`Sequence[UserContent]` in one `enqueue` call is rejected."""
     agent = Agent(FunctionModel(simple_model_function))
 
     @agent.tool

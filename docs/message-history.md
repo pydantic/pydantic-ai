@@ -392,25 +392,21 @@ print(result2.all_messages())
 ## Injecting messages mid-run
 
 Tools, capability hooks, and external code driving an agent run can inject extra
-[`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s into the conversation
-mid-run via a pending message queue. Use this when something happens during a run
-that the agent should know about — a tool wants to add follow-up context, an external
-event needs to redirect the agent's plan, or background work needs to reach the agent
-when it completes.
+content into the conversation mid-run via a pending message queue. Use this when
+something happens during a run that the agent should know about — a tool wants to
+add follow-up context, an external event needs to redirect the agent's plan, or
+background work needs to reach the agent when it completes.
 
 Enqueued items are bundled into a [`PendingMessage`][pydantic_ai.messages.PendingMessage]
 and drained automatically based on a `priority`:
 
-- `'steering'` (default): drained into the next [`ModelRequest`][pydantic_ai.messages.ModelRequest] before the model call. Use when the new context should influence the agent's *next* step.
-- `'follow_up'`: drained only when the agent would otherwise end. The agent run continues with a new model request that includes the follow-up parts. Use when the agent shouldn't stop while there's still pending work.
+- `'asap'` (default): delivered at the earliest opportunity — prepended to the next [`ModelRequest`][pydantic_ai.messages.ModelRequest], or, if the agent would otherwise terminate before another request, used to redirect the run into one more request. Use when the new context should reach the model as soon as possible.
+- `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages. Use when the agent shouldn't be interrupted but should pick up the new work once it's done with what it's doing.
 
 Each positional argument to `enqueue` accepts the same shape as `Agent.run(user_prompt=...)` —
 a `str` or `Sequence[UserContent]` is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
-Pass an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when you need something
-other than user-style content. Pass a single
-[`ModelRequest`][pydantic_ai.messages.ModelRequest] when you need to control
-request-level fields like `instructions` or `metadata`.
+Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] when you need to control
+request-level fields like `instructions` or `metadata`, or to inject a non-user part type.
 
 ### From inside a tool or hook
 
@@ -429,7 +425,7 @@ def trigger_alert(ctx: RunContext[None]) -> str:
     return 'alert raised'
 ```
 
-The steering message is appended to the agent's message history and is visible to the
+The `'asap'` message is appended to the agent's message history and is visible to the
 model on the next request, alongside any tool returns from the same step.
 
 ### From external code driving `agent.iter()`
@@ -447,11 +443,11 @@ agent = Agent('openai:gpt-5.2')
 async def main():
     async with agent.iter('Summarize the latest deploy report') as agent_run:
         # An external system pushes a follow-up while the agent is working.
-        # When the agent would otherwise finish, the follow-up redirects it
+        # When the agent would otherwise finish, the message redirects it
         # into a fresh model request so it can incorporate the new context.
         agent_run.enqueue(
             'A new error was just reported — include it in the summary.',
-            priority='follow_up',
+            priority='when_idle',
         )
         node = agent_run.next_node
         while not isinstance(node, End):
@@ -459,28 +455,34 @@ async def main():
 ```
 
 The example drives the run with [`AgentRun.next()`][pydantic_ai.run.AgentRun.next]
-because follow-up messages are only drained when the agent reaches a natural
+because `'when_idle'` messages are only drained when the agent would otherwise reach an
 `End` — that drain happens in `after_node_run`, which doesn't fire inside a bare
-`async for node in agent_run:` loop. Steering messages don't have this constraint
-(they're drained in `before_model_request`, which fires either way).
+`async for node in agent_run:` loop. `'asap'` messages are drained in
+`before_model_request` (which fires either way) and also at the same end-of-run
+point if anything arrived during the final step.
 
 [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] exposes the
 current queue for inspection.
 
 !!! info "Limitations"
-    - Follow-up messages need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
+    - End-of-run redirects need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
       explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
-      aren't drained inside a bare `async for node in agent_run:` loop. Steering
-      messages work in either case.
+      aren't drained inside a bare `async for node in agent_run:` loop. Messages
+      delivered into a `before_model_request` work in either case.
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
       activities and don't share state with the workflow, so `ctx.enqueue` from a
       tool doesn't currently propagate back to the run. Enqueue from the workflow
       context (e.g. via `AgentRun.enqueue`) instead.
-    - Each `'follow_up'` redirect opens a new model request. If something keeps
-      enqueueing follow-ups every step (e.g. a tool that always enqueues, or a
+    - Each end-of-run redirect opens a new model request. If something keeps
+      enqueueing on every step (e.g. a tool that always enqueues, or a
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
+    - `SystemPromptPart` isn't accepted as an enqueue item directly: Anthropic and
+      Google hoist all `SystemPromptPart`s to their top-level system parameter
+      regardless of position, which invalidates prefix cache and loses positional
+      intent. If you really need to inject system-style content mid-run, wrap it in
+      a `ModelRequest` passthrough and be aware of the cross-provider behavior.
 
 ## Processing Message History
 
