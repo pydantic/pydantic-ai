@@ -37,7 +37,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
     Outside of Prefect flows, the capability is transparent.
 
     The capability discovers the agent's model, name, and toolsets
-    automatically via ``for_agent()``.
+    automatically via `for_agent()`.
 
     Example:
         ```python {test="skip"}
@@ -194,7 +194,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         return bound
 
     def _install_flow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Replace ``agent.run`` and ``agent.run_sync`` with Prefect-flow-decorated wrappers.
+        """Replace `agent.run` and `agent.run_sync` with Prefect-flow-decorated wrappers.
 
         When called outside an active flow run, the wrapper enters a new flow so
         every model and toolset task recorded inside it is observable in the Prefect
@@ -202,7 +202,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         redundant nested flow.
 
         Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
-        ``PrefectDurability`` instances by mistake), the second call is a no-op
+        `PrefectDurability` instances by mistake), the second call is a no-op
         rather than stacking wrappers.
         """
         if getattr(agent.run, '_pydantic_ai_prefect_wrapped', False):

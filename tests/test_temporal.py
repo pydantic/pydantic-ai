@@ -205,7 +205,7 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 
 def _kill_leaked_temporal_server(port: int) -> None:
-    """Kill any `temporal-sdk-python-*` dev server still bound to ``port``.
+    """Kill any `temporal-sdk-python-*` dev server still bound to `port`.
 
     A previous test run that crashed mid-fixture leaves the embedded Temporal
     dev server listening on `port`, which makes the next run fail to bind. The
@@ -4569,9 +4569,9 @@ def test_durability_find_model_id_falls_back_to_model_id_string():
 def test_durability_rejects_runtime_added_capabilities():
     """Per-run capabilities not seen at construction time are rejected.
 
-    Capability instances added via ``agent.run(capabilities=[...])`` bypass the
-    activity-registration step in ``for_agent``. The capability detects this by
-    snapshotting the bound chain's classes and comparing against ``ctx.root_capability``.
+    Capability instances added via `agent.run(capabilities=[...])` bypass the
+    activity-registration step in `for_agent`. The capability detects this by
+    snapshotting the bound chain's classes and comparing against `ctx.root_capability`.
     """
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.capabilities.abstract import AbstractCapability

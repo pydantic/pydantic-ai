@@ -61,7 +61,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     Outside of workflows, the capability is transparent.
 
     The capability discovers the agent's model, name, and toolsets
-    automatically via ``for_agent()``. Only Temporal-specific configuration
+    automatically via `for_agent()`. Only Temporal-specific configuration
     needs to be passed to the constructor.
 
     Example:
@@ -110,12 +110,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         """Create a TemporalDurability capability.
 
         The agent's model, name, and toolsets are discovered automatically
-        when the capability is attached to an agent (via ``for_agent()``).
+        when the capability is attached to an agent (via `for_agent()`).
 
         Args:
             models: Optional additional models keyed by ID for runtime model
                 switching. The agent's primary model is always registered as
-                ``'default'``. Pre-instantiated `Model` instances passed at
+                `'default'`. Pre-instantiated `Model` instances passed at
                 runtime via `agent.run(model=instance)` are accepted as-is.
             provider_factory: Optional factory used to instantiate a
                 [`Provider`][pydantic_ai.providers.Provider] from a provider
@@ -129,7 +129,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model requests use a streaming activity that invokes this handler
                 inside the activity.
             activity_config: Base Temporal activity config for all activities.
-                Defaults to a 60-second ``start_to_close_timeout``.
+                Defaults to a 60-second `start_to_close_timeout`.
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
@@ -137,7 +137,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
             temporalize_toolset_func: Custom function for wrapping leaf toolsets.
-                Defaults to the built-in ``temporalize_toolset``.
+                Defaults to the built-in `temporalize_toolset`.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -148,8 +148,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             async def my_slow_tool(...): ...
             ```
 
-            or via the ``SetToolMetadata`` capability for selector-based config.
-            Setting the ``'temporal'`` key to ``False`` skips activity wrapping
+            or via the `SetToolMetadata` capability for selector-based config.
+            Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
         self.run_context_type = run_context_type
@@ -368,7 +368,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         """All Temporal activities registered by this capability.
 
         Register these with the Temporal worker, either directly or via
-        ``DurabilityPlugin``.
+        `DurabilityPlugin`.
         """
         return self._temporal_activities
 
@@ -391,7 +391,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     def _find_model_id(self, model: Model) -> str | None:
         """Find the cross-activity identifier for a `Model` instance.
 
-        Returns ``None`` for the agent's default model (no extra info needed),
+        Returns `None` for the agent's default model (no extra info needed),
         a registry key when an instance from `models=` is being used, or the
         model's own `model_id` string when the model was constructed at runtime
         (via `resolve_model` / `provider_factory`). Activities use the result to

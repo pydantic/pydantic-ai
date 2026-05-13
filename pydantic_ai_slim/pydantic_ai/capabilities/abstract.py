@@ -265,11 +265,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         initialized (model, name, toolsets are all available). Override to
         discover agent configuration and return a bound instance.
 
-        This runs before ``get_*()`` methods are called, so the returned
-        instance's ``get_toolset()``, ``get_instructions()``, etc. will be
+        This runs before `get_*()` methods are called, so the returned
+        instance's `get_toolset()`, `get_instructions()`, etc. will be
         used for the agent's initial configuration.
 
-        Default: return ``self`` (no agent-specific setup needed).
+        Default: return `self` (no agent-specific setup needed).
         """
         return self
 

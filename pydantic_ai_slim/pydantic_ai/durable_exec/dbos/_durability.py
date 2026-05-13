@@ -37,7 +37,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
     Outside of DBOS workflows, the capability is transparent.
 
     The capability discovers the agent's model, name, and toolsets
-    automatically via ``for_agent()``.
+    automatically via `for_agent()`.
 
     Example:
         ```python {test="skip"}
@@ -69,8 +69,8 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
             parallel_execution_mode: Tool-call execution mode applied for the duration
-                of every run. Defaults to ``'parallel_ordered_events'`` so events
-                replay deterministically. Set to ``'sequential'`` for strict ordering.
+                of every run. Defaults to `'parallel_ordered_events'` so events
+                replay deterministically. Set to `'sequential'` for strict ordering.
         """
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
@@ -184,18 +184,18 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         return bound
 
     def _install_workflow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Replace ``agent.run`` and ``agent.run_sync`` with DBOS-workflow-decorated wrappers.
+        """Replace `agent.run` and `agent.run_sync` with DBOS-workflow-decorated wrappers.
 
         When called outside an active DBOS workflow, the wrapper enters a workflow so
         all model and toolset steps recorded inside become durable. When already inside a
         workflow, it skips the redundant wrap and just applies the configured parallel
         execution mode.
 
-        ``agent.iter`` is wrapped in-place by `wrap_run` instead — its async-generator
-        signature can't be cleanly forwarded through ``@DBOS.workflow``.
+        `agent.iter` is wrapped in-place by `wrap_run` instead — its async-generator
+        signature can't be cleanly forwarded through `@DBOS.workflow`.
 
         Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
-        ``DBOSDurability`` instances by mistake), the second call is a no-op rather
+        `DBOSDurability` instances by mistake), the second call is a no-op rather
         than stacking wrappers.
         """
         if getattr(agent.run, '_pydantic_ai_dbos_wrapped', False):
@@ -287,8 +287,8 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         """Apply the configured parallel-execution mode for the duration of the run.
 
         Auto-wrapping into a DBOS workflow is handled by `_install_workflow_wrappers`
-        for ``run``/``run_sync``. This hook is the single chokepoint that applies the
-        execution mode for every entry point — including ``iter``, which the run/sync
+        for `run`/`run_sync`. This hook is the single chokepoint that applies the
+        execution mode for every entry point — including `iter`, which the run/sync
         wrappers don't cover.
         """
         agent = self._agent
