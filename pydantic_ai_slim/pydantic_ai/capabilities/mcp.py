@@ -149,15 +149,13 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # MCP has no named string strategies — strings are treated as fastmcp connect specs
         # (URL/path/etc.) and wrapped in `MCPToolset`. `local=True` uses the URL from `MCP(url=...)`.
         try:
-            if name is True:
-                return self._build_local()
-            from pydantic_ai.mcp import MCPToolset as _MCPToolset
+            if isinstance(name, str):
+                from pydantic_ai.mcp import MCPToolset
 
-            return _MCPToolset(name, include_instructions=True)
+                return MCPToolset(name, include_instructions=True)
+            return self._build_local()
         except ImportError as e:
-            raise UserError(
-                'MCP(local=...) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
-            ) from e
+            raise UserError('MCP(local=...) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.') from e
 
     def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Merge authorization_token into headers for local connection.

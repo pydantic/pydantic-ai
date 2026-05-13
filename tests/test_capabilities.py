@@ -5341,10 +5341,12 @@ class TestMCPCapability:
             MCP()  # type: ignore[call-arg]
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
-        """A non-toolset `local=` input (e.g. an override URL) is wrapped in `MCPToolset` automatically."""
+        """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        from fastmcp import FastMCP
+
         from pydantic_ai.mcp import MCPToolset
 
-        cap = MCP(url='https://mcp.example.com/api', native=True, local='https://override.example.com/mcp')
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
         assert isinstance(cap.local, MCPToolset)
 
 
