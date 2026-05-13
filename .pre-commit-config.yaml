@@ -80,6 +80,13 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: typecheck-ty
+        name: Typecheck with Ty
+        entry: bash
+        args: [scripts/typecheck_ty.sh]
+        language: system
+        pass_filenames: false
+        stages: [manual]
       - id: check-cassettes
         name: Check cassettes
         entry: uv

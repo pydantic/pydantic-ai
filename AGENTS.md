@@ -89,6 +89,7 @@ The project uses:
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
+- Ty compatibility is advisory, checked for `pydantic_ai_slim/pydantic_ai` by `.github/workflows/ty.yml` and the manual pre-commit hook `typecheck-ty` against `dsfaccini/ruff@codex/ty-pydantic-compat`. Pyright remains the required type checker. If Ty fails, fix real typing issues with the smallest Pyright-compatible refactor; if Ty is wrong, open an issue against the Ty fork with a minimal `uv` inline-dependencies repro, then add a narrow `# ty: ignore[...]` with the issue link.
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs

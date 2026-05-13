@@ -1,0 +1,64 @@
+name: Ty
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.13
+  UV_FROZEN: "1"
+  TY_FORK_REPOSITORY: dsfaccini/ruff
+  TY_FORK_REF: codex/ty-pydantic-compat
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: ty (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: ty
+
+      - name: Install dependencies
+        run: uv sync --all-extras --no-extra outlines-vllm-offline --all-packages --group lint
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: ${{ env.TY_FORK_REPOSITORY }}
+          ref: ${{ env.TY_FORK_REF }}
+          path: .ty/ruff
+          persist-credentials: false
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            .ty/ruff/target
+          key: ty-${{ runner.os }}-${{ env.TY_FORK_REF }}-${{ hashFiles('.github/workflows/ty.yml') }}
+          restore-keys: |
+            ty-${{ runner.os }}-${{ env.TY_FORK_REF }}-
+
+      - name: Build Ty fork
+        working-directory: .ty/ruff
+        run: cargo build --release --package ty --bin ty
+
+      - name: Run Ty
+        env:
+          TY_BIN: ${{ github.workspace }}/.ty/ruff/target/release/ty
+          TY_OUTPUT_FORMAT: github
+          TY_PATHS: pydantic_ai_slim/pydantic_ai
+        run: uvx pre-commit run typecheck-ty --hook-stage manual --all-files --verbose
