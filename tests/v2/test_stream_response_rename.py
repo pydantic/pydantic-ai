@@ -1,11 +1,11 @@
-"""Card 32: `stream_responses()` -> `stream_response()`.
+"""`stream_responses()` -> `stream_response()` rename.
 
 In 1.x, calling `stream_responses()` (plural) on `AgentStream`,
-`StreamedRunResult`, or `StreamedRunResultSync` emits a `DeprecationWarning`.
-The new singular `stream_response()` is the contract going forward; both names
-yield identical items in 1.x. The semantic shift the v2 card describes (yielded
-type changing from `tuple[ModelResponse, bool]` to `ModelResponse` on the result
-classes) is deferred to the v2 cut.
+`StreamedRunResult`, or `StreamedRunResultSync` emits a
+`PydanticAIDeprecationWarning`. The new singular `stream_response()` is the
+contract going forward; both names yield identical items in 1.x. The semantic
+shift planned for v2 (yielded type changing from `tuple[ModelResponse, bool]`
+to `ModelResponse` on the result classes) is deferred to the v2 cut.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.anyio
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.anyio
 
 def _assert_no_deprecation(getter: Any) -> Any:
     with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
         return getter()
 
 
@@ -52,7 +53,7 @@ async def test_agent_stream_stream_response_singular_silent_and_plural_warns():
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     with pytest.warns(
-                        DeprecationWarning,
+                        PydanticAIDeprecationWarning,
                         match=r'`AgentStream\.stream_responses\(\)` is deprecated',
                     ):
                         async for r in stream.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
@@ -81,7 +82,7 @@ async def test_streamed_run_result_stream_response_singular_silent_and_plural_wa
     async with agent.run_stream('hi') as result:
         plural: list[tuple[Any, bool]] = []
         with pytest.warns(
-            DeprecationWarning,
+            PydanticAIDeprecationWarning,
             match=r'`StreamedRunResult\.stream_responses\(\)` is deprecated',
         ):
             async for item in result.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
@@ -104,7 +105,7 @@ def test_streamed_run_result_sync_stream_response_singular_silent_and_plural_war
 
     result = agent.run_stream_sync('hi')
     with pytest.warns(
-        DeprecationWarning,
+        PydanticAIDeprecationWarning,
         match=r'`StreamedRunResultSync\.stream_responses\(\)` is deprecated',
     ):
         plural = list(result.stream_responses(debounce_by=None))  # pyright: ignore[reportDeprecated]

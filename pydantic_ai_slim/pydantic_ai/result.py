@@ -24,6 +24,7 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._warnings import PydanticAIDeprecationWarning
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
@@ -114,8 +115,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield self.response  # current state of the response
 
     @deprecated(
-        '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0; '
-        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+        '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. '
+        'Replace `async for r in stream.stream_responses(...)` with '
+        '`async for r in stream.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        category=PydanticAIDeprecationWarning,
     )
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         async for response in self.stream_response(debounce_by=debounce_by):
@@ -606,8 +609,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @deprecated(
-        '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0; '
-        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+        '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0. '
+        'Replace `async for msg, is_last in result.stream_responses(...)` with '
+        '`async for msg, is_last in result.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        category=PydanticAIDeprecationWarning,
     )
     async def stream_responses(
         self, *, debounce_by: float | None = 0.1
@@ -861,8 +866,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
 
     @deprecated(
-        '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0; '
-        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+        '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0. '
+        'Replace `for msg, is_last in result.stream_responses(...)` with '
+        '`for msg, is_last in result.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        category=PydanticAIDeprecationWarning,
     )
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
         return self.stream_response(debounce_by=debounce_by)
