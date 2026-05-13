@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -38,7 +39,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from ..builtin_tools import AbstractBuiltinTool
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
@@ -46,8 +47,8 @@ from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tool_manager import ToolManager
 from ..tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -200,10 +201,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             prompt: Optional user prompt to expose as `RunContext.prompt`.
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
-            pending_messages: Optional pending message queue to expose as
-                `RunContext.pending_messages`. When called from within a run, pass
-                through the active queue so `ctx.enqueue()` calls inside system-prompt
-                callbacks are not silently discarded.
         """
         return []  # pragma: no cover — concrete subclasses override this
 
@@ -248,7 +245,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -273,7 +269,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -297,10 +292,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -341,13 +336,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.run')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -368,7 +367,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             output_retries=output_retries,
             toolsets=toolsets,
-            builtin_tools=builtin_tools,
             capabilities=capabilities,
             spec=spec,
         ) as agent_run:
@@ -438,7 +436,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -463,7 +460,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -487,10 +483,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -530,13 +526,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_sync'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -557,7 +559,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_retries=output_retries,
                 infer_name=False,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
@@ -583,7 +584,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -608,7 +608,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -633,10 +632,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
@@ -683,7 +682,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
@@ -693,6 +691,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
@@ -717,7 +722,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_retries=output_retries,
             infer_name=False,
             toolsets=toolsets,
-            builtin_tools=builtin_tools,
             capabilities=capabilities,
             spec=spec,
         ) as agent_run:
@@ -880,7 +884,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -904,7 +907,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -927,10 +929,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
@@ -979,7 +981,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
@@ -989,6 +990,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream_sync'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1008,7 +1016,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_retries=output_retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
@@ -1037,7 +1044,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentEventStream[OutputDataT]: ...
@@ -1061,7 +1067,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentEventStream[RunOutputDataT]: ...
@@ -1084,9 +1089,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AgentEventStream[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -1144,7 +1149,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
@@ -1152,6 +1156,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             An `AgentEventStream` async context manager yielding stream events `AgentStreamEvent` and finally a
             `AgentRunResultEvent` with the final run result.
         """
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+            _deprecated_kwargs, 'agent.run_stream_events'
+        )
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1174,7 +1185,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 metadata=metadata,
                 output_retries=output_retries,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
                 capabilities=capabilities,
                 spec=spec,
             )
@@ -1197,7 +1207,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         output_retries: int | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
@@ -1229,7 +1238,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     output_retries=output_retries,
                     infer_name=False,
                     toolsets=toolsets,
-                    builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
                     capabilities=capabilities,
                     spec=spec,
@@ -1276,7 +1284,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -1300,7 +1307,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -1325,7 +1331,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_retries: int | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -1413,7 +1418,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
@@ -1433,7 +1437,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         output_retries: int | _utils.Unset = _utils.UNSET,
@@ -1450,8 +1454,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
-            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
-                Per-run `builtin_tools` are still added to these.
+            native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
@@ -1587,7 +1590,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
 
-    # TODO (v2): Remove in favor of using `AGUIApp` directly -- we don't have `to_temporal()` or `to_vercel_ai()` either.
+    @deprecated(
+        '`Agent.to_ag_ui()` is deprecated and will be removed in 2.0. Replace:\n'
+        '    app = agent.to_ag_ui()\n'
+        'with a Starlette/FastAPI route:\n'
+        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
+        '    @app.post("/")\n'
+        '    async def run_agent(request):\n'
+        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
+        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
+        category=PydanticAIDeprecationWarning,
+    )
     def to_ag_ui(
         self,
         *,
@@ -1615,13 +1628,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Returns an ASGI application that handles every AG-UI request by running the agent.
 
         Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
         To provide different `deps` for each request (e.g. based on the authenticated user),
-        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
-        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
+        compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly via [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] instead.
 
         Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
@@ -1676,29 +1688,33 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-        return AGUIApp(
-            agent=self,
-            # Agent.iter parameters
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            # Starlette
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            lifespan=lifespan,
-        )
+        # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
+        # one warning from `to_ag_ui()` itself, not a second one from internal construction.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=PydanticAIDeprecationWarning)
+            return AGUIApp(  # pyright: ignore[reportDeprecated]
+                agent=self,
+                # Agent.iter parameters
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                # Starlette
+                debug=debug,
+                routes=routes,
+                middleware=middleware,
+                exception_handlers=exception_handlers,
+                on_startup=on_startup,
+                on_shutdown=on_shutdown,
+                lifespan=lifespan,
+            )
 
     def to_a2a(
         self,

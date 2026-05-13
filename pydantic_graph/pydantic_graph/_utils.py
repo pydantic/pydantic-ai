@@ -34,7 +34,7 @@ try:
         """Get a string representing the span context to use for annotating spans."""
         real_span: Span
         if isinstance(span, Span):
-            real_span = span
+            real_span = span  # pragma: lax no cover
         else:
             real_span = span._span
             assert real_span

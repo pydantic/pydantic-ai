@@ -7,7 +7,7 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, `WebSearch`, `Hooks`, custom capabilities
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
-- [BUILTIN-TOOLS.md](./BUILTIN-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
+- [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, deferred loading
 - [INPUT-AND-HISTORY.md](./INPUT-AND-HISTORY.md) — multimodal input, message history, history processors
 - [TESTING-AND-DEBUGGING.md](./TESTING-AND-DEBUGGING.md) — `TestModel`, `FunctionModel`, `capture_run_messages`, Logfire

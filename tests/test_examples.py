@@ -23,14 +23,14 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -132,6 +132,8 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated',
     'ignore:`BuiltinToolResultEvent` is deprecated',
+    # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
+    'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -825,14 +827,14 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],

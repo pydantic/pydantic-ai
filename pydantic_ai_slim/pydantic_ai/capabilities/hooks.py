@@ -4,16 +4,18 @@ Provides the [`Hooks`][pydantic_ai.capabilities.Hooks] class as an ergonomic
 alternative to subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]
 for registering hook functions.
 
-Hook functions are registered via the `hooks.on` namespace::
+Hook functions are registered via the `hooks.on` namespace:
 
-    hooks = Hooks()
+```python {test="skip" lint="skip"}
+hooks = Hooks()
 
-    @hooks.on.before_model_request
-    async def log_request(ctx, request_context):
-        print(f'Request: {request_context}')
-        return request_context
+@hooks.on.before_model_request
+async def log_request(ctx, request_context):
+    print(f'Request: {request_context}')
+    return request_context
 
-    agent = Agent('openai:gpt-5', capabilities=[hooks])
+agent = Agent('openai:gpt-5', capabilities=[hooks])
+```
 """
 
 from __future__ import annotations
@@ -313,15 +315,17 @@ class _HookRegistration(Generic[AgentDepsT]):
     """Decorator namespace for registering hooks on a [`Hooks`][pydantic_ai.capabilities.Hooks] instance.
 
     Accessed via `hooks.on`. Each method corresponds to a lifecycle hook and
-    can be used as a bare decorator or a parameterized decorator::
+    can be used as a bare decorator or a parameterized decorator:
 
-        @hooks.on.before_model_request
-        async def my_hook(ctx, request_context):
-            return request_context
+    ```python {test="skip" lint="skip"}
+    @hooks.on.before_model_request
+    async def my_hook(ctx, request_context):
+        return request_context
 
-        @hooks.on.before_tool_execute(tools=['dangerous'], timeout=5.0)
-        async def guard(ctx, *, call, tool_def, args):
-            return args
+    @hooks.on.before_tool_execute(tools=['dangerous'], timeout=5.0)
+    async def guard(ctx, *, call, tool_def, args):
+        return args
+    ```
     """
 
     def __init__(self, hooks: Hooks[AgentDepsT]) -> None:
@@ -714,22 +718,26 @@ class Hooks(AbstractCapability[AgentDepsT]):
     For application code that needs a few hooks without the ceremony of a subclass,
     use `Hooks`.
 
-    Example using decorators::
+    Example using decorators:
 
-        hooks = Hooks()
+    ```python {test="skip" lint="skip"}
+    hooks = Hooks()
 
-        @hooks.on.before_model_request
-        async def log_request(ctx, request_context):
-            print(f'Request: {request_context}')
-            return request_context
+    @hooks.on.before_model_request
+    async def log_request(ctx, request_context):
+        print(f'Request: {request_context}')
+        return request_context
 
-        agent = Agent('openai:gpt-5', capabilities=[hooks])
+    agent = Agent('openai:gpt-5', capabilities=[hooks])
+    ```
 
-    Example using constructor kwargs::
+    Example using constructor kwargs:
 
-        agent = Agent('openai:gpt-5', capabilities=[
-            Hooks(before_model_request=log_request)
-        ])
+    ```python {test="skip" lint="skip"}
+    agent = Agent('openai:gpt-5', capabilities=[
+        Hooks(before_model_request=log_request)
+    ])
+    ```
     """
 
     _registry: dict[str, list[_HookEntry[Any]]]
