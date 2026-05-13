@@ -36,9 +36,11 @@ except ImportError as _import_error:
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
+
+_parse_retry_after_date: Callable[[str], datetime] = parsedate_to_datetime
 
 if TYPE_CHECKING:
     from tenacity.asyncio.retry import RetryBaseT
@@ -365,7 +367,7 @@ def wait_retry_after(
                 except ValueError:
                     # Try parsing as HTTP date
                     try:
-                        retry_time = cast(datetime, parsedate_to_datetime(retry_after))  # ty: ignore[redundant-cast]
+                        retry_time = _parse_retry_after_date(retry_after)
                         assert isinstance(retry_time, datetime)
                         now = datetime.now(timezone.utc)
                         wait_seconds = (retry_time - now).total_seconds()
