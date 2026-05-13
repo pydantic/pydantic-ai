@@ -32,9 +32,9 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from google.genai.client import Client
 
-    from pydantic_ai.models.google import (  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.google import (
         GoogleModelSettings,
-        _resolve_google_cloud_service_tier,
+        _resolve_google_cloud_service_tier,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers import infer_provider, infer_provider_class
     from pydantic_ai.providers.gateway import normalize_gateway_provider
