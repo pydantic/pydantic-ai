@@ -272,7 +272,7 @@ agent = Agent(model, model_settings=settings)
 ```
 
 !!! note "Disabling reasoning"
-    Setting [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] via the unified setting sends `reasoning={'enabled': False}` in the request body, which OpenRouter forwards as the disable signal to the underlying model. This is honored across providers that expose a way to turn reasoning off (e.g. hybrid models like `anthropic/claude-sonnet-4.5` or `moonshotai/kimi-k2.6` whose default is to reason); for models without a disable mechanism, OpenRouter silently no-ops.
+    Setting [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] via the unified setting sends `reasoning={'enabled': False}` in the request body, which OpenRouter forwards to the underlying model. Behavior then depends on the downstream provider: hybrid models like `anthropic/claude-sonnet-4.5` or `z-ai/glm-4.6` honor the disable; some always-on reasoning models (e.g. `x-ai/grok-3-mini`) reject the request with HTTP 400. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-model control.
 
 ## Mistral
 

@@ -1216,3 +1216,56 @@ def test_openrouter_error_with_metadata() -> None:
 
     assert exc_info.value.status_code == 524
     assert 'Provider returned error' in str(exc_info.value)
+
+
+# Regression tests for https://github.com/pydantic/pydantic-ai/issues/5379:
+# `thinking=False` must reach the wire as `reasoning={'enabled': False}` regardless
+# of whether the underlying model's intrinsic profile declares `supports_thinking`.
+
+
+async def test_openrouter_thinking_false_profile_gated_model(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Hybrid model whose intrinsic profile reports `supports_thinking=False`.
+
+    Before the fix, the profile gate in `Model.prepare_request` stripped `thinking`
+    before the OpenRouter transformer saw it, so the wire body had no `reasoning`
+    field and the model fell back to its default (reasoning on for glm-4.6).
+    See `test_openrouter_with_reasoning` above for the default-on baseline.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('z-ai/glm-4.6', provider=provider)
+    settings = OpenRouterModelSettings(thinking=False)
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['reasoning'] == {'enabled': False}
+
+    assert not any(isinstance(part, ThinkingPart) for part in response.parts)
+
+
+async def test_openrouter_thinking_false_supports_thinking_model(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Reasoning model whose intrinsic profile already reports `supports_thinking=True`.
+
+    Before the fix, `thinking` reached the OpenRouter transformer but the
+    `if thinking is not False:` guard suppressed the emit, dropping the user's
+    off-signal on the wire. Mirrors the `anthropic/claude-sonnet-4.5` row of the
+    issue reporter's test matrix.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    settings = OpenRouterModelSettings(thinking=False)
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['reasoning'] == {'enabled': False}
+
+    assert not any(isinstance(part, ThinkingPart) for part in response.parts)
