@@ -458,7 +458,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         toolsets; until that lands, the static class check is relaxed for any agent
         that uses dynamic capabilities.
         """
-        from pydantic_ai.capabilities import DynamicCapability
+        from pydantic_ai.capabilities import DynamicCapability, Instrumentation
 
         if ctx.root_capability is None:  # pragma: no cover - always set inside an agent run
             return
@@ -472,6 +472,11 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             runtime_classes.add(type(cap))
 
         ctx.root_capability.apply(_collect)
+        # `Instrumentation` is auto-injected per-run by `Agent.iter()` when the legacy
+        # `instrument=...` / `Agent.instrument_all()` path is used (e.g. via `LogfirePlugin`).
+        # It runs purely workflow-side and registers no activities, so it's safe to allow
+        # at runtime even when it wasn't bound at agent construction time.
+        runtime_classes.discard(Instrumentation)
         extra = runtime_classes - self._bound_capability_classes
         if extra:
             names = ', '.join(sorted(c.__name__ for c in extra))

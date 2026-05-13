@@ -9,10 +9,9 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
-from pydantic_core import SchemaValidator, to_json
+from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
@@ -365,91 +364,45 @@ async def run_output_with_hooks(
     return cast(OutputDataT, result)
 
 
-async def execute_traced_output_function(
+async def execute_output_function(
     function_schema: _function_schema.FunctionSchema,
     *,
     run_context: RunContext[AgentDepsT],
     args: dict[str, Any],
     wrap_validation_errors: bool = True,
 ) -> Any:
-    """Execute an output function within a traced span with error handling.
+    """Execute an output function with error handling, converting `ModelRetry` to `ToolRetryError`.
 
-    This function executes the output function within an OpenTelemetry span for observability,
-    automatically records the function response, and handles ModelRetry exceptions by converting
-    them to ToolRetryError when wrap_validation_errors is True.
+    Tracing for output-function execution is provided by the
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability's
+    `wrap_output_process` hook — this function executes the function plain.
 
     Args:
         function_schema: The function schema containing the function to execute
-        run_context: The current run context containing tracing and tool information
+        run_context: The current run context containing tool information
         args: Arguments to pass to the function
-        wrap_validation_errors: If True, wrap ModelRetry exceptions in ToolRetryError
+        wrap_validation_errors: If True, wrap `ModelRetry` exceptions in `ToolRetryError`
 
     Returns:
         The result of the function execution
 
     Raises:
-        ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
-        ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
+        ToolRetryError: When `wrap_validation_errors` is True and a `ModelRetry` is caught
+        ModelRetry: When `wrap_validation_errors` is False and a `ModelRetry` occurs
     """
-    instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
-    # Set up span attributes
-    tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
-    attributes = {
-        'gen_ai.operation.name': 'execute_tool',
-        'gen_ai.tool.name': tool_name,
-        **get_agent_run_baggage_attributes(),
-        'logfire.msg': f'running output function: {tool_name}',
-    }
-    if run_context.tool_call_id:
-        attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
-    if run_context.trace_include_content:
-        attributes[instrumentation_names.tool_arguments_attr] = to_json(args).decode()
-
-    attributes['logfire.json_schema'] = json.dumps(
-        {
-            'type': 'object',
-            'properties': {
-                **(
-                    {
-                        instrumentation_names.tool_arguments_attr: {'type': 'object'},
-                        instrumentation_names.tool_result_attr: {'type': 'object'},
-                    }
-                    if run_context.trace_include_content
-                    else {}
-                ),
-                'gen_ai.tool.name': {},
-                **({'gen_ai.tool.call.id': {}} if run_context.tool_call_id else {}),
-            },
-        }
-    )
-
-    with run_context.tracer.start_as_current_span(
-        instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
-    ) as span:
-        try:
-            output = await function_schema.call(args, run_context)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                    tool_name=run_context.tool_name,
-                )
-                if run_context.tool_call_id:
-                    m.tool_call_id = run_context.tool_call_id  # pragma: no cover
-                raise ToolRetryError(m) from r
-            else:
-                raise
-
-        # Record response if content inclusion is enabled
-        if run_context.trace_include_content and span.is_recording():
-            from .models.instrumented import InstrumentedModel
-
-            span.set_attribute(
-                instrumentation_names.tool_result_attr,
-                output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+    try:
+        return await function_schema.call(args, run_context)
+    except ModelRetry as r:
+        if wrap_validation_errors:
+            m = _messages.RetryPromptPart(
+                content=r.message,
+                tool_name=run_context.tool_name,
             )
-
-        return output
+            if run_context.tool_call_id:
+                m.tool_call_id = run_context.tool_call_id  # pragma: no cover
+            raise ToolRetryError(m) from r
+        else:
+            raise
 
 
 @dataclass
@@ -1007,7 +960,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
-            output = await execute_traced_output_function(
+            output = await execute_output_function(
                 self._function_schema,
                 run_context=run_context,
                 args=output,
@@ -1082,6 +1035,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output_type=self.output_type,
             object_def=self.object_def,
             has_function=self._function_schema is not None,
+            function_name=getattr(self._function_schema.function, '__name__', None) if self._function_schema else None,
             tool_call=tool_call,
             tool_def=tool_def,
             allows_text=schema.allows_text,
@@ -1412,7 +1366,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ) -> Any:
         """Execute the text output function."""
         args = {self._str_argument_name: output}
-        return await execute_traced_output_function(
+        return await execute_output_function(
             self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
         )
 
@@ -1429,6 +1383,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             output_type=str,
             object_def=None,
             has_function=True,
+            function_name=getattr(self._function_schema.function, '__name__', None),
             tool_call=tool_call,
             tool_def=tool_def,
             allows_text=schema.allows_text,

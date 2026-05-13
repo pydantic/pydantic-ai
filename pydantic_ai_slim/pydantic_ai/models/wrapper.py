@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from typing_extensions import Self
 
@@ -135,9 +135,12 @@ class ReplayStreamedResponse(StreamedResponse):
             elif isinstance(part, ThinkingPart) and part.content:
                 yield PartDeltaEvent(index=index, delta=ThinkingPartDelta(content_delta=part.content))
             elif isinstance(part, ToolCallPart):
+                # `cast`: typed subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a `TypedDict`,
+                # which `ToolCallPartDelta.args_delta` doesn't accept. TypedDicts are dicts at runtime.
+                args_delta = cast('str | dict[str, Any] | None', part.args)
                 yield PartDeltaEvent(
                     index=index,
-                    delta=ToolCallPartDelta(args_delta=part.args),
+                    delta=ToolCallPartDelta(args_delta=args_delta),
                 )
             # PartEndEvent is added automatically by StreamedResponse.__aiter__
 
@@ -231,6 +234,9 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        return self.wrapped.prepare_messages(messages)
 
     @property
     def provider(self) -> Provider[Any] | None:

@@ -29,7 +29,7 @@ from .._inline_snapshot import snapshot
 def model_request_parameters() -> ModelRequestParameters:
     return ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],

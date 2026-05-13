@@ -253,6 +253,17 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
+    # `InstrumentedModel` / `instrument_model` direct construction is deprecated; tests for those classes
+    # (`tests/models/test_instrumented.py`) and the backwards-compat path test in `tests/test_logfire.py`
+    # exercise the deprecated entry points on purpose.
+    "ignore:.*(InstrumentedModel|instrument_model).*:pydantic_ai._warnings.PydanticAIDeprecationWarning",
+    # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
+    # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
+    # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in
+    # `tests/test_capabilities.py`) cover the deprecation warning itself.
+    "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
+    # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
+    "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
