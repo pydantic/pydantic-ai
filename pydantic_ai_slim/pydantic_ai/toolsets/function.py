@@ -578,7 +578,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
-            defer_loading=defer_loading,
+            defer_loading=bool(defer_loading if defer_loading is not None else self._defer_loading),
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
@@ -594,8 +594,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
-        if tool.defer_loading is None:
-            tool.defer_loading = self._defer_loading
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool

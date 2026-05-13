@@ -9,7 +9,7 @@ from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentedModel  # pyright: ignore[reportDeprecated]
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
@@ -89,12 +89,12 @@ def test_instrumented_model_settings_delegation():
     base_model = TestModel(settings=base_settings)
 
     # InstrumentedModel should delegate settings to wrapped model
-    instrumented = InstrumentedModel(base_model)
+    instrumented = InstrumentedModel(base_model)  # pyright: ignore[reportDeprecated]
     assert instrumented.settings == base_settings
 
     # Test with wrapped model without settings
     base_model_no_settings = TestModel()
-    instrumented_no_settings = InstrumentedModel(base_model_no_settings)
+    instrumented_no_settings = InstrumentedModel(base_model_no_settings)  # pyright: ignore[reportDeprecated]
     assert instrumented_no_settings.settings is None
 
 
@@ -116,7 +116,7 @@ def test_wrapper_model_profile_delegation_is_dynamic():
 
     inner = _DynamicProfileModel()
     wrapper = WrapperModel(inner)
-    instrumented = InstrumentedModel(inner)
+    instrumented = InstrumentedModel(inner)  # pyright: ignore[reportDeprecated]
 
     assert wrapper.profile is profile_a
     assert instrumented.profile is profile_a

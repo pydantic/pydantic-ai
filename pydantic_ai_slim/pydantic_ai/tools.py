@@ -1,22 +1,24 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import AliasChoices, Discriminator, Field, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from .builtin_tools import AbstractBuiltinTool
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
+from .native_tools import AbstractNativeTool
 
 __all__ = (
     'AgentDepsT',
@@ -33,8 +35,8 @@ __all__ = (
     'ToolSelectorFunc',
     'ToolSelector',
     'matches_tool_selector',
-    'AgentBuiltinTool',
-    'BuiltinToolFunc',
+    'AgentNativeTool',
+    'NativeToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -225,19 +227,19 @@ async def matches_tool_selector(
     return tool_def.name in selector
 
 
-BuiltinToolFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+NativeToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractNativeTool | None] | AbstractNativeTool | None
 ]
-"""Definition of a function that can prepare a builtin tool at call time.
+"""Definition of a function that can prepare a native tool at call time.
 
-This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+This is useful if you want to customize the native tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
 """
 
-AgentBuiltinTool: TypeAlias = AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]
-"""A builtin tool or a function that dynamically produces one.
+AgentNativeTool: TypeAlias = AbstractNativeTool | NativeToolFunc[AgentDepsT]
+"""A native tool or a function that dynamically produces one.
 
-This is a convenience alias for `AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]`.
+This is a convenience alias for `AbstractNativeTool | NativeToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
@@ -452,7 +454,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
-    defer_loading: bool | None
+    defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -479,7 +481,7 @@ class Tool(Generic[ToolAgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -742,19 +744,84 @@ class ToolDefinition:
     Defaults to None (no timeout).
     """
 
-    defer_loading: bool | None = None
-    """Whether this tool should be hidden from the model until discovered via tool search.
+    defer_loading: bool = False
+    """Whether this tool should be hidden from the model until something explicitly surfaces it.
 
-    If `None`, the value is inherited from the toolset or capability that provided it.
+    Carries two meanings depending on where in the pipeline you observe it:
+
+    1. **User-input intent** — set on `Tool(defer_loading=True)` (or via a custom toolset)
+       to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
+       pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
+    2. **Current visibility state** — after a toolset like
+       [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] processes
+       the corpus, it flips this field to `False` for tools whose discovery shows up in
+       message history, so downstream `Model.prepare_request` filtering and adapter wire
+       formatting can read "should this be on the wire?" off a single boolean.
+
+    The dual meaning is acknowledged tech debt: a future `RunContext.loaded_tools` /
+    equivalent will surface (2) as a derived view so this field cleanly stays a user-input
+    flag. Until then, the toolset-set value flows through agent-graph plumbing on a per-step
+    `ToolDefinition` instance built via `replace(...)`; user-persisted definitions are not
+    mutated.
+
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    prefer_builtin: str | None = None
-    """If set, this function tool is a local fallback for the builtin tool with the given unique_id.
+    unless_native: Annotated[
+        str | None,
+        # Old names were `prefer_builtin` and (after the builtin → native rename in #5338)
+        # `prefer_native`; keep accepting both for serialized-history backward compat.
+        Field(validation_alias=AliasChoices('unless_native', 'prefer_native', 'prefer_builtin')),
+    ] = None
+    """If set, this tool is dropped from the wire when the named native tool is supported by the model.
 
-    When the model supports the corresponding builtin tool natively, this function tool is
-    removed from the request. When the model does not support the builtin, the builtin is
-    removed and this function tool stays.
+    Generic version of the old `prefer_builtin` flag: a function tool carrying
+    `unless_native='web_search'` is treated as a local fallback for the
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] native tool and silently
+    removed from the request whenever the model handles `WebSearchTool` natively. It
+    stays in the request when the native tool isn't supported.
+    """
+
+    with_native: str | None = None
+    """If set, this tool is kept on the wire when the named native tool is supported, with the
+    native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
+    on the request param for the framework-managed tool-search native tool).
+
+    Symmetric pair with `unless_native`:
+
+    * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
+    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
+      (corpus member managed by the native tool).
+
+    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
+    is dropped (the corpus member is currently undiscovered, so the model can't call it on
+    this provider); otherwise it's kept as a regular function tool.
+    """
+
+    # Implementation note for new typed native tools: registering a new tool_kind value
+    # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
+    # the typed subclass + narrower under pydantic_ai/<your_native_tool>.py and registering
+    # in _TOOL_CALL_NARROWERS / _NATIVE_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
+    # _NATIVE_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
+    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
+    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
+    # the new typed subclasses.
+    tool_kind: ToolPartKind | None = None
+    """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
+
+    Set by the framework when a tool emits parts that should be promoted to a typed
+    subclass (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]). Leave as
+    `None` for user-defined function tools — they go through the standard
+    [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] shapes.
+
+    To detect a tool-search part regardless of execution path (native server-side vs.
+    local fallback), check `part.tool_kind == 'tool-search'` — this works across both
+    call/return and both server/local variants.
+
+    Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
+    semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
     """
 
     return_schema: ObjectJsonSchema | None = None
@@ -807,4 +874,38 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
+    def __getattr__(self, name: str) -> Any:
+        # Deprecated aliases for read access to the renamed `unless_native` field
+        # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
+        if name in ('prefer_builtin', 'prefer_native'):
+            warnings.warn(
+                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            return self.unless_native
+        raise AttributeError(name)
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
+_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
+
+
+_RENAMED_TYPE_ALIASES: dict[str, str] = {
+    'BuiltinToolFunc': 'NativeToolFunc',
+    'AgentBuiltinTool': 'AgentNativeTool',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _RENAMED_TYPE_ALIASES:
+        new_name = _RENAMED_TYPE_ALIASES[name]
+        warnings.warn(
+            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new_name]
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
