@@ -253,10 +253,6 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
-    # `InstrumentedModel` / `instrument_model` direct construction is deprecated; tests for those classes
-    # (`tests/models/test_instrumented.py`) and the backwards-compat path test in `tests/test_logfire.py`
-    # exercise the deprecated entry points on purpose.
-    "ignore:.*(InstrumentedModel|instrument_model).*:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
     # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
     # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in
