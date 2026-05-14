@@ -32,7 +32,7 @@ jobs:
           cache-suffix: lint
 
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra outlines-vllm-offline --all-packages --group lint
+        run: uv sync --all-extras --all-packages --group lint
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
@@ -121,7 +121,7 @@ jobs:
           - name: standard
             command: ""
           - name: all-extras
-            command: "--all-extras --no-extra outlines-vllm-offline"
+            command: "--all-extras"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
@@ -206,7 +206,7 @@ jobs:
 
       - run: unset UV_FROZEN
 
-      - run: uv run --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
@@ -246,7 +246,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv run --all-extras --no-extra outlines-vllm-offline python tests/import_examples.py
+      - run: uv run --all-extras python tests/import_examples.py
 
   coverage:
     runs-on: ubuntu-latest
