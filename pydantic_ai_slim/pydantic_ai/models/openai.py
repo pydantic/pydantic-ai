@@ -343,7 +343,6 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
         type='image_generation',
         action=tool.action,
         background=tool.background,
-        input_fidelity=tool.input_fidelity,
         moderation=tool.moderation,
         output_compression=output_compression,
         output_format=tool.output_format or 'png',
@@ -353,6 +352,8 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     )
     if tool.model is not None:
         image_generation_tool['model'] = tool.model
+    if tool.input_fidelity is not None:
+        image_generation_tool['input_fidelity'] = tool.input_fidelity
     return image_generation_tool
 
 
