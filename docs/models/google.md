@@ -136,14 +136,11 @@ agent = Agent('google-cloud:gemini-3-pro-preview')
 Or you can explicitly create the provider and model:
 
 ```python {test="skip"}
-import os
-
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-os.environ['GOOGLE_API_KEY'] = 'your-api-key'
-provider = GoogleCloudProvider()
+provider = GoogleCloudProvider(api_key='your-api-key')
 model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...

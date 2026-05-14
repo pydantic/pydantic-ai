@@ -2,7 +2,7 @@
 
 `GoogleProvider.name` returns `'google'` / `'google-cloud'` post-rename, but historical
 `ModelMessage` records may have `provider_name='google-gla'` / `'google-vertex'`. The Google
-model class accepts both via the `GEMINI_API_SYSTEMS` / `GOOGLE_CLOUD_SYSTEMS` sets, so
+model class accepts both via the `_GEMINI_API_PROVIDER_NAMES` / `_GOOGLE_CLOUD_PROVIDER_NAMES` sets, so
 replay still routes thinking signatures and built-in tool parts correctly. These tests pin
 that contract.
 

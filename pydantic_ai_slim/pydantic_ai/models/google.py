@@ -184,21 +184,9 @@ _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.g
 
 # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
 # (`google-vertex` / `google-gla`) so history captured against the old provider name
-# still routes correctly through the new model class. Exposed publicly so users patching
-# their own backward-compat have a stable handle to import.
-GOOGLE_CLOUD_SYSTEMS: frozenset[str] = frozenset({'google-cloud', 'google-vertex'})
-"""Provider names that route to Google Cloud (formerly known as Vertex AI).
-
-Includes the pre-v2 `'google-vertex'` name so message history captured against the
-old provider name still replays correctly.
-"""
-
-GEMINI_API_SYSTEMS: frozenset[str] = frozenset({'google', 'google-gla'})
-"""Provider names that route to the Gemini API.
-
-Includes the pre-v2 `'google-gla'` name so message history captured against the
-old provider name still replays correctly.
-"""
+# still routes correctly through the new model class.
+_GOOGLE_CLOUD_PROVIDER_NAMES: frozenset[str] = frozenset({'google-cloud', 'google-vertex'})
+_GEMINI_API_PROVIDER_NAMES: frozenset[str] = frozenset({'google', 'google-gla'})
 
 
 GoogleCloudServiceTier = Literal[
@@ -448,8 +436,7 @@ class GoogleModel(Model[Client]):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google', 'google-cloud', 'google-gla', 'google-vertex', 'gateway']
-        | Provider[Client] = 'google',
+        provider: Literal['google', 'google-cloud', 'gateway'] | Provider[Client] = 'google',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -491,10 +478,10 @@ class GoogleModel(Model[Client]):
 
     @property
     def _matching_provider_names(self) -> frozenset[str]:
-        if self.system in GOOGLE_CLOUD_SYSTEMS:
-            return GOOGLE_CLOUD_SYSTEMS
-        if self.system in GEMINI_API_SYSTEMS:
-            return GEMINI_API_SYSTEMS
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+            return _GOOGLE_CLOUD_PROVIDER_NAMES
+        if self.system in _GEMINI_API_PROVIDER_NAMES:
+            return _GEMINI_API_PROVIDER_NAMES
         return frozenset({self.system})  # pragma: no cover
 
     @property
@@ -567,7 +554,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name not in GEMINI_API_SYSTEMS:
+        if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             config.update(  # pragma: lax no cover
                 system_instruction=generation_config.get('system_instruction'),
@@ -638,7 +625,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system in GOOGLE_CLOUD_SYSTEMS:
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -883,7 +870,7 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system in GOOGLE_CLOUD_SYSTEMS:
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
             headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
@@ -1147,7 +1134,7 @@ class GoogleModel(Model[Client]):
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
                 f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system in GOOGLE_CLOUD_SYSTEMS:
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
                     f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
@@ -1172,12 +1159,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system in GOOGLE_CLOUD_SYSTEMS)
+            file.is_youtube or (file.url.startswith('gs://') and self.system in _GOOGLE_CLOUD_PROVIDER_NAMES)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system in GEMINI_API_SYSTEMS
+                self.system in _GEMINI_API_PROVIDER_NAMES
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')

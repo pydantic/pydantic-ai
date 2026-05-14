@@ -109,7 +109,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         self,
         model_name: GoogleEmbeddingModelName,
         *,
-        provider: Literal['google', 'google-cloud', 'google-gla', 'google-vertex'] | Provider[Client] = 'google',
+        provider: Literal['google', 'google-cloud'] | Provider[Client] = 'google',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize a Google embedding model.

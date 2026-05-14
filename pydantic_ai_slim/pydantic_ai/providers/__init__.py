@@ -50,11 +50,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     @property
     @abstractmethod
     def name(self) -> str:
-        # Returned value flows into ModelMessage.provider_name on every part.
-        # Thinking-tag detection and built-in-tool detection check this value when
-        # the model class loads history, so silently renaming breaks replay of any
-        # message history captured against the old name.
-        """The provider name."""
+        """The provider name.
+
+        The returned value flows into [`ModelMessage.provider_name`][pydantic_ai.messages.ModelMessage]
+        on every part. Thinking-tag detection and native-tool detection check this value when
+        the model class loads history, so silently renaming a concrete `name` value breaks
+        replay of any message history captured against the old name.
+        """
         raise NotImplementedError()
 
     @property

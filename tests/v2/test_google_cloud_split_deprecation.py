@@ -38,7 +38,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers import infer_provider, infer_provider_class
     from pydantic_ai.providers.gateway import normalize_gateway_provider
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 
@@ -122,9 +122,13 @@ def test_google_cloud_provider_no_warning_on_construction() -> None:
     assert isinstance(provider, GoogleCloudProvider)
 
 
-def test_google_cloud_provider_is_google_provider() -> None:
+def test_google_cloud_provider_shares_base_with_google_provider() -> None:
+    """Both classes inherit from `BaseGoogleProvider` (which owns the shared client wiring),
+    rather than `GoogleCloudProvider` subclassing `GoogleProvider`. This avoids the trap
+    where `GoogleCloudProvider.__init__` would inherit `GoogleProvider`'s deprecation warnings."""
     provider = GoogleCloudProvider(project='p', location='us-central1')
-    assert isinstance(provider, GoogleProvider)
+    assert isinstance(provider, BaseGoogleProvider)
+    assert not isinstance(provider, GoogleProvider)
 
 
 def test_gateway_google_vertex_prefix_warns_and_routes_to_google_cloud_provider(

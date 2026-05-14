@@ -24,16 +24,12 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-class GoogleProvider(Provider[Client]):
-    """Provider for Google."""
+class BaseGoogleProvider(Provider[Client]):
+    """Common base for the Gemini API and Google Cloud providers.
 
-    @property
-    def name(self) -> str:
-        # Returned value flows into ModelMessage.provider_name on every part.
-        # Thinking-tag detection and built-in-tool detection check this value when
-        # the model class loads history, so silently renaming breaks replay of any
-        # message history captured against the old name.
-        return 'google-cloud' if self._client._api_client.vertexai else 'google'  # pyright: ignore[reportPrivateUsage]
+    Subclasses construct `self._client` via [`_init_client`][pydantic_ai.providers.google.BaseGoogleProvider._init_client];
+    everything else (`base_url`, `client`, `_set_http_client`, model profile lookup) is shared.
+    """
 
     @property
     def base_url(self) -> str:
@@ -46,6 +42,88 @@ class GoogleProvider(Provider[Client]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
+
+    def _init_client(
+        self,
+        *,
+        vertexai: bool,
+        api_key: str | None,
+        credentials: Credentials | None,
+        project: str | None,
+        location: GoogleCloudLocation | Literal['global'] | str | None,
+        client: Client | None,
+        http_client: httpx.AsyncClient | None,
+        base_url: str | None,
+    ) -> None:
+        if client is not None:
+            self._client = client
+            return
+
+        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+
+        if http_client is None:
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
+        # Note: google-genai's HttpOptions.timeout defaults to None, which causes
+        # the SDK to explicitly pass timeout=None to httpx, overriding any timeout
+        # configured on the httpx client. We must set the timeout here to ensure
+        # requests actually time out. Read the timeout from the http_client if set,
+        # otherwise use the default. The value is converted from seconds to milliseconds.
+        timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
+        timeout_ms = int(timeout_seconds * 1000)
+        http_options = HttpOptions(
+            base_url=base_url,
+            headers={'User-Agent': get_user_agent()},
+            httpx_async_client=http_client,
+            timeout=timeout_ms,
+        )
+
+        if not vertexai:
+            if api_key is None:
+                raise UserError(
+                    'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
+                    ' to use the Gemini API.'
+                )
+            self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
+            return
+
+        # Google Cloud mode: ADC kwargs (credentials/project/location) take precedence over API-key
+        # auth. With none provided and only an api_key, the SDK uses Vertex AI Express Mode.
+        if credentials is not None or project is not None or location is not None:
+            api_key = None
+
+        if api_key is None:
+            project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
+            # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
+            # Currently `us-central1` supports the most models by far of any region including `global`, but not
+            # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
+            # which use `us-east5` instead. `global` has fewer models but higher availability.
+            # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
+            location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
+
+        self._client = Client(
+            vertexai=True,
+            api_key=api_key,
+            project=project,
+            location=location,
+            credentials=credentials,
+            http_options=http_options,
+        )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
+        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
+        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+class GoogleProvider(BaseGoogleProvider):
+    """Provider for Google."""
+
+    @property
+    def name(self) -> str:
+        return 'google-cloud' if self._client._api_client.vertexai else 'google'  # pyright: ignore[reportPrivateUsage]
 
     @overload
     def __init__(
@@ -107,9 +185,6 @@ class GoogleProvider(Provider[Client]):
             base_url: The base URL for the Google API.
         """
         if client is None:
-            # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-            api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
-
             vertex_ai_args_used = bool(location or project or credentials)
             if vertexai is True or vertex_ai_args_used:
                 # Detect Google Cloud usage from any signal — explicit flag OR any Vertex-only kwarg. The
@@ -135,60 +210,16 @@ class GoogleProvider(Provider[Client]):
             if vertexai is None:
                 vertexai = vertex_ai_args_used
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
-            # Note: google-genai's HttpOptions.timeout defaults to None, which causes
-            # the SDK to explicitly pass timeout=None to httpx, overriding any timeout
-            # configured on the httpx client. We must set the timeout here to ensure
-            # requests actually time out. Read the timeout from the http_client if set,
-            # otherwise use the default. The value is converted from seconds to milliseconds.
-            timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
-            timeout_ms = int(timeout_seconds * 1000)
-            http_options = HttpOptions(
-                base_url=base_url,
-                headers={'User-Agent': get_user_agent()},
-                httpx_async_client=http_client,
-                timeout=timeout_ms,
-            )
-            if not vertexai:
-                if api_key is None:
-                    raise UserError(
-                        'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                        ' to use the Gemini API.'
-                    )
-                self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
-            else:
-                if vertex_ai_args_used:
-                    api_key = None
-
-                if api_key is None:
-                    project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
-                    # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
-                    # Currently `us-central1` supports the most models by far of any region including `global`, but not
-                    # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
-                    # which use `us-east5` instead. `global` has fewer models but higher availability.
-                    # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
-                    location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
-
-                self._client = Client(
-                    vertexai=True,
-                    api_key=api_key,
-                    project=project,
-                    location=location,
-                    credentials=credentials,
-                    http_options=http_options,
-                )
-        else:
-            # Custom client overrides everything — we can't reliably tell whether it points at Google Cloud
-            # or the Gemini API, so suppress the deprecation. The user picked their own client.
-            self._client = client
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
-        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
-        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
+        self._init_client(
+            vertexai=bool(vertexai),
+            api_key=api_key,
+            credentials=credentials,
+            project=project,
+            location=location,
+            client=client,
+            http_client=http_client,
+            base_url=base_url,
+        )
 
 
 GoogleCloudLocation = Literal[

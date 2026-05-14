@@ -1462,10 +1462,10 @@ def infer_model(  # noqa: C901
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
+            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
+            PydanticAIDeprecationWarning,
         )
-        provider_name = 'google-vertex'
+        provider_name = 'google-cloud'
 
     provider = provider_factory(provider_name)
 
