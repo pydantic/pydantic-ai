@@ -96,7 +96,7 @@ jobs:
       - name: Check for modified config files
         if: >-
           github.event.pull_request.head.repo.fork &&
-          !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+          !contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
@@ -230,7 +230,7 @@ jobs:
       - name: Check for modified config files
         if: >-
           github.event.pull_request.head.repo.fork &&
-          !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+          !contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
