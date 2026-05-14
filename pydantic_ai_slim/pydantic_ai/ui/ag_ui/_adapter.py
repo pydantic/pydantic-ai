@@ -246,6 +246,12 @@ def _payload_dict(raw: Any) -> dict[str, Any]:
 def _resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     """Translate one `ResumeEntry` payload into `ToolApproved` / `ToolDenied`.
 
+    Approval requires an explicit `payload.approved == True` — any other shape
+    (`False`, missing, `null`, non-bool, or a non-dict payload) is treated as a denial.
+    This deny-by-default stance is intentional: this code only runs when a tool was
+    declared `requires_approval=True`, so any ambiguity in the client's response must
+    not silently execute the call.
+
     `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
     fully replacing the originally proposed call arguments before the agent re-executes the tool.
     """
@@ -253,16 +259,16 @@ def _resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
         return ToolDenied(message='Cancelled by user.')
 
     payload = _payload_dict(entry.payload)
-    if payload.get('approved') is False:
-        denial_message = payload.get('reason')
-        if isinstance(denial_message, str) and denial_message:
-            return ToolDenied(message=denial_message)
-        return ToolDenied()
+    if payload.get('approved') is True:
+        edited_args = payload.get('editedArgs')
+        if isinstance(edited_args, dict):
+            return ToolApproved(override_args=cast('dict[str, Any]', edited_args))
+        return ToolApproved()
 
-    edited_args = payload.get('editedArgs')
-    if isinstance(edited_args, dict):
-        return ToolApproved(override_args=cast('dict[str, Any]', edited_args))
-    return ToolApproved()
+    denial_message = payload.get('reason')
+    if isinstance(denial_message, str) and denial_message:
+        return ToolDenied(message=denial_message)
+    return ToolDenied()
 
 
 @dataclass
@@ -369,12 +375,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
 
-        Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`:
+        Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
+        The mapping is **deny-by-default**: approval requires an explicit
+        `payload.approved == True`. Any other shape is treated as a denial so a malformed
+        or hostile client cannot accidentally execute a tool that requires human approval.
 
         - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is False` → `ToolDenied(payload.get('reason', ...))`
         - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
         - `payload.approved is True` without edits → `ToolApproved()`
+        - Anything else (`False`, missing, `null`, non-bool, non-dict payload) →
+          `ToolDenied(payload.get('reason'))` if `reason` is a non-empty string, else
+          `ToolDenied()` (which carries the default `"The tool call was denied."` message).
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.

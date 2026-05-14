@@ -4926,6 +4926,41 @@ async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
 
 
 @pytestmark_interrupts
+@pytest.mark.parametrize(
+    'payload',
+    [
+        pytest.param({}, id='missing-approved'),
+        pytest.param({'approved': None}, id='approved-null'),
+        pytest.param({'approved': 'true'}, id='approved-string-true'),
+        pytest.param({'approved': 1}, id='approved-truthy-int'),
+        pytest.param('approved', id='payload-is-string'),
+        pytest.param([{'approved': True}], id='payload-is-list'),
+        pytest.param(None, id='payload-null'),
+    ],
+)
+async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
+    """Approval requires an explicit `payload.approved == True`.
+
+    Anything else (missing, null, non-bool, non-dict payload) must deny so a malformed or
+    hostile client cannot bypass the `requires_approval=True` gate by omitting the field.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload=payload)],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
 async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
     """An `interrupt_id` that doesn't carry the adapter's prefix is a protocol error
     we surface as `UserError` rather than silently mapping to a wrong tool call.
