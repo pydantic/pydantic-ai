@@ -11397,6 +11397,201 @@ async def test_enqueue_rejects_model_request_mixed_with_other_items():
             pass
 
 
+async def test_enqueue_asap_with_rich_message_history_tail():
+    """`'asap'` enqueue lands as its own `ModelRequest` after a rich-tail `message_history`.
+
+    `all_messages()` keeps the un-merged view (drain's request is a separate
+    `ModelRequest` after the rich tail). On the wire, `_clean_message_history`
+    merges the two adjacent `ModelRequest`s and sorts `ToolReturnPart`/`RetryPromptPart`
+    first — non-tool parts keep arrival order, so the enqueued content lands at the
+    *end* of the merged turn (not interleaved between existing parts).
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='original prompt')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+            model_name='function:model_fn:',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1'),
+                UserPromptPart(content='follow-up question'),
+            ],
+        ),
+    ]
+
+    async with agent.iter(message_history=history) as agent_run:
+        agent_run.enqueue('injected after rich tail')
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    # `all_messages()` keeps the un-merged view.
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()
+                    ),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    # On the wire, `_clean_message_history` merges the rich tail + drained request,
+    # sorting `ToolReturnPart` first; the injected `UserPromptPart` lands at the end.
+    from pydantic_ai._agent_graph import _clean_message_history
+
+    cleaned = _clean_message_history(agent_run.result.all_messages())
+    last_request = next(msg for msg in reversed(cleaned) if isinstance(msg, ModelRequest))
+    kinds_and_contents = [
+        (type(p).__name__, getattr(p, 'content', None)) for p in last_request.parts
+    ]
+    assert kinds_and_contents == [
+        ('ToolReturnPart', 'ok'),
+        ('UserPromptPart', 'follow-up question'),
+        ('UserPromptPart', 'injected after rich tail'),
+    ]
+
+
+async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
+    """`'asap'` arriving during the final step (after its `before_model_request` drain) still gets delivered.
+
+    Simulates the background-tools pattern: a long-running task completes *during* what
+    would have been the model's final response. The enqueue happens after the step's
+    `before_model_request` drain has already fired, so the message can only be picked up
+    by the end-of-run drain (matching pi-mono's drain-on-end). Without this fallback the
+    message would be lost. `'asap'` semantically means "deliver at the earliest opportunity"
+    — including redirecting if the agent would otherwise terminate before another call.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final after late asap')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class BackgroundTaskCap(AbstractCapability[Any]):
+        """Simulates a background task that completes mid-model-response on the first call only."""
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired:
+                ctx.enqueue('background task result', priority='asap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTaskCap()])
+
+    result = await agent.run('Hello')
+    assert result.output == 'final after late asap'
+    assert call_count == 2
+    # The 'asap' message landed in its own ModelRequest before the final response,
+    # not lost despite the agent producing a no-tool-call response.
+    assert any(
+        isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content == 'background task result' for p in msg.parts)
+        for msg in result.all_messages()
+    )
+
+
+async def test_enqueue_when_idle_drains_after_leftover_asap():
+    """If both `'asap'` and `'when_idle'` are queued at end-of-run, `'asap'` drains first."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Only fire enqueues once.
+        already_enqueued = any(
+            isinstance(p, UserPromptPart) and p.content in ('A', 'B')
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for p in msg.parts
+        )
+        # If we've already seen our injected messages, just terminate.
+        if already_enqueued:
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('B', priority='when_idle')
+        ctx.enqueue('A', priority='asap')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Both A and B should appear in history. `'asap'` (A) drains in `before_model_request`
+    # before the second call. `'when_idle'` (B) drains at end-of-run when the second
+    # response has no tool calls.
+    requests_with_injected = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('A', 'B') for p in msg.parts)
+    ]
+    contents = [
+        [p.content for p in r.parts if isinstance(p, UserPromptPart) and p.content in ('A', 'B')]
+        for r in requests_with_injected
+    ]
+    assert contents == [['A'], ['B']], f'expected A before B in separate requests, got {contents}'
+
+
 # --- Output hook tests ---
 
 
