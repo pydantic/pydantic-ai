@@ -4304,7 +4304,7 @@ def test_tool_definition_prefer_native_attribute_deprecated():
         PydanticAIDeprecationWarning,
         match=r'`ToolDefinition\.prefer_native` is deprecated, use `ToolDefinition\.unless_native` instead\.',
     ):
-        result = td.prefer_native  # pyright: ignore[reportAttributeAccessIssue]
+        result = td.prefer_native
     assert result == 'web_search'
 
 
