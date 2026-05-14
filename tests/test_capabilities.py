@@ -7,7 +7,7 @@ import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11120,7 +11120,19 @@ async def test_pending_messages_accessible_on_run_context():
 
 async def test_enqueue_rejects_empty_parts():
     """`ctx.enqueue()` and `agent_run.enqueue()` reject zero-part calls."""
-    agent = Agent(FunctionModel(simple_model_function))
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
@@ -11162,11 +11174,12 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
     @agent.system_prompt
     def maybe_enqueue(ctx: RunContext[None]) -> str:
         nonlocal enqueued
-        # Only enqueue once so we don't loop. ReinjectSystemPrompt re-runs us
-        # for every model request; if we kept enqueueing follow-ups we'd never end.
-        if not enqueued:
-            ctx.enqueue('from system prompt callback', priority='when_idle')
-            enqueued = True
+        # ReinjectSystemPrompt only re-runs the callback when there's no existing
+        # SystemPromptPart in history; the first call adds 'extra prompt', so the
+        # second call's `before_model_request` finds it and skips the callback.
+        # That means we enqueue exactly once without needing an explicit guard.
+        ctx.enqueue('from system prompt callback', priority='when_idle')
+        enqueued = True
         return 'extra prompt'
 
     # Provide a message_history without an existing SystemPromptPart so
@@ -11255,7 +11268,12 @@ async def test_enqueue_accepts_multimodal_user_content():
 
 
 async def test_enqueue_accepts_model_request_passthrough():
-    """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`."""
+    """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
+
+    Two passthroughs cover both branches of the fill-in-if-unset stamping logic:
+    one with `timestamp`/`run_id` unset (drain stamps them); one with both set
+    (drain leaves them alone).
+    """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -11269,28 +11287,68 @@ async def test_enqueue_accepts_model_request_passthrough():
         )
 
     agent = Agent(FunctionModel(model_fn))
-    custom = ModelRequest(
+    unstamped = ModelRequest(
         parts=[UserPromptPart(content='wire-level payload')],
         instructions='do this carefully',
         metadata={'origin': 'webhook-42'},
     )
+    preset_timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    prestamped = ModelRequest(
+        parts=[UserPromptPart(content='already stamped')],
+        instructions='preserve me',
+        timestamp=preset_timestamp,
+        run_id='caller-run-id',
+    )
 
     @agent.tool
     def inject_msg(ctx: RunContext[None]) -> str:
-        ctx.enqueue(custom)
+        ctx.enqueue(unstamped)
+        ctx.enqueue(prestamped)
         return 'ok'
 
     result = await agent.run('Hello')
-    injected = [
+
+    injected_unstamped = next(
         msg
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest) and msg.instructions == 'do this carefully'
-    ]
-    assert len(injected) == 1
-    assert injected[0].metadata == {'origin': 'webhook-42'}
+    )
+    assert injected_unstamped.metadata == {'origin': 'webhook-42'}
     # Drain should have stamped timestamp/run_id since the user didn't set them.
-    assert injected[0].timestamp is not None
-    assert injected[0].run_id is not None
+    assert injected_unstamped.timestamp is not None
+    assert injected_unstamped.run_id is not None
+
+    injected_prestamped = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
+    )
+    # Producer-supplied timestamp/run_id are preserved (drain doesn't overwrite).
+    assert injected_prestamped.timestamp == preset_timestamp
+    assert injected_prestamped.run_id == 'caller-run-id'
+
+
+def test_pending_message_drain_capability_is_not_spec_constructible():
+    """`PendingMessageDrainCapability` is auto-injected only; can't be in an `AgentSpec`."""
+    from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
+
+    assert PendingMessageDrainCapability.get_serialization_name() is None
+
+
+def test_pending_message_rejects_empty_payload():
+    """Directly constructing a `PendingMessage` with an empty payload is rejected.
+
+    `build_enqueue_payload` already guards the public `enqueue()` entry points,
+    but `PendingMessage` is a public type — guard against producers constructing
+    it directly with a bad payload (e.g. via deserialization or stub builders).
+    """
+    from pydantic_ai.messages import PendingMessage
+
+    with pytest.raises(ValueError, match='PendingMessage requires a request with at least one part'):
+        PendingMessage(payload=ModelRequest(parts=[]))
+
+    with pytest.raises(ValueError, match='PendingMessage requires at least one part'):
+        PendingMessage(payload=())
 
 
 async def test_enqueue_parts_style_calls_merge_into_one_request():
@@ -11382,7 +11440,19 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
 
 async def test_enqueue_rejects_model_request_mixed_with_other_items():
     """Mixing a `ModelRequest` with strings/`Sequence[UserContent]` in one `enqueue` call is rejected."""
-    agent = Agent(FunctionModel(simple_model_function))
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
