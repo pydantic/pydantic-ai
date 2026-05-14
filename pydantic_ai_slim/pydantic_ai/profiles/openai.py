@@ -8,8 +8,23 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_OPENAI_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+)
+"""Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
+`OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
+profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
@@ -205,6 +220,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on
+    # GPT-5.4 and later mainline models.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -222,6 +242,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
         openai_supports_phase=supports_phase,
+        supported_native_tools=supported_native_tools,
     )
 
 

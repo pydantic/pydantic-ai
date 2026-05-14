@@ -27,7 +27,7 @@ except ImportError:  # pragma: lax no cover
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
-    Runs the MCP server locally by default — keeps credentials, hooks, and tracing under
+    Runs the MCP server locally — keeps credentials, hooks, and tracing under
     your control. Pass `native=True` to also advertise the model provider's native MCP
     support (with local as a fallback for unsupported models), or `native=True, local=False`
     for strict native-only.
@@ -128,7 +128,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return MCPServerStreamableHTTP(self.url, headers=local_headers or None, include_instructions=True)
         except ImportError as e:
             raise UserError(
-                'MCP runs the server locally by default in v2, but the MCP extra is not installed.\n\n'
+                'MCP runs the server locally by default, but the MCP extra is not installed.\n\n'
                 'Either install the MCP extras:\n'
                 '    pip install "pydantic-ai-slim[mcp]"\n'
                 "or use only the model's native MCP support (no local needed):\n"

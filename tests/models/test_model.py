@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
@@ -240,6 +241,7 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)
@@ -257,7 +259,7 @@ def test_infer_model_with_provider():
     from pydantic_ai.providers import openai
 
     provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
-    m = infer_model('openai:gpt-5', lambda x: provider_class)
+    m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
     assert m._provider is provider_class  # type: ignore

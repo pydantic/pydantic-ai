@@ -20,7 +20,7 @@ WebSearchLocalStrategy = Literal['duckduckgo']
 class WebSearch(NativeOrLocalTool[AgentDepsT]):
     """Web search capability.
 
-    Uses the model's native web search by default and raises `UserError` on models that
+    Uses the model's native web search and raises `UserError` on models that
     don't support it natively. Pass `local='duckduckgo'` (or `local=True`) to opt into a
     local fallback, or any callable / Tool / AbstractToolset.
     """

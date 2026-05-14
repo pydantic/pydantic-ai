@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -165,7 +166,9 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -204,7 +207,9 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -251,7 +256,9 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -298,7 +305,9 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -343,7 +352,9 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -394,7 +405,9 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -433,7 +446,9 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -463,7 +478,9 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -511,7 +528,9 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -552,7 +571,9 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -602,7 +623,9 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -994,7 +1017,9 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -1071,7 +1096,9 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_native': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1091,7 +1118,9 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_native': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1184,7 +1213,9 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_native': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1203,7 +1234,9 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_native': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
             },
@@ -1245,7 +1278,9 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_native': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
         }
@@ -1262,7 +1297,7 @@ def test_dynamic_tools_agent_wide():
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1290,7 +1325,7 @@ def test_sync_prepare_tools_agent_wide():
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1418,7 +1453,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), tool_retries=3, output_retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), tool_retries=3, output_retries=3, capabilities=[PrepareTools(prepare_tool_defs)])
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries

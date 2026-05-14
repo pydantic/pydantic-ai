@@ -277,7 +277,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             if span is None:
                 if self.auto_instrument:
                     entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
-            else:
+            else:  # pragma: lax no cover
                 entered_span = stack.enter_context(span)
             traceparent = None if entered_span is None else get_traceparent(entered_span)
             async with GraphRun[StateT, DepsT, OutputT](
@@ -817,7 +817,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
             except BrokenResourceError:
-                pass  # pragma: no cover # This can happen in difficult-to-reproduce circumstances when cancelling an asyncio task
+                # Can happen when an asyncio task is cancelled mid-send.
+                pass
 
     async def _run_task(
         self,
