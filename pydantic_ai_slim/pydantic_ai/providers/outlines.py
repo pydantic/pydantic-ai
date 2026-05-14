@@ -2,10 +2,19 @@ from __future__ import annotations as _annotations
 
 from typing import Any
 
+from typing_extensions import deprecated
+
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 
 
+@deprecated(
+    '`OutlinesProvider` is deprecated and will be removed in v2. '
+    'If you would like to keep using Outlines with Pydantic AI, please file an issue at '
+    'https://github.com/dottxt-ai/outlines/issues.',
+    category=PydanticAIDeprecationWarning,
+)
 class OutlinesProvider(Provider[Any]):
     """Provider for Outlines API."""
 

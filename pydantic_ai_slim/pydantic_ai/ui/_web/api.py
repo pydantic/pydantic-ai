@@ -11,8 +11,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -79,10 +80,11 @@ def validate_request_options(
 def create_api_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    **_deprecated_kwargs: object,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -92,7 +94,7 @@ def create_api_app(
             - A sequence of model names/instances (e.g., `['openai:gpt-5', Model(...)]`)
             - A dict mapping display labels to model names/instances
             If not provided, the UI will have no model options.
-        builtin_tools: Optional list of additional builtin tools to make available in the UI.
+        native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
@@ -101,13 +103,18 @@ def create_api_app(
     Returns:
         A Starlette application with the API endpoints.
     """
+    from ... import _utils
+
+    native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+    _utils.validate_empty_kwargs(_deprecated_kwargs)
+
     # Build model ID → original reference mapping and ModelInfo list for frontend
     model_id_to_ref: dict[str, Model | str] = {}
     model_infos: list[ModelInfo] = []
 
-    # Filter out builtin_tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._cap_builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
-    ui_builtin_tools = [t for t in (builtin_tools or []) if t.unique_id not in agent_tool_ids]
+    # Filter out tools that are already configured on the agent (they're always included)
+    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
+    ui_native_tools = [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
 
     # Build combined models: agent's model first (if exists), then provided models
     all_models: list[tuple[str | None, Model | str]] = []
@@ -125,14 +132,14 @@ def create_api_app(
             continue
         seen_model_ids.add(model_id)
         display_name = label or model.label
-        model_supported_tools = model.profile.supported_builtin_tools
-        supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
+        model_supported_tools = model.profile.supported_native_tools
+        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref
         model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
     model_ids = set(model_id_to_ref.keys())
-    allowed_tool_ids = {tool.unique_id for tool in ui_builtin_tools}
+    allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
     async def options_chat(request: Request) -> Response:
         """Handle CORS preflight requests."""
@@ -142,7 +149,7 @@ def create_api_app(
         """Endpoint to configure the frontend with available models and tools."""
         config = ConfigureFrontend(
             models=model_infos,
-            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_builtin_tools],
+            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_native_tools],
         )
         return JSONResponse(config.model_dump(by_alias=True))
 
@@ -159,12 +166,13 @@ def create_api_app(
             return JSONResponse({'error': error}, status_code=400)
 
         model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
-        request_builtin_tools = [tool for tool in ui_builtin_tools if tool.unique_id in extra_data.builtin_tools]
+        request_native_tools = [tool for tool in ui_native_tools if tool.unique_id in extra_data.builtin_tools]
+        request_capabilities: list[NativeTool[AgentDepsT]] = [NativeTool(tool) for tool in request_native_tools]
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
             model=model_ref,
-            builtin_tools=request_builtin_tools,
+            capabilities=request_capabilities,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

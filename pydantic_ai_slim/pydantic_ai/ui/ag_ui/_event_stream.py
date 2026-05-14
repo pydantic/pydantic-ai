@@ -13,9 +13,9 @@ from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -187,10 +187,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for event in _impl(self, part):
             yield event
 
-    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
 
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = part.tool_call_id
         builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
@@ -199,7 +199,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         return self._handle_tool_call_start(part, tool_call_id)
 
     async def _handle_tool_call_start(
-        self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
+        self, part: ToolCallPart | NativeToolCallPart, tool_call_id: str | None = None
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
@@ -223,11 +223,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         builtin_id = self._builtin_tool_call_ids[part.tool_call_id]
         yield ToolCallEndEvent(tool_call_id=builtin_id)
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
         # Use a one-off message ID instead of `self.new_message_id()` to avoid
         # mutating `self.message_id`, which is used as `parent_message_id` for
@@ -278,7 +278,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                         yield item
 
 
-def _tool_return_content(part: BuiltinToolReturnPart | ToolReturnPart) -> str:
+def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
     """Return tool output string with file descriptions if present."""
     output = part.model_response_str()
     if file_descriptions := [describe_file(f) for f in part.files]:

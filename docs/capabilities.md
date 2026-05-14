@@ -4,14 +4,14 @@ A capability is a reusable, composable unit of agent behavior. Instead of thread
 
 Capabilities can provide any combination of:
 
-* **Tools** — via [toolsets](toolsets.md) or [builtin tools](builtin-tools.md)
+* **Tools** — via [toolsets](toolsets.md) or [native tools](native-tools.md)
 * **Lifecycle hooks** — intercept and modify model requests, tool calls, and the overall run
 * **Instructions** — static or dynamic [instruction](agent.md#instructions) additions
 * **Model settings** — static or per-step [model settings](agent.md#model-run-settings)
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-## Built-in capabilities
+## Native capabilities
 
 Pydantic AI ships with several capabilities that cover common needs:
 
@@ -19,14 +19,16 @@ Pydantic AI ships with several capabilities that cover common needs:
 |---|---|:---:|
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
-| [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
+| [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire tracing — see [Debugging and Monitoring](logfire.md) | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native when supported, subagent fallback via `fallback_model` | Yes |
+| [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — native when supported, direct connection otherwise | Yes |
+| [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] | Discovery of [deferred tools](tools-advanced.md#tool-search) — native when supported, local `search_tools` function tool otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
 | [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
-| [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
+| [`NativeTool`][pydantic_ai.capabilities.NativeTool] | Registers a [native tool](native-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
@@ -37,7 +39,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
-```python {title="builtin_capabilities.py"}
+```python {title="native_capabilities.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking, WebSearch
 
@@ -46,7 +48,7 @@ agent = Agent(
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
-        WebSearch(),
+        WebSearch(local='duckduckgo'),
     ],
 )
 ```
@@ -118,9 +120,9 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [builtin tool](builtin-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [native tool](native-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
 
-Each accepts `builtin` and `local` keyword arguments to control which side is used:
+Each accepts `native` and `local` keyword arguments to control which side is used:
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
@@ -129,55 +131,70 @@ from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        # Auto-detects DuckDuckGo as local fallback
-        WebSearch(),
-        # Auto-detects markdownify-based fetch as local fallback
-        WebFetch(),
-        # Builtin when the model supports it; falls back to a subagent
-        # running the specified LLM with image generation support
+        # Native when supported; falls back to DuckDuckGo locally
+        WebSearch(local='duckduckgo'),
+        # Native when supported; falls back to the markdownify-based local tool
+        WebFetch(local=True),
+        # Native when supported; falls back to a subagent running an
+        # image-generation-capable model
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
-        # Auto-detects transport from URL
-        MCP(url='https://mcp.example.com/api'),
+        # Native when supported; falls back to a local MCP transport derived from the URL
+        MCP(url='https://mcp.example.com/api', native=True),
     ],
 )
 ```
 
-To force builtin-only (errors on unsupported models instead of falling back to local):
+To force native-only (errors on unsupported models instead of falling back to local):
 
-```python {title="builtin_only.py" test="skip" lint="skip"}
+```python {title="native_only.py" test="skip" lint="skip"}
 MCP(url='https://mcp.example.com/api', local=False)
 ```
 
-To force local-only (never use the builtin, even when the model supports it):
+To force local-only (never use the native tool, even when the model supports it):
 
 ```python {title="local_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', builtin=False)
+MCP(url='https://mcp.example.com/api', native=False)
 ```
 
-Some constraint fields require the builtin because the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the builtin, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
+Some constraint fields require the native tool because the local fallback can't enforce them. When these are set and the model doesn't support the native tool, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the native tool, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
 
 ```python {title="constraints.py" test="skip" lint="skip"}
-# Only search example.com — requires builtin support
+# Only search example.com — requires native support
 WebSearch(allowed_domains=['example.com'])
 
-# Only fetch example.com — enforced locally when builtin is unavailable
+# Only fetch example.com — enforced locally when native is unavailable
 WebFetch(allowed_domains=['example.com'])
 ```
 
-All of these capabilities are subclasses of [`BuiltinOrLocalTool`][pydantic_ai.capabilities.BuiltinOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] with a local fallback:
+All of these capabilities are subclasses of [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] with a local fallback:
 
-```python {title="custom_builtin_or_local.py" test="skip" lint="skip"}
-from pydantic_ai.builtin_tools import CodeExecutionTool
-from pydantic_ai.capabilities import BuiltinOrLocalTool
+```python {title="custom_native_or_local.py" test="skip" lint="skip"}
+from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.capabilities import NativeOrLocalTool
 
-cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
+cap = NativeOrLocalTool(native=CodeExecutionTool(), local=my_local_executor)
 ```
+
+### ToolSearch
+
+The [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability handles discovery of tools marked with `defer_loading=True`, so agents with large toolsets only pay tokens for the tools the model needs. Like the [provider-adaptive tools](#provider-adaptive-tools) above, it picks the best path for the active model — native server-executed search on Anthropic and OpenAI Responses, a local `search_tools` function tool elsewhere — and is auto-injected into every agent with zero overhead when no deferred tools exist.
+
+Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to pick a specific [`strategy`][pydantic_ai.capabilities.ToolSearch.strategy] (`'keywords'`, `'bm25'`, `'regex'`, or a custom callable) or tune the local fallback:
+
+```python {title="tool_search_capability.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='keywords')])
+```
+
+See [Tool Search](tools-advanced.md#tool-search) for when to reach for it, the full strategy table, and provider support details.
 
 ### PrepareTools and PrepareOutputTools
 
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput]. The Agent constructor's [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] arguments are sugar that injects these capabilities automatically.
 
-```python {title="prepare_tools_builtin.py"}
+```python {title="prepare_tools_native.py"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
 
@@ -218,8 +235,8 @@ from pydantic_ai.capabilities import MCP, PrefixTools
 agent = Agent(
     'openai:gpt-5.2',
     capabilities=[
-        PrefixTools(MCP(url='https://api1.example.com'), prefix='api1'),
-        PrefixTools(MCP(url='https://api2.example.com'), prefix='api2'),
+        PrefixTools(MCP(url='https://api1.example.com', native=True), prefix='api1'),
+        PrefixTools(MCP(url='https://api2.example.com', native=True), prefix='api2'),
     ],
 )
 ```
@@ -227,7 +244,7 @@ agent = Agent(
 Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a convenience method [`prefix_tools`][pydantic_ai.capabilities.AbstractCapability.prefix_tools] that returns a [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] wrapper:
 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
+MCP(url='https://mcp.example.com/api', native=True).prefix_tools('mcp')
 ```
 
 ### IncludeToolReturnSchemas
@@ -417,7 +434,7 @@ print(result.output)
 #> The answer is 5.0
 ```
 
-For [builtin tools](builtin-tools.md), override [`get_builtin_tools`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] to return a sequence of [`AgentBuiltinTool`][pydantic_ai.tools.AgentBuiltinTool] instances (which includes both [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] objects and callables that receive [`RunContext`][pydantic_ai.tools.RunContext]).
+For [native tools](native-tools.md), override [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] to return a sequence of [`AgentNativeTool`][pydantic_ai.tools.AgentNativeTool] instances (which includes both [`AbstractNativeTool`][pydantic_ai.native_tools.AbstractNativeTool] objects and callables that receive [`RunContext`][pydantic_ai.tools.RunContext]).
 
 #### Toolset wrapping
 
@@ -541,7 +558,7 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 | Method | Return type | Purpose |
 |---|---|---|
 | [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AgentToolset`][pydantic_ai.toolsets.AgentToolset] ` \| None` | A [toolset](toolsets.md) to register (or a callable for [dynamic toolsets](toolsets.md#dynamically-building-a-toolset)) |
-| [`get_builtin_tools()`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] | `Sequence[`[`AgentBuiltinTool`][pydantic_ai.tools.AgentBuiltinTool]`]` | [Builtin tools](builtin-tools.md) to register (including callables) |
+| [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] | `Sequence[`[`AgentNativeTool`][pydantic_ai.tools.AgentNativeTool]`]` | [Native tools](native-tools.md) to register (including callables) |
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | [Instructions](agent.md#instructions) (static strings, [template strings](agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | [Model settings](agent.md#model-run-settings) dict, or a callable for per-step settings |
@@ -770,7 +787,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass — these are also what the agent-level [`prepare_tools=`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools=`][pydantic_ai.tools.ToolsPrepareFunc] kwargs inject, so kwarg and capability share one execution path.
+For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass.
 
 #### Event stream hook
 
@@ -955,7 +972,7 @@ print(counter.count)
 
 Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](./dependencies.md).
 
-To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or [`agent.run()`][pydantic_ai.Agent.run]. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, builtin tools, and hooks all flow through normally.
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or [`agent.run()`][pydantic_ai.Agent.run]. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, native tools, and hooks all flow through normally.
 
 ```python {title="dynamic_capability.py"}
 from dataclasses import dataclass
@@ -1001,7 +1018,7 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
 !!! note "Durable execution (Temporal, DBOS, Prefect)"
 
-    A dynamic capability whose resolved capability contributes only instructions, model settings, builtin tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
+    A dynamic capability whose resolved capability contributes only instructions, model settings, native tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
 
     However, dynamic capabilities that contribute their own toolset via `get_toolset()` are not yet supported with durable execution. The toolset is only known at run time, so it bypasses the durable wrapper's construction-time toolset registration and would attempt I/O directly inside the workflow. As a workaround, register the toolsets statically via `Agent(toolsets=[...])` (where they get wrapped properly) and have the dynamic capability reference them indirectly — e.g. via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] to scope which tools are visible per-run, rather than constructing the toolset inside the factory. Full support is tracked in [#5253](https://github.com/pydantic/pydantic-ai/issues/5253).
 
@@ -1009,7 +1026,7 @@ To return more than one capability from a single factory, wrap them in a [`Combi
 
 When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django and Starlette:
 
-* **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, builtin tools collect.
+* **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, native tools collect.
 * **`before_*`** hooks fire in capability order (outermost to innermost): `cap1 → cap2 → cap3`.
 * **`after_*`** hooks fire in reverse order (innermost to outermost): `cap3 → cap2 → cap1`.
 * **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the **outermost** layer.
