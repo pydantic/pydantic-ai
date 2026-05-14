@@ -32,6 +32,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     NativeTool,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
@@ -5661,38 +5662,6 @@ class TestPrepareOutputToolsCapability:
         assert PrepareOutputTools.get_serialization_name() is None
 
 
-class TestAgentPrepareArgInjection:
-    """The Agent `prepare_tools` / `prepare_output_tools` constructor args are
-    sugar for `PrepareTools` / `PrepareOutputTools` capabilities — verify they
-    show up in `root_capability` and apply the same way."""
-
-    def test_prepare_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', prepare_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-    def test_prepare_output_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareOutputTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', output_type=str, prepare_output_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareOutputTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-
 class TestOverrideWithSpec:
     async def test_override_with_spec_instructions_and_model(self):
         """Spec instructions and model replace the agent's when used via override."""
@@ -6316,7 +6285,7 @@ class TestGetWrapperToolsetHook:
             descs = [t.description for t in info.function_tools]
             return make_text_response(f'tools: {tool_names}, descs: {descs}')
 
-        agent = Agent(FunctionModel(model_fn), prepare_tools=agent_prepare, capabilities=[PrefixCap()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(agent_prepare), PrefixCap()])
 
         @agent.tool_plain
         def my_tool() -> str:

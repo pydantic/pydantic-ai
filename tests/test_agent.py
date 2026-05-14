@@ -61,7 +61,7 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -7592,7 +7592,7 @@ def test_override_toolsets():
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
 
-    agent = Agent('test', toolsets=[foo_toolset], prepare_tools=prepare_tools)
+    agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.tool_plain
     def baz() -> str:
@@ -7642,7 +7642,7 @@ def test_override_tools():
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
 
-    agent = Agent('test', tools=[foo], prepare_tools=prepare_tools)
+    agent = Agent('test', tools=[foo], capabilities=[PrepareTools(prepare_tools)])
 
     result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['foo'])
@@ -7688,7 +7688,7 @@ def test_toolset_factory():
         else:
             return ModelResponse(parts=[TextPart('Done')])
 
-    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], prepare_tools=prepare_tools)
+    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.toolset
     def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
@@ -7828,7 +7828,7 @@ def test_prepare_output_tools():
         deps_type=AgentDeps,
         tools=[present_plan],
         output_type=[ToolOutput(run_sql, name='run_sql')],
-        prepare_output_tools=only_if_plan_presented,
+        capabilities=[PrepareOutputTools(only_if_plan_presented)],
     )
 
     result = agent.run_sync('Hello', deps=AgentDeps())
@@ -7932,7 +7932,7 @@ def test_prepare_output_tools_receives_output_max_retries():
         output_type=Foo,
         output_retries=target_retries,
         tool_retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
-        prepare_output_tools=prep,
+        capabilities=[PrepareOutputTools(prep)],
     )
 
     @agent.output_validator
@@ -7973,7 +7973,7 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
         FunctionModel(return_model),
         output_type=Foo,
         output_retries=5,
-        prepare_output_tools=prep,
+        capabilities=[PrepareOutputTools(prep)],
     )
 
     result = agent.run_sync('Hello', output_retries=2)
@@ -8344,6 +8344,9 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
+@pytest.mark.filterwarnings(
+    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_wrapper_agent():
     async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
         pass  # pragma: no cover
@@ -8355,7 +8358,7 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(
+    agent = Agent(  # pyright: ignore[reportCallIssue]
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
