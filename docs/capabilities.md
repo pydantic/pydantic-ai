@@ -129,9 +129,9 @@ from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        # Native only — raises on models without web search support unless `local=` is set
+        # Native when supported; DuckDuckGo fallback on unsupported models
         WebSearch(local='duckduckgo'),
-        # Native only — raises on models without web fetch support unless `local=` is set
+        # Native when supported; markdownify fallback on unsupported models
         WebFetch(local=True),
         # Native when the model supports it; subagent fallback via `fallback_model`
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
@@ -153,7 +153,7 @@ Strict native-only (no local — does not require the `mcp` extra):
 MCP(url='https://mcp.example.com/api', native=True, local=False)
 ```
 
-For `WebSearch`, the `local=` argument accepts the named strategy `'duckduckgo'` (equivalent to `local=True`), a callable (e.g., a Tavily / Perplexity / Brave wrapper from [`common_tools`](common-tools.md)), a [`Tool`][pydantic_ai.tools.Tool], or an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. `WebFetch` and `MCP` accept `local=True` for the default local strategy. Without `local=`, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] on models that don't support the native tool.
+For `WebSearch`, the `local=` argument accepts the named strategy `'duckduckgo'` (equivalent to `local=True`), a callable (e.g., a Tavily / Perplexity / Brave wrapper from [`common_tools`](common-tools.md)), a [`Tool`][pydantic_ai.tools.Tool], or an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. `WebFetch` and `MCP` accept `local=True` for the default local strategy. For `WebSearch` and `WebFetch`, omitting `local=` means the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] on models that don't support the native tool.
 
 Some constraint fields require the native tool because the local fallback can't enforce them. When these are set and the model doesn't support the native tool, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the native tool, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
 

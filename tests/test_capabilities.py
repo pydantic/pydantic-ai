@@ -4753,7 +4753,7 @@ class TestXSearchCapability:
     def test_xsearch_native_false_raises(self):
         """XSearch(native=False) → UserError (no local fallback for X search)."""
         with pytest.raises(UserError, match='requires an explicit local tool'):
-            XSearch(native=False, allowed_x_handles=['handle1'])
+            XSearch(native=False)
 
     def test_xsearch_native_false_with_local_constraints_raises(self):
         """XSearch(native=False, local=callable, allowed_x_handles=...) → UserError (constraint requires native)."""

@@ -129,7 +129,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         except ImportError as e:
             raise UserError(
                 'MCP runs the server locally by default, but the MCP extra is not installed.\n\n'
-                'Either install the MCP extras:\n'
+                'Either install the MCP extra:\n'
                 '    pip install "pydantic-ai-slim[mcp]"\n'
                 "or use only the model's native MCP support (no local needed):\n"
                 "    MCP(url='…', native=True, local=False)"
