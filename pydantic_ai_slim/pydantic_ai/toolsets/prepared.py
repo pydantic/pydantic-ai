@@ -63,4 +63,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             name: replace(matching_tools[name], tool_def=tool_def)
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
-        return {**passthrough_tools, **prepared}
+        return {
+            name: prepared[name] if name in prepared else passthrough_tools[name]
+            for name in original_tools
+            if name in prepared or name in passthrough_tools
+        }

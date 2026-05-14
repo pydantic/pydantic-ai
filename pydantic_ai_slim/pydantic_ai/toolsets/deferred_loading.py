@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition, ToolSelector, ToolsPrepareFunc, matches_tool_selector
+from ..tools import ToolDefinition, ToolSelector, ToolsPrepareFunc
 from .abstract import AbstractToolset
 from .prepared import PreparedToolset
 
@@ -36,17 +36,9 @@ class DeferredLoadingToolset(PreparedToolset[AgentDepsT]):
             if tools != 'all':
                 raise TypeError("Cannot specify both 'tools' and 'tool_names'.")
             # Convert frozenset/sequence to list for ToolSelector (Sequence[str])
-            self.tools: ToolSelector[AgentDepsT] = list(tool_names)
-        else:
-            self.tools = tools
-
-        selector = self.tools
+            tools = list(tool_names)
 
         async def _mark_deferred(ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [
-                replace(td, defer_loading=True) if await matches_tool_selector(selector, ctx, td) else td
-                for td in tool_defs
-            ]
+            return [replace(td, defer_loading=True) for td in tool_defs]
 
-        self.wrapped = wrapped
-        self.prepare_func = _mark_deferred
+        super().__init__(wrapped=wrapped, prepare_func=_mark_deferred, tools=tools)
