@@ -94,7 +94,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                     params.name,
                     params.tool_args,
                     run_context,
-                    self.tool_for_tool_def(params.tool_def),
+                    self.tool_for_tool_def(params.tool_def, ctx=run_context),
                 )
             )
 
@@ -106,7 +106,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
     @abstractmethod
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -123,17 +125,12 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         _mcp_types: tuple[type, ...] = ()
         try:
             from pydantic_ai.mcp import MCPServer
-
-            _mcp_types += (MCPServer,)
-        except ImportError:
-            pass
-        try:
             from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-            _mcp_types += (FastMCPToolset,)
+            _mcp_types += (MCPServer, FastMCPToolset)
         except ImportError:
             pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
+        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:
             serialized_run_context = self.run_context_type.serialize_run_context(ctx)
             activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
             return await workflow.execute_activity(
@@ -160,7 +157,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             ],
             **activity_config,
         )
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
 
     async def call_tool(
         self,

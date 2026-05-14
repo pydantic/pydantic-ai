@@ -78,7 +78,9 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @abstractmethod
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -101,7 +103,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
@@ -114,17 +116,12 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         _mcp_types: tuple[type, ...] = ()
         try:
             from pydantic_ai.mcp import MCPServer
-
-            _mcp_types += (MCPServer,)
-        except ImportError:
-            pass
-        try:
             from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-            _mcp_types += (FastMCPToolset,)
+            _mcp_types += (MCPServer, FastMCPToolset)
         except ImportError:
             pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
+        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:
             return await self._dbos_wrapped_get_instructions_step(ctx)
         return None
 
