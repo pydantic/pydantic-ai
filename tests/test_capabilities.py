@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     NativeTool,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
@@ -465,36 +466,6 @@ def test_agent_from_spec_tool_timeout():
 def test_agent_from_spec_tool_timeout_override():
     agent = Agent.from_spec({'model': 'test', 'tool_timeout': 30.0}, tool_timeout=5.0)
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field configures `agent.instrument`."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert agent.instrument is True
-
-
-def test_agent_from_spec_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
-    """The `instrument=` kwarg on `from_file` is deprecated; the agent still gets configured."""
-    spec_path = tmp_path / 'spec.yaml'
-    spec_path.write_text('model: test\n')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_init_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True
 
 
 def test_agent_from_spec_metadata():
@@ -1776,11 +1747,6 @@ Supported by:
                     'anyOf': [{'type': 'number'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Tool Timeout',
-                },
-                'instrument': {
-                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Instrument',
                 },
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
@@ -5661,38 +5627,6 @@ class TestPrepareOutputToolsCapability:
         assert PrepareOutputTools.get_serialization_name() is None
 
 
-class TestAgentPrepareArgInjection:
-    """The Agent `prepare_tools` / `prepare_output_tools` constructor args are
-    sugar for `PrepareTools` / `PrepareOutputTools` capabilities — verify they
-    show up in `root_capability` and apply the same way."""
-
-    def test_prepare_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', prepare_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-    def test_prepare_output_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareOutputTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', output_type=str, prepare_output_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareOutputTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-
 class TestOverrideWithSpec:
     async def test_override_with_spec_instructions_and_model(self):
         """Spec instructions and model replace the agent's when used via override."""
@@ -6316,7 +6250,7 @@ class TestGetWrapperToolsetHook:
             descs = [t.description for t in info.function_tools]
             return make_text_response(f'tools: {tool_names}, descs: {descs}')
 
-        agent = Agent(FunctionModel(model_fn), prepare_tools=agent_prepare, capabilities=[PrefixCap()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(agent_prepare), PrefixCap()])
 
         @agent.tool_plain
         def my_tool() -> str:
