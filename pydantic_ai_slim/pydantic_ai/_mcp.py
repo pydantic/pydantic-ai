@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal, Union
 
-from typing_extensions import assert_never
+import logfire
+from pydantic import TypeAdapter
+from pydantic.alias_generators import to_snake
+from typing_extensions import TypedDict, assert_never
 
 from . import exceptions, messages
+from ._output import types_from_output_spec
+from ._run_context import AgentDepsT
+from .output import OutputDataT
 
 try:
     from mcp import types as mcp_types
+    from mcp.server.lowlevel.server import Server, StructuredContent
+    from mcp.types import Tool
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    from .agent.abstract import AbstractAgent
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
@@ -135,3 +146,61 @@ def map_from_sampling_content(
     else:
         # TODO: Add support for Image/Audio using FilePart.
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
+
+
+class _AgentToolArgs(TypedDict):
+    prompt: str
+
+
+def agent_to_mcp(
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
+    *,
+    server_name: str | None = None,
+    tool_name: str | None = None,
+    tool_description: str | None = None,
+    deps: AgentDepsT = None,
+) -> Server:
+    default_name = to_snake((agent.name or 'PydanticAI Agent').replace(' ', '_'))
+    server_name = server_name or default_name
+    tool_name = tool_name or default_name
+
+    return_types = types_from_output_spec(agent.output_type)
+    if len(return_types) == 1:
+        output_adapter: TypeAdapter[Any] = TypeAdapter(return_types[0])
+    else:
+        output_adapter = TypeAdapter(Union[tuple(return_types)])  # noqa: UP007
+
+    app: Server[Any, Any] = Server(name=server_name)
+
+    async def list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name=tool_name,
+                description=tool_description,
+                inputSchema={
+                    'type': 'object',
+                    'properties': {'prompt': {'type': 'string'}},
+                    'required': ['prompt'],
+                },
+                outputSchema={
+                    'type': 'object',
+                    'properties': {'result': agent.output_json_schema()},
+                    'required': ['result'],
+                },
+            )
+        ]
+
+    async def call_tool(name: str, args: _AgentToolArgs) -> StructuredContent:
+        if name != tool_name:
+            raise ValueError(f'Unknown tool: {name!r}')
+
+        logfire.info('Calling tool {name}', name=name, args=args)
+
+        result = await agent.run(user_prompt=args['prompt'], deps=deps)
+
+        return {'result': output_adapter.dump_python(result.output, mode='json')}
+
+    app.list_tools()(list_tools)
+    app.call_tool()(call_tool)
+
+    return app
