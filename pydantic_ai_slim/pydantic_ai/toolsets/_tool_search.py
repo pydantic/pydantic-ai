@@ -236,13 +236,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            cap = ctx.capabilities.get(tool.tool_def.capability_id) if tool.tool_def.capability_id is not None else None
-            deferred_cap_not_loaded = (
-                cap is not None
-                and cap.defer_loading is True
-                and tool.tool_def.capability_id not in ctx.loaded_capability_ids
-            )
-            if tool.tool_def.defer_loading or deferred_cap_not_loaded:
+            if tool.tool_def.defer_loading:
                 deferred[name] = tool
             else:
                 visible[name] = tool

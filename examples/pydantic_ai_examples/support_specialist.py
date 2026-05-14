@@ -17,6 +17,7 @@ import logfire
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import Capability
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
@@ -86,6 +87,7 @@ returns_capability = Capability[Store](
 
 support_agent = Agent(
     model='anthropic:claude-sonnet-4-6',
+    model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders_capability, returns_capability],
@@ -101,6 +103,8 @@ async def main() -> None:
         print(f'\n> {prompt}')
         result = await support_agent.run(prompt, deps=store)
         print(result.output)
+
+        print(result.usage())
 
 
 if __name__ == '__main__':

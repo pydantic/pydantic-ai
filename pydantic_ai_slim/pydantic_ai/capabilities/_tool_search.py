@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from pydantic_ai import ModelRequestContext
+if TYPE_CHECKING:
+    from pydantic_ai import ModelRequestContext
 
 from .._run_context import AgentDepsT, RunContext
 from ..native_tools._tool_search import (
