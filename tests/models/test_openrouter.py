@@ -1242,8 +1242,11 @@ async def test_openrouter_thinking_false_profile_gated_model(
 async def test_openrouter_thinking_true_emits_effort_medium(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
-    """`thinking=True` is forwarded as `reasoning.effort='medium'`, mirroring the
-    issue reporter's positive-direction matrix for `anthropic/claude-sonnet-4.5`."""
+    """`thinking=True` is forwarded as `reasoning={'effort': 'medium', 'enabled': True}`.
+
+    The explicit `enabled: True` matters for reasoning-optional OpenRouter routes
+    (e.g. parts of `google/gemma-*`) that silently leave reasoning disabled when
+    only `effort` is set. No-op for reasoning-by-default models."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
     settings = OpenRouterModelSettings(thinking=True)
@@ -1253,7 +1256,7 @@ async def test_openrouter_thinking_true_emits_effort_medium(
     )
 
     sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert sent['reasoning'] == {'effort': 'medium'}
+    assert sent['reasoning'] == {'effort': 'medium', 'enabled': True}
 
 
 async def test_openrouter_thinking_false_supports_thinking_model(

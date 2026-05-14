@@ -574,6 +574,11 @@ def _openrouter_settings_to_openai_settings(
                 'xhigh': 'high',
             }
             openrouter_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
+            # `enabled` is documented as inferred from `effort`, but some reasoning-optional
+            # routes (e.g. parts of the `google/gemma-*` family) leave reasoning disabled
+            # unless `enabled` is explicit. Safe across the board: a no-op for
+            # reasoning-by-default models, load-bearing for reasoning-optional ones.
+            openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
     if reasoning := model_settings.pop('openrouter_reasoning', None):

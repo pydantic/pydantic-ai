@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '169'
+      - '186'
       content-type:
       - application/json
       host:
@@ -21,6 +21,7 @@ interactions:
       model: anthropic/claude-sonnet-4.5
       reasoning:
         effort: medium
+        enabled: true
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -32,7 +33,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1886'
+      - '1846'
       content-type:
       - application/json
       permissions-policy:
@@ -49,34 +50,34 @@ interactions:
         logprobs: null
         message:
           content: ok
-          reasoning: The user is asking me to reply with the single word "ok". This is a simple, straightforward request that
-            doesn't involve anything harmful or problematic. I'll simply respond with "ok" as requested.
+          reasoning: The user is asking me to reply with just the single word "ok". This is a straightforward request that
+            doesn't involve anything harmful or problematic. I should simply respond with "ok".
           reasoning_details:
           - format: anthropic-claude-v1
             index: 0
-            signature: EvACCkgIDRABGAIqQONP1w6HXSIKvWxICtnagulhnn46Hx1YNJVW426aj1H9p2uZqcZTlhKFEUuCh1KE4cDpzHolzfY8Fp1KyJ9NOLYSDDt3MZpYltx6RAp2HxoMF5l9vlb4HseYMJHQIjAv3/iXnHOEhplcIn4gVNwCClbixuirUnB3S8MGg5pMdt3fJQYHzJUMySPQp+4iYcsq1QHtufV42WVQvZSV7CiqQ4kieofSXkbAiCBn6NFCpqXnaTHbhrRfNzErMxQR40XCRYSGrTNcil8capUYD8ENQPeuJxKK3Zy1PY34Sy9w4KneKopNVKkh30XAS4wHmfQDU+5z/B9BAipw/jXxVYw3bcuvx0rpVh2+oRrsVBdLnlcfbrPCDv+YU3CoEqcOasc7ToyMYmwyfuANPtQldJqRnzKCa5qZzgyzJpM5+EDjv6cKzWCTsomY8LfJbwKsVfzwfMCbz5Njzun3bE5aIJVlNVyWfWjCQJsYAQ==
-            text: The user is asking me to reply with the single word "ok". This is a simple, straightforward request that
-              doesn't involve anything harmful or problematic. I'll simply respond with "ok" as requested.
+            signature: EuQCCkgIDRABGAIqQDu3Tjfr2erqiMmY2YgxVZw9Keqzwrkq9b5qSwJ5okPTz8oyvGH4HrQ4Pll2gMCeDRmAj9JVfd/8l39X9KUdEeMSDDX5++SjUHFt4G/BPBoMVSHYZ2HIAsCysr0RIjAgczy7YkSz9zo5q6j0B4pef4/GpGeFXTQGKiN9j4rSD7NZXgAfr3D0QkHgWCGUym4qyQGGuwvG2rLh+0+Kg1SyojxsiXXn7g/H42tze8UQJSrhQEapjJ4NYbhsD8YHMiJwGVse4l9gT9KDH8XSyK4/pfml9LIMuCurQyrlb7XCWYZGjh81U9sY8zfeGy5BKt2X+JBO374o7WYgeFGl5kjOexFLhUPaUSRudaJiZfX6uQGr2yy3lApBWXg1DtJXFSf9g9+5bnuQMNzsvVn2zSkVN5ccfDrz57B+kik2OvlbuWzxnKEOVhU0WiDx3bNIHqR3T5jVQLuyuPdEaREYAQ==
+            text: The user is asking me to reply with just the single word "ok". This is a straightforward request that doesn't
+              involve anything harmful or problematic. I should simply respond with "ok".
             type: reasoning.text
           refusal: null
           role: assistant
         native_finish_reason: end_turn
-      created: 1778744497
-      id: gen-1778744497-TkoYoyZyEBPu5agTtqdK
+      created: 1778777138
+      id: gen-1778777138-y0iwbTSBFZ0eELM0EhLt
       model: anthropic/claude-4.5-sonnet-20250929
       object: chat.completion
       provider: Amazon Bedrock
       system_fingerprint: null
       usage:
-        completion_tokens: 55
+        completion_tokens: 51
         completion_tokens_details:
           audio_tokens: 0
           image_tokens: 0
-          reasoning_tokens: 50
-        cost: 0.000954
+          reasoning_tokens: 47
+        cost: 0.000894
         cost_details:
-          upstream_inference_completions_cost: 0.000825
-          upstream_inference_cost: 0.000954
+          upstream_inference_completions_cost: 0.000765
+          upstream_inference_cost: 0.000894
           upstream_inference_prompt_cost: 0.000129
         is_byok: false
         prompt_tokens: 43
@@ -85,7 +86,7 @@ interactions:
           cache_write_tokens: 0
           cached_tokens: 0
           video_tokens: 0
-        total_tokens: 98
+        total_tokens: 94
     status:
       code: 200
       message: OK

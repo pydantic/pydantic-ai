@@ -92,7 +92,10 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -
     profile = grok_model_profile(model_name)
     assert profile is not None
     assert profile.supports_thinking == expected_thinking
-    assert profile.thinking_always_enabled is False
+    # `reasoning_effort` has no `'none'` value on xAI, so any grok model that
+    # supports reasoning is necessarily always-on (thinking=False is silently
+    # dropped via the gate).
+    assert profile.thinking_always_enabled == expected_thinking
 
 
 async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:

@@ -678,14 +678,14 @@ class TestOpenRouterThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('reasoning') == {'effort': 'medium'}
+        assert extra_body.get('reasoning') == {'effort': 'medium', 'enabled': True}
 
     def test_thinking_high(self):
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking='high')
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('reasoning') == {'effort': 'high'}
+        assert extra_body.get('reasoning') == {'effort': 'high', 'enabled': True}
 
     def test_thinking_false_emits_enabled_false(self):
         """`thinking=False` is forwarded to OpenRouter as `reasoning.enabled=False`."""
