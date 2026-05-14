@@ -124,3 +124,67 @@ When using `to_a2a()`, Pydantic AI automatically:
   - String results become `TextPart` artifacts and also appear in the message history
   - Structured data (Pydantic models, dataclasses, tuples, etc.) become `DataPart` artifacts with the data wrapped as `{"result": <your_data>}`
   - Artifacts include metadata with type information and JSON schema when available
+
+### Injecting per-request dependencies
+
+For agents that use [`deps_type`](dependencies.md), you can provide a `deps_factory` callable that is invoked once
+per incoming task with the raw [`TaskSendParams`][fasta2a.schema.TaskSendParams] and returns the deps to inject.
+This is useful for per-request context like auth tokens, database sessions, or user identity.
+
+```python {title="agent_to_a2a_deps.py"}
+from dataclasses import dataclass
+
+from fasta2a.schema import TaskSendParams
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class MyDeps:
+    user_id: str
+
+
+agent = Agent('openai:gpt-5.2', deps_type=MyDeps)
+
+
+@agent.system_prompt
+def personalize(ctx: RunContext[MyDeps]) -> str:
+    return f'You are helping user {ctx.deps.user_id}.'
+
+
+def make_deps(params: TaskSendParams) -> MyDeps:
+    # Extract caller-supplied metadata from the incoming message
+    user_id = (params['message'].get('metadata') or {}).get('user_id', 'anonymous')
+    return MyDeps(user_id=user_id)
+
+
+app = agent.to_a2a(deps_factory=make_deps)
+```
+
+The factory can also be `async`:
+
+```python {title="agent_to_a2a_deps_async.py"}
+import asyncio
+from dataclasses import dataclass
+
+from fasta2a.schema import TaskSendParams
+
+from pydantic_ai import Agent
+
+
+@dataclass
+class MyDeps:
+    user_id: str
+
+
+agent = Agent('openai:gpt-5.2', deps_type=MyDeps)
+
+
+async def make_deps(params: TaskSendParams) -> MyDeps:
+    await asyncio.sleep(0)  # simulate async I/O (e.g., a database lookup)
+    user_id = (params['message'].get('metadata') or {}).get('user_id', 'anonymous')
+    return MyDeps(user_id=user_id)
+
+
+app = agent.to_a2a(deps_factory=make_deps)
+```
