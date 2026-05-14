@@ -21,6 +21,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.usage import RunUsage
 
@@ -107,6 +108,25 @@ async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_mo
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     settings: XaiModelSettings = {'thinking': True}
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert 'reasoning_effort' not in kwargs[0]
+
+
+async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_model_requests: None) -> None:
+    """Defensive guard: `_create_chat` skips emitting `reasoning_effort` when `thinking=False`
+    survives the gate (only possible under a profile with `supports_thinking=True` and
+    `thinking_always_enabled=False`). xAI's `reasoning_effort` has no `'none'` value,
+    so `XAI_EFFORT_MAP[False]` would KeyError if the guard were removed."""
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    custom_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client), profile=custom_profile)
+    settings: XaiModelSettings = {'thinking': False}
     agent = Agent(m, model_settings=settings)
 
     await agent.run('hi')
