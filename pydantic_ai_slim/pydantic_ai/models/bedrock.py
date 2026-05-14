@@ -810,7 +810,6 @@ class BedrockConverseModel(Model[BaseClient]):
         if not tools:
             return None
 
-        profile = cast(BedrockModelProfile, self.profile)
         if cache_tool_definitions := (model_settings or {}).get('bedrock_cache_tool_definitions'):
             if profile.get('bedrock_supports_tool_caching', False):
                 tools.append(cast('ToolTypeDef', self._get_cache_point(cache_tool_definitions)))
