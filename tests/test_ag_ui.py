@@ -2524,7 +2524,7 @@ async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() ->
         return tool_defs
 
     def my_tool() -> str:
-        return 'ok'  # pragma: no cover
+        return 'ok'
 
     agent = Agent(TestModel(), tools=[my_tool])
     run_input = create_input(UserMessage(id='msg0', content='Hello!'))
