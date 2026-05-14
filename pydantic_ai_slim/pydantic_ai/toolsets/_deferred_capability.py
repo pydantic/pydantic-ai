@@ -67,6 +67,11 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=('Load a capability to access its full instructions and tools.'),
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
+            # Flagging `tool_kind` here is what triggers `_agent_graph` to promote the return
+            # to the typed `LoadCapabilityReturnPart` via `ToolReturnPart.narrow_type` — so
+            # downstream history scans can use `isinstance(part, LoadCapabilityReturnPart)`
+            # instead of matching `tool_name` strings and re-validating `part.content`.
+            tool_kind='capability-load',
         )
 
         load_tool = ToolsetTool(

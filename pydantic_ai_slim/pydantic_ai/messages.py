@@ -1067,7 +1067,7 @@ else:
     )
 
 
-ToolPartKind: TypeAlias = Literal['tool-search']
+ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
 """Discriminator value for the typed call/return-part subclass associated with a tool.
 
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
