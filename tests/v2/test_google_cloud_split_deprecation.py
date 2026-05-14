@@ -140,7 +140,7 @@ def test_gateway_google_vertex_prefix_warns_and_routes_to_google_cloud_provider(
         assert infer_provider_class('gateway/google-vertex') is GoogleCloudProvider
     with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/google-vertex.' prefix is deprecated"):
         provider = infer_provider('gateway/google-vertex')
-    assert isinstance(provider, GoogleProvider)
+    assert isinstance(provider, GoogleCloudProvider)
 
 
 def test_gateway_google_cloud_prefix_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,7 +150,7 @@ def test_gateway_google_cloud_prefix_no_warning(monkeypatch: pytest.MonkeyPatch)
         warnings.simplefilter('error')
         assert infer_provider_class('gateway/google-cloud') is GoogleCloudProvider
         provider = infer_provider('gateway/google-cloud')
-    assert isinstance(provider, GoogleProvider)
+    assert isinstance(provider, GoogleCloudProvider)
 
 
 def test_gateway_google_cloud_maps_to_legacy_gateway_wire_value() -> None:
@@ -160,7 +160,8 @@ def test_gateway_google_cloud_maps_to_legacy_gateway_wire_value() -> None:
     `'google-vertex'` on the wire until Daniel renames the Gateway side.
     """
     assert normalize_gateway_provider('gateway/google-cloud') == 'google-vertex'
-    assert normalize_gateway_provider('gateway/google-vertex') == 'google-vertex'
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/google-vertex.' prefix is deprecated"):
+        assert normalize_gateway_provider('gateway/google-vertex') == 'google-vertex'
 
 
 def test_google_vertex_service_tier_warns_and_routes_to_google_cloud_service_tier() -> None:

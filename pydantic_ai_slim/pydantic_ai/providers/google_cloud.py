@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 from typing import Literal
 
 import httpx
@@ -51,13 +52,33 @@ class GoogleCloudProvider(BaseGoogleProvider):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.
         """
-        self._init_client(
+        if client is not None:
+            self._client = client
+            return
+
+        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+
+        # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
+        # the SDK uses Vertex AI Express Mode.
+        if credentials is not None or project is not None or location is not None:
+            api_key = None
+
+        if api_key is None:
+            project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
+            # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
+            # Currently `us-central1` supports the most models by far of any region including `global`, but not
+            # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
+            # which use `us-east5` instead. `global` has fewer models but higher availability.
+            # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
+            location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
+
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url)
+        self._client = Client(
             vertexai=True,
             api_key=api_key,
-            credentials=credentials,
             project=project,
             location=location,
-            client=client,
-            http_client=http_client,
-            base_url=base_url,
+            credentials=credentials,
+            http_options=http_options,
         )

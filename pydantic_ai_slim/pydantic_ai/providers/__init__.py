@@ -114,20 +114,11 @@ class Provider(ABC, Generic[InterfaceClient]):
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
     came_from_gateway = provider.startswith('gateway/')
-    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai')
+    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai').
+    # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`.
     if came_from_gateway:
         from .gateway import normalize_gateway_provider
 
-        # User-facing gateway-prefix rename: deprecate `gateway/google-vertex` in favor of
-        # `gateway/google-cloud`. Internal Gateway wire value still maps to `google-vertex`
-        # until the Gateway team renames their side; `normalize_gateway_provider` handles that.
-        if provider == 'gateway/google-vertex':
-            warnings.warn(
-                "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
-                "Use 'gateway/google-cloud:' instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
         provider = normalize_gateway_provider(provider)
 
     # Normalize deprecated/alias provider names
@@ -282,16 +273,8 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        # User-facing gateway-prefix rename: `gateway/google-vertex` -> `gateway/google-cloud`.
-        # Internal Gateway wire value still maps to `google-vertex` until the Gateway team
-        # renames their side (see rule 17 — decouples our cadence from theirs).
-        if provider == 'gateway/google-vertex':
-            warnings.warn(
-                "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
-                "Use 'gateway/google-cloud:' instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
+        # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`,
+        # which `gateway_provider` calls below.
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
 

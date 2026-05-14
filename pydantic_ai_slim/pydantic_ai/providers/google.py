@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import warnings
+from abc import ABC, abstractmethod
 from typing import Literal, overload
 
 import httpx
@@ -24,12 +25,18 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-class BaseGoogleProvider(Provider[Client]):
+class BaseGoogleProvider(Provider[Client], ABC):
     """Common base for the Gemini API and Google Cloud providers.
 
-    Subclasses construct `self._client` via [`_init_client`][pydantic_ai.providers.google.BaseGoogleProvider._init_client];
-    everything else (`base_url`, `client`, `_set_http_client`, model profile lookup) is shared.
+    Abstract — instantiate [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] for the
+    Gemini API or [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] for
+    Google Cloud. Subclasses share `base_url`, `client`, `_set_http_client`, and model-profile
+    lookup; each subclass owns its own `Client` construction.
     """
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
 
     @property
     def base_url(self) -> str:
@@ -43,73 +50,31 @@ class BaseGoogleProvider(Provider[Client]):
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
 
-    def _init_client(
+    def _build_http_options(
         self,
         *,
-        vertexai: bool,
-        api_key: str | None,
-        credentials: Credentials | None,
-        project: str | None,
-        location: GoogleCloudLocation | Literal['global'] | str | None,
-        client: Client | None,
         http_client: httpx.AsyncClient | None,
         base_url: str | None,
-    ) -> None:
-        if client is not None:
-            self._client = client
-            return
+    ) -> HttpOptions:
+        """Build `HttpOptions` and record ownership of the httpx client if we created it.
 
-        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
-
+        Subclasses call this before constructing their `Client(...)` to keep timeout / user-agent /
+        ownership wiring consistent.
+        """
         if http_client is None:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-        # Note: google-genai's HttpOptions.timeout defaults to None, which causes
-        # the SDK to explicitly pass timeout=None to httpx, overriding any timeout
-        # configured on the httpx client. We must set the timeout here to ensure
-        # requests actually time out. Read the timeout from the http_client if set,
-        # otherwise use the default. The value is converted from seconds to milliseconds.
+        # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
+        # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
+        # here (ms) so requests actually time out.
         timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
         timeout_ms = int(timeout_seconds * 1000)
-        http_options = HttpOptions(
+        return HttpOptions(
             base_url=base_url,
             headers={'User-Agent': get_user_agent()},
             httpx_async_client=http_client,
             timeout=timeout_ms,
-        )
-
-        if not vertexai:
-            if api_key is None:
-                raise UserError(
-                    'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                    ' to use the Gemini API.'
-                )
-            self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
-            return
-
-        # Google Cloud mode: ADC kwargs (credentials/project/location) take precedence over API-key
-        # auth. With none provided and only an api_key, the SDK uses Vertex AI Express Mode.
-        if credentials is not None or project is not None or location is not None:
-            api_key = None
-
-        if api_key is None:
-            project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
-            # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
-            # Currently `us-central1` supports the most models by far of any region including `global`, but not
-            # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
-            # which use `us-east5` instead. `global` has fewer models but higher availability.
-            # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
-            location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
-
-        self._client = Client(
-            vertexai=True,
-            api_key=api_key,
-            project=project,
-            location=location,
-            credentials=credentials,
-            http_options=http_options,
         )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
@@ -119,11 +84,11 @@ class BaseGoogleProvider(Provider[Client]):
 
 
 class GoogleProvider(BaseGoogleProvider):
-    """Provider for Google."""
+    """Provider for the Gemini API (formerly Google AI Studio / Google GLA)."""
 
     @property
     def name(self) -> str:
-        return 'google-cloud' if self._client._api_client.vertexai else 'google'  # pyright: ignore[reportPrivateUsage]
+        return 'google'
 
     @overload
     def __init__(
@@ -166,60 +131,67 @@ class GoogleProvider(BaseGoogleProvider):
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None:
-        """Create a new Google provider.
+        """Create a new Google provider for the Gemini API.
 
         Args:
-            api_key: The `API key <https://ai.google.dev/gemini-api/docs/api-key>`_ to
+            api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
                 use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
-                be obtained from environment variables and default credentials. For more information, see Set up
-                Application Default Credentials. Applies to Google Cloud only.
-            project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
-                (for example, GOOGLE_CLOUD_PROJECT). Applies to Google Cloud only.
-            location: The location to send API requests to (for example, us-central1). Can be obtained from environment variables.
-                Applies to Google Cloud only.
-            vertexai: Force the use of Google Cloud (formerly known as Vertex AI). If `False`, the Gemini API
-                will be used. Defaults to `False` unless `location`, `project`, or `credentials` are provided.
+            credentials: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
+            project: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
+            location: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
+            vertexai: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
-            base_url: The base URL for the Google API.
+            base_url: The base URL for the Gemini API.
         """
-        if client is None:
-            vertex_ai_args_used = bool(location or project or credentials)
-            if vertexai is True or vertex_ai_args_used:
-                # Detect Google Cloud usage from any signal — explicit flag OR any Vertex-only kwarg. The
-                # google-genai SDK also implicitly routes to Google Cloud when env vars like
-                # `GOOGLE_GENAI_USE_VERTEXAI=1` are set, but we can't detect that from kwargs alone — users
-                # in that scenario should pass one of these kwargs (or just switch to `GoogleCloudProvider`).
-                warnings.warn(
-                    '`GoogleProvider(...)` with Google Cloud (formerly known as Vertex AI) arguments '
-                    '(`vertexai=True`, `location=`, `project=`, or `credentials=`) is deprecated and will '
-                    'be removed in v2.0. Use `GoogleCloudProvider(...)` instead, which only accepts the '
-                    'Google Cloud arguments.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-            elif vertexai is False:
-                warnings.warn(
-                    '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
-                    "drop the explicit `vertexai=False` (it's the default).",
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
+        if client is not None:
+            self._client = client
+            return
 
-            if vertexai is None:
-                vertexai = vertex_ai_args_used
+        vertex_ai_args_used = bool(location or project or credentials)
+        if vertexai is True or vertex_ai_args_used:
+            # Cloud-args usage on `GoogleProvider` is deprecated in 1.x; forward to `GoogleCloudProvider`
+            # so the Cloud-specific construction logic stays in one place.
+            warnings.warn(
+                '`GoogleProvider(...)` with Google Cloud (formerly known as Vertex AI) arguments '
+                '(`vertexai=True`, `location=`, `project=`, or `credentials=`) is deprecated and will '
+                'be removed in v2.0. Use `GoogleCloudProvider(...)` instead, which only accepts the '
+                'Google Cloud arguments.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            from .google_cloud import GoogleCloudProvider
 
-        self._init_client(
-            vertexai=bool(vertexai),
-            api_key=api_key,
-            credentials=credentials,
-            project=project,
-            location=location,
-            client=client,
-            http_client=http_client,
-            base_url=base_url,
-        )
+            delegate = GoogleCloudProvider(
+                api_key=api_key,
+                credentials=credentials,
+                project=project,
+                location=location,
+                http_client=http_client,
+                base_url=base_url,
+            )
+            self._client = delegate._client
+            self._own_http_client = delegate._own_http_client
+            self._http_client_factory = delegate._http_client_factory
+            return
+
+        if vertexai is False:
+            warnings.warn(
+                '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
+                "drop the explicit `vertexai=False` (it's the default).",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+
+        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        if api_key is None:
+            raise UserError(
+                'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
+                ' to use the Gemini API.'
+            )
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url)
+        self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
 
 GoogleCloudLocation = Literal[

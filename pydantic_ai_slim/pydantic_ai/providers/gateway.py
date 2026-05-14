@@ -100,7 +100,6 @@ ModelProvider = Literal[
     'anthropic',
     'bedrock',
     'google-cloud',
-    'google-vertex',
 ]
 
 
@@ -201,14 +200,9 @@ def gateway_provider(
             )
         )
     elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
-        from .google import GoogleProvider
+        from .google_cloud import GoogleCloudProvider
 
-        with warnings.catch_warnings():
-            # Internal forward; the gateway-google-cloud path is reworked in v2.
-            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-            return _with_http_client(
-                GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
-            )
+        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
@@ -251,6 +245,14 @@ def normalize_gateway_provider(provider: str) -> str:
         provider: The provider name to normalize.
     """
     provider = provider.removeprefix('gateway/')
+
+    if provider == 'google-vertex':
+        warnings.warn(
+            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
 
     if provider in ('openai', 'openai-chat', 'chat'):
         return 'openai'
