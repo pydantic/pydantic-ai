@@ -12,11 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -79,6 +80,14 @@ if TYPE_CHECKING:
     import transformers
 
 
+_DEPRECATION_MESSAGE = (
+    '`OutlinesModel` is deprecated and will be removed in v2. '
+    'If you would like to keep using Outlines with Pydantic AI, please file an issue at '
+    'https://github.com/dottxt-ai/outlines/issues.'
+)
+
+
+@deprecated(_DEPRECATION_MESSAGE, category=PydanticAIDeprecationWarning)
 @dataclass(init=False)
 class OutlinesModel(Model):
     """A model that relies on the Outlines library to run non API-based models."""

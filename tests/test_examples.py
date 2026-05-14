@@ -133,6 +133,8 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
     'ignore:`BuiltinToolCallEvent` is deprecated',
     'ignore:`BuiltinToolResultEvent` is deprecated',
     'ignore:`Agent.to_a2a\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning',
+    # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
+    'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
