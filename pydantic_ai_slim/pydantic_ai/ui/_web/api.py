@@ -13,7 +13,7 @@ from starlette.routing import Route
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -132,7 +132,7 @@ def create_api_app(
             continue
         seen_model_ids.add(model_id)
         display_name = label or model.label
-        model_supported_tools = model.profile.supported_native_tools
+        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref

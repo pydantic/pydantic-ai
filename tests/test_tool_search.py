@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -57,8 +57,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
@@ -258,9 +259,12 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     setattr(
         model,
         'profile',
-        replace(
+        merge_profile(
             model.profile,
-            supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+            ModelProfile(
+                supported_native_tools=model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                - {ToolSearchTool}
+            ),
         ),
     )
     agent: Agent[None, str] = Agent(model=model)
@@ -3219,7 +3223,7 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     splits into `ModelResponse(call) + ModelRequest(return)`."""
     # Default `TestModel` excludes `ToolSearchTool` from `supported_native_tools`.
     model = TestModel()
-    assert ToolSearchTool not in model.profile.supported_native_tools
+    assert ToolSearchTool not in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
@@ -3274,7 +3278,7 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
             return frozenset({ToolSearchTool})
 
     model = NativeToolSearchTestModel()
-    assert ToolSearchTool in model.profile.supported_native_tools
+    assert ToolSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),

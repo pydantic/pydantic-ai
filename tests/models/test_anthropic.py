@@ -60,7 +60,14 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -603,8 +610,8 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
         model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
     )
     assert m.model_name == model_name
-    assert m.profile.supports_json_schema_output is True
-    assert ToolSearchTool in m.profile.supported_native_tools
+    assert m.profile.get('supports_json_schema_output', False) is True
+    assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:

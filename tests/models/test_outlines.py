@@ -39,9 +39,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, WebSearchTool
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
@@ -258,16 +257,12 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
     assert m.model_name == 'outlines-model'
     assert m.system == 'outlines'
     assert m.settings is None
-    assert m.profile == ModelProfile(
-        supports_tools=False,
-        supports_json_schema_output=True,
-        supports_json_object_output=True,
-        default_structured_output_mode='native',
-        native_output_requires_schema_in_instructions=True,
-        thinking_tags=('<think>', '</think>'),
-        ignore_streamed_leading_whitespace=False,
-        supported_native_tools=frozenset(),
-    )
+    assert m.profile.get('supports_tools', True) is False
+    assert m.profile.get('supports_json_schema_output', False) is True
+    assert m.profile.get('supports_json_object_output', False) is True
+    assert m.profile.get('default_structured_output_mode', 'tool') == 'native'
+    assert m.profile.get('native_output_requires_schema_in_instructions', False) is True
+    assert m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
 
 @pytest.mark.filterwarnings('default::pydantic_ai._warnings.PydanticAIDeprecationWarning')
@@ -324,16 +319,12 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
     assert m.model_name == 'outlines-model'
     assert m.system == 'outlines'
     assert m.settings is None
-    assert m.profile == ModelProfile(
-        supports_tools=False,
-        supports_json_schema_output=True,
-        supports_json_object_output=True,
-        default_structured_output_mode='native',
-        native_output_requires_schema_in_instructions=True,
-        thinking_tags=('<think>', '</think>'),
-        ignore_streamed_leading_whitespace=False,
-        supported_native_tools=frozenset(),
-    )
+    assert m.profile.get('supports_tools', True) is False
+    assert m.profile.get('supports_json_schema_output', False) is True
+    assert m.profile.get('supports_json_object_output', False) is True
+    assert m.profile.get('default_structured_output_mode', 'tool') == 'native'
+    assert m.profile.get('native_output_requires_schema_in_instructions', False) is True
+    assert m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
 
 @skip_if_llama_cpp_imports_unsuccessful

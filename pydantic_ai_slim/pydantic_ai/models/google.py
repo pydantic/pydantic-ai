@@ -419,7 +419,7 @@ class GoogleModel(Model[Client]):
             provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Client:
@@ -441,7 +441,7 @@ class GoogleModel(Model[Client]):
 
     @property
     def _resolved_profile(self) -> GoogleModelProfile:
-        return GoogleModelProfile.from_profile(self.profile)
+        return cast(GoogleModelProfile, self.profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -458,7 +458,7 @@ class GoogleModel(Model[Client]):
         if (
             user_native_tools
             and model_request_parameters.output_tools
-            and not self._resolved_profile.google_supports_tool_combination
+            and not self._resolved_profile.get('google_supports_tool_combination', False)
         ):
             # Pre-Gemini-3 models reject `output_tools + native_tools` together. Force prompted
             # output (the only mode that doesn't add a tool to the request); raise if the caller
@@ -618,7 +618,9 @@ class GoogleModel(Model[Client]):
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
         if model_request_parameters.native_tools:
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self._resolved_profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError('This model does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.native_tools:
@@ -632,7 +634,7 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.supports_image_output:
+                    if not self.profile.get('supports_image_output', False):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
@@ -690,7 +692,9 @@ class GoogleModel(Model[Client]):
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self._resolved_profile.google_supports_server_side_tool_invocations:
+        if emits_tool_call_invocations and self._resolved_profile.get(
+            'google_supports_server_side_tool_invocations', False
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -757,14 +761,12 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        # Don't use `self._resolved_profile`: `tests/test_thinking.py` invokes this as an
-        # unbound method with a `FunctionModel` carrying a `GoogleModelProfile`.
-        profile = GoogleModelProfile.from_profile(self.profile)
+        profile = cast(GoogleModelProfile, self.profile)
         if thinking is False:
-            if profile.google_supports_thinking_level:
+            if profile.get('google_supports_thinking_level', False):
                 return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
             return ThinkingConfigDict(thinking_budget=0)
-        if profile.google_supports_thinking_level:
+        if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             level_map: dict[ThinkingEffort, str] = {
@@ -794,13 +796,15 @@ class GoogleModel(Model[Client]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
-        if model_request_parameters.function_tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self._resolved_profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError(
                     'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
@@ -809,13 +813,13 @@ class GoogleModel(Model[Client]):
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not tools:
-            if not self.profile.supports_json_object_output:
+            if not self.profile.get('supports_json_object_output', False):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities: list[str] = [Modality.TEXT.value]
-        if self.profile.supports_image_output:
+        if self.profile.get('supports_image_output', False):
             modalities.append(Modality.IMAGE.value)
             if not model_request_parameters.allow_text_output:
                 modalities.remove(Modality.TEXT.value)
@@ -963,7 +967,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
-        supports_tool_combination = self._resolved_profile.google_supports_tool_combination
+        supports_tool_combination = self._resolved_profile.get('google_supports_tool_combination', False)
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1045,7 +1049,7 @@ class GoogleModel(Model[Client]):
         parts after the function_response (fallback strategy).
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
-        supported_mime_types = self._resolved_profile.google_supported_mime_types_in_tool_returns
+        supported_mime_types = self._resolved_profile.get('google_supported_mime_types_in_tool_returns', ())
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []

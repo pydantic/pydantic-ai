@@ -30,9 +30,6 @@ from .conftest import try_import
 with try_import() as mcp_imports:
     from pydantic_ai.capabilities import MCP
 
-with try_import() as bedrock_imports:
-    from pydantic_ai.providers.bedrock import BedrockModelProfile
-
 pytestmark = pytest.mark.anyio
 
 
@@ -797,68 +794,6 @@ def test_tool_definition_prefer_legacy_wins_when_both_kwargs_passed():
     assert td.unless_native == 'code_execution'
 
 
-def test_model_profile_supported_builtin_tools_constructor_deprecated():
-    """`ModelProfile(supported_builtin_tools=...)` warns and routes to `supported_native_tools=`."""
-    from pydantic_ai.profiles import ModelProfile
-
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile = ModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
-    assert profile.supported_native_tools == frozenset({WebSearchTool})
-
-
-def test_model_profile_supported_builtin_tools_attribute_deprecated():
-    """Reading `ModelProfile.supported_builtin_tools` warns and returns `supported_native_tools`."""
-    from pydantic_ai.profiles import ModelProfile
-
-    profile = ModelProfile(supported_native_tools=frozenset({WebSearchTool}))
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`ModelProfile\.supported_builtin_tools` is deprecated, use `\.supported_native_tools`',
-    ):
-        result = profile.supported_builtin_tools
-    assert result == profile.supported_native_tools == frozenset({WebSearchTool})
-
-
-def test_model_profile_supported_legacy_wins_when_both_kwargs_passed():
-    """`ModelProfile(supported_native_tools=..., supported_builtin_tools=...)` warns and the legacy `supported_builtin_tools=` wins.
-
-    The dominant trigger for "both kwargs present" is
-    `dataclasses.replace(obj, supported_builtin_tools=...)`, which silently re-passes
-    every existing field value as `supported_native_tools=...`. Letting the legacy
-    spelling win preserves the explicit value the caller actually typed; the deprecation
-    warning still informs them they should switch to `supported_native_tools=`.
-    """
-    from pydantic_ai.profiles import ModelProfile
-
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile = ModelProfile(
-            supported_native_tools=frozenset({WebSearchTool}),
-            supported_builtin_tools=frozenset({CodeExecutionTool}),  # pyright: ignore[reportCallIssue]
-        )
-    assert profile.supported_native_tools == frozenset({CodeExecutionTool})
-
-
-def test_model_profile_subclass_supported_builtin_tools_constructor_deprecated():
-    """`OpenAIModelProfile(supported_builtin_tools=...)` propagates the deprecated alias through subclasses."""
-    from pydantic_ai.profiles.openai import OpenAIModelProfile
-
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`OpenAIModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile = OpenAIModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
-    assert profile.supported_native_tools == frozenset({WebSearchTool})
-
-
 def test_model_subclass_supported_builtin_tools_override_still_used():
     """`Model` subclass overriding only the deprecated classmethod still has its tools picked up."""
     from pydantic_ai.models import Model
@@ -993,23 +928,6 @@ def test_model_supported_builtin_tools_classmethod_deprecated_on_base():
     ):
         result = TestModel.supported_builtin_tools()
     assert result == TestModel.supported_native_tools()
-
-
-def test_google_profile_supports_native_output_with_builtin_tools_constructor_deprecated():
-    """`GoogleModelProfile(google_supports_native_output_with_builtin_tools=...)` warns and routes to the replacement flag.
-
-    `google_supports_native_output_with_builtin_tools` was replaced by the broader
-    `google_supports_tool_combination` flag — see `GoogleModelProfile.__post_init__`.
-    """
-    from pydantic_ai.profiles.google import GoogleModelProfile
-
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`google_supports_native_output_with_builtin_tools` is deprecated, '
-        r'use `google_supports_tool_combination` instead',
-    ):
-        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
-    assert profile.google_supports_tool_combination is True
 
 
 def test_openai_responses_settings_openai_builtin_tools_key_deprecated():
@@ -1176,48 +1094,6 @@ def test_image_generation_tool_factory_builtin_tool_kwarg_deprecated():
 # --- Profile-subclass and spec-loader deprecations (post-audit catch-ups) ---
 
 
-@pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
-def test_bedrock_profile_supported_builtin_tools_constructor_deprecated():
-    """`BedrockModelProfile(supported_builtin_tools=...)` warns and routes to `supported_native_tools=`.
-
-    Lock-in for the audit gap where `BedrockModelProfile` (in `providers/bedrock.py`)
-    was missed when the prior fix wired the deprecated kwarg through each known profile
-    subclass via explicit `install_deprecated_kwarg_alias` calls.
-    """
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`BedrockModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile = BedrockModelProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
-    assert profile.supported_native_tools == frozenset({WebSearchTool})
-
-
-def test_user_subclass_modelprofile_supported_builtin_tools_constructor_deprecated():
-    """User-defined `@dataclass(kw_only=True)` subclasses of `ModelProfile` still accept the legacy kwarg.
-
-    Lock-in for the lazy-install pattern in `ModelProfile.__new__`: each subclass's
-    dataclass-generated `__init__` is wrapped on first instantiation, so user-defined
-    subclasses get the alias without needing an explicit `install_deprecated_kwarg_alias`
-    call.
-    """
-    from dataclasses import dataclass
-
-    from pydantic_ai.profiles import ModelProfile
-
-    @dataclass(kw_only=True)
-    class _UserProfile(ModelProfile):
-        pass
-
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`_UserProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile = _UserProfile(supported_builtin_tools=frozenset({WebSearchTool}))  # pyright: ignore[reportCallIssue]
-    assert WebSearchTool in profile.supported_native_tools
-
-
 def test_agent_from_spec_with_builtin_tool_capability_key_deprecated():
     """`Agent.from_spec({'capabilities': [{'BuiltinTool': ...}]})` warns and resolves to `NativeTool`.
 
@@ -1279,25 +1155,6 @@ def test_tool_definition_replace_with_prefer_builtin_routes_to_unless_native():
     ):
         td2 = replace(td, prefer_builtin='code_execution')
     assert td2.unless_native == 'code_execution'
-
-
-def test_model_profile_replace_with_supported_builtin_tools_routes_to_supported_native_tools():
-    """`replace(profile, supported_builtin_tools=...)` warns AND the legacy value reaches `supported_native_tools`."""
-    from dataclasses import replace
-
-    from pydantic_ai.profiles import ModelProfile
-
-    profile = ModelProfile()
-    # The default `supported_native_tools` has 8 entries — the bug previously caused
-    # the implicit re-pass to win, silently overriding the caller's explicit empty set.
-    assert len(profile.supported_native_tools) > 0
-    with pytest.warns(
-        PydanticAIDeprecationWarning,
-        match=r'`ModelProfile\(supported_builtin_tools=\.\.\.\)` is deprecated, '
-        r'use `supported_native_tools=`',
-    ):
-        profile2 = replace(profile, supported_builtin_tools=frozenset())
-    assert profile2.supported_native_tools == frozenset()
 
 
 def test_native_or_local_tool_replace_with_builtin_routes_to_native():
