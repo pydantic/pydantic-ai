@@ -2,11 +2,12 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, TypeAlias, cast, overload
+from uuid import uuid4
 
 import pydantic_core
 from pydantic import TypeAdapter
@@ -45,6 +46,7 @@ from ..messages import (
     ToolReturnPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UploadedFileProviderName,
     UserPromptPart,
     VideoUrl,
     is_multi_modal_content,
@@ -54,6 +56,8 @@ from ..native_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
+    SkillReference,
     WebFetchTool,
     WebSearchTool,
 )
@@ -71,7 +75,13 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
-from ..tools import AgentDepsT, ToolDefinition
+from ..tools import (
+    AgentDepsT,
+    ApplyPatchNativeDefinition,
+    ShellNativeDefinition,
+    TextEditorNativeDefinition,
+    ToolDefinition,
+)
 from . import (
     Model,
     ModelRequestParameters,
@@ -79,20 +89,20 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    warn_native_tool_fallback,
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
-_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': None,
     'refusal': 'content_filter',
 }
-
 
 try:
     from anthropic import (
@@ -110,11 +120,14 @@ try:
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaBase64PDFSourceParam,
+        BetaBashCodeExecutionResultBlock,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
+        BetaBashCodeExecutionToolResultError,
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
+        BetaCodeExecutionResultBlock,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -125,6 +138,7 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
+        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -159,17 +173,20 @@ try:
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
+        BetaSkillParams,
         BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
+        BetaTextEditorCodeExecutionToolResultError,
         BetaThinkingBlock,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
         BetaTokenTaskBudgetParam,
+        BetaToolBash20250124Param,
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolReferenceBlockParam,
@@ -179,6 +196,7 @@ try:
         BetaToolSearchToolResultBlockParam,
         BetaToolSearchToolResultErrorParam,
         BetaToolSearchToolSearchResultBlockParam,
+        BetaToolTextEditor20250728Param,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -455,6 +473,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
+    _native_tool_names: dict[str, str] = field(default_factory=lambda: dict[str, str](), repr=False)
+    _code_execution_tool_name: str = field(default=CodeExecutionTool.kind, repr=False)
 
     def __init__(
         self,
@@ -476,6 +496,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
+        self._native_tool_names: dict[str, str] = {}
+        self._code_execution_tool_name = CodeExecutionTool.kind
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
@@ -503,8 +525,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool})
+        """The set of native tool types this model can handle."""
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, ShellTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool}
+        )
 
     async def request(
         self,
@@ -520,6 +544,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         try:
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+            # Auto-retry with a fresh container when an auto-inferred container has expired.
+            if not model_settings.get('anthropic_container') and _has_container_error(response):
+                fresh_settings = cast(AnthropicModelSettings, {**model_settings, 'anthropic_container': False})
+                response = await self._messages_create(messages, False, fresh_settings, model_request_parameters)
             return self._process_response(response)
         except ValueError as e:
             if 'Streaming is required' in str(e):
@@ -563,11 +591,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._messages_create(
-            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(AnthropicModelSettings, model_settings or {})
+        # Check whether we're reusing a container from message history.
+        # Only an actual container_id means we might hit a stale-container error;
+        # skills alone (no id) can never be stale, so skip the check.
+        has_history_container = False
+        if not settings.get('anthropic_container'):
+            for m in reversed(messages):
+                if (
+                    isinstance(m, ModelResponse)
+                    and m.provider_name == self.system
+                    and m.provider_details
+                    and m.provider_details.get('container_id')
+                ):
+                    has_history_container = True
+                    break
+        response = await self._messages_create(messages, True, settings, model_request_parameters)
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            streamed_response = cast(
+                AnthropicStreamedResponse,
+                await self._process_streamed_response(response, model_request_parameters),
+            )
+            # When reusing a container from history, install a retry callback so
+            # that if all code execution results are container errors, the stream
+            # transparently retries with a fresh container once fully consumed.
+            if has_history_container:
+                fresh_settings = cast(AnthropicModelSettings, {**settings, 'anthropic_container': False})
+
+                async def make_retry_request() -> ModelResponse:
+                    retry = await self._messages_create(messages, False, fresh_settings, model_request_parameters)
+                    return self._process_response(retry)
+
+                streamed_response.set_container_retry(make_retry_request)
+            yield streamed_response
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -705,7 +761,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container = self._get_container(messages, model_settings)
+        container = self._get_container(messages, model_settings, model_request_parameters)
 
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
@@ -809,7 +865,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> BetaContainerParams | str | None:
         """Resolve the `container` request parameter.
 
@@ -826,17 +885,47 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
         """
-        if (container := model_settings.get('anthropic_container')) is not None:
-            if container is False:
-                return None
-            if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
-                return cid
-            return container
-        for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
-                if cid := m.provider_details.get('container_id'):
+        # On pause_turn continuation, pass just the container ID string to reconnect.
+        # Re-passing BetaContainerParams triggers a prefill rejection on some models
+        # (e.g. Sonnet 4-6) even though plain string ID works fine.
+        if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
+            if messages[-1].provider_details:
+                return messages[-1].provider_details.get('container_id')
+            return None  # pragma: lax no cover
+
+        container_id: str | None = None
+        explicit = model_settings.get('anthropic_container')
+        if explicit is not None:
+            if explicit is False:
+                pass  # Force fresh — no container reuse
+            elif isinstance(explicit, str):
+                container_id = explicit
+            else:
+                # BetaContainerParams from user — return directly with skills merged
+                skills = _get_shell_skills(model_request_parameters)
+                if skills:
+                    explicit['skills'] = skills
+                    return explicit
+                # Unwrap broken {'id': x}-only shape to plain string (see docstring).
+                if set(explicit) == {'id'} and (cid := explicit.get('id')):
                     return cid
-        return None
+                return explicit
+        else:
+            for m in reversed(messages):
+                if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+                    if cid := m.provider_details.get('container_id'):
+                        container_id = cid
+                        break
+
+        # If we have a container_id and need skills, use BetaContainerParams
+        skills = _get_shell_skills(model_request_parameters)
+        if skills:
+            container = BetaContainerParams(id=container_id) if container_id else BetaContainerParams()
+            container['skills'] = skills
+            return container
+
+        # Plain string for reuse, None for fresh
+        return container_id
 
     async def _messages_count_tokens(
         self,
@@ -891,7 +980,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
-                call_part = _map_server_tool_use_block(item, self.system)
+                call_part = _map_server_tool_use_block(item, self.system, self._code_execution_tool_name)
                 builtin_tool_calls[call_part.tool_call_id] = call_part
                 items.append(call_part)
             elif isinstance(item, BetaWebSearchToolResultBlock):
@@ -899,13 +988,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(item, BetaToolSearchToolResultBlock):
                 items.append(_map_tool_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
-                items.append(_map_code_execution_tool_result_block(item, self.system))
-            elif isinstance(item, BetaBashCodeExecutionToolResultBlock):
-                items.append(_map_bash_code_execution_tool_result_block(item, self.system))
-            elif isinstance(item, BetaTextEditorCodeExecutionToolResultBlock):
-                items.append(_map_text_editor_code_execution_tool_result_block(item, self.system))
+                return_part, uploaded_files = _map_code_execution_tool_result_block(
+                    item, self.system, self._code_execution_tool_name
+                )
+                items.append(return_part)
+                items.extend(uploaded_files)
             elif isinstance(item, BetaWebFetchToolResultBlock):
                 items.append(_map_web_fetch_tool_result_block(item, self.system))
+            elif isinstance(item, BetaBashCodeExecutionToolResultBlock):
+                return_part, uploaded_files = _map_bash_code_execution_tool_result_block(
+                    item, self.system, self._code_execution_tool_name
+                )
+                items.append(return_part)
+                items.extend(uploaded_files)
+            elif isinstance(item, BetaTextEditorCodeExecutionToolResultBlock):
+                items.append(
+                    _map_text_editor_code_execution_tool_result_block(item, self.system, self._code_execution_tool_name)
+                )
             elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
@@ -923,9 +1022,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 items.append(CompactionPart(content=item.content, provider_name=self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
+                # Map provider-native tool names back to toolset names
+                tool_name = self._native_tool_names.get(item.name, item.name)
                 items.append(
                     ToolCallPart(
-                        tool_name=item.name,
+                        tool_name=tool_name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
                     )
@@ -948,6 +1049,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -970,6 +1072,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _native_tool_names=self._native_tool_names,
+            _code_execution_tool_name=self._code_execution_tool_name,
         )
 
     def _get_code_execution_tool_version(
@@ -1005,7 +1109,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return 'regex'
         return strategy or 'bm25'
 
-    def _add_native_tools(
+    def _add_native_tools(  # noqa: C901
         self,
         tools: list[BetaToolUnionParam],
         model_request_parameters: ModelRequestParameters,
@@ -1013,6 +1117,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+
+        has_shell = any(isinstance(t, ShellTool) for t in model_request_parameters.native_tools)
+        has_code_exec = any(isinstance(t, CodeExecutionTool) for t in model_request_parameters.native_tools)
+        if has_shell and has_code_exec:
+            raise UserError('`ShellTool` and `CodeExecutionTool` are mutually exclusive — use one or the other')
+        self._code_execution_tool_name = ShellTool.kind if has_shell else CodeExecutionTool.kind
+
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = (
@@ -1031,6 +1142,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
+            elif isinstance(tool, ShellTool):
+                profile = AnthropicModelProfile.from_profile(self.profile)
+                if '20260120' not in profile.anthropic_supported_code_execution_tool_versions:
+                    raise UserError(
+                        f'`ShellTool` is not supported by model {self.model_name!r}; '
+                        'it requires Anthropic code execution tool version `20260120`.'
+                    )
+                tools.append(_map_code_execution_tool('20260120'))
+                if tool.skills:
+                    beta_features.add('skills-2025-10-02')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -1139,8 +1260,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
-        # Map ToolDefinitions to Anthropic format
-        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t, model_settings) for t in tool_defs.values()]
+        # Map ToolDefinitions to Anthropic format, using provider-native callable
+        # tool formats where a toolset supplied a native definition.
+        native_tool_names: dict[str, str] = {}
+        tools: list[BetaToolUnionParam] = [
+            self._map_tool_definition_or_native(t, model_settings, native_tool_names) for t in tool_defs.values()
+        ]
+        self._native_tool_names = native_tool_names
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -1165,6 +1291,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        has_shell_tool = any(isinstance(t, ShellTool) for t in model_request_parameters.native_tools)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Whenever the current request carries any `ToolSearchTool` builtin, render any
@@ -1189,7 +1316,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
-                        async for content in self._map_user_prompt(request_part):
+                        async for content in self._map_user_prompt(request_part, has_shell_tool=has_shell_tool):
                             if isinstance(content, CachePoint):
                                 self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
@@ -1277,6 +1404,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
+                # Reverse mapping: user-facing tool name -> native provider name
+                _reverse_native_names = {v: k for k, v in self._native_tool_names.items()}
                 assistant_content_params: list[
                     BetaTextBlockParam
                     | BetaToolUseBlockParam
@@ -1301,7 +1430,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
-                            name=response_part.tool_name,
+                            name=_reverse_native_names.get(response_part.tool_name, response_part.tool_name),
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
@@ -1344,6 +1473,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
+                                ShellTool.kind,
                                 'bash_code_execution',
                                 'text_editor_code_execution',
                             ):
@@ -1447,6 +1577,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
+                                ShellTool.kind,
                                 'code_execution_tool_result',  # Backward compatibility
                                 'bash_code_execution',
                                 'text_editor_code_execution',
@@ -1521,8 +1652,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             assistant_content_params.append(
                                 BetaCompactionBlockParam(content=response_part.content, type='compaction')
                             )
-                    elif isinstance(response_part, FilePart):  # pragma: no cover
-                        # Files generated by models are not sent back to models that don't themselves generate files.
+                    elif isinstance(response_part, FilePart | UploadedFile):  # pragma: no cover
+                        # Files generated by models and uploaded file references are not sent back to models that don't generate them.
                         pass
                     else:
                         assert_never(response_part)
@@ -1851,6 +1982,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_user_prompt(
         self,
         part: UserPromptPart,
+        *,
+        has_shell_tool: bool,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
@@ -1869,25 +2002,58 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    if item.media_type.startswith('image/'):
-                        yield BetaImageBlockParam(
-                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
-                            type='image',
-                        )
-                    elif item.media_type.startswith(('text/', 'application/')):
-                        yield BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
-                        )
-                    else:
-                        raise UserError(
-                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
-                            'Only image and document (text/application) types are supported.'
-                        )
+                    if item.target in ('message', 'both'):
+                        if item.media_type.startswith('image/'):
+                            yield BetaImageBlockParam(
+                                source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                                type='image',
+                            )
+                        elif item.media_type.startswith(('text/', 'application/')):
+                            yield BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            )
+                        else:
+                            raise UserError(
+                                f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                                'Only image and document (text/application) types are supported.'
+                            )
+                    if item.target in ('container', 'both'):
+                        if not has_shell_tool:
+                            raise UserError(
+                                f"`UploadedFile` with `target={item.target!r}` requires a `ShellTool` in the agent's native tools."
+                            )
+                        yield BetaContainerUploadBlockParam(file_id=item.file_id, type='container_upload')
                 elif is_multi_modal_content(item):
                     yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')  # pyright: ignore[reportArgumentType]
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
+
+    def _map_tool_definition_or_native(
+        self,
+        f: ToolDefinition,
+        model_settings: AnthropicModelSettings,
+        native_tool_names: dict[str, str],
+    ) -> BetaToolUnionParam:
+        native_def = f.native_definition
+        if isinstance(native_def, ShellNativeDefinition) and self.profile.supports_native_shell_tool:
+            native_tool_names['bash'] = f.name
+            return BetaToolBash20250124Param(type='bash_20250124', name='bash')
+        if isinstance(native_def, TextEditorNativeDefinition) and self.profile.supports_native_text_editor_tool:
+            native_tool_names['str_replace_based_edit_tool'] = f.name
+            editor_param = BetaToolTextEditor20250728Param(
+                type='text_editor_20250728',
+                name='str_replace_based_edit_tool',
+            )
+            if native_def.max_characters is not None:
+                editor_param['max_characters'] = native_def.max_characters
+            return editor_param
+        if native_def is not None:
+            if isinstance(native_def, ShellNativeDefinition | TextEditorNativeDefinition | ApplyPatchNativeDefinition):
+                warn_native_tool_fallback(native_def.kind, 'anthropic')
+            else:
+                assert_never(native_def)
+        return self._map_tool_definition(f, model_settings)
 
     def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
@@ -2129,7 +2295,21 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
     _provider_name: str
     _provider_url: str
+    _native_tool_names: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    _code_execution_tool_name: str = CodeExecutionTool.kind
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _container_retry_fn: Callable[[], Awaitable[ModelResponse]] | None = field(default=None, init=False)
+    _container_retry_response: ModelResponse | None = field(default=None, init=False)
+
+    def set_container_retry(self, fn: Callable[[], Awaitable[ModelResponse]]) -> None:
+        """Install a callback that retries the request with a fresh container if all results are errors."""
+        self._container_retry_fn = fn
+
+    def get(self) -> ModelResponse:
+        """Return the retry response if a stale-container retry occurred, otherwise the streamed result."""
+        if self._container_retry_response is not None:
+            return self._container_retry_response
+        return super().get()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
@@ -2168,16 +2348,20 @@ class AnthropicStreamedResponse(StreamedResponse):
                         ):
                             yield event_
                     elif isinstance(current_block, BetaToolUseBlock):
+                        # Map provider-native tool names back to toolset names
+                        tool_name = self._native_tool_names.get(current_block.name, current_block.name)
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=event.index,
-                            tool_name=current_block.name,
+                            tool_name=tool_name,
                             args=cast(dict[str, Any], current_block.input) or None,
                             tool_call_id=current_block.id,
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     elif isinstance(current_block, BetaServerToolUseBlock):
-                        call_part = _map_server_tool_use_block(current_block, self.provider_name)
+                        call_part = _map_server_tool_use_block(
+                            current_block, self.provider_name, self._code_execution_tool_name
+                        )
                         builtin_tool_calls[call_part.tool_call_id] = call_part
                         # In streaming, the block's `input` is empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
@@ -2198,27 +2382,33 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_tool_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         # Legacy code execution responses used this bare `code_execution_tool_result` shape.
                         # Current code execution tool versions emit the named bash/text-editor blocks below.
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=event.index,
-                            part=_map_code_execution_tool_result_block(current_block, self.provider_name),
+                        return_part, uploaded_files = _map_code_execution_tool_result_block(
+                            current_block, self.provider_name, self._code_execution_tool_name
                         )
-                    elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=event.index,
-                            part=_map_bash_code_execution_tool_result_block(current_block, self.provider_name),
-                        )
-                    elif isinstance(current_block, BetaTextEditorCodeExecutionToolResultBlock):
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=event.index,
-                            part=_map_text_editor_code_execution_tool_result_block(current_block, self.provider_name),
-                        )
+                        yield self._parts_manager.handle_part(vendor_part_id=event.index, part=return_part)
+                        for uploaded_file in uploaded_files:
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=uploaded_file)
                     elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
+                        return_part, uploaded_files = _map_bash_code_execution_tool_result_block(
+                            current_block, self.provider_name, self._code_execution_tool_name
+                        )
+                        yield self._parts_manager.handle_part(vendor_part_id=event.index, part=return_part)
+                        for uploaded_file in uploaded_files:
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=uploaded_file)
+                    elif isinstance(current_block, BetaTextEditorCodeExecutionToolResultBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_text_editor_code_execution_tool_result_block(
+                                current_block, self.provider_name, self._code_execution_tool_name
+                            ),
                         )
                     elif isinstance(current_block, BetaMCPToolUseBlock):
                         call_part = _map_mcp_server_use_block(current_block, self.provider_name)
@@ -2298,6 +2488,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                        self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
@@ -2328,6 +2519,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+
+        # After all events are consumed, check for stale-container errors.
+        # If all code execution results failed, retry with a fresh container.
+        if self._container_retry_fn is not None:
+            if _has_container_error_in_response(super().get()):
+                self._container_retry_response = await self._container_retry_fn()
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -2438,6 +2635,45 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
     'web_fetch': WebFetchTool.kind,
 }
 
+_CONTAINER_ERROR_CODES = frozenset({'container_expired', 'invalid_tool_input'})
+
+
+def _is_exec_result_error(
+    item: BetaBashCodeExecutionToolResultBlock | BetaTextEditorCodeExecutionToolResultBlock,
+) -> bool:
+    """Check if a code execution result block is a container-related error."""
+    content = item.content
+    if isinstance(content, BetaBashCodeExecutionToolResultError):
+        return content.error_code in _CONTAINER_ERROR_CODES
+    if isinstance(content, BetaTextEditorCodeExecutionToolResultError):
+        return content.error_code in _CONTAINER_ERROR_CODES
+    return False
+
+
+def _has_container_error(response: BetaMessage) -> bool:
+    """Check if all code execution tool results in the raw response are container errors."""
+    exec_results = [
+        item
+        for item in response.content
+        if isinstance(item, (BetaBashCodeExecutionToolResultBlock, BetaTextEditorCodeExecutionToolResultBlock))
+    ]
+    if not exec_results:
+        return False
+    return all(_is_exec_result_error(item) for item in exec_results)
+
+
+def _has_container_error_in_response(response: ModelResponse) -> bool:
+    """Check if all code execution tool results in a processed response are container errors."""
+    exec_results: list[dict[str, Any]] = []
+    for part in response.parts:
+        if isinstance(part, NativeToolReturnPart) and part.tool_name in (CodeExecutionTool.kind, ShellTool.kind):
+            content = part.content
+            if isinstance(content, dict):
+                exec_results.append(cast(dict[str, Any], content))
+    if not exec_results:
+        return False
+    return all(content.get('error_code') in _CONTAINER_ERROR_CODES for content in exec_results)
+
 
 def _anthropic_code_execution_tool_provider_details(
     tool_name: _AnthropicCodeExecutionProviderDetailToolName,
@@ -2452,6 +2688,9 @@ def _get_anthropic_code_execution_tool_name(
         tool_name = part.provider_details.get(_ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL)
         if isinstance(tool_name, str) and tool_name in _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES:
             return tool_name
+        server_tool_name = part.provider_details.get('server_tool_name')
+        if isinstance(server_tool_name, str) and server_tool_name in _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES:
+            return server_tool_name
 
     if part.tool_name in ('bash_code_execution', 'text_editor_code_execution'):
         return cast(_AnthropicCodeExecutionToolName, part.tool_name)
@@ -2477,10 +2716,16 @@ def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> Beta
             assert_never(version)
 
 
-def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> NativeToolCallPart:
+def _map_server_tool_use_block(
+    item: BetaServerToolUseBlock,
+    provider_name: str,
+    code_execution_tool_name: str = CodeExecutionTool.kind,
+) -> NativeToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
         kind = _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME[item.name]
+        if item.name == 'code_execution':
+            kind = code_execution_tool_name
         part = NativeToolCallPart(
             provider_name=provider_name,
             tool_name=kind,
@@ -2505,7 +2750,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     if item.name == 'bash_code_execution':
         return NativeToolCallPart(
             provider_name=provider_name,
-            tool_name=CodeExecutionTool.kind,
+            tool_name=code_execution_tool_name,
             args=tool_args,
             tool_call_id=item.id,
             provider_details=_anthropic_code_execution_tool_provider_details('bash_code_execution'),
@@ -2513,7 +2758,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     if item.name == 'text_editor_code_execution':
         return NativeToolCallPart(
             provider_name=provider_name,
-            tool_name=CodeExecutionTool.kind,
+            tool_name=code_execution_tool_name,
             args=tool_args,
             tool_call_id=item.id,
             provider_details=_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
@@ -2631,14 +2876,27 @@ code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBl
 )
 
 
+def _extract_uploaded_files_from_result_outputs(content: Any, provider_name: str) -> list[UploadedFile]:
+    """Extract UploadedFile instances from code execution result blocks that contain file outputs."""
+    if isinstance(content, (BetaCodeExecutionResultBlock, BetaBashCodeExecutionResultBlock)):
+        uploaded_provider = cast(UploadedFileProviderName, provider_name)
+        return [UploadedFile(file_id=output.file_id, provider_name=uploaded_provider) for output in content.content]
+    return []
+
+
 def _map_code_execution_tool_result_block(
-    item: BetaCodeExecutionToolResultBlock, provider_name: str
-) -> NativeToolReturnPart:
-    return NativeToolReturnPart(
-        provider_name=provider_name,
-        tool_name=CodeExecutionTool.kind,
-        content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
-        tool_call_id=item.tool_use_id,
+    item: BetaCodeExecutionToolResultBlock,
+    provider_name: str,
+    tool_name: str = CodeExecutionTool.kind,
+) -> tuple[NativeToolReturnPart, list[UploadedFile]]:
+    return (
+        NativeToolReturnPart(
+            provider_name=provider_name,
+            tool_name=tool_name,
+            content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+            tool_call_id=item.tool_use_id,
+        ),
+        _extract_uploaded_files_from_result_outputs(item.content, provider_name),
     )
 
 
@@ -2648,14 +2906,19 @@ bash_code_execution_tool_result_content_ta: TypeAdapter[BashCodeExecutionToolRes
 
 
 def _map_bash_code_execution_tool_result_block(
-    item: BetaBashCodeExecutionToolResultBlock, provider_name: str
-) -> NativeToolReturnPart:
-    return NativeToolReturnPart(
-        provider_name=provider_name,
-        tool_name=CodeExecutionTool.kind,
-        content=bash_code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
-        tool_call_id=item.tool_use_id,
-        provider_details=_anthropic_code_execution_tool_provider_details('bash_code_execution'),
+    item: BetaBashCodeExecutionToolResultBlock,
+    provider_name: str,
+    tool_name: str = CodeExecutionTool.kind,
+) -> tuple[NativeToolReturnPart, list[UploadedFile]]:
+    return (
+        NativeToolReturnPart(
+            provider_name=provider_name,
+            tool_name=tool_name,
+            content=bash_code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+            tool_call_id=item.tool_use_id,
+            provider_details=_anthropic_code_execution_tool_provider_details('bash_code_execution'),
+        ),
+        _extract_uploaded_files_from_result_outputs(item.content, provider_name),
     )
 
 
@@ -2665,11 +2928,13 @@ text_editor_code_execution_tool_result_content_ta: TypeAdapter[TextEditorCodeExe
 
 
 def _map_text_editor_code_execution_tool_result_block(
-    item: BetaTextEditorCodeExecutionToolResultBlock, provider_name: str
+    item: BetaTextEditorCodeExecutionToolResultBlock,
+    provider_name: str,
+    tool_name: str = CodeExecutionTool.kind,
 ) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=CodeExecutionTool.kind,
+        tool_name=tool_name,
         content=text_editor_code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
         provider_details=_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
@@ -2708,6 +2973,25 @@ def _map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def _get_shell_skills(model_request_parameters: ModelRequestParameters) -> list[BetaSkillParams] | None:
+    """Extract and convert skills from a ShellTool in the native tools list."""
+    for tool in model_request_parameters.native_tools:
+        if isinstance(tool, ShellTool) and tool.skills:
+            return [_map_skill_reference(skill) for skill in tool.skills]
+    return None
+
+
+def _map_skill_reference(skill: SkillReference) -> BetaSkillParams:
+    """Convert a SkillReference to an Anthropic BetaSkillParams."""
+    params = BetaSkillParams(
+        skill_id=skill.skill_id,
+        type='anthropic' if skill.source == 'provider' else 'custom',
+    )
+    if skill.version is not None:
+        params['version'] = str(skill.version)
+    return params
 
 
 def _support_tool_forcing(

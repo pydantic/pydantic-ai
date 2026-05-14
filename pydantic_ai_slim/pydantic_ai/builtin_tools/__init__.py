@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         NATIVE_TOOLS_REQUIRING_CONFIG as BUILTIN_TOOLS_REQUIRING_CONFIG,
         SUPPORTED_NATIVE_TOOLS as SUPPORTED_BUILTIN_TOOLS,
         AbstractNativeTool as AbstractBuiltinTool,
+        CodeExecutionNetworkPolicy,
         CodeExecutionTool,
         FileSearchTool,
         ImageAspectRatio,
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
         ImageGenerationTool,
         MCPServerTool,
         MemoryTool,
+        ShellTool,
+        SkillReference,
         UrlContextTool,  # pyright: ignore[reportDeprecated]
         WebFetchTool,
         WebSearchTool,
@@ -58,6 +61,9 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'SkillReference',
+    'CodeExecutionNetworkPolicy',
+    'ShellTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -65,7 +71,7 @@ __all__ = (
 )
 
 
-# Old name → new name in `pydantic_ai.native_tools`. Names not in this dict
+# Old name -> new name in `pydantic_ai.native_tools`. Names not in this dict
 # are unchanged in the rename and just need a path-deprecation warning.
 _RENAMES: dict[str, str] = {
     'AbstractBuiltinTool': 'AbstractNativeTool',

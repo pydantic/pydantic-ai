@@ -1,0 +1,134 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '331'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2 + 2? Use python to calculate it.
+        role: user
+      instructions: Always use the shell tool. Keep responses brief.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - environment:
+          type: container_auto
+        type: shell
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1878'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '15434'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1773212932
+      created_at: 1773212916
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e9f3e97bce0d13c0169b114f4ccc081909a37b78e8467ade0
+      incomplete_details: null
+      instructions: Always use the shell tool. Keep responses brief.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      object: response
+      output:
+      - action:
+          commands:
+          - |-
+            python3 - <<'PY'
+            print(2+2)
+            PY
+          max_output_length: null
+          timeout_ms: null
+        call_id: call_T86WP7YSfjMG5EuLRXu392NC
+        environment:
+          container_id: cntr_69b114fb6b108190b8ba5d98d49508b60615b6d51b77bc58
+          type: container_reference
+        id: sh_0e9f3e97bce0d13c0169b114ff980c819089563f2086370215
+        status: completed
+        type: shell_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Using Python, `2 + 2 = 4`.
+          type: output_text
+        id: msg_0e9f3e97bce0d13c0169b11503d268819087cf55e14b16a768
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - environment:
+          container_id: cntr_69b114fb6b108190b8ba5d98d49508b60615b6d51b77bc58
+          type: container_reference
+        type: shell
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 819
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 29
+        total_tokens: 864
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

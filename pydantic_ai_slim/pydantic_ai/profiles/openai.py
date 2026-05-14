@@ -13,6 +13,7 @@ from ..native_tools import (
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
+    ShellTool,
     WebSearchTool,
 )
 from ..native_tools._tool_search import ToolSearchTool
@@ -20,7 +21,7 @@ from ..settings import ThinkingLevel
 from . import ModelProfile
 
 _OPENAI_BASE_BUILTINS = frozenset(
-    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ShellTool}
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
@@ -236,6 +237,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_image_output=supports_image_output,
         supports_thinking=supports_reasoning,
         thinking_always_enabled=thinking_always_enabled,
+        supports_shell_network_policy=True,
+        supports_native_shell_tool=True,
+        supports_native_apply_patch_tool=True,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,

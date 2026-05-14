@@ -540,10 +540,28 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'CodeExecutionNetworkPolicy': {
+                    'properties': {
+                        'mode': {'enum': ['disabled', 'allowlist'], 'title': 'Mode', 'type': 'string'},
+                        'allowed_domains': {
+                            'default': [],
+                            'items': {'type': 'string'},
+                            'title': 'Allowed Domains',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['mode'],
+                    'title': 'CodeExecutionNetworkPolicy',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'network_policy': {
+                            'anyOf': [{'$ref': '#/$defs/CodeExecutionNetworkPolicy'}, {'type': 'null'}],
+                            'default': None,
+                        },
                     },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
@@ -1225,6 +1243,43 @@ All types must be serializable using Pydantic.\
                     'title': 'ToolSearchTool',
                     'type': 'object',
                 },
+                'ShellTool': {
+                    'properties': {
+                        'kind': {'default': 'shell', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'skills': {
+                            'default': [],
+                            'items': {'$ref': '#/$defs/SkillReference'},
+                            'title': 'Skills',
+                            'type': 'array',
+                        },
+                        'network_policy': {
+                            'anyOf': [{'$ref': '#/$defs/CodeExecutionNetworkPolicy'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                    },
+                    'title': 'ShellTool',
+                    'type': 'object',
+                },
+                'SkillReference': {
+                    'properties': {
+                        'skill_id': {'title': 'Skill Id', 'type': 'string'},
+                        'version': {
+                            'anyOf': [{'type': 'string'}, {'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Version',
+                        },
+                        'source': {
+                            'default': 'custom',
+                            'enum': ['custom', 'provider'],
+                            'title': 'Source',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['skill_id'],
+                    'title': 'SkillReference',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
@@ -1395,6 +1450,7 @@ Supported by:
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/ShellTool'},
                                         {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
@@ -4629,8 +4685,20 @@ class TestWebSearchCapability:
         # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
         assert toolset is not None
 
-    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_websearch_default_with_nonsupporting_model(
+        self, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+    ):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
+        from pydantic_ai.common_tools import duckduckgo
+
+        calls: list[tuple[str, int | None]] = []
+
+        class FakeDDGS:
+            def text(self, query: str, *, max_results: int | None = None) -> list[dict[str, str]]:
+                calls.append((query, max_results))
+                return [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example result'}]
+
+        monkeypatch.setattr(duckduckgo, 'DDGS', FakeDDGS)
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4651,6 +4719,7 @@ class TestWebSearchCapability:
         result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
+        assert calls == [('test', None)]
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
@@ -6466,16 +6535,16 @@ def test_web_fetch_with_constraints():
         enable_citations=True,
         max_content_tokens=1000,
     )
-    builtin_tools = cap.get_native_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, WebFetchTool)
     assert tool.allowed_domains == ['example.com']
     assert tool.blocked_domains == ['bad.com']
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Only max_uses requires builtin (domains are handled locally)
+    # Only max_uses requires the native tool (domains are handled locally)
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -6487,7 +6556,7 @@ def test_web_fetch_unique_id():
 
 @pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
-    """XSearch returns the correct builtin unique_id."""
+    """XSearch returns the correct native unique_id."""
     cap = XSearch()
     assert cap._native_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
@@ -6504,9 +6573,9 @@ def test_web_search_with_constraints():
         allowed_domains=['good.com'],
         max_uses=3,
     )
-    builtin_tools = cap.get_native_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, WebSearchTool)
     assert tool.search_context_size == 'high'
     assert tool.user_location is not None
@@ -6517,7 +6586,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch() silently produces a builtin-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
+    """WebSearch() silently produces a native-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
 
     original_import = builtins.__import__
@@ -6555,13 +6624,13 @@ def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.Monk
     assert cap.local is None
 
 
-def test_mcp_default_builtin():
+def test_mcp_default_native():
     """MCP capability constructs the default native MCPServerTool."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
-    builtin_tools = cap.get_native_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
