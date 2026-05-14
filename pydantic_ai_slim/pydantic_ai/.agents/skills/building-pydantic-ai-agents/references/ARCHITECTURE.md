@@ -184,7 +184,7 @@ Need deterministic, fast tests?
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
-| `HistoryProcessor` | Wraps a history processor function | No |
+| `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
 
 ### When to Use Each Agent Method
 
