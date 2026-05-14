@@ -11288,9 +11288,7 @@ async def test_enqueue_accepts_model_request_passthrough():
     assert injected_unstamped.run_id is not None
 
     injected_prestamped = next(
-        msg
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
+        msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
     )
     # Producer-supplied timestamp/run_id are preserved (drain doesn't overwrite).
     assert injected_prestamped.timestamp == preset_timestamp
@@ -11390,14 +11388,15 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
         msg
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
-        and any(
-            isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
-            for p in msg.parts
-        )
+        and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
     ]
     assert len(drained) == 3
     contents = [
-        next(p.content for p in r.parts if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after'))
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
+        )
         for r in drained
     ]
     assert contents == ['before', 'passthrough', 'after']
@@ -11477,9 +11476,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
     # `all_messages()` keeps the un-merged view.
     assert agent_run.result.all_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]
-            ),
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
@@ -11488,9 +11485,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
-                        tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()
-                    ),
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
                     UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
@@ -11517,9 +11512,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
 
     cleaned = _clean_message_history(agent_run.result.all_messages())
     last_request = next(msg for msg in reversed(cleaned) if isinstance(msg, ModelRequest))
-    kinds_and_contents = [
-        (type(p).__name__, getattr(p, 'content', None)) for p in last_request.parts
-    ]
+    kinds_and_contents = [(type(p).__name__, getattr(p, 'content', None)) for p in last_request.parts]
     assert kinds_and_contents == [
         ('ToolReturnPart', 'ok'),
         ('UserPromptPart', 'follow-up question'),

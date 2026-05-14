@@ -201,6 +201,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             prompt: Optional user prompt to expose as `RunContext.prompt`.
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
+            pending_messages: Optional live pending-message list to expose as
+                `RunContext.pending_messages` so `ctx.enqueue` calls from inside system
+                prompt callbacks reach the actual queue (e.g. when `ReinjectSystemPrompt`
+                re-resolves callbacks via a synthetic `RunContext`).
         """
         return []  # pragma: no cover — concrete subclasses override this
 

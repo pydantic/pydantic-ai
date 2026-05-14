@@ -2367,7 +2367,7 @@ pass that as the payload — but be aware of the cross-provider behavior.
 """
 
 
-def coerce_enqueue_item(item: 'str | Sequence[UserContent]') -> 'UserPromptPart':
+def coerce_enqueue_item(item: str | Sequence[UserContent]) -> UserPromptPart:
     """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item (other than a [`ModelRequest`][pydantic_ai.messages.ModelRequest]) to a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
 
     Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
@@ -2376,7 +2376,7 @@ def coerce_enqueue_item(item: 'str | Sequence[UserContent]') -> 'UserPromptPart'
     return UserPromptPart(content=item)
 
 
-def build_enqueue_payload(items: 'Sequence[EnqueueContent]') -> 'tuple[ModelRequestPart, ...] | ModelRequest':
+def build_enqueue_payload(items: Sequence[EnqueueContent]) -> tuple[ModelRequestPart, ...] | ModelRequest:
     """Build the payload that will be stored on a [`PendingMessage`][pydantic_ai.messages.PendingMessage] from the args to `enqueue`.
 
     Returns the original [`ModelRequest`][pydantic_ai.messages.ModelRequest] when a single one was passed (passthrough);
@@ -2416,7 +2416,7 @@ class PendingMessage:
     serializable message history.
     """
 
-    payload: 'tuple[ModelRequestPart, ...] | ModelRequest'
+    payload: tuple[ModelRequestPart, ...] | ModelRequest
     """Either a tuple of [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s to merge
     at drain time, or a complete [`ModelRequest`][pydantic_ai.messages.ModelRequest] to emit verbatim."""
 

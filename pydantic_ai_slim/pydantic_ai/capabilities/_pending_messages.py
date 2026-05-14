@@ -153,9 +153,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not leftover_asap and not when_idle:
             return result
 
-        requests = _flatten_drained(
-            [*leftover_asap, *when_idle], fallback_run_id=ctx.run_id
-        )
+        requests = _flatten_drained([*leftover_asap, *when_idle], fallback_run_id=ctx.run_id)
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
         # will re-stamp it during the graph lifecycle. `_flatten_drained` already
         # stamped it, which is harmless (the lifecycle stamp overwrites).

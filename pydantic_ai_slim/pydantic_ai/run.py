@@ -447,7 +447,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         payload = _messages.build_enqueue_payload(content)
         self._graph_run.state.pending_messages.append(_messages.PendingMessage(payload=payload, priority=priority))
 
-
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
