@@ -11,7 +11,7 @@ env:
   UV_PYTHON: 3.13
   UV_FROZEN: "1"
   TY_FORK_REPOSITORY: dsfaccini/ruff
-  TY_FORK_REF: codex/ty-pydantic-compat
+  TY_FORK_SHA: afe245870007732a82e61e9b4aed51c76451a0de
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ env.TY_FORK_REPOSITORY }}
-          ref: ${{ env.TY_FORK_REF }}
+          ref: ${{ env.TY_FORK_SHA }}
           path: .ty/ruff
           persist-credentials: false
 
@@ -47,10 +47,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            .ty/ruff/target
-          key: ty-${{ runner.os }}-${{ env.TY_FORK_REF }}-${{ hashFiles('.github/workflows/ty.yml') }}
+          key: ty-${{ runner.os }}-${{ env.TY_FORK_SHA }}-${{ hashFiles('.github/workflows/ty.yml') }}
           restore-keys: |
-            ty-${{ runner.os }}-${{ env.TY_FORK_REF }}-
+            ty-${{ runner.os }}-${{ env.TY_FORK_SHA }}-
 
       - name: Build Ty fork
         working-directory: .ty/ruff
@@ -61,4 +60,4 @@ jobs:
           TY_BIN: ${{ github.workspace }}/.ty/ruff/target/release/ty
           TY_OUTPUT_FORMAT: github
           TY_PATHS: pydantic_ai_slim
-        run: uvx pre-commit run typecheck-ty --hook-stage manual --all-files --verbose
+        run: uvx --from pre-commit==4.6.0 pre-commit run typecheck-ty --hook-stage manual --all-files --verbose
