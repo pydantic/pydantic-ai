@@ -70,7 +70,14 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
@@ -122,6 +129,11 @@ with try_import() as imports_successful:
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as interrupts_imports_successful:
+    # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
+    # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
+    from ag_ui.core import ResumeEntry
 
 
 pytestmark = [
@@ -4714,6 +4726,302 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
     user_part = request.parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
+
+
+# endregion
+
+
+# region: Interrupts — AG-UI RunFinished outcome and resume[] translation
+
+
+pytestmark_interrupts = pytest.mark.skipif(
+    not interrupts_imports_successful(),
+    reason='ag-ui-protocol < 0.1.19 — interrupt types unavailable',
+)
+
+
+_INTERRUPTS_AG_UI_VERSION = '0.1.19'
+
+
+async def _collect_adapter_events(
+    agent: Agent[Any, Any],
+    run_input: RunAgentInput,
+    *,
+    ag_ui_version: str = _INTERRUPTS_AG_UI_VERSION,
+    deferred_tool_results: DeferredToolResults | None = None,
+) -> list[dict[str, Any]]:
+    """Drive `AGUIAdapter` directly so we can pin `ag_ui_version` to the interrupt-aware release."""
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+    events: list[dict[str, Any]] = []
+    async for encoded in adapter.encode_stream(adapter.run_stream(deferred_tool_results=deferred_tool_results)):
+        events.append(json.loads(encoded.removeprefix('data: ')))
+    return events
+
+
+@pytestmark_interrupts
+async def test_run_finished_success_outcome_on_modern_version() -> None:
+    """On ag-ui-protocol >= 0.1.19, a normal run ends with `outcome.type == 'success'`."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot({'type': 'success'})
+
+
+@pytestmark_interrupts
+async def test_run_finished_no_outcome_on_legacy_version() -> None:
+    """On ag-ui-protocol < 0.1.19, no `outcome` field is emitted — matches today's behavior."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='0.1.10'
+    )
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
+    """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
+    interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
+    and the original `tool_call_id` bound for resume.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'deleted {path}'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot(
+        {
+            'type': 'interrupt',
+            'interrupts': [
+                {
+                    'id': IsStr(),
+                    'reason': 'tool_call',
+                    'message': IsStr(),
+                    'toolCallId': IsStr(),
+                    'responseSchema': {
+                        'type': 'object',
+                        'properties': {
+                            'approved': {'type': 'boolean'},
+                            'editedArgs': {'type': 'object'},
+                            'reason': {'type': 'string'},
+                        },
+                        'required': ['approved'],
+                    },
+                }
+            ],
+        }
+    )
+    interrupt = run_finished['outcome']['interrupts'][0]
+    # The `id` must let the client round-trip back to the original tool_call_id.
+    assert interrupt['id'].endswith(interrupt['toolCallId'])
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_approves_tool() -> None:
+    """`status='resolved'` + `payload.approved=True` → `ToolApproved()` for the bound tool call."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_edited_args_passes_override_args() -> None:
+    """`payload.editedArgs` on an approval translates to `ToolApproved(override_args=...)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': True, 'editedArgs': {'path': '/tmp/safer.env'}},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolApproved(override_args={'path': '/tmp/safer.env'})})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_approved_false_denies_tool() -> None:
+    """`payload.approved=False` with a `reason` → `ToolDenied(reason)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': False, 'reason': 'too destructive'},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='too destructive')})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
+    """`status='cancelled'` → `ToolDenied('Cancelled by user.')` regardless of payload contents."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            # Even an apparently-approving payload is overridden by `status='cancelled'`.
+            ResumeEntry(interrupt_id='int-tc-001', status='cancelled', payload={'approved': True}),
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='Cancelled by user.')})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
+    """An `interrupt_id` that doesn't carry the adapter's prefix is a protocol error
+    we surface as `UserError` rather than silently mapping to a wrong tool call.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='bogus-123', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with pytest.raises(UserError, match=r'does not start with the expected'):
+        _ = adapter.deferred_tool_results
+
+
+@pytestmark_interrupts
+async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
+    """End-to-end: turn 1 ends with an interrupt outcome; turn 2 supplies `resume[]` and the
+    tool actually runs. The resumed turn must NOT re-emit `TOOL_CALL_START` for the same
+    `tool_call_id` (per AG-UI spec) — the agent loops back into execution with the original id
+    and we only see `TOOL_CALL_RESULT`.
+    """
+    executed: list[dict[str, Any]] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # Whenever the agent has just a user prompt + system prompts, propose the call;
+        # after the tool result is in history, emit a final text response.
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, 'parts', [])):
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        executed.append({'path': path})
+        return f'deleted {path}'
+
+    # Turn 1: collect the interrupt outcome.
+    turn1_input = create_input(UserMessage(id='m1', content='delete .env'))
+    turn1_events = await _collect_adapter_events(agent, turn1_input)
+
+    run_finished_1 = next(e for e in turn1_events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished_1['outcome']['interrupts'][0]
+    interrupt_id = interrupt['id']
+    tool_call_id = interrupt['toolCallId']
+    assert executed == [], 'turn 1 must not execute the deferred tool'
+
+    # Turn 2: resume with approval; the message history must include the proposed call so the
+    # agent's tool manager can match the resume back to it.
+    turn2_input = RunAgentInput(
+        thread_id=turn1_input.thread_id,
+        run_id=uuid_str(),
+        state={},
+        messages=[
+            UserMessage(id='m1', content='delete .env'),
+            AssistantMessage(
+                id='m2',
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_id,
+                        type='function',
+                        function=FunctionCall(name='delete_file', arguments='{"path": ".env"}'),
+                    )
+                ],
+            ),
+        ],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id=interrupt_id, status='resolved', payload={'approved': True})],
+    )
+    turn2_events = await _collect_adapter_events(agent, turn2_input)
+
+    assert executed == [{'path': '.env'}], 'turn 2 must execute the approved tool'
+
+    tool_starts_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_START' and e.get('toolCallId') == tool_call_id
+    ]
+    tool_results_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_RESULT' and e.get('toolCallId') == tool_call_id
+    ]
+    assert tool_starts_for_call == [], 'spec: resumed turn must not re-emit TOOL_CALL_START for the same tool_call_id'
+    assert len(tool_results_for_call) == 1, 'resumed turn must emit exactly one TOOL_CALL_RESULT'
+
+    run_finished_2 = next(e for e in turn2_events if e['type'] == 'RUN_FINISHED')
+    assert run_finished_2['outcome'] == snapshot({'type': 'success'})
 
 
 # endregion

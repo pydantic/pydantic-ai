@@ -19,6 +19,7 @@ from typing import (
 from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
+from ...exceptions import UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -45,7 +46,13 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import (
+    AgentDepsT,
+    DeferredToolApprovalResult,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDenied,
+)
 from ...toolsets import AbstractToolset
 
 try:
@@ -67,7 +74,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import AGUIEventStream
+    from ._event_stream import INTERRUPT_ID_PREFIX, AGUIEventStream
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
@@ -90,11 +97,14 @@ if TYPE_CHECKING:
         DocumentInputContent,
         ImageInputContent,
         ReasoningMessage,
+        ResumeEntry,
         VideoInputContent,
     )
     from starlette.requests import Request
 
     from ...agent import AbstractAgent
+
+    _HAS_INTERRUPTS = True
 else:
     try:
         from ag_ui.core import ReasoningMessage
@@ -118,6 +128,16 @@ else:
 
         class DocumentInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
+
+    try:
+        from ag_ui.core import ResumeEntry
+
+        _HAS_INTERRUPTS = True
+    except ImportError:  # pragma: no cover
+        _HAS_INTERRUPTS = False
+
+        class ResumeEntry:
+            """Stub for ag-ui-protocol < 0.1.19 — no instances are constructed when `_HAS_INTERRUPTS` is False."""
 
 
 __all__ = ['AGUIAdapter']
@@ -199,6 +219,50 @@ def _user_content_to_input(
         return None
     else:
         assert_never(item)
+
+
+def _interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
+    """Reverse the `INTERRUPT_ID_PREFIX` convention applied in `_approval_to_interrupt`."""
+    if not interrupt_id.startswith(INTERRUPT_ID_PREFIX):
+        raise UserError(
+            f'ResumeEntry.interrupt_id {interrupt_id!r} does not start with the expected '
+            f'{INTERRUPT_ID_PREFIX!r} prefix; cannot map it back to a tool call id.'
+        )
+    return interrupt_id[len(INTERRUPT_ID_PREFIX) :]
+
+
+def _payload_dict(raw: Any) -> dict[str, Any]:
+    """Coerce a `ResumeEntry.payload` (typed `Optional[Any]` in ag-ui-protocol) into a typed dict.
+
+    Anything that isn't a mapping is treated as the empty payload — the adapter's
+    `response_schema` only advertises an object shape, so non-conforming payloads
+    fall through to the unapproved/default path.
+    """
+    if isinstance(raw, dict):
+        return cast('dict[str, Any]', raw)
+    return {}
+
+
+def _resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
+    """Translate one `ResumeEntry` payload into `ToolApproved` / `ToolDenied`.
+
+    `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
+    fully replacing the originally proposed call arguments before the agent re-executes the tool.
+    """
+    if entry.status == 'cancelled':
+        return ToolDenied(message='Cancelled by user.')
+
+    payload = _payload_dict(entry.payload)
+    if payload.get('approved') is False:
+        denial_message = payload.get('reason')
+        if isinstance(denial_message, str) and denial_message:
+            return ToolDenied(message=denial_message)
+        return ToolDenied()
+
+    edited_args = payload.get('editedArgs')
+    if isinstance(edited_args, dict):
+        return ToolApproved(override_args=cast('dict[str, Any]', edited_args))
+    return ToolApproved()
 
 
 @dataclass
@@ -298,6 +362,32 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def conversation_id(self) -> str | None:
         """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
         return self.run_input.thread_id
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Translate AG-UI `RunAgentInput.resume[]` into Pydantic AI `DeferredToolResults`.
+
+        See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
+
+        Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`:
+
+        - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
+        - `payload.approved is False` → `ToolDenied(payload.get('reason', ...))`
+        - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
+        - `payload.approved is True` without edits → `ToolApproved()`
+
+        Returns `None` when `resume` is missing or empty, or when the installed
+        ag-ui-protocol predates the interrupt lifecycle.
+        """
+        if not _HAS_INTERRUPTS:
+            return None
+        resume: list[ResumeEntry] | None = getattr(self.run_input, 'resume', None)
+        if not resume:
+            return None
+        approvals: dict[str, DeferredToolApprovalResult | bool] = {
+            _interrupt_id_to_tool_call_id(entry.interrupt_id): _resume_entry_to_approval(entry) for entry in resume
+        }
+        return DeferredToolResults(approvals=approvals)
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901

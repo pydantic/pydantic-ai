@@ -19,6 +19,14 @@ MULTIMODAL_VERSION = (0, 1, 15)
 Also changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
 """
 
+INTERRUPTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced the interrupt-aware run lifecycle.
+
+`RunFinishedEvent.outcome` (`RunFinishedSuccessOutcome` | `RunFinishedInterruptOutcome`),
+`Interrupt`, `ResumeEntry`, and `RunAgentInput.resume` were added in
+[ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
+"""
+
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'

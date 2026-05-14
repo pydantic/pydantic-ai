@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -27,10 +28,16 @@ from ...messages import (
     ToolReturnPart,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._event_stream import describe_file
-from ._utils import BUILTIN_TOOL_CALL_ID_PREFIX, DEFAULT_AG_UI_VERSION, REASONING_VERSION, parse_ag_ui_version
+from ._utils import (
+    BUILTIN_TOOL_CALL_ID_PREFIX,
+    DEFAULT_AG_UI_VERSION,
+    INTERRUPTS_VERSION,
+    REASONING_VERSION,
+    parse_ag_ui_version,
+)
 
 try:
     from ag_ui.core import (
@@ -55,6 +62,44 @@ except ImportError as e:  # pragma: no cover
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
+
+
+if TYPE_CHECKING:
+    from ag_ui.core import (
+        Interrupt,
+        RunFinishedInterruptOutcome,
+        RunFinishedSuccessOutcome,
+    )
+
+    _HAS_INTERRUPTS = True
+else:
+    try:
+        from ag_ui.core import (
+            Interrupt,
+            RunFinishedInterruptOutcome,
+            RunFinishedSuccessOutcome,
+        )
+
+        _HAS_INTERRUPTS = True
+    except ImportError:  # pragma: no cover
+        _HAS_INTERRUPTS = False
+
+        class Interrupt:
+            """Stub for ag-ui-protocol < 0.1.19 — no instances are constructed when `_HAS_INTERRUPTS` is False."""
+
+        class RunFinishedInterruptOutcome:
+            """Stub for ag-ui-protocol < 0.1.19."""
+
+        class RunFinishedSuccessOutcome:
+            """Stub for ag-ui-protocol < 0.1.19."""
+
+
+INTERRUPT_ID_PREFIX = 'int-'
+"""Prefix used to derive an `Interrupt.id` from a `ToolCallPart.tool_call_id`.
+
+The same prefix is stripped on resume to map `ResumeEntry.interrupt_id` back to a `tool_call_id`.
+Keep this string stable — clients may persist `Interrupt.id` across page reloads.
+"""
 
 __all__ = [
     'AGUIEventStream',
@@ -118,12 +163,41 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield  # Make this an async generator
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
-        if not self._error:
+        if self._error:
+            return
+
+        # The `outcome` field on `RunFinishedEvent` only exists in ag-ui-protocol >= 0.1.19,
+        # and `ConfiguredBaseModel` forbids extra fields. So we branch instead of passing
+        # `outcome=None` on the old path.
+        if _HAS_INTERRUPTS:
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                outcome=self._build_outcome(),
+                timestamp=self._get_timestamp(),
+            )
+        else:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
                 run_id=self.run_input.run_id,
                 timestamp=self._get_timestamp(),
             )
+
+    def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
+        """Build the `RunFinishedEvent.outcome` from the final agent result.
+
+        Returns `None` when the negotiated AG-UI version predates interrupts, so an old
+        client doesn't receive a field it doesn't understand even if the server SDK
+        does.
+        """
+        if parse_ag_ui_version(self.ag_ui_version) < INTERRUPTS_VERSION:
+            return None
+        output = self._result.output if self._result else None
+        if isinstance(output, DeferredToolRequests) and output.approvals:
+            return RunFinishedInterruptOutcome(
+                interrupts=[_approval_to_interrupt(call, output.metadata) for call in output.approvals],
+            )
+        return RunFinishedSuccessOutcome()
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
@@ -276,6 +350,31 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+
+def _approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]]) -> Interrupt:
+    """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart`.
+
+    The `response_schema` describes the shape clients must put in `ResumeEntry.payload`:
+    `{ approved: bool, editedArgs?: dict }`. `editedArgs`, when present, replaces the
+    proposed `ToolCallPart.args` (see `ToolApproved.override_args`).
+    """
+    return Interrupt(
+        id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
+        reason='tool_call',
+        tool_call_id=call.tool_call_id,
+        message=f'Approve {call.tool_name}({call.args_as_json_str()})?',
+        response_schema={
+            'type': 'object',
+            'properties': {
+                'approved': {'type': 'boolean'},
+                'editedArgs': {'type': 'object'},
+                'reason': {'type': 'string'},
+            },
+            'required': ['approved'],
+        },
+        metadata=metadata.get(call.tool_call_id),
+    )
 
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
