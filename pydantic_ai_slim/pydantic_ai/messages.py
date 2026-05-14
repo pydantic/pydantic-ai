@@ -4,6 +4,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
