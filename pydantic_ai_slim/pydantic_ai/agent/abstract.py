@@ -1208,32 +1208,25 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         task = asyncio.create_task(run_agent())
 
         async def event_iterator() -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
-            try:
-                async with receive_stream:
-                    async for message in receive_stream:
-                        yield message
-
-            except asyncio.CancelledError as e:
-                await _utils.cancel_and_drain(task, msg=e.args[0] if len(e.args) != 0 else None)
-                raise
-
-            except BaseException:
-                # The consumer side is already exiting. Await the producer only to
-                # retrieve its exception and finish cleanup; it must not replace the
-                # exception that is already propagating from the consumer side.
-                await _utils.cancel_and_drain(task)
-                raise
-
-            else:
-                result = await task
-                yield AgentRunResultEvent(result)
+            async with receive_stream:
+                async for message in receive_stream:
+                    yield message
+            # On natural exhaustion of the receive stream, surface the run's final result.
+            # If the task raised, `await task` re-raises and propagates to the consumer.
+            result = await task
+            yield AgentRunResultEvent(result)
 
         iterator = event_iterator()
         try:
             yield iterator
         finally:
-            # Drive the iterator's exception handlers to drain the background task on early exit.
+            # Cleanup at the CM scope so it runs regardless of whether the consumer ever
+            # advanced the iterator (an unstarted async generator's body — including any
+            # try/finally inside it — never executes on `aclose()`).
             await iterator.aclose()
+            if not task.done():
+                await _utils.cancel_and_drain(task)
+            await receive_stream.aclose()
 
     @overload
     def iter(
