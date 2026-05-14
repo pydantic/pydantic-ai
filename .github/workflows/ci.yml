@@ -376,18 +376,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REF: ${{ github.sha }}
 
-  # TODO(Marcelo): We need to split this into two jobs: `build` and `release`.
-  release:
+  # Build wheels in an isolated job with no publish credentials. If anything in
+  # `uv build` (build backend, transitive build deps, restored cache) is
+  # compromised, the OIDC token for PyPI is in a separate job that only runs
+  # `pypi-publish` against the already-built artifacts.
+  release-build:
+    name: build release artifacts
     needs: [check]
     if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-
-    environment:
-      name: release
-      url: https://pypi.org/project/pydantic-ai/${{ steps.inspect_package.outputs.version }}
-
-    permissions:
-      id-token: write
 
     outputs:
       package-version: ${{ steps.inspect_package.outputs.version }}
@@ -410,6 +407,35 @@ jobs:
           uv tool install --with uv-dynamic-versioning hatchling
           version=$(uvx hatchling version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: dist/
+
+  release:
+    name: publish to PyPI
+    needs: [release-build]
+    if: success() && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    environment:
+      name: release
+      url: https://pypi.org/project/pydantic-ai/${{ needs.release-build.outputs.package-version }}
+
+    permissions:
+      id-token: write
+
+    outputs:
+      package-version: ${{ needs.release-build.outputs.package-version }}
+
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
