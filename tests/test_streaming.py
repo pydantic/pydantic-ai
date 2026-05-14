@@ -3203,29 +3203,6 @@ async def test_output_tool_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'bad_value': 'invalid'},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=False,
-            ),
-            FunctionToolResultEvent(
-                part=RetryPromptPart(
-                    tool_name='final_result',
-                    content=[
-                        {
-                            'type': 'missing',
-                            'loc': ('value',),
-                            'msg': 'Field required',
-                            'input': {'bad_value': 'invalid'},
-                        }
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                )
-            ),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
@@ -3424,24 +3401,6 @@ def test_function_tool_event_tool_call_id_properties():
 
     # The event should expose the same `tool_call_id` as the result part
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
-
-
-def test_function_tool_result_event_deprecated_result_alias():
-    """`FunctionToolResultEvent(result=...)` and `event.result` keep working with a `DeprecationWarning`."""
-    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='ret_1')
-
-    with pytest.warns(DeprecationWarning, match=r'`result=\.\.\.` to `FunctionToolResultEvent` is deprecated'):
-        event = FunctionToolResultEvent(result=return_part)
-    assert event.part is return_part
-
-    with pytest.warns(DeprecationWarning, match=r'`result` is deprecated, use `part` instead\.'):
-        assert event.result is return_part  # pyright: ignore[reportDeprecated]
-
-    with pytest.raises(TypeError, match='either `part` or `result`'):
-        FunctionToolResultEvent(part=return_part, result=return_part)
-
-    with pytest.raises(TypeError, match='missing required argument'):
-        FunctionToolResultEvent()
 
 
 async def test_tool_raises_call_deferred():
