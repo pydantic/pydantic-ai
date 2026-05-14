@@ -1148,6 +1148,110 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert tools['tool_b'].tool_def.defer_loading is True
 
 
+async def test_tool_search_capability_with_tool_selector_names():
+    """`ToolSearch(tools=[names])` defers matching tools alongside any with `defer_loading=True`
+    on the tool itself."""
+    from pydantic_ai.capabilities import ToolSearch
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def tool_a() -> str:  # pragma: no cover
+        """Tool A."""
+        return 'a'
+
+    @toolset.tool_plain
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    cap = ToolSearch(tools=['tool_b'])
+    searchable = cap.get_wrapper_toolset(toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert 'search_tools' in tools
+    assert tools['tool_a'].tool_def.defer_loading is False
+    assert tools['tool_b'].tool_def.defer_loading is True
+
+
+async def test_tool_search_capability_with_tool_selector_metadata():
+    """`ToolSearch(tools={metadata})` defers tools whose metadata matches the selector — useful
+    for tools coming from external toolsets where the user can't add `defer_loading=True`."""
+    from pydantic_ai.capabilities import ToolSearch
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def tool_a() -> str:  # pragma: no cover
+        """Tool A."""
+        return 'a'
+
+    @toolset.tool_plain(metadata={'rarely_used': True})
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    cap = ToolSearch(tools={'rarely_used': True})
+    searchable = cap.get_wrapper_toolset(toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert 'search_tools' in tools
+    assert tools['tool_a'].tool_def.defer_loading is False
+    assert tools['tool_b'].tool_def.defer_loading is True
+
+
+async def test_tool_search_capability_selector_unions_with_per_tool_flag():
+    """Per-tool `defer_loading=True` is still respected when a selector is provided —
+    the selector adds to the deferred set, it doesn't replace the per-tool flag."""
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.tools import Tool
+
+    toolset = FunctionToolset(tools=[Tool(lambda: 'a', name='tool_a', defer_loading=True)])
+
+    @toolset.tool_plain
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    @toolset.tool_plain
+    def tool_c() -> str:  # pragma: no cover
+        """Tool C."""
+        return 'c'
+
+    # Selector matches tool_b only; tool_a is deferred via per-tool flag.
+    cap = ToolSearch(tools=['tool_b'])
+    searchable = cap.get_wrapper_toolset(toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert tools['tool_a'].tool_def.defer_loading is True  # per-tool flag
+    assert tools['tool_b'].tool_def.defer_loading is True  # selector
+    assert tools['tool_c'].tool_def.defer_loading is False  # neither
+
+
+async def test_tool_search_capability_no_selector_preserves_per_tool_flag_only():
+    """Default `tools=None` preserves today's behavior: only `defer_loading=True` is deferred."""
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.tools import Tool
+
+    toolset = FunctionToolset(tools=[Tool(lambda: 'a', name='tool_a', defer_loading=True)])
+
+    @toolset.tool_plain
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    cap = ToolSearch()  # no selector
+    searchable = cap.get_wrapper_toolset(toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert tools['tool_a'].tool_def.defer_loading is True
+    assert tools['tool_b'].tool_def.defer_loading is False
+
+
 async def test_tool_search_toolset_marks_corpus_with_native():
     """Every deferred tool keeps its real name in the toolset output and carries
     `with_native='tool_search'` regardless of the current model — the adapter's

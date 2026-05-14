@@ -2843,6 +2843,57 @@ def test_set_metadata_toolset_with_dict_arg():
     assert td.metadata['code_mode'] is True
 
 
+def test_with_description_replace():
+    """`.with_description(replace=...)` overwrites the description."""
+
+    def search() -> str:
+        """Original."""
+        return ''  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[search])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_description(replace='New description')])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'search')
+    assert td.description == 'New description'
+
+
+def test_with_description_append_and_prepend():
+    """`.with_description(append=...)` and `prepend` join with two newlines."""
+
+    def my_tool() -> str:
+        """Base."""
+        return ''  # pragma: no cover
+
+    toolset_app = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset_app.with_description(append='Extra.')])
+    agent.run_sync('test')
+    td = next(td for td in test_model.last_model_request_parameters.function_tools if td.name == 'my_tool')
+    assert td.description == 'Base.\n\nExtra.'
+
+    toolset_prep = FunctionToolset(tools=[my_tool])
+    test_model2 = TestModel()
+    agent2 = Agent(test_model2, toolsets=[toolset_prep.with_description(prepend='Hint.')])
+    agent2.run_sync('test')
+    td2 = next(td for td in test_model2.last_model_request_parameters.function_tools if td.name == 'my_tool')
+    assert td2.description == 'Hint.\n\nBase.'
+
+
+def test_with_description_validation():
+    """`SetDescriptionToolset` enforces exactly one of replace / append / prepend."""
+    from pydantic_ai.toolsets.set_description import SetDescriptionToolset
+
+    toolset = FunctionToolset()
+    with pytest.raises(TypeError, match='requires exactly one'):
+        SetDescriptionToolset(toolset)
+    with pytest.raises(TypeError, match='cannot mix'):
+        SetDescriptionToolset(toolset, replace='a', append='b')
+
+
 def test_approval_required_with_tool_selector():
     """ApprovalRequiredToolset with tools selector scopes which tools require approval."""
     from pydantic_ai.toolsets.approval_required import ApprovalRequiredToolset

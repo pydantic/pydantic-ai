@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
+    from .set_description import SetDescriptionToolset
     from .set_metadata import SetMetadataToolset
 
 
@@ -343,3 +344,34 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             raise TypeError("Cannot specify both a 'metadata' dict and keyword metadata arguments.")
         actual_metadata = metadata if metadata is not None else kwargs
         return SetMetadataToolset(self, actual_metadata, tools=tools)
+
+    def with_description(
+        self,
+        *,
+        replace: str | None = None,  # noqa: A002 — public field name
+        append: str | None = None,
+        prepend: str | None = None,
+        tools: ToolSelector[AgentDepsT] = 'all',
+    ) -> SetDescriptionToolset[AgentDepsT]:
+        """Returns a new toolset that modifies the descriptions of selected tools.
+
+        Pass exactly one of `replace`, `append`, or `prepend`:
+
+        - `replace`: overwrite the existing description.
+        - `append`: add text after the existing description (joined with two newlines).
+        - `prepend`: add text before the existing description (joined with two newlines).
+
+        ```python
+        toolset.with_description(replace='Search the knowledge base.', tools=['search'])
+        toolset.with_description(append='Use with care.', tools={'category': 'destructive'})
+        ```
+
+        Args:
+            replace: Replacement description.
+            append: Text to append to the existing description.
+            prepend: Text to prepend to the existing description.
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools to modify.
+        """
+        from .set_description import SetDescriptionToolset
+
+        return SetDescriptionToolset(self, replace=replace, append=append, prepend=prepend, tools=tools)

@@ -51,6 +51,7 @@ from .process_history import (
 )
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .require_tool_approval import RequireToolApproval
+from .set_tool_description import SetToolDescription
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -82,6 +83,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ProcessHistory,
         ReinjectSystemPrompt,
         RequireToolApproval,
+        SetToolDescription,
         SetToolMetadata,
         Thinking,
         ToolSearch,
@@ -138,6 +140,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'RequireToolApproval',
+    'SetToolDescription',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',

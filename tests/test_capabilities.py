@@ -99,6 +99,8 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr, try_import
 
+from pydantic_ai.capabilities import SetToolDescription
+
 with try_import() as xai_imports:
     from pydantic_ai.models.xai import XSearch
 
@@ -119,8 +121,7 @@ def test_capability_types() -> None:
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
-            'RequireToolApproval': RequireToolApproval,
-            'SetToolMetadata': SetToolMetadata,
+            'RequireToolApproval': RequireToolApproval, 'SetToolDescription': SetToolDescription, 'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
@@ -1480,8 +1481,7 @@ Supported by:
                     'required': ['SetToolMetadata'],
                     'title': 'spec_SetToolMetadata',
                     'type': 'object',
-                },
-                'spec_PrefixTools': {
+                }, 'spec_SetToolDescription': {'additionalProperties': False, 'properties': {'SetToolDescription': {'$ref': '#/$defs/spec_params_SetToolDescription'}}, 'required': ['SetToolDescription'], 'title': 'spec_SetToolDescription', 'type': 'object'}, 'spec_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
                     'required': ['PrefixTools'],
@@ -1630,8 +1630,7 @@ Supported by:
                     },
                     'title': 'spec_params_SetToolMetadata',
                     'type': 'object',
-                },
-                'spec_params_PrefixTools': {
+                }, 'spec_params_SetToolDescription': {'additionalProperties': False, 'properties': {'tools': {'anyOf': [{'const': 'all', 'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'additionalProperties': True, 'type': 'object'}], 'title': 'Tools'}, 'replace': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Replace'}, 'append': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Append'}, 'prepend': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Prepend'}}, 'title': 'spec_params_SetToolDescription', 'type': 'object'}, 'spec_params_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {
                         'prefix': {'title': 'Prefix', 'type': 'string'},
@@ -1655,6 +1654,8 @@ Supported by:
                                         {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                         {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                         {'const': 'RequireToolApproval', 'type': 'string'},
+                                        {'const': 'SetToolDescription', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_SetToolDescription'},
                                         {'const': 'SetToolMetadata', 'type': 'string'},
                                         {'$ref': '#/$defs/spec_SetToolMetadata'},
                                         {'const': 'Thinking', 'type': 'string'},
@@ -1662,10 +1663,7 @@ Supported by:
                                         {'const': 'ToolSearch', 'type': 'string'},
                                         {'$ref': '#/$defs/spec_ToolSearch'},
                                         {'const': 'WebFetch', 'type': 'string'},
-                                        {'$ref': '#/$defs/spec_WebFetch'},
-                                        {'const': 'WebSearch', 'type': 'string'},
-                                        {'$ref': '#/$defs/spec_WebSearch'},
-                                    ]
+                                        {'$ref': '#/$defs/spec_WebFetch'}, {'const': 'WebSearch', 'type': 'string'}, {'$ref': '#/$defs/spec_WebSearch'}]
                                 },
                                 {'type': 'null'},
                             ]
@@ -1695,8 +1693,7 @@ Supported by:
                         'parameter_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Parameter Description',
-                        },
-                    },
+                        }, 'tools': {'anyOf': [{'const': 'all', 'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'additionalProperties': True, 'type': 'object'}, {'type': 'null'}], 'title': 'Tools'}},
                     'title': 'spec_params_ToolSearch',
                     'type': 'object',
                 },
@@ -1841,6 +1838,8 @@ Supported by:
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'RequireToolApproval', 'type': 'string'},
+                            {'const': 'SetToolDescription', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_SetToolDescription'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
@@ -1848,10 +1847,7 @@ Supported by:
                             {'const': 'ToolSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
-                            {'$ref': '#/$defs/spec_WebFetch'},
-                            {'const': 'WebSearch', 'type': 'string'},
-                            {'$ref': '#/$defs/spec_WebSearch'},
-                        ]
+                            {'$ref': '#/$defs/spec_WebFetch'}, {'const': 'WebSearch', 'type': 'string'}, {'$ref': '#/$defs/spec_WebSearch'}]
                     },
                     'title': 'Capabilities',
                     'type': 'array',
@@ -10496,6 +10492,144 @@ async def test_require_tool_approval_capability():
     assert result.output.approvals[0].tool_name == 'dangerous_tool'
 
 
+async def test_require_tool_approval_with_handler_approves_inline():
+    """With a handler, RequireToolApproval resolves approvals inline; the run continues."""
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('dangerous_tool', '{}', tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def approve(ctx: RunContext[None], call: ToolCallPart) -> bool:
+        return True
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[RequireToolApproval(tools=['dangerous_tool'], handler=approve)],
+    )
+
+    @agent.tool_plain
+    def dangerous_tool() -> str:
+        return 'dangerous-result'
+
+    result = await agent.run('do it')
+    assert result.output == 'done'
+
+
+async def test_require_tool_approval_with_handler_denies_inline():
+    """A handler that returns False denies the call inline."""
+    from pydantic_ai.tools import ToolDenied
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('dangerous_tool', '{}', tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('handled denial')])
+
+    def deny(ctx: RunContext[None], call: ToolCallPart) -> ToolDenied:
+        return ToolDenied(message=f'No way, {call.tool_name} is too risky')
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[RequireToolApproval(tools=['dangerous_tool'], handler=deny)],
+    )
+
+    @agent.tool_plain
+    def dangerous_tool() -> str:
+        return 'dangerous'  # pragma: no cover
+
+    result = await agent.run('do it')
+    assert result.output == 'handled denial'
+
+
+async def test_require_tool_approval_handler_scoped_to_own_tools():
+    """Two RequireToolApproval capabilities with different selectors + handlers compose:
+    each handler only resolves its own matched tools; others pass through."""
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('delete', '{}', tool_call_id='c1'),
+                    ToolCallPart('write', '{}', tool_call_id='c2'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    delete_calls: list[str] = []
+    write_calls: list[str] = []
+
+    def approve_delete(ctx: RunContext[None], call: ToolCallPart) -> bool:
+        delete_calls.append(call.tool_name)
+        return True
+
+    def approve_write(ctx: RunContext[None], call: ToolCallPart) -> bool:
+        write_calls.append(call.tool_name)
+        return True
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[
+            RequireToolApproval(tools=['delete'], handler=approve_delete),
+            RequireToolApproval(tools=['write'], handler=approve_write),
+        ],
+    )
+
+    @agent.tool_plain
+    def delete() -> str:
+        return 'deleted'
+
+    @agent.tool_plain
+    def write() -> str:
+        return 'written'
+
+    result = await agent.run('do both')
+    assert result.output == 'done'
+    # Each handler should have been invoked for only its own tool.
+    assert delete_calls == ['delete']
+    assert write_calls == ['write']
+
+
+async def test_require_tool_approval_no_handler_bubbles_up():
+    """Without a handler, RequireToolApproval is pure marker — approvals bubble up
+    even when paired with other capabilities."""
+    from pydantic_ai.output import DeferredToolRequests
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('dangerous_tool', '{}', tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[RequireToolApproval(tools=['dangerous_tool'])],
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain
+    def dangerous_tool() -> str:
+        return 'dangerous'  # pragma: no cover
+
+    result = await agent.run('do it')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [c.tool_name for c in result.output.approvals] == ['dangerous_tool']
+
+
 async def test_prefix_tools_standalone():
     """PrefixTools without wrapped prefixes agent-wide tools."""
 
@@ -10621,6 +10755,128 @@ async def test_set_tool_metadata_with_dict_arg():
 
     result = await agent.run('test')
     assert "{'tagged': True}" in result.output
+
+
+async def test_set_tool_description_replace():
+    """SetToolDescription(replace=...) overwrites the description on matching tools."""
+    from pydantic_ai.capabilities import SetToolDescription
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descs = {t.name: t.description for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(descs))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SetToolDescription(tools=['search'], replace='Searches the knowledge base.')],
+    )
+
+    @agent.tool_plain
+    def search() -> str:
+        """Original search description."""
+        return ''  # pragma: no cover
+
+    @agent.tool_plain
+    def fetch() -> str:
+        """Original fetch description."""
+        return ''  # pragma: no cover
+
+    result = await agent.run('test')
+    # search is replaced; fetch is unchanged
+    assert "'search': 'Searches the knowledge base.'" in result.output
+    assert "'fetch': 'Original fetch description.'" in result.output
+
+
+async def test_set_tool_description_append():
+    """SetToolDescription(append=...) adds text after the existing description."""
+    from pydantic_ai.capabilities import SetToolDescription
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descs = {t.name: t.description for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(descs))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SetToolDescription(tools=['delete'], append='Cannot be undone.')],
+    )
+
+    @agent.tool_plain
+    def delete() -> str:
+        """Deletes a resource."""
+        return ''  # pragma: no cover
+
+    result = await agent.run('test')
+    assert "'delete': 'Deletes a resource.\\n\\nCannot be undone.'" in result.output
+
+
+async def test_set_tool_description_prepend():
+    """SetToolDescription(prepend=...) adds text before the existing description."""
+    from pydantic_ai.capabilities import SetToolDescription
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descs = {t.name: t.description for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(descs))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SetToolDescription(tools=['delete'], prepend='[DESTRUCTIVE]')],
+    )
+
+    @agent.tool_plain
+    def delete() -> str:
+        """Deletes a resource."""
+        return ''  # pragma: no cover
+
+    result = await agent.run('test')
+    assert "'delete': '[DESTRUCTIVE]\\n\\nDeletes a resource.'" in result.output
+
+
+async def test_set_tool_description_metadata_selector():
+    """SetToolDescription with a metadata selector works in combination with SetToolMetadata."""
+    from pydantic_ai.capabilities import SetToolDescription
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descs = {t.name: t.description for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(descs))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[
+            SetToolDescription(tools={'dangerous': True}, append='Requires care.'),
+            SetToolMetadata(tools=['delete'], dangerous=True),
+        ],
+    )
+
+    @agent.tool_plain
+    def delete() -> str:
+        """Deletes a resource."""
+        return ''  # pragma: no cover
+
+    @agent.tool_plain
+    def search() -> str:
+        """Searches resources."""
+        return ''  # pragma: no cover
+
+    result = await agent.run('test')
+    # Only delete (marked dangerous via SetToolMetadata) gets the appended text.
+    assert "'delete': 'Deletes a resource.\\n\\nRequires care.'" in result.output
+    assert "'search': 'Searches resources.'" in result.output
+
+
+def test_set_tool_description_validation():
+    """SetToolDescription enforces exactly one of replace / append / prepend."""
+    from pydantic_ai.capabilities import SetToolDescription
+
+    with pytest.raises(TypeError, match='requires exactly one'):
+        SetToolDescription()
+
+    with pytest.raises(TypeError, match='cannot mix'):
+        SetToolDescription(replace='a', append='b')
+
+    with pytest.raises(TypeError, match='cannot mix'):
+        SetToolDescription(replace='a', prepend='b')
+
+    with pytest.raises(TypeError, match='cannot mix'):
+        SetToolDescription(append='a', prepend='b')
 
 
 async def test_wrapper_capability_with_no_wrapped():
