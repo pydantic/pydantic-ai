@@ -36,6 +36,20 @@ result = agent.run_sync('Who let the dogs out?')
 
 If you're running into issues with setting the API key for your model, visit the [Models](models/overview.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
 
+## Nested `run_sync()` / calling another agent from sync code
+
+If you call an agent inside another agent *synchronously* (for example: a tool function or output tool calling `other_agent.run_sync(...)`), you may see the process **hang/freeeze**.
+
+This can happen because `run_sync()` has to bridge async internals into a sync API, and nested sync bridging can deadlock depending on the environment.
+
+Recommended fixes:
+
+- Prefer fully-async composition: make your outer entrypoint `async` and use [`Agent.run()`][pydantic_ai.agent.Agent.run] everywhere.
+- If you need multiple agents, keep the whole call stack async (use `await other_agent.run(...)` from tools/output tools).
+- As a last resort, move the inner agent call to a separate thread/process.
+
+Related issue: https://github.com/pydantic/pydantic-ai/issues/3899
+
 ## Monitoring HTTPX Requests
 
 You can use custom `httpx` clients in your models in order to access specific requests, responses, and headers at runtime.
