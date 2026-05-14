@@ -61,8 +61,8 @@ class InstrumentationSettings:
 
     Used in:
 
-    - `Agent(instrument=...)`
-    - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
+    - [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability
+    - [`Agent.instrument`][pydantic_ai.agent.Agent.instrument] / [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.

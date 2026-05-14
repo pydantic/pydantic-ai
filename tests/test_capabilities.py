@@ -468,36 +468,6 @@ def test_agent_from_spec_tool_timeout_override():
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field configures `agent.instrument`."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert agent.instrument is True
-
-
-def test_agent_from_spec_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
-    """The `instrument=` kwarg on `from_file` is deprecated; the agent still gets configured."""
-    spec_path = tmp_path / 'spec.yaml'
-    spec_path.write_text('model: test\n')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_init_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True
-
-
 def test_agent_from_spec_metadata():
     agent = Agent.from_spec({'model': 'test', 'metadata': {'env': 'prod', 'version': '1.0'}})
     assert agent._metadata == {'env': 'prod', 'version': '1.0'}  # pyright: ignore[reportPrivateUsage]
@@ -1777,11 +1747,6 @@ Supported by:
                     'anyOf': [{'type': 'number'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Tool Timeout',
-                },
-                'instrument': {
-                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Instrument',
                 },
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],

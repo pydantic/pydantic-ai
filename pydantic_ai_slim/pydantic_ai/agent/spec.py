@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
+from pydantic import BaseModel, Field, model_serializer
 from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import Self
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -66,24 +63,8 @@ class AgentSpec(BaseModel):
     output_retries: int | None = None
     end_strategy: EndStrategy = 'early'
     tool_timeout: float | None = None
-    # `instrument` is deprecated in favor of an `Instrumentation` entry in `capabilities` —
-    # see the `_warn_instrument_deprecation` validator below for the emitted warning. We don't
-    # use Pydantic's `Field(deprecated=...)` because that always emits a plain `DeprecationWarning`;
-    # we want `PydanticAIDeprecationWarning` to match the rest of the project's deprecation surface.
-    instrument: bool | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
-
-    @model_validator(mode='after')
-    def _warn_instrument_deprecation(self) -> Self:
-        if 'instrument' in self.model_fields_set:
-            warnings.warn(
-                '`AgentSpec.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead. '
-                'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return self
 
     @classmethod
     def from_file(
@@ -241,7 +222,6 @@ class AgentSpec(BaseModel):
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
             tool_timeout: float | None = None
-            instrument: bool | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
