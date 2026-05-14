@@ -1013,6 +1013,63 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
+@pytest.mark.parametrize(
+    ('thinking', 'expected_effort'),
+    [
+        (True, 'medium'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_openrouter_settings_to_openai_settings_thinking_sets_enabled(
+    thinking: bool | Literal['minimal', 'low', 'medium', 'high', 'xhigh'],
+    expected_effort: str,
+) -> None:
+    """Unified `thinking` must translate to `reasoning.enabled=True` plus mapped `effort`.
+
+    For reasoning-optional models on OpenRouter (e.g. some gemma routes), omitting
+    `enabled: True` leaves reasoning disabled despite `effort` being set. The explicit
+    flag is a no-op for reasoning-by-default models, so this is safe across the board.
+    """
+    settings = OpenRouterModelSettings()
+    model_request_parameters = ModelRequestParameters(thinking=thinking)
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'reasoning' in extra_body
+    reasoning = extra_body['reasoning']
+    assert reasoning['effort'] == expected_effort
+    assert reasoning['enabled'] is True
+
+
+async def test_openrouter_settings_to_openai_settings_thinking_false_omits_reasoning() -> None:
+    """`thinking=False` must not inject a reasoning block."""
+    settings = OpenRouterModelSettings()
+    model_request_parameters = ModelRequestParameters(thinking=False)
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'reasoning' not in extra_body
+
+
+async def test_openrouter_settings_to_openai_settings_explicit_reasoning_wins() -> None:
+    """Explicit `openrouter_reasoning` is honoured verbatim; the unified-thinking fallback is skipped."""
+    explicit_reasoning: dict[str, Any] = {'effort': 'low'}
+    settings = OpenRouterModelSettings(openrouter_reasoning=cast(Any, explicit_reasoning))
+    model_request_parameters = ModelRequestParameters(thinking=True)
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert extra_body['reasoning'] == {'effort': 'low'}
+    assert 'enabled' not in extra_body['reasoning']
+
+
 async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
     """Test prepare_request loop continuation when first tool is not WebSearchTool."""
     from unittest.mock import Mock
