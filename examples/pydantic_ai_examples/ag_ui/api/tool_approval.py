@@ -32,7 +32,13 @@ def delete_file(path: str) -> str:
 
 
 async def run_agent(request: Request) -> Response:
-    return await AGUIAdapter.dispatch_request(request, agent=agent)
+    # `ag_ui_version='0.1.19'` is needed until ag-ui-protocol cuts the 0.1.19 release: the
+    # unreleased SDK installed from `main` still reports `version='0.1.18'` even though it
+    # ships the interrupt types, so the adapter's default version gate blocks `outcome` emission.
+    # Drop this override once `pip show ag-ui-protocol` reports `0.1.19` or later.
+    return await AGUIAdapter.dispatch_request(
+        request, agent=agent, ag_ui_version='0.1.19'
+    )
 
 
 app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])

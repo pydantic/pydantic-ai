@@ -120,7 +120,8 @@ ag-ui-protocol = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "d
 
 1. Remove the `ag-ui-protocol = { git = ... }` line from root `pyproject.toml` `[tool.uv.sources]`.
 2. Run `uv sync` to refresh `uv.lock` against PyPI.
-3. (Optional but recommended) Bump the floor in `pydantic_ai_slim/pyproject.toml` to `>=0.1.19` and drop the `try_import` / `_HAS_INTERRUPTS` gate, simplifying the adapter — but only if the maintainers approve raising the minimum.
+3. Drop the `ag_ui_version='0.1.19'` override in [examples/pydantic_ai_examples/ag_ui/api/tool_approval.py](examples/pydantic_ai_examples/ag_ui/api/tool_approval.py) — it was a temporary workaround because the pre-release SDK from `main` reports its version as `0.1.18`. Once the published SDK identifies itself as `0.1.19`, the adapter's `DEFAULT_AG_UI_VERSION` already picks up the right value.
+4. (Optional but recommended) Bump the floor in `pydantic_ai_slim/pyproject.toml` to `>=0.1.19` and drop the `try_import` / `_HAS_INTERRUPTS` gate, simplifying the adapter — but only if the maintainers approve raising the minimum.
 
 **CI behavior with this branch as-is:** CI runs `make install` which uses `uv sync --frozen --all-extras ...`. The lockfile pins to the git revision, so CI installs the merged-main snapshot; `pyright` resolves the new types; all 9 new gated tests run. No CI coverage gap.
 
@@ -271,9 +272,114 @@ Local results on this branch (lockfile pinned to `ag-ui-protocol @ git@df613e4`)
 3. **Broader sanity:** `pytest tests/test_capabilities.py tests/test_ui.py tests/test_ag_ui.py tests/test_tools.py` → **895/895 pass**.
 4. **Lint / format:** `ruff check` and `ruff format` → clean.
 5. **Docs examples:** `pytest tests/test_examples.py -k ag_ui` → **10 pass, 0 fail** — the new doc snippet is picked up automatically.
-6. **Manual end-to-end (suggested for reviewer):** run the new example via `python -m pydantic_ai_examples.ag_ui` (per [examples/pydantic_ai_examples/ag_ui/__main__.py](examples/pydantic_ai_examples/ag_ui/__main__.py)) and POST to `/tool_approval`. Confirm:
-   - Turn 1 stream ends with `RUN_FINISHED` carrying `outcome.type == "interrupt"`.
-   - Turn 2 (with `resume: [{interrupt_id, status: "resolved", payload: {approved: true}}]`) emits a single `TOOL_CALL_RESULT` against the same `tool_call_id` — no second `TOOL_CALL_START`.
+6. **Manual end-to-end (reproducible by a reviewer with an OpenAI key).** Verified locally against `openai:gpt-5-mini` on this branch.
+
+   **Setup (one shell):**
+
+   ```bash
+   export OPENAI_API_KEY=sk-...
+   uv run python -m pydantic_ai_examples.ag_ui   # serves on :9000, mounts /tool_approval
+   ```
+
+   **Turn 1 — propose a delete (a second shell):**
+
+   ```bash
+   curl -N -X POST http://127.0.0.1:9000/tool_approval/ \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: text/event-stream' \
+     -d '{
+       "threadId": "demo-thread-1",
+       "runId": "demo-run-1",
+       "state": {},
+       "messages": [
+         {"id": "m1", "role": "user", "content": "Please delete /tmp/foo.txt"}
+       ],
+       "tools": [],
+       "context": [],
+       "forwardedProps": {}
+     }'
+   ```
+
+   Expected stream (timestamps elided, `<TC>` is the model-assigned `toolCallId`):
+
+   ```
+   RUN_STARTED       threadId=demo-thread-1 runId=demo-run-1
+   TOOL_CALL_START   toolCallId=<TC>  toolCallName=delete_file  parentMessageId=...
+   TOOL_CALL_ARGS    delta="{"  ...  delta="\"}"
+   TOOL_CALL_END     toolCallId=<TC>
+   RUN_FINISHED      outcome={
+                       "type": "interrupt",
+                       "interrupts": [{
+                         "id": "int-<TC>",
+                         "reason": "tool_call",
+                         "toolCallId": "<TC>",
+                         "message": "Approve delete_file({\"path\":\"/tmp/foo.txt\"})?",
+                         "responseSchema": {
+                           "type": "object",
+                           "properties": {
+                             "approved": {"type": "boolean"},
+                             "editedArgs": {"type": "object"},
+                             "reason": {"type": "string"}
+                           },
+                           "required": ["approved"]
+                         }
+                       }]
+                     }
+   ```
+
+   The tool body **does not execute** on turn 1 — the agent stops at the `requires_approval` boundary.
+
+   **Turn 2 — resume with approval (capture `<TC>` from turn 1 first):**
+
+   ```bash
+   TC=<paste the toolCallId from turn 1>
+   curl -N -X POST http://127.0.0.1:9000/tool_approval/ \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: text/event-stream' \
+     -d "{
+       \"threadId\": \"demo-thread-1\",
+       \"runId\": \"demo-run-2\",
+       \"state\": {},
+       \"messages\": [
+         {\"id\": \"m1\", \"role\": \"user\", \"content\": \"Please delete /tmp/foo.txt\"},
+         {\"id\": \"m2\", \"role\": \"assistant\", \"toolCalls\": [
+           {\"id\": \"$TC\", \"type\": \"function\", \"function\": {\"name\": \"delete_file\", \"arguments\": \"{\\\"path\\\": \\\"/tmp/foo.txt\\\"}\"}}
+         ]}
+       ],
+       \"tools\": [],
+       \"context\": [],
+       \"forwardedProps\": {},
+       \"resume\": [
+         {\"interruptId\": \"int-$TC\", \"status\": \"resolved\", \"payload\": {\"approved\": true}}
+       ]
+     }"
+   ```
+
+   Expected stream:
+
+   ```
+   RUN_STARTED         threadId=demo-thread-1 runId=demo-run-2
+   TOOL_CALL_RESULT    toolCallId=<TC>  role=tool  content="deleted /tmp/foo.txt"
+   TEXT_MESSAGE_START  role=assistant
+   TEXT_MESSAGE_CONTENT  delta="Done. I deleted /tmp/foo.txt."
+   TEXT_MESSAGE_END
+   RUN_FINISHED        outcome={"type": "success"}
+   ```
+
+   The four spec-mandated checks all pass:
+
+   - `TOOL_CALL_RESULT` carries the **original** `toolCallId` (the same one from turn 1).
+   - **No fresh** `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` is emitted on the resumed turn — this is the key AG-UI spec rule for interrupted runs.
+   - The tool body actually executes and its return value (`"deleted /tmp/foo.txt"`) reaches the model.
+   - The terminal `RUN_FINISHED` carries `outcome.type == "success"` rather than another interrupt.
+
+   **Variations on turn 2** (replace the `resume[]` entry only):
+
+   - Deny: `{"interruptId": "int-$TC", "status": "resolved", "payload": {"approved": false, "reason": "not allowed"}}`
+   - Cancel (payload ignored): `{"interruptId": "int-$TC", "status": "cancelled"}`
+   - Approve with edited args: `{"interruptId": "int-$TC", "status": "resolved", "payload": {"approved": true, "editedArgs": {"path": "/tmp/other.txt"}}}`
+
+   **Dev-install footnote.** The example passes `ag_ui_version='0.1.19'` to `AGUIAdapter.dispatch_request(...)`. This override exists only because the unreleased `ag-ui-protocol` installed from the pinned `main` commit (`df613e4`) still reports its package version as `0.1.18`. Without the override, the default `DEFAULT_AG_UI_VERSION = detect_ag_ui_version()` returns `'0.1.18'`, which trips the negotiated-version gate (`< INTERRUPTS_VERSION`) and suppresses `outcome` emission. The override is removable as soon as `pip show ag-ui-protocol` reports `0.1.19` or later. The production gate logic is correct as-is — this is purely an artifact of testing against pre-release SDK.
 7. **Old-SDK regression:** `test_run_finished_no_outcome_on_legacy_version` proves the silent-skip path. A fresh-venv `ag-ui-protocol==0.1.10` install rerun is **not** needed because the version is negotiated at the adapter level (`ag_ui_version="0.1.10"`) rather than at import time. Two `cast` calls are present, both in `_payload_dict`, scoped to AG-UI's `Optional[Any]` payload boundary (explained inline).
 
 ## Out of scope (follow-ups)
