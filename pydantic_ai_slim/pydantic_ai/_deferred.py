@@ -3,20 +3,20 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from typing_extensions import TypedDict
-
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+# `messages.py` re-exports `LoadCapabilityReturn` from `_tool_search.py` (canonical home,
+# alongside the typed `LoadCapabilityReturnPart` that carries it). Re-export it here too
+# so existing `from pydantic_ai._deferred import LoadCapabilityReturn` paths keep working.
+from pydantic_ai.messages import (
+    LoadCapabilityReturn as LoadCapabilityReturn,
+    ModelRequest,
+    ToolReturnPart,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
-
-
-class LoadCapabilityReturn(TypedDict):
-    capability_id: str
-    instructions: str | None
 
 
 def extract_load_capability_return(content: Any) -> LoadCapabilityReturn | None:

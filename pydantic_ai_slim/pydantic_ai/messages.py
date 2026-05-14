@@ -1958,6 +1958,12 @@ deserialized). Same population pattern.
 # module to keep this file focused on the base part shapes. Imported here so the
 # discriminator unions below can reference them and so import-time registration of
 # narrowers happens whenever `pydantic_ai.messages` is imported.
+from ._load_capability import (  # noqa: E402  (same late-import rationale as `_tool_search` above)
+    LoadCapabilityArgs as LoadCapabilityArgs,
+    LoadCapabilityCallPart as LoadCapabilityCallPart,
+    LoadCapabilityReturn as LoadCapabilityReturn,
+    LoadCapabilityReturnPart as LoadCapabilityReturnPart,
+)
 from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
     NativeToolSearchCallPart as NativeToolSearchCallPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
@@ -2000,6 +2006,7 @@ ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
     pydantic.Discriminator(_model_request_part_discriminator),
@@ -2037,6 +2044,7 @@ def _model_response_part_discriminator(v: Any) -> str | None:
 ModelResponsePart = Annotated[
     Annotated[TextPart, pydantic.Tag('text')]
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
+    | Annotated[LoadCapabilityCallPart, pydantic.Tag('capability-load-call')]
     | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
     | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]

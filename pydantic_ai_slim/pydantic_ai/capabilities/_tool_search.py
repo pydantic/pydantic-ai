@@ -196,11 +196,3 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
         )
-
-    async def before_model_request(
-        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        # What I need to do here is to find capabilities which are loaded and the tools themselves that belong to that capability are not deferred loaded
-        # Those should be shown as if they were revealed with the capabilities as if a round trip happened
-
-        return request_context
