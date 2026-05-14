@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
-from ..tools import ToolDefinition, ToolsPrepareFunc
+from ..tools import ToolDefinition, ToolSelector, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -190,33 +190,59 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return visitor(self)
 
     def filtered(
-        self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool | Awaitable[bool]]
+        self,
+        tools: ToolSelector[AgentDepsT] | None = None,
+        *,
+        filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool | Awaitable[bool]] | None = None,
     ) -> FilteredToolset[AgentDepsT]:
-        """Returns a new toolset that filters this toolset's tools using a filter function that takes the agent context and the tool definition.
+        """Returns a new toolset that filters this toolset's tools using a [`ToolSelector`][pydantic_ai.tools.ToolSelector].
 
         See [toolset docs](../toolsets.md#filtering-tools) for more information.
+
+        Args:
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools to include.
+            filter_func: Deprecated. Use `tools` instead. A callable is a valid `ToolSelector`.
         """
         from .filtered import FilteredToolset
 
-        return FilteredToolset(self, filter_func)
+        return FilteredToolset(self, tools=tools, filter_func=filter_func)
 
-    def prefixed(self, prefix: str) -> PrefixedToolset[AgentDepsT]:
+    def prefixed(
+        self,
+        prefix: str,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+    ) -> PrefixedToolset[AgentDepsT]:
         """Returns a new toolset that prefixes the names of this toolset's tools.
 
         See [toolset docs](../toolsets.md#prefixing-tool-names) for more information.
+
+        Args:
+            prefix: The prefix to add to tool names (e.g. `'mcp'` turns `'search'` into `'mcp_search'`).
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools to prefix.
         """
         from .prefixed import PrefixedToolset
 
-        return PrefixedToolset(self, prefix)
+        return PrefixedToolset(self, prefix, tools=tools)
 
-    def prepared(self, prepare_func: ToolsPrepareFunc[AgentDepsT]) -> PreparedToolset[AgentDepsT]:
+    def prepared(
+        self,
+        prepare_func: ToolsPrepareFunc[AgentDepsT],
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+    ) -> PreparedToolset[AgentDepsT]:
         """Returns a new toolset that prepares this toolset's tools using a prepare function that takes the agent context and the original tool definitions.
 
         See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
+
+        Args:
+            prepare_func: A callable that receives the run context and tool definitions, returning modified definitions.
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools the prepare function sees.
+                Non-matching tools pass through unchanged.
         """
         from .prepared import PreparedToolset
 
-        return PreparedToolset(self, prepare_func)
+        return PreparedToolset(self, prepare_func, tools=tools)
 
     def renamed(self, name_map: dict[str, str]) -> RenamedToolset[AgentDepsT]:
         """Returns a new toolset that renames this toolset's tools using a dictionary mapping new names to original names.
@@ -229,33 +255,47 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     def approval_required(
         self,
-        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] = (
-            lambda ctx, tool_def, tool_args: True
-        ),
+        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] | None = None,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
     ) -> ApprovalRequiredToolset[AgentDepsT]:
         """Returns a new toolset that requires (some) calls to tools it contains to be approved.
 
         See [toolset docs](../toolsets.md#requiring-tool-approval) for more information.
+
+        Args:
+            approval_required_func: Optional callable for per-call approval decisions based on tool args.
+                When `None`, all tools matching `tools` require approval.
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools require approval.
         """
         from .approval_required import ApprovalRequiredToolset
 
-        return ApprovalRequiredToolset(self, approval_required_func)
+        return ApprovalRequiredToolset(self, approval_required_func, tools=tools)
 
-    def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
+    def defer_loading(
+        self,
+        tool_names: Sequence[str] | None = None,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+    ) -> DeferredLoadingToolset[AgentDepsT]:
         """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
 
         See [toolset docs](../toolsets.md#deferred-loading) for more information.
 
         Args:
-            tool_names: Optional sequence of tool names to mark for deferred loading.
-                If `None`, all tools are marked for deferred loading.
+            tool_names: Deprecated. Use `tools` instead.
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools to defer.
         """
         from .deferred_loading import DeferredLoadingToolset
 
-        return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)
+        return DeferredLoadingToolset(self, tools=tools, tool_names=tool_names)
 
-    def include_return_schemas(self) -> IncludeReturnSchemasToolset[AgentDepsT]:
-        """Returns a new toolset that sets `include_return_schema=True` on all tools.
+    def include_return_schemas(
+        self,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+    ) -> IncludeReturnSchemasToolset[AgentDepsT]:
+        """Returns a new toolset that sets `include_return_schema=True` on selected tools.
 
         This causes the model to receive return type information for the tools
         in this toolset. For models that natively support return schemas (e.g.
@@ -267,13 +307,39 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         capability, which can be used to enable return schemas across all
         toolsets or a subset matched by a
         [`ToolSelector`][pydantic_ai.tools.ToolSelector].
+
+        Args:
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools get return schemas.
         """
         from .include_return_schemas import IncludeReturnSchemasToolset
 
-        return IncludeReturnSchemasToolset(self)
+        return IncludeReturnSchemasToolset(self, tools=tools)
 
-    def with_metadata(self, **metadata: Any) -> SetMetadataToolset[AgentDepsT]:
-        """Returns a new toolset that merges the given metadata onto all tools."""
+    def with_metadata(
+        self,
+        metadata: dict[str, Any] | None = None,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+        **kwargs: Any,
+    ) -> SetMetadataToolset[AgentDepsT]:
+        """Returns a new toolset that merges the given metadata onto selected tools.
+
+        Metadata can be provided as an explicit dict or as keyword arguments:
+
+        ```python
+        toolset.with_metadata(code_mode=True)
+        toolset.with_metadata({'code_mode': True})
+        toolset.with_metadata({'code_mode': True}, tools=['search'])
+        ```
+
+        Args:
+            metadata: An explicit dict of metadata key-value pairs.
+            tools: A [`ToolSelector`][pydantic_ai.tools.ToolSelector] specifying which tools to set metadata on.
+            **kwargs: Key-value pairs to merge into tool metadata (alternative to `metadata` dict).
+        """
         from .set_metadata import SetMetadataToolset
 
-        return SetMetadataToolset(self, metadata)
+        if metadata is not None and kwargs:
+            raise TypeError("Cannot specify both a 'metadata' dict and keyword metadata arguments.")
+        actual_metadata = metadata if metadata is not None else kwargs
+        return SetMetadataToolset(self, actual_metadata, tools=tools)

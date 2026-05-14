@@ -15,6 +15,8 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
+from .defer_tool_loading import DeferToolLoading
+from .filter_tools import FilterTools
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -22,6 +24,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .require_tool_approval import RequireToolApproval
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -34,12 +37,15 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
+        DeferToolLoading,
+        FilterTools,
         HistoryProcessor,
         ImageGeneration,
         IncludeToolReturnSchemas,
         MCP,
         PrefixTools,
         PrepareTools,
+        RequireToolApproval,
         SetToolMetadata,
         Thinking,
         Toolset,
@@ -64,12 +70,18 @@ __all__ = [
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
+    'CombinedCapability',
+    'DeferToolLoading',
+    'FilterTools',
+    'HookTimeoutError',
+    'Hooks',
     'ImageGeneration',
     'HistoryProcessor',
     'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'RequireToolApproval',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
@@ -77,7 +89,4 @@ __all__ = [
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
-    'CombinedCapability',
-    'HookTimeoutError',
-    'Hooks',
 ]

@@ -2087,3 +2087,260 @@ async def test_toolset_empty_instructions_filtered():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
+
+
+# --- ToolSelector on toolsets ---
+
+
+def test_filtered_toolset_with_name_list():
+    """FilteredToolset accepts a list of tool names as ToolSelector."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.filtered(tools=['tool_a'])])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_filtered_toolset_with_metadata_dict():
+    """FilteredToolset accepts a metadata dict as ToolSelector."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    # Set metadata on tool_a, then filter by it
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        toolsets=[toolset.with_metadata(public=True).filtered(tools={'public': True})],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a', 'tool_b']  # both have metadata set by with_metadata
+
+
+def test_filtered_toolset_deprecated_filter_func():
+    """FilteredToolset still accepts deprecated filter_func keyword."""
+    import warnings
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        filtered = toolset.filtered(filter_func=lambda ctx, td: td.name == 'tool_a')
+        assert len(w) == 1
+        assert 'filter_func' in str(w[0].message)
+        assert issubclass(w[0].category, DeprecationWarning)
+
+    agent = Agent(test_model, toolsets=[filtered])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_filtered_toolset_callable_as_tools():
+    """A callable passed as 'tools' positional arg works (backward compat for positional filter_func)."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    # Old positional style: FilteredToolset(wrapped, some_func)
+    from pydantic_ai.toolsets.filtered import FilteredToolset
+
+    agent = Agent(test_model, toolsets=[FilteredToolset(toolset, lambda ctx, td: td.name == 'tool_a')])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_prefixed_toolset_with_tool_selector():
+    """PrefixedToolset only prefixes tools matching the selector."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.prefixed('ns', tools=['tool_a'])])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = sorted(td.name for td in params.function_tools)
+    assert tool_names == ['ns_tool_a', 'tool_b']
+
+
+def test_prepared_toolset_with_tool_selector():
+    """PreparedToolset only passes matching tools to the prepare function."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    async def add_suffix(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(td, description=f'{td.description} [prepared]') for td in tool_defs]
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.prepared(add_suffix, tools=['tool_a'])])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert '[prepared]' in (td_a.description or '')
+    assert '[prepared]' not in (td_b.description or '')
+
+
+def test_include_return_schemas_toolset_with_selector():
+    """IncludeReturnSchemasToolset only includes return schemas for matching tools."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.include_return_schemas(tools=['tool_a'])])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.include_return_schema is True
+    assert td_b.include_return_schema is None
+
+
+def test_set_metadata_toolset_with_selector():
+    """SetMetadataToolset only sets metadata on matching tools."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_metadata(tools=['tool_a'], tagged=True)])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['tagged'] is True
+    assert td_b.metadata is None or 'tagged' not in td_b.metadata
+
+
+def test_set_metadata_toolset_with_dict_arg():
+    """SetMetadataToolset and with_metadata accept a positional dict."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_metadata({'code_mode': True})])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.metadata is not None
+    assert td.metadata['code_mode'] is True
+
+
+def test_approval_required_with_tool_selector():
+    """ApprovalRequiredToolset with tools selector scopes which tools require approval."""
+    from pydantic_ai.toolsets.approval_required import ApprovalRequiredToolset
+
+    def safe_tool() -> str:
+        return 'safe'
+
+    def dangerous_tool() -> str:
+        return 'dangerous'  # pragma: no cover
+
+    toolset = FunctionToolset(tools=[safe_tool, dangerous_tool])
+    approval_toolset = ApprovalRequiredToolset(toolset, tools=['dangerous_tool'])
+
+    ctx = build_run_context(None)
+    import asyncio
+
+    tools = asyncio.get_event_loop().run_until_complete(approval_toolset.get_tools(ctx))
+    assert 'safe_tool' in tools
+    assert 'dangerous_tool' in tools
+
+
+def test_deferred_loading_with_tool_selector():
+    """DeferredLoadingToolset accepts ToolSelector via tools param."""
+
+    def tool_a() -> str:
+        return 'a'
+
+    def tool_b() -> str:
+        return 'b'
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    deferred_toolset = toolset.defer_loading(tools=['tool_a'])
+    assert deferred_toolset.tools == ['tool_a']
+
+
+def test_deferred_loading_deprecated_tool_names():
+    """DeferredLoadingToolset still accepts deprecated tool_names."""
+    import warnings
+
+    def tool_a() -> str:
+        return 'a'
+
+    toolset = FunctionToolset(tools=[tool_a])
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        toolset.defer_loading(['tool_a'])
+        assert len(w) == 1
+        assert 'tool_names' in str(w[0].message)
+        assert issubclass(w[0].category, DeprecationWarning)

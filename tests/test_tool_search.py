@@ -821,7 +821,7 @@ async def test_deferred_loading_toolset_marks_specific_tools():
         """Tool B."""
         return 'b'
 
-    deferred = toolset.defer_loading(['tool_b'])
+    deferred = toolset.defer_loading(tools=['tool_b'])
     searchable = ToolSearchToolset(wrapped=deferred)
     ctx = _build_run_context(None)
 

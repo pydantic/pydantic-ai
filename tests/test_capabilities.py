@@ -20,9 +20,12 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    DeferToolLoading,
+    FilterTools,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    RequireToolApproval,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -78,10 +81,13 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'BuiltinTool': BuiltinTool,
+            'DeferToolLoading': DeferToolLoading,
+            'FilterTools': FilterTools,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'RequireToolApproval': RequireToolApproval,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
@@ -1126,19 +1132,11 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
-                'short_spec_SetToolMetadata': {
+                'short_spec_PrefixTools': {
                     'additionalProperties': False,
-                    'properties': {
-                        'SetToolMetadata': {
-                            'anyOf': [
-                                {'const': 'all', 'type': 'string'},
-                                {'items': {'type': 'string'}, 'type': 'array'},
-                                {'additionalProperties': True, 'type': 'object'},
-                            ],
-                            'title': 'Settoolmetadata',
-                        }
-                    },
-                    'title': 'short_spec_SetToolMetadata',
+                    'properties': {'PrefixTools': {'title': 'Prefixtools', 'type': 'string'}},
+                    'required': ['PrefixTools'],
+                    'title': 'short_spec_PrefixTools',
                     'type': 'object',
                 },
                 'short_spec_Thinking': {
@@ -1167,6 +1165,13 @@ Supported by:
                     'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
                     'required': ['MCP'],
                     'title': 'spec_MCP',
+                    'type': 'object',
+                },
+                'spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {'SetToolMetadata': {'$ref': '#/$defs/spec_params_SetToolMetadata'}},
+                    'required': ['SetToolMetadata'],
+                    'title': 'spec_SetToolMetadata',
                     'type': 'object',
                 },
                 'spec_PrefixTools': {
@@ -1281,33 +1286,62 @@ Supported by:
                     'title': 'spec_params_MCP',
                     'type': 'object',
                 },
+                'spec_params_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Metadata',
+                        },
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                    },
+                    'title': 'spec_params_SetToolMetadata',
+                    'type': 'object',
+                },
                 'spec_params_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {
                         'prefix': {'title': 'Prefix', 'type': 'string'},
                         'capability': {
                             'anyOf': [
-                                {'const': 'BuiltinTool', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
-                                {'const': 'ImageGeneration', 'type': 'string'},
-                                {'$ref': '#/$defs/spec_ImageGeneration'},
-                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
-                                {'$ref': '#/$defs/short_spec_MCP'},
-                                {'$ref': '#/$defs/spec_MCP'},
-                                {'$ref': '#/$defs/spec_PrefixTools'},
-                                {'const': 'SetToolMetadata', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
-                                {'const': 'Thinking', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_Thinking'},
-                                {'const': 'WebFetch', 'type': 'string'},
-                                {'$ref': '#/$defs/spec_WebFetch'},
-                                {'const': 'WebSearch', 'type': 'string'},
-                                {'$ref': '#/$defs/spec_WebSearch'},
+                                {
+                                    'anyOf': [
+                                        {'const': 'BuiltinTool', 'type': 'string'},
+                                        {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                        {'const': 'DeferToolLoading', 'type': 'string'},
+                                        {'const': 'FilterTools', 'type': 'string'},
+                                        {'const': 'ImageGeneration', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_ImageGeneration'},
+                                        {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                        {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                                        {'$ref': '#/$defs/short_spec_MCP'},
+                                        {'$ref': '#/$defs/spec_MCP'},
+                                        {'$ref': '#/$defs/short_spec_PrefixTools'},
+                                        {'$ref': '#/$defs/spec_PrefixTools'},
+                                        {'const': 'RequireToolApproval', 'type': 'string'},
+                                        {'const': 'SetToolMetadata', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_SetToolMetadata'},
+                                        {'const': 'Thinking', 'type': 'string'},
+                                        {'$ref': '#/$defs/short_spec_Thinking'},
+                                        {'const': 'WebFetch', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_WebFetch'},
+                                        {'const': 'WebSearch', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_WebSearch'},
+                                    ]
+                                },
+                                {'type': 'null'},
                             ]
                         },
+                        'tools': {'title': 'Tools'},
                     },
-                    'required': ['prefix', 'capability'],
+                    'required': ['prefix'],
                     'title': 'spec_params_PrefixTools',
                     'type': 'object',
                 },
@@ -1431,15 +1465,19 @@ Supported by:
                         'anyOf': [
                             {'const': 'BuiltinTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'DeferToolLoading', 'type': 'string'},
+                            {'const': 'FilterTools', 'type': 'string'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/short_spec_PrefixTools'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'RequireToolApproval', 'type': 'string'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
+                            {'$ref': '#/$defs/spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
@@ -8253,3 +8291,252 @@ async def test_thread_executor_static_method() -> None:
         assert tool_threads[0].startswith('static-pool')
     finally:
         executor.shutdown(wait=True)
+
+
+# --- ToolSelector on capabilities ---
+
+
+async def test_filter_tools_capability():
+    """FilterTools capability filters agent tools by name list."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[FilterTools(tools=['tool_a'])])
+
+    @agent.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    assert result.output == 'tool_a'
+
+
+async def test_filter_tools_capability_with_metadata():
+    """FilterTools capability filters by metadata dict."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[
+            SetToolMetadata(tools=['tool_a'], public=True),
+            FilterTools(tools={'public': True}),
+        ],
+    )
+
+    @agent.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    assert result.output == 'tool_a'
+
+
+async def test_defer_tool_loading_capability():
+    """DeferToolLoading capability marks matching tools as deferred."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[DeferToolLoading(tools=['tool_b'])])
+
+    @agent.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    # tool_b is deferred so it won't appear in the model's tool list;
+    # search_tools is added automatically when deferred tools exist
+    assert 'tool_a' in result.output
+    # tool_b should be hidden (deferred)
+    tool_names = result.output.split(',')
+    assert 'tool_b' not in tool_names
+
+
+async def test_require_tool_approval_capability():
+    """RequireToolApproval capability scopes which tools require approval."""
+    from pydantic_ai.output import DeferredToolRequests
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('dangerous_tool', '{}'), ToolCallPart('safe_tool', '{}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[RequireToolApproval(tools=['dangerous_tool'])],
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain
+    def safe_tool() -> str:
+        return 'safe'
+
+    @agent.tool_plain
+    def dangerous_tool() -> str:
+        return 'dangerous'  # pragma: no cover
+
+    result = await agent.run('do something')
+    # dangerous_tool requires approval (deferred), safe_tool executes immediately
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.approvals[0].tool_name == 'dangerous_tool'
+
+
+async def test_prefix_tools_standalone():
+    """PrefixTools without wrapped prefixes agent-wide tools."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[PrefixTools(prefix='ns')])
+
+    @agent.tool_plain
+    def search() -> str:
+        return 'result'  # pragma: no cover
+
+    @agent.tool_plain
+    def fetch() -> str:
+        return 'data'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    assert result.output == 'ns_fetch,ns_search'
+
+
+async def test_prefix_tools_standalone_with_selector():
+    """PrefixTools standalone with tools selector only prefixes matching tools."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[PrefixTools(prefix='ns', tools=['search'])])
+
+    @agent.tool_plain
+    def search() -> str:
+        return 'result'  # pragma: no cover
+
+    @agent.tool_plain
+    def fetch() -> str:
+        return 'data'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    assert result.output == 'fetch,ns_search'
+
+
+async def test_prefix_tools_with_wrapped_and_selector():
+    """PrefixTools with wrapped cap and tools selector only prefixes matching tools from the wrapped toolset."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_a() -> str:
+        return 'a'  # pragma: no cover
+
+    @inner_toolset.tool_plain
+    def inner_b() -> str:
+        return 'b'  # pragma: no cover
+
+    cap = PrefixTools(wrapped=Toolset(inner_toolset), prefix='ns', tools=['inner_a'])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+    @agent.tool_plain
+    def outer_tool() -> str:
+        return 'outer'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    assert result.output == 'inner_b,ns_inner_a,outer_tool'
+
+
+async def test_prepare_tools_with_selector():
+    """PrepareTools with tools selector only applies prepare function to matching tools."""
+    from dataclasses import replace
+
+    from pydantic_ai.capabilities import PrepareTools
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descs = {t.name: t.description for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(descs))])
+
+    async def add_tag(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(td, description=f'{td.description} [tagged]') for td in tool_defs]
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[PrepareTools(add_tag, tools=['tool_a'])],
+    )
+
+    @agent.tool_plain
+    def tool_a() -> str:
+        """Tool A."""
+        return 'a'  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b() -> str:
+        """Tool B."""
+        return 'b'  # pragma: no cover
+
+    result = await agent.run('describe tools')
+    output = result.output
+    assert '[tagged]' in output
+    # tool_a should have the tag, tool_b should not
+    assert "'tool_a': 'Tool A. [tagged]'" in output
+    assert "'tool_b': 'Tool B.'" in output
+
+
+async def test_set_tool_metadata_with_dict_arg():
+    """SetToolMetadata accepts an explicit metadata dict."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_metadata = {t.name: t.metadata for t in info.function_tools}
+        return ModelResponse(parts=[TextPart(str(tool_metadata))])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SetToolMetadata({'tagged': True})],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'result'  # pragma: no cover
+
+    result = await agent.run('test')
+    assert "{'tagged': True}" in result.output
+
+
+async def test_wrapper_capability_with_no_wrapped():
+    """WrapperCapability with wrapped=None falls through to AbstractCapability defaults."""
+    cap = WrapperCapability()
+    assert cap.wrapped is None
+    assert cap.get_instructions() is None
+    assert cap.get_model_settings() is None
+    assert cap.get_toolset() is None
+    assert cap.get_builtin_tools() == []
+    assert cap.has_wrap_node_run is False
