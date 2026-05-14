@@ -9371,6 +9371,276 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
     )
 
 
+def _mcp_list_tools_item(
+    item_id: str,
+    server_label: str,
+    *tool_names: str,
+    error: str | None = None,
+) -> Any:
+    return resp.response_output_item.McpListTools(
+        id=item_id,
+        server_label=server_label,
+        tools=[
+            resp.response_output_item.McpListToolsTool(
+                input_schema={
+                    'type': 'object',
+                    'properties': {'query': {'type': 'string'}},
+                    'required': ['query'],
+                    'additionalProperties': False,
+                },
+                name=tool_name,
+                description=f'{tool_name} description',
+            )
+            for tool_name in tool_names
+        ],
+        error=error,
+        type='mcp_list_tools',
+    )
+
+
+async def _collect_mcp_list_tools_stream_events(
+    stream: list[Any],
+) -> tuple[list[Any], ModelResponse]:
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('List MCP tools')],
+        None,
+        ModelRequestParameters(
+            native_tools=[
+                MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+                MCPServerTool(id='learnMicrosoft', url='https://learn.microsoft.com/api/mcp'),
+                MCPServerTool(id='docs', url='https://docs.example.com/mcp'),
+            ]
+        ),
+    ) as response_stream:
+        events = [event async for event in response_stream]
+        response = response_stream.get()
+
+    return events, response
+
+
+async def test_openai_responses_model_multiple_mcp_list_tools_stream_backfills_missing_done(
+    allow_model_requests: None,
+):
+    deepwiki_added = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki')
+    deepwiki_done = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki', 'ask_question')
+    learn_added = _mcp_list_tools_item('mcpl_learn', 'learnMicrosoft')
+    learn_done = _mcp_list_tools_item('mcpl_learn', 'learnMicrosoft', 'learn_topic')
+    completed_response = response_message([deepwiki_done, learn_done]).model_copy(update={'status': 'completed'})
+
+    events, response = await _collect_mcp_list_tools_stream_events(
+        [
+            resp.ResponseCreatedEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseInProgressEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.in_progress',
+                sequence_number=1,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=deepwiki_added,
+                output_index=0,
+                type='response.output_item.added',
+                sequence_number=2,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=learn_added,
+                output_index=1,
+                type='response.output_item.added',
+                sequence_number=3,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=learn_done,
+                output_index=1,
+                type='response.output_item.done',
+                sequence_number=4,
+            ),
+            resp.ResponseCompletedEvent(
+                response=completed_response,
+                type='response.completed',
+                sequence_number=5,
+            ),
+        ]
+    )
+
+    return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert {part.tool_call_id for part in return_parts} == {'mcpl_deepwiki', 'mcpl_learn'}
+    content_by_id = {part.tool_call_id: cast(dict[str, Any], part.content) for part in return_parts}
+    assert content_by_id['mcpl_deepwiki']['tools'][0]['name'] == 'ask_question'
+    assert content_by_id['mcpl_learn']['tools'][0]['name'] == 'learn_topic'
+    return_event_ids = {
+        event.part.tool_call_id
+        for event in events
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    }
+    assert return_event_ids == {'mcpl_deepwiki', 'mcpl_learn'}
+
+
+async def test_openai_responses_model_multiple_mcp_list_tools_stream_backfills_multiple_missing_done_results(
+    allow_model_requests: None,
+):
+    deepwiki_added = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki')
+    deepwiki_done = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki', 'ask_question', 'read_wiki_structure')
+    learn_added = _mcp_list_tools_item('mcpl_learn', 'learnMicrosoft')
+    learn_failed = _mcp_list_tools_item(
+        'mcpl_learn',
+        'learnMicrosoft',
+        error='failed to list tools from learnMicrosoft',
+    )
+    docs_added = _mcp_list_tools_item('mcpl_docs', 'docs')
+    docs_done = _mcp_list_tools_item('mcpl_docs', 'docs', 'search_docs')
+    completed_response = response_message([deepwiki_done, learn_failed, docs_done]).model_copy(
+        update={'status': 'completed'}
+    )
+
+    events, response = await _collect_mcp_list_tools_stream_events(
+        [
+            resp.ResponseCreatedEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseInProgressEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.in_progress',
+                sequence_number=1,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=deepwiki_added,
+                output_index=0,
+                type='response.output_item.added',
+                sequence_number=2,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=learn_added,
+                output_index=1,
+                type='response.output_item.added',
+                sequence_number=3,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=docs_added,
+                output_index=2,
+                type='response.output_item.added',
+                sequence_number=4,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=docs_done,
+                output_index=2,
+                type='response.output_item.done',
+                sequence_number=5,
+            ),
+            resp.ResponseCompletedEvent(
+                response=completed_response,
+                type='response.completed',
+                sequence_number=6,
+            ),
+        ]
+    )
+
+    return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert {part.tool_call_id for part in return_parts} == {'mcpl_deepwiki', 'mcpl_learn', 'mcpl_docs'}
+    content_by_id = {part.tool_call_id: cast(dict[str, Any], part.content) for part in return_parts}
+    assert [tool['name'] for tool in content_by_id['mcpl_deepwiki']['tools']] == [
+        'ask_question',
+        'read_wiki_structure',
+    ]
+    assert content_by_id['mcpl_learn'] == {
+        'tools': [],
+        'error': 'failed to list tools from learnMicrosoft',
+    }
+    assert content_by_id['mcpl_docs']['tools'][0]['name'] == 'search_docs'
+    return_event_ids = [
+        event.part.tool_call_id
+        for event in events
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    ]
+    assert set(return_event_ids) == {'mcpl_deepwiki', 'mcpl_learn', 'mcpl_docs'}
+    assert len(return_event_ids) == 3
+
+
+async def test_openai_responses_model_mcp_list_tools_stream_deduplicates_done_and_completed_results(
+    allow_model_requests: None,
+):
+    deepwiki_added = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki')
+    deepwiki_done = _mcp_list_tools_item('mcpl_deepwiki', 'DeepWiki', 'ask_question')
+    learn_added = _mcp_list_tools_item('mcpl_learn', 'learnMicrosoft')
+    learn_done = _mcp_list_tools_item('mcpl_learn', 'learnMicrosoft', 'learn_topic')
+    completed_response = response_message([deepwiki_done, learn_done]).model_copy(update={'status': 'completed'})
+
+    events, response = await _collect_mcp_list_tools_stream_events(
+        [
+            resp.ResponseCreatedEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseInProgressEvent(
+                response=completed_response.model_copy(update={'output': [], 'status': 'in_progress'}),
+                type='response.in_progress',
+                sequence_number=1,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=deepwiki_added,
+                output_index=0,
+                type='response.output_item.added',
+                sequence_number=2,
+            ),
+            resp.ResponseOutputItemAddedEvent(
+                item=learn_added,
+                output_index=1,
+                type='response.output_item.added',
+                sequence_number=3,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=deepwiki_done,
+                output_index=0,
+                type='response.output_item.done',
+                sequence_number=4,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=deepwiki_done,
+                output_index=0,
+                type='response.output_item.done',
+                sequence_number=5,
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=learn_done,
+                output_index=1,
+                type='response.output_item.done',
+                sequence_number=6,
+            ),
+            resp.ResponseCompletedEvent(
+                response=completed_response,
+                type='response.completed',
+                sequence_number=7,
+            ),
+        ]
+    )
+
+    call_event_ids = [
+        event.part.tool_call_id
+        for event in events
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolCallPart)
+    ]
+    return_event_ids = [
+        event.part.tool_call_id
+        for event in events
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    ]
+    assert call_event_ids.count('mcpl_deepwiki') == 1
+    assert call_event_ids.count('mcpl_learn') == 1
+    assert return_event_ids.count('mcpl_deepwiki') == 1
+    assert return_event_ids.count('mcpl_learn') == 1
+
+    return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [part.tool_call_id for part in return_parts] == ['mcpl_deepwiki', 'mcpl_learn']
+
+
 async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'o4-mini',
