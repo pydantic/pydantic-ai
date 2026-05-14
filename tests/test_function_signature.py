@@ -1032,7 +1032,7 @@ def test_function_with_bare_generic_annotation():
     import types as t
 
     mod = t.ModuleType('_test_bare_generic')
-    mod.__dict__['List'] = getattr(typing, 'List')  # typing.List (has origin but no args)
+    mod.__dict__['List'] = list  # typing.List (has origin but no args)
     exec(
         compile('def func(items: List) -> None: ...', '<test>', 'exec'),
         mod.__dict__,
@@ -1432,3 +1432,59 @@ def test_render_empty_type_signature():
     # Empty with description renders docstring but no pass
     ts_with_desc = TypeSignature(name='Marker', description='A marker type')
     assert ts_with_desc.render_definition() == 'class Marker(TypedDict):\n    """A marker type"""'
+
+
+def test_schema_with_boolean_additional_properties_true():
+    """`additionalProperties: True` is valid JSON Schema (matches anything) and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='create_dashboard',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'config': {'type': 'object', 'additionalProperties': True},
+            },
+            'required': ['config'],
+        },
+    )
+    assert 'config' in sig.params
+
+
+def test_schema_with_boolean_additional_properties_false():
+    """`additionalProperties: False` is valid JSON Schema (matches nothing) and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='strict_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'opts': {'type': 'object', 'additionalProperties': False},
+            },
+            'required': ['opts'],
+        },
+    )
+    assert 'opts' in sig.params
+
+
+def test_schema_with_boolean_property_value():
+    """A property whose schema is just `True` is valid JSON Schema and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='passthrough_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'anything': True},
+            'required': ['anything'],
+        },
+    )
+    assert 'anything' in sig.params
+
+
+def test_schema_with_single_member_all_of_boolean():
+    """`allOf: [True]` recurses into _schema_to_type_expr with a bool and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='allof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'allOf': [True]}},
+            'required': ['value'],
+        },
+    )
+    assert 'value' in sig.params
