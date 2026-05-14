@@ -11,7 +11,7 @@ env:
   UV_PYTHON: 3.13
   UV_FROZEN: "1"
   TY_FORK_REPOSITORY: dsfaccini/ruff
-  TY_FORK_SHA: afe245870007732a82e61e9b4aed51c76451a0de
+  TY_FORK_SHA: fd0315a391e25961c9211a9fbd6e5491c3e17e3d
 
 permissions:
   contents: read
