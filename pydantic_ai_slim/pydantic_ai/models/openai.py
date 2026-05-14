@@ -65,7 +65,6 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..native_tools import (
-    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -80,14 +79,8 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ..profiles.openai import (
-    OPENAI_REASONING_EFFORT_MAP,
-    SAMPLING_PARAMS,
-    OpenAIModelProfile,
-    OpenAISystemPromptRole,
-    validate_openai_profile,
-)
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
@@ -433,7 +426,7 @@ def _drop_sampling_params_for_reasoning(
     reasoning is active. For models that support reasoning_effort='none' (GPT-5.1+),
     sampling params are allowed when reasoning is off.
     """
-    if not profile.get('openai_supports_reasoning', False):
+    if not profile.openai_supports_reasoning:
         return
 
     reasoning_effort = model_settings.get('openai_reasoning_effort')
@@ -443,7 +436,7 @@ def _drop_sampling_params_for_reasoning(
         reasoning_effort is None and thinking is not None and thinking is not False
     )
     # On GPT-5.1+ models, sampling params are allowed when reasoning is off
-    if profile.get('openai_supports_reasoning_effort_none', False) and not reasoning_active:
+    if profile.openai_supports_reasoning_effort_none and not reasoning_active:
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -462,7 +455,7 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
     Used currently only by Cerebras
     """
-    for setting in profile.get('openai_unsupported_model_settings', ()):
+    for setting in profile.openai_unsupported_model_settings:
         model_settings.pop(setting, None)
 
 
@@ -801,12 +794,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile)
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
-            self.profile = merge_profile(self.profile, OpenAIModelProfile(openai_system_prompt_role=system_prompt_role))
-
-        validate_openai_profile(self.profile)
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -838,15 +829,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
         """
         _profile = super().profile
-        if not _profile.get('openai_chat_supports_web_search', False):
-            new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
-            _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        openai_profile = OpenAIModelProfile.from_profile(_profile)
+        if not openai_profile.openai_chat_supports_web_search:
+            new_tools = _profile.supported_native_tools - {WebSearchTool}
+            _profile = replace(_profile, supported_native_tools=new_tools)
         return _profile
 
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
-        return self.profile.get('openai_system_prompt_role')
+        return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     def prepare_request(
         self,
@@ -856,7 +848,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # Check for WebSearchTool before base validation to provide a helpful error message
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.native_tools)
-            and not self.profile.get('openai_chat_supports_web_search', False)
+            and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
             and not any(t.unless_native == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
@@ -947,7 +939,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = OpenAIModelProfile.from_profile(self.profile)
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -956,8 +948,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = self._map_json_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted' and self.profile.get(
-            'supports_json_object_output', False
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
@@ -1075,9 +1067,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if choice.message.content:
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(
-                    choice.message.content, self.profile.get('thinking_tags', ('<think>', '</think>'))
-                )
+                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -1115,8 +1105,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        profile = cast(OpenAIModelProfile, self.profile)
-        custom_field = profile.get('openai_chat_thinking_field', None)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        custom_field = profile.openai_chat_thinking_field
         items: list[ThinkingPart] = []
 
         # Prefer the configured custom reasoning field, if present in profile.
@@ -1199,7 +1189,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = cast(OpenAIModelProfile, self.profile)
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
@@ -1337,14 +1327,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling thinking parts.
             """
-            profile = cast(OpenAIModelProfile, self._model.profile)
-            include_method = profile.get('openai_chat_send_back_thinking_parts', 'auto')
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
+            include_method = profile.openai_chat_send_back_thinking_parts
 
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
             # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
                 # Check if thinking came from a custom field from the same provider
-                custom_field = profile.get('openai_chat_thinking_field', None)
+                custom_field = profile.openai_chat_thinking_field
                 matches_custom_field = (not custom_field) or (item.id == custom_field)
 
                 if (
@@ -1357,13 +1347,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
-                    start_tag, end_tag = self._model.profile.get('thinking_tags', ('<think>', '</think>'))
+                    start_tag, end_tag = self._model.profile.thinking_tags
                     self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'tags':
-                start_tag, end_tag = self._model.profile.get('thinking_tags', ('<think>', '</think>'))
+                start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                field = profile.get('openai_chat_thinking_field', None)
+                field = profile.openai_chat_thinking_field
                 if field:  # pragma: no branch
                     self.thinkings.setdefault(field, []).append(item.content)
 
@@ -1425,7 +1415,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
-        system_prompt_role = self.profile.get('openai_system_prompt_role', None) or 'system'
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
@@ -1445,7 +1436,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
-        if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
+        if not profile.openai_chat_supports_multiple_system_messages:
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
 
@@ -1464,7 +1455,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         }
         if o.description:
             response_format_param['json_schema']['description'] = o.description
-        if self.profile.get('openai_supports_strict_tool_definition', True):  # pragma: no branch
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
             response_format_param['json_schema']['strict'] = o.strict
         return response_format_param
 
@@ -1477,7 +1468,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if f.strict and self.profile.get('openai_supports_strict_tool_definition', True):
+        if f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:
             tool_param['function']['strict'] = f.strict
         return tool_param
 
@@ -1485,7 +1476,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                system_prompt_role = self.profile.get('openai_system_prompt_role', None)
+                system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
                 if system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
                 elif system_prompt_role == 'user':
@@ -1528,7 +1519,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = OpenAIModelProfile.from_profile(self.profile)
         if _is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
@@ -1543,13 +1534,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
         elif item.is_audio:
             assert item.format in ('wav', 'mp3')
-            if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri':
+            if profile.openai_chat_audio_input_encoding == 'uri':
                 audio = InputAudio(data=item.data_uri, format=item.format)
             else:
                 audio = InputAudio(data=item.base64, format=item.format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
-            if not profile.get('openai_chat_supports_document_input', True):
+            if not profile.openai_chat_supports_document_input:
                 self._raise_document_input_not_supported_error()
             return File(
                 file=FileFile(
@@ -1565,8 +1556,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
-        data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
         assert downloaded_item['data_type'] in (
             'wav',
@@ -1577,10 +1568,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
         """Map a DocumentUrl to a chat completion content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = OpenAIModelProfile.from_profile(self.profile)
         # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
         # Some providers (e.g., OpenRouter) support URLs via the profile flag.
-        if not item.force_download and profile.get('openai_chat_supports_file_urls', False):
+        if not item.force_download and profile.openai_chat_supports_file_urls:
             return File(
                 file=FileFile(
                     file_data=item.url,
@@ -1596,7 +1587,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 identifier=item.identifier,
             )
         else:
-            if not profile.get('openai_chat_supports_document_input', True):
+            if not profile.openai_chat_supports_document_input:
                 self._raise_document_input_not_supported_error()
             downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
             return File(
@@ -1742,7 +1733,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile)
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -2144,7 +2135,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if not tools:
             tool_choice = None
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = OpenAIModelProfile.from_profile(self.profile)
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
@@ -2156,8 +2147,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
-        elif model_request_parameters.output_mode == 'prompted' and self.profile.get(
-            'supports_json_object_output', False
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
 
@@ -2182,7 +2173,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
-        if profile.get('openai_supports_encrypted_reasoning_content', False):
+        if profile.openai_supports_encrypted_reasoning_content:
             include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
@@ -2285,7 +2276,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             A tuple of (filtered_function_tools, tool_choice).
             Note: builtin tools are handled separately and should be added to this list.
         """
-        openai_profile = cast(OpenAIModelProfile, self.profile)
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -2432,7 +2423,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': bool(f.strict and self.profile.get('openai_supports_strict_tool_definition', True)),
+            'strict': bool(
+                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
+            ),
         }
         if f.with_native == ToolSearchTool.kind:
             # `defer_loading` on the wire controls OpenAI's native tool search caching.
@@ -2579,9 +2572,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
-            'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
+            'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
         # With `execution='client'` tool search, `search_tools` calls/returns need to be
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
@@ -2652,7 +2645,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     if isinstance(item, TextPart):
                         phase = (item.provider_details or {}).get('phase')
                         send_phase = (
-                            profile.get('openai_supports_phase', False)
+                            profile.openai_supports_phase
                             and item.provider_name == self.system
                             and phase in ('commentary', 'final_answer')
                         )
@@ -2711,7 +2704,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 call_id=call_id,
                                 type='function_call',
                             )
-                            if profile.get('openai_responses_requires_function_call_status_none', False):
+                            if profile.openai_responses_requires_function_call_status_none:
                                 param['status'] = None  # type: ignore[reportGeneralTypeIssues]
                             if id and should_send_item_id:  # pragma: no branch
                                 param['id'] = id
@@ -2860,7 +2853,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             if (
                                 item.signature
                                 and item.provider_name == self.system
-                                and profile.get('openai_supports_encrypted_reasoning_content', False)
+                                and profile.openai_supports_encrypted_reasoning_content
                             ):
                                 signature = item.signature
 
@@ -2890,7 +2883,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', ('<think>', '</think>'))
+                            start_tag, end_tag = profile.thinking_tags
                             openai_messages.append(
                                 responses.EasyInputMessageParam(
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
@@ -2924,7 +2917,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         }
         if o.description:
             response_format_param['description'] = o.description
-        if self.profile.get('openai_supports_strict_tool_definition', True):  # pragma: no branch
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
             response_format_param['strict'] = o.strict
         return response_format_param
 
@@ -3139,8 +3132,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        profile = cast(OpenAIModelProfile, self._model_profile)
-        custom_field = profile.get('openai_chat_thinking_field', None)
+        profile = OpenAIModelProfile.from_profile(self._model_profile)
+        custom_field = profile.openai_chat_thinking_field
 
         # Prefer the configured custom reasoning field, if present in profile.
         # Fall back to built-in fields if no custom field result was found.
@@ -3183,8 +3176,8 @@ class OpenAIStreamedResponse(StreamedResponse):
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
-                thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
-                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
+                thinking_tags=self._model_profile.thinking_tags,
+                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
             ):
                 if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
                     event.part.id = 'content'
@@ -4033,7 +4026,7 @@ def _support_tool_forcing(
     model_settings: ModelSettings | None,
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
-    if not openai_profile.get('openai_supports_tool_choice_required', True):
+    if not openai_profile.openai_supports_tool_choice_required:
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(

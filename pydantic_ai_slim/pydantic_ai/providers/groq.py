@@ -8,7 +8,6 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
@@ -30,18 +29,16 @@ except ImportError as _import_error:
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    return merge_profile(
-        ModelProfile(supports_json_object_output=True, supports_json_schema_output=True),
-        moonshotai_model_profile(model_name),
+    return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
+        moonshotai_model_profile(model_name)
     )
 
 
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Meta model used with the Groq provider."""
     if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
-        return merge_profile(
-            ModelProfile(supports_json_object_output=True, supports_json_schema_output=True),
-            meta_model_profile(model_name),
+        return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
+            meta_model_profile(model_name)
         )
     else:
         return meta_model_profile(model_name)

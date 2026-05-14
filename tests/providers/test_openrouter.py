@@ -112,77 +112,77 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
     assert google_profile is not None
-    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3n-e4b-it:free')
     google_model_profile_mock.assert_called_with('gemma-3n-e4b-it')
     assert google_profile is not None
-    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     openai_profile = provider.model_profile('openai/o1-mini')
     openai_model_profile_mock.assert_called_with('o1-mini')
     assert openai_profile is not None
-    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
     assert anthropic_profile is not None
-    assert anthropic_profile.get('supports_json_schema_output', False) is True
+    assert anthropic_profile.supports_json_schema_output is True
 
     anthropic_profile = provider.model_profile('anthropic/claude-haiku-4.5:free')
     anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
     assert anthropic_profile is not None
-    assert anthropic_profile.get('supports_json_schema_output', False) is True
+    assert anthropic_profile.supports_json_schema_output is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert mistral_profile is not None
-    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('qwen/qwen-2.5-coder-32b')
     qwen_model_profile_mock.assert_called_with('qwen-2.5-coder-32b')
     assert qwen_profile is not None
-    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     grok_profile = provider.model_profile('x-ai/grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere/command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
-    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     amazon_profile = provider.model_profile('amazon/titan-text-express-v1')
     amazon_model_profile_mock.assert_called_with('titan-text-express-v1')
     assert amazon_profile is not None
-    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek/deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-maverick')
     meta_model_profile_mock.assert_called_with('llama-4-maverick')
     assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
-    assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
+    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
-    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 def test_openrouter_google_json_schema_transformer():

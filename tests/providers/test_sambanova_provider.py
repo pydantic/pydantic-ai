@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
@@ -45,7 +46,7 @@ def test_meta_llama_profile():
     provider = SambaNovaProvider(api_key='key')
     # Meta Llama model -> expect meta profile wrapped in OpenAI compatibility
     profile = provider.model_profile('Meta-Llama-3.1-8B-Instruct')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile is not None
 
 
@@ -53,7 +54,7 @@ def test_deepseek_profile():
     provider = SambaNovaProvider(api_key='key')
     # DeepSeek model -> expect deepseek profile wrapped in OpenAI compatibility
     profile = provider.model_profile('DeepSeek-R1-0528')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile is not None
 
 
@@ -61,7 +62,7 @@ def test_qwen_profile():
     provider = SambaNovaProvider(api_key='key')
     # Qwen model -> expect qwen profile wrapped in OpenAI compatibility
     profile = provider.model_profile('Qwen3-32B')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile is not None
 
 
@@ -69,7 +70,7 @@ def test_llama4_profile():
     provider = SambaNovaProvider(api_key='key')
     # Llama 4 model -> expect meta profile wrapped in OpenAI compatibility
     profile = provider.model_profile('Llama-4-Maverick-17B-128E-Instruct')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile is not None
 
 
@@ -77,7 +78,7 @@ def test_mistral_profile():
     provider = SambaNovaProvider(api_key='key')
     # Mistral-based model -> expect mistral profile wrapped in OpenAI compatibility
     profile = provider.model_profile('E5-Mistral-7B-Instruct')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile is not None
 
 
@@ -85,7 +86,7 @@ def test_unknown_model_profile():
     provider = SambaNovaProvider(api_key='key')
     # Unknown model -> should return OpenAI compatibility wrapper with None base profile
     profile = provider.model_profile('unknown-model')
-    assert isinstance(profile, dict)
+    assert isinstance(profile, OpenAIModelProfile)
 
 
 def test_sambanova_provider_with_openai_client():

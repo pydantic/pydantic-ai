@@ -278,18 +278,18 @@ def test_model_profile_supported_model():
     """Models that support structured outputs have supports_json_schema_output=True."""
     profile = anthropic_model_profile('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.get('supports_json_schema_output', False) is True
+    assert profile.supports_json_schema_output is True
 
 
 def test_model_profile_unsupported_model():
     """Models that don't support structured outputs have supports_json_schema_output=False."""
     profile = anthropic_model_profile('claude-sonnet-4-0')
     assert profile is not None
-    assert profile.get('supports_json_schema_output', False) is False
+    assert profile.supports_json_schema_output is False
 
 
 def test_model_profile_opus():
     """Opus 4.1 supports structured outputs."""
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
-    assert profile.get('supports_json_schema_output', False) is True
+    assert profile.supports_json_schema_output is True

@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -84,38 +84,38 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is False
-    assert meta_profile.get('supports_json_schema_output', False) is False
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.supports_json_object_output is False
+    assert meta_profile.supports_json_schema_output is False
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-maverick-17b-128e-instruct')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is True
-    assert meta_profile.get('supports_json_schema_output', False) is True
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.supports_json_object_output is True
+    assert meta_profile.supports_json_schema_output is True
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-scout-17b-16e-instruct')
     meta_model_profile_mock.assert_called_with('llama-4-scout-17b-16e-instruct')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is True
-    assert meta_profile.get('supports_json_schema_output', False) is True
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.supports_json_object_output is True
+    assert meta_profile.supports_json_schema_output is True
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('llama-3.3-70b-versatile')
     meta_model_profile_mock.assert_called_with('llama-3.3-70b-versatile')
     assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     google_profile = provider.model_profile('gemma2-9b-it')
     google_model_profile_mock.assert_called_with('gemma2-9b-it')
     assert google_profile is not None
-    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek-r1-distill-llama-70b')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1-distill-llama-70b')
     assert deepseek_profile is not None
-    assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert deepseek_profile.ignore_streamed_leading_whitespace is True
 
     mistral_profile = provider.model_profile('mistral-saba-24b')
     mistral_model_profile_mock.assert_called_with('mistral-saba-24b')
@@ -124,32 +124,32 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     qwen_profile = provider.model_profile('qwen-qwq-32b')
     qwen_model_profile_mock.assert_called_with('qwen-qwq-32b')
     assert qwen_profile is not None
-    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('compound-beta')
     groq_model_profile_mock.assert_called_with('compound-beta')
     assert qwen_profile is not None
-    assert isinstance(qwen_profile, dict)
-    assert qwen_profile.get('groq_always_has_web_search_builtin_tool', False) is True
+    assert isinstance(qwen_profile, GroqModelProfile)
+    assert qwen_profile.groq_always_has_web_search_builtin_tool is True
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2-instruct')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2-instruct')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.get('supports_json_object_output', False) is True
-    assert moonshotai_profile.get('supports_json_schema_output', False) is True
-    assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert moonshotai_profile.supports_json_object_output is True
+    assert moonshotai_profile.supports_json_schema_output is True
+    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
 
     openai_profile = provider.model_profile('openai/gpt-oss-20b')
     openai_model_profile_mock.assert_called_with('gpt-oss-20b')
     assert openai_profile is not None
-    assert openai_profile.get('supports_json_object_output', False) is True
-    assert openai_profile.get('supports_json_schema_output', False) is True
+    assert openai_profile.supports_json_object_output is True
+    assert openai_profile.supports_json_schema_output is True
 
     openai_profile = provider.model_profile('openai/gpt-oss-120b')
     openai_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert openai_profile is not None
-    assert openai_profile.get('supports_json_object_output', False) is True
-    assert openai_profile.get('supports_json_schema_output', False) is True
+    assert openai_profile.supports_json_object_output is True
+    assert openai_profile.supports_json_schema_output is True
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None

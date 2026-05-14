@@ -136,7 +136,7 @@ class CohereModel(Model[AsyncClientV2]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile)
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def client(self) -> AsyncClientV2:
