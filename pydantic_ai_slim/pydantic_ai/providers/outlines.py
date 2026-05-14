@@ -11,9 +11,8 @@ from pydantic_ai.providers import Provider
 
 @deprecated(
     '`OutlinesProvider` is deprecated and will be removed in v2. '
-    'If you would like to keep using Outlines with Pydantic AI, please open an issue at '
-    'https://github.com/dottxt-ai/outlines/issues asking the Outlines maintainers to take ownership of a '
-    '`pydantic-ai-outlines` package.',
+    'If you would like to keep using Outlines with Pydantic AI, please file an issue at '
+    'https://github.com/dottxt-ai/outlines/issues.',
     category=PydanticAIDeprecationWarning,
 )
 class OutlinesProvider(Provider[Any]):
