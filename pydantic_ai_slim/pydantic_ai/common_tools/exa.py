@@ -29,6 +29,14 @@ __all__ = (
     'exa_answer_tool',
 )
 
+_INTEGRATION_NAME = 'pydantic-ai'
+
+
+def _build_client(api_key: str) -> AsyncExa:
+    client = AsyncExa(api_key=api_key)
+    client.headers['x-exa-integration'] = _INTEGRATION_NAME
+    return client
+
 
 class ExaSearchResult(TypedDict):
     """An Exa search result with content.
@@ -97,16 +105,17 @@ class ExaSearchTool:
     async def __call__(
         self,
         query: str,
-        search_type: Literal['auto', 'keyword', 'neural', 'fast', 'deep'] = 'auto',
+        search_type: Literal['auto', 'neural', 'fast', 'instant', 'deep', 'deep-lite', 'deep-reasoning'] = 'auto',
     ) -> list[ExaSearchResult]:
         """Searches Exa for the given query and returns the results with content.
 
         Args:
             query: The search query to execute with Exa.
             search_type: The type of search to perform. 'auto' automatically chooses
-                the best search type, 'keyword' for exact matches, 'neural' for
-                semantic search, 'fast' for speed-optimized search, 'deep' for
-                comprehensive multi-query search.
+                the best search type, 'neural' for embeddings-based semantic search,
+                'fast' for a speed-optimized version, 'instant' for the lowest latency,
+                'deep' for a light deep search, 'deep-lite' for a lightweight synthesized
+                output, and 'deep-reasoning' for the base deep search.
 
         Returns:
             The search results with text content.
@@ -282,7 +291,7 @@ def exa_search_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)
+        client = _build_client(api_key)
     return Tool[Any](
         ExaSearchTool(
             client=client,
@@ -329,7 +338,7 @@ def exa_find_similar_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)
+        client = _build_client(api_key)
     return Tool[Any](
         ExaFindSimilarTool(client=client, num_results=num_results).__call__,
         name='exa_find_similar',
@@ -362,7 +371,7 @@ def exa_get_contents_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)
+        client = _build_client(api_key)
     return Tool[Any](
         ExaGetContentsTool(client=client).__call__,
         name='exa_get_contents',
@@ -395,7 +404,7 @@ def exa_answer_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)
+        client = _build_client(api_key)
     return Tool[Any](
         ExaAnswerTool(client=client).__call__,
         name='exa_answer',
@@ -446,7 +455,7 @@ class ExaToolset(FunctionToolset):
             include_answer: Whether to include the answer tool. Defaults to True.
             id: Optional ID for the toolset, used for durable execution environments.
         """
-        client = AsyncExa(api_key=api_key)
+        client = _build_client(api_key)
         tools: list[Tool[Any]] = []
 
         if include_search:

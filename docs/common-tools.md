@@ -231,7 +231,7 @@ pip/uv-add "pydantic-ai-slim[exa]"
 
 You can use Exa tools individually or as a toolset. The following tools are available:
 
-- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with various search types (auto, keyword, neural, fast, deep)
+- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with various search types (auto, neural, fast, instant, deep, deep-lite, deep-reasoning)
 - [`exa_find_similar_tool`][pydantic_ai.common_tools.exa.exa_find_similar_tool]: Find pages similar to a given URL
 - [`exa_get_contents_tool`][pydantic_ai.common_tools.exa.exa_get_contents_tool]: Get full text content from URLs
 - [`exa_answer_tool`][pydantic_ai.common_tools.exa.exa_answer_tool]: Get AI-powered answers with citations
