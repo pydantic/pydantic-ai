@@ -16,7 +16,7 @@ from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
@@ -34,21 +34,14 @@ _load_capability_args_ta = TypeAdapter(_LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
-_LOAD_CAPABILITY_TOOL_DEF = ToolDefinition(
-    name=LOAD_CAPABILITY_TOOL_NAME,
-    description='Load a capability to access its full instructions and tools.',
-    parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-    tool_kind='capability-load',
-)
-
 
 @dataclass
-class CapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
+class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a ``load_capability`` discovery tool.
 
     When unloaded capabilities exist, ``get_tools`` adds a ``load_capability`` tool.
     The catalog of loadable capabilities is provided by
-    :class:`~pydantic_ai.capabilities._loader.CapabilityLoader` instructions.
+    :class:`~pydantic_ai.capabilities.deferred.DeferredLoadingCapability` instructions.
     When the model calls ``load_capability(id)``, the matching capability's
     instructions are returned as the tool result. Once all capabilities are loaded,
     the ``load_capability`` tool is removed.
@@ -70,9 +63,15 @@ class CapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
                 'Rename your tool to avoid conflicts.'
             )
 
+        load_tool_def = ToolDefinition(
+            name=LOAD_CAPABILITY_TOOL_NAME,
+            description=('Load a capability to access its full instructions and tools.'),
+            parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
+        )
+
         load_tool = ToolsetTool(
             toolset=self,
-            tool_def=_LOAD_CAPABILITY_TOOL_DEF,
+            tool_def=load_tool_def,
             max_retries=1,
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )
@@ -103,7 +102,7 @@ class CapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
                 if resolved is not None:
                     parts.append(resolved)
 
-        for resolved in await self._collect_owned_toolset_instructions(capability_id, ctx):
+        for resolved in await self._collect_scoped_toolset_instructions(capability_id, ctx):
             parts.append(resolved)
 
         instructions_text = '\n\n'.join(parts) or None
@@ -112,23 +111,23 @@ class CapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )
 
-    async def _collect_owned_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
-        """Pull instructions from `CapabilityOwnedToolset`s tagged with this cap_id.
+    async def _collect_scoped_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
+        """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
 
         Bypasses each wrapper's own gate (still closed because the cap isn't yet
         in `loaded_capability_ids` — its tool return hasn't been appended to
         history) by calling `get_instructions` on `ts.wrapped` directly.
         """
-        owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
+        scoped: list[CapabilityScopedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(ts, CapabilityOwnedToolset) and ts.capability_id == capability_id:
-                owned.append(ts)
+            if isinstance(ts, CapabilityScopedToolset) and ts.capability_id == capability_id:
+                scoped.append(ts)
 
         self.apply(collect)
 
         out: list[str] = []
-        for ts in owned:
+        for ts in scoped:
             result = await ts.wrapped.get_instructions(ctx)
             if result is None:
                 continue

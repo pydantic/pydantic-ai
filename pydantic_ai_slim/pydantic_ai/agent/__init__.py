@@ -23,7 +23,7 @@ from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities._loader import CapabilityLoader
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 
 from .. import (
     _agent_graph,
@@ -1385,7 +1385,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
         if any(cap.defer_loading is True for cap in collect_leaves(run_capability)):
-            run_capability = CombinedCapability([run_capability, CapabilityLoader()])
+            run_capability = CombinedCapability([run_capability, DeferredLoadingCapability()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -2544,10 +2544,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
         Toolset instructions are collected separately during run execution.
-
-        Args:
-            additional_instructions: Additional instructions to include for this run.
-            cap_instructions: Instructions from capabilities, resolved at run time.
         """
         override_instructions = self._override_instructions.get()
         if override_instructions:

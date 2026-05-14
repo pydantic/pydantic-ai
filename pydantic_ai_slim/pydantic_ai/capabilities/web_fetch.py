@@ -54,14 +54,7 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
-        id: str | None = None,
-        defer_loading: bool | None = None,
-        description: str | None = None,
     ) -> None:
-        if id is not None:
-            self.id = id
-        self.defer_loading = defer_loading
-        self.description = description
         self.native = native
         self.local = local
         self.allowed_domains = allowed_domains

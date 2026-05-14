@@ -65,18 +65,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         *,
         native: AgentNativeTool[AgentDepsT] | bool = True,
         local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None,
-        id: str | None = None,
-        defer_loading: bool | None = None,
-        description: str | None = None,
     ) -> None:
-        # `id`, `defer_loading`, `description` are dataclass fields on
-        # `AbstractCapability`. Subclasses override `__init__` (so the dataclass-generated
-        # `__init__` doesn't run); forward these explicitly so `dataclasses.replace()`
-        # round-trips and so users can pass them at construction.
-        if id is not None:
-            self.id = id
-        self.defer_loading = defer_loading
-        self.description = description
         self.native = native
         self.local = local
         self.__post_init__()

@@ -17,12 +17,6 @@ from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
-from pydantic_ai._load_capability import (
-    LoadCapabilityCallPart,
-    LoadCapabilityReturnPart,
-    _narrow_load_capability_call,  # pyright: ignore[reportPrivateUsage]
-    _narrow_load_capability_return,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -54,7 +48,6 @@ from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -1557,9 +1550,6 @@ Supported by:
                             ],
                             'title': 'Aspect Ratio',
                         },
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
@@ -1587,7 +1577,6 @@ Supported by:
                             'title': 'Allowed Tools',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
@@ -1680,9 +1669,6 @@ Supported by:
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebFetch',
                     'type': 'object',
@@ -1712,9 +1698,6 @@ Supported by:
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
@@ -2380,14 +2363,7 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
 
 
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
-    """A deferred capability's tools sit on the wire from turn 1 (cache stability) and become
-    callable when the model invokes `load_capability`.
-
-    Wire visibility and call permission are orthogonal: `CapabilityOwnedToolset` stamps
-    `capability_id` on each tool and appends a hint to the description, so the model sees
-    the tool and learns the prerequisite — but `call_tool` raises `ModelRetry` until the
-    cap is loaded. `load_capability`'s tool block drops once no deferred caps remain.
-    """
+    """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -2460,14 +2436,9 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     result = await agent.run('Can I get a refund?')
 
     assert result.output == snapshot('final: order-123: refund allowed for 30 days')
-    # Step 1: `lookup_refund_policy` is already on the wire (cache stability across the
-    # `load_capability` boundary); `load_capability` is present because a deferred cap is
-    # unloaded. No `search_tools` — no tool inside the cap has tool-level `defer_loading=True`.
-    # Step 2: cap loaded → `load_capability` drops; `lookup_refund_policy` is now callable.
-    # Step 3: same wire as step 2; model returns final text.
     assert seen_tool_names == snapshot(
         [
-            ['load_capability', 'lookup_refund_policy'],
+            ['search_tools', 'load_capability'],
             ['lookup_refund_policy'],
             ['lookup_refund_policy'],
         ]
@@ -2486,7 +2457,7 @@ The following capabilities are deferred and can be loaded via load_capability: r
             ),
             ModelResponse(
                 parts=[
-                    LoadCapabilityCallPart(
+                    ToolCallPart(
                         tool_name='load_capability',
                         args={'id': 'refunds'},
                         tool_call_id='load-refunds',
@@ -2500,7 +2471,7 @@ The following capabilities are deferred and can be loaded via load_capability: r
             ),
             ModelRequest(
                 parts=[
-                    LoadCapabilityReturnPart(
+                    ToolReturnPart(
                         tool_name='load_capability',
                         content={
                             'capability_id': 'refunds',
@@ -2562,17 +2533,7 @@ The following capabilities are deferred and can be loaded via load_capability: r
     )
 
 
-async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> None:
-    """`load_capability` called with an id absent from the catalog returns an error to the
-    model without unlocking any cap-scoped tool.
-
-    Under the cache-stable model, cap-scoped tools sit on the wire from turn 1 — what
-    "unloaded" means is execution-gate-closed, not invisible. This test pins that a bad
-    `load_capability` call does not flip the gate: `hidden_tool` stays visible (wire is
-    stable across the failed load) but invoking it would raise `ModelRetry` via
-    `CapabilityOwnedToolset.call_tool`. Verifies the wire shape and asserts the load
-    return is the catalog-not-found error string.
-    """
+async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -2610,13 +2571,10 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
     result = await agent.run('load missing')
 
     assert result.output == snapshot('done')
-    # Wire stays identical across the failed load: `hidden_tool` is on the wire both
-    # turns (cap-scoped, execution-gated), `load_capability` stays because no cap has
-    # been loaded. The failed load doesn't expand or shrink the tool block.
     assert seen_tool_names == snapshot(
         [
-            ['load_capability', 'hidden_tool'],
-            ['load_capability', 'hidden_tool'],
+            ['search_tools', 'load_capability'],
+            ['search_tools', 'load_capability'],
         ]
     )
     assert result.all_messages() == snapshot(
@@ -2630,7 +2588,7 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
             ),
             ModelResponse(
                 parts=[
-                    LoadCapabilityCallPart(
+                    ToolCallPart(
                         tool_name='load_capability',
                         args={'id': 'missing'},
                         tool_call_id='load-missing',
@@ -2644,7 +2602,7 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
             ),
             ModelRequest(
                 parts=[
-                    LoadCapabilityReturnPart(
+                    ToolReturnPart(
                         tool_name='load_capability',
                         content="No capability found with id 'missing'.",
                         tool_call_id='load-missing',
@@ -2666,374 +2624,6 @@ async def test_load_capability_with_unknown_id_keeps_execution_gate_closed() -> 
             ),
         ]
     )
-
-
-async def test_deferred_capability_load_returns_wrapped_toolset_instructions() -> None:
-    """When a deferred capability's toolset carries its own instructions, the
-    `load_capability` return concatenates them with the capability-level instructions.
-
-    Also pins the defensive guard inside `_collect_scoped_toolset_instructions`: a
-    wrapper toolset emitting a whitespace-only string is dropped instead of polluting
-    the load return. Covers both legs of `if content and content.strip()` — the
-    truthy leg via the real toolset, the falsy leg via the whitespace wrapper.
-    """
-    from pydantic_ai.toolsets.wrapper import WrapperToolset
-
-    inner = FunctionToolset[None]()
-
-    @inner.tool_plain
-    def refund_status(order_id: str) -> str:
-        return f'{order_id}: pending'  # pragma: no cover
-
-    @dataclass
-    class WhitespaceInstructionWrapper(WrapperToolset[None]):
-        """Returns a mix of whitespace-only and real instructions to exercise both legs
-        of `if content and content.strip()` inside `_collect_scoped_toolset_instructions`."""
-
-        async def get_instructions(self, ctx: RunContext[None]) -> list[str]:
-            return ['   ', 'Toolset-level instruction.']
-
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund tools.',
-        instructions='Capability-level instruction.',
-        toolset=WhitespaceInstructionWrapper(wrapped=inner),
-        defer_loading=True,
-    )
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
-            )
-        return make_text_response('done')
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    result = await agent.run('load refunds')
-
-    assert result.output == 'done'
-
-    load_return = next(
-        part
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, LoadCapabilityReturnPart)
-    )
-    assert load_return.loaded == snapshot(
-        {
-            'capability_id': 'refunds',
-            'instructions': 'Capability-level instruction.\n\nToolset-level instruction.',
-        }
-    )
-
-
-async def test_deferred_capability_tool_called_before_load_raises_model_retry() -> None:
-    """Calling a cap-scoped tool before `load_capability` raises `ModelRetry`.
-
-    Cap-scoped tools are visible on the wire from turn 1 (cache stability) but the
-    execution gate stays closed until `load_capability` runs. This test pins that the
-    gate inside `CapabilityOwnedToolset.call_tool` actually trips: an early call
-    becomes a `RetryPromptPart` instructing the model to load the cap first.
-    """
-    toolset = FunctionToolset[None]()
-
-    @toolset.tool_plain
-    def refund_status(order_id: str) -> str:
-        """Look up the refund status for an order."""
-        return f'{order_id}: pending'  # pragma: no cover
-
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund policy tools.',
-        toolset=toolset,
-        defer_loading=True,
-    )
-
-    call_count = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Skip load_capability entirely on turn 1.
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'order-7'}, tool_call_id='early')]
-            )
-        return make_text_response('done')
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    result = await agent.run('look up early')
-
-    assert result.output == 'done'
-
-    retry_prompts = [
-        part
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, RetryPromptPart)
-    ]
-    assert retry_prompts == snapshot(
-        [
-            RetryPromptPart(
-                content="Tool 'refund_status' belongs to capability 'refunds', which has not been loaded yet. "
-                "Call load_capability(id='refunds') first.",
-                tool_name='refund_status',
-                tool_call_id='early',
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
-async def test_deferred_capability_wire_is_stable_across_load_capability() -> None:
-    """The wire-level tool list and tool schemas are byte-identical across the
-    `load_capability` boundary within a run.
-
-    This is the headline cache-stability property: on Anthropic / OpenAI, the cached
-    prefix runs tool definitions → system prompt → conversation history. If the tool
-    block changed when the model called `load_capability`, the entire downstream cache
-    would invalidate. Under model B, cap-scoped tools sit on the wire from turn 1
-    with `capability_id` stamped; loading just flips the runtime execution-gate, not
-    the wire. This test pins that property: each turn's serialized cap-scoped tool def
-    is identical to the first turn's, and `load_capability` is the only difference
-    between turn 1 and the rest.
-    """
-    from dataclasses import asdict
-
-    toolset = FunctionToolset[None]()
-
-    @toolset.tool_plain
-    def refund_status(order_id: str) -> str:
-        """Look up the refund status for an order."""
-        return f'{order_id}: pending'
-
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund policy tools.',
-        instructions='Use refund_status to look up refunds.',
-        toolset=toolset,
-        defer_loading=True,
-    )
-
-    per_turn_wire: list[dict[str, dict[str, Any]]] = []
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        # `info.function_tools` already reflects the post-`_resolve_native_tool_swap`
-        # wire shape, so capturing it here is the same view the provider would see.
-        # Keyed by name for stable lookup across turns.
-        per_turn_wire.append({td.name: asdict(td) for td in info.function_tools})
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
-            )
-        if not any(part.tool_name == 'refund_status' for part in tool_returns):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'order-7'}, tool_call_id='call')]
-            )
-        return make_text_response('done')
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    await agent.run('check my refund')
-
-    # `load_capability` only sits on the wire while a deferred cap is unloaded (turn 1);
-    # `refund_status` carries identical bytes every turn — that repetition IS the
-    # cache-stability invariant the provider's prompt cache relies on.
-    assert per_turn_wire == snapshot(
-        [
-            {
-                LOAD_CAPABILITY_TOOL_NAME: {
-                    'name': LOAD_CAPABILITY_TOOL_NAME,
-                    'parameters_json_schema': IsInstance(dict),
-                    'description': 'Load a capability to access its full instructions and tools.',
-                    'outer_typed_dict_key': None,
-                    'tool_kind': 'capability-load',
-                    'sequential': False,
-                    'kind': 'function',
-                    'unless_native': None,
-                    'timeout': None,
-                    'with_native': None,
-                    'capability_id': None,
-                    'defer_loading': False,
-                    'strict': None,
-                    'return_schema': None,
-                    'include_return_schema': None,
-                    'metadata': None,
-                },
-                'refund_status': {
-                    'name': 'refund_status',
-                    'parameters_json_schema': {
-                        'additionalProperties': False,
-                        'properties': {'order_id': {'type': 'string'}},
-                        'required': ['order_id'],
-                        'type': 'object',
-                    },
-                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
-                    'outer_typed_dict_key': None,
-                    'strict': None,
-                    'sequential': False,
-                    'kind': 'function',
-                    'metadata': None,
-                    'timeout': None,
-                    'defer_loading': False,
-                    'unless_native': None,
-                    'with_native': None,
-                    'tool_kind': None,
-                    'return_schema': None,
-                    'include_return_schema': None,
-                    'capability_id': 'refunds',
-                },
-            },
-            {
-                'refund_status': {
-                    'name': 'refund_status',
-                    'parameters_json_schema': {
-                        'additionalProperties': False,
-                        'properties': {'order_id': {'type': 'string'}},
-                        'required': ['order_id'],
-                        'type': 'object',
-                    },
-                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
-                    'outer_typed_dict_key': None,
-                    'strict': None,
-                    'sequential': False,
-                    'kind': 'function',
-                    'metadata': None,
-                    'timeout': None,
-                    'defer_loading': False,
-                    'unless_native': None,
-                    'with_native': None,
-                    'tool_kind': None,
-                    'return_schema': None,
-                    'include_return_schema': None,
-                    'capability_id': 'refunds',
-                }
-            },
-            {
-                'refund_status': {
-                    'name': 'refund_status',
-                    'parameters_json_schema': {
-                        'additionalProperties': False,
-                        'properties': {'order_id': {'type': 'string'}},
-                        'required': ['order_id'],
-                        'type': 'object',
-                    },
-                    'description': "Look up the refund status for an order. (This tool belongs to capability 'refunds'. Call load_capability(id='refunds') first if you haven't.)",
-                    'outer_typed_dict_key': None,
-                    'strict': None,
-                    'sequential': False,
-                    'kind': 'function',
-                    'metadata': None,
-                    'timeout': None,
-                    'defer_loading': False,
-                    'unless_native': None,
-                    'with_native': None,
-                    'tool_kind': None,
-                    'return_schema': None,
-                    'include_return_schema': None,
-                    'capability_id': 'refunds',
-                }
-            },
-        ]
-    )
-
-
-def test_load_capability_typed_parts_round_trip() -> None:
-    """`LoadCapabilityCallPart` / `LoadCapabilityReturnPart` survive JSON round-trips.
-
-    Equality on Python dataclasses requires both sides to be the same class, so this
-    single assertion pins both type preservation (a regression to the base
-    `ToolCallPart` / `ToolReturnPart` would fail equality) AND field-value fidelity
-    across success and catalog-miss return shapes.
-    """
-    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
-
-    original = [
-        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='ok')]),
-        ModelRequest(
-            parts=[
-                LoadCapabilityReturnPart(
-                    content={'capability_id': 'refunds', 'instructions': 'Use refund_status.'},
-                    tool_call_id='ok',
-                )
-            ]
-        ),
-        ModelRequest(
-            parts=[LoadCapabilityReturnPart(content="No capability found with id 'missing'.", tool_call_id='miss')]
-        ),
-    ]
-    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(original)) == original
-
-
-@pytest.mark.parametrize(
-    ('args', 'expected_typed_args', 'expected_capability_id'),
-    [
-        pytest.param({'id': 'refunds'}, {'id': 'refunds'}, 'refunds', id='dict-args'),
-        pytest.param('{"id": "refunds"}', {'id': 'refunds'}, 'refunds', id='json-string-args'),
-        pytest.param('{"id":', None, None, id='unparseable-streaming-partial'),
-        pytest.param('["id"]', None, None, id='non-dict-json'),
-        pytest.param(None, None, None, id='none-args'),
-    ],
-)
-def test_load_capability_call_part_typed_args_dispatch(
-    args: Any, expected_typed_args: Any, expected_capability_id: str | None
-) -> None:
-    """`typed_args` and `capability_id` accessors dispatch across each `args` shape.
-
-    Pins the streaming-partial path (returns `None` until JSON completes), the
-    pre-parsed dict path (passthrough), and the catalog-call path (JSON string parsed).
-    """
-    part = LoadCapabilityCallPart(args=args, tool_call_id='ok')
-    assert part.typed_args == expected_typed_args
-    assert part.capability_id == expected_capability_id
-
-
-def test_load_capability_return_part_accessors_dispatch_on_content_shape() -> None:
-    """`.loaded` extracts validated success payloads; `.error` surfaces catalog-miss strings."""
-    success = LoadCapabilityReturnPart(
-        content={'capability_id': 'refunds', 'instructions': 'Use refund_status.'},
-        tool_call_id='ok',
-    )
-    assert success.loaded == {'capability_id': 'refunds', 'instructions': 'Use refund_status.'}
-    assert success.error is None
-
-    miss = LoadCapabilityReturnPart(content="No capability found with id 'missing'.", tool_call_id='miss')
-    assert miss.loaded is None
-    assert miss.error == "No capability found with id 'missing'."
-
-
-def test_load_capability_narrowers_passthrough_when_already_typed() -> None:
-    """Narrowers short-circuit (return the same instance) when the input is already typed."""
-    call = LoadCapabilityCallPart(args={'id': 'x'}, tool_call_id='ok')
-    assert _narrow_load_capability_call(call) is call
-
-    ret = LoadCapabilityReturnPart(content={'capability_id': 'x', 'instructions': None}, tool_call_id='ok')
-    assert _narrow_load_capability_return(ret) is ret
-
-
-def test_capability_subclass_init_forwards_explicit_id() -> None:
-    """Subclasses that override `__init__` must forward an explicit `id=` instead of
-    silently keeping the auto-generated uuid4. Pins the `if id is not None: self.id = id`
-    forwarding added so `dataclasses.replace()` round-trips on deferred-loading capabilities.
-    """
-    assert WebFetch(id='explicit', local=False).id == 'explicit'
-    assert ImageGeneration(id='explicit').id == 'explicit'
-    assert NativeOrLocalTool(native=WebSearchTool(), id='explicit').id == 'explicit'
 
 
 def test_infer_fmt_explicit():
@@ -5680,12 +5270,6 @@ class TestImageGenerationCapability:
             'native',
             'local',
             'fallback_model',
-            # `AbstractCapability` base-class fields forwarded through `__init__` so
-            # `dataclasses.replace()` round-trips. Not part of the ImageGenerationTool
-            # config surface.
-            'id',
-            'defer_loading',
-            'description',
         }
         assert init_params == builtin_fields
 

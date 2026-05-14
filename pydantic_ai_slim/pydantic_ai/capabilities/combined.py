@@ -21,7 +21,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
@@ -81,6 +81,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if capability.defer_loading is True:
                 continue
             instructions.extend(normalize_instructions(capability.get_instructions()))
+
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
@@ -127,14 +128,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if toolset is None:
                 continue
             elif isinstance(toolset, AbstractToolset):
-                # `AgentToolset[T]` aliases `AbstractToolset[T] | ToolsetFunc[T]`; pyright
-                # narrows `ToolsetFunc` to `Callable[...]` and loses the `T` binding, so the
-                # post-isinstance branch is typed as `AbstractToolset[T] | AbstractToolset[Unknown]`.
+                # Pyright can't narrow Callable type aliases out of unions after isinstance check
                 cap_toolset = cast(AbstractToolset[AgentDepsT], toolset)
             else:
                 cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
 
-            toolsets.append(CapabilityOwnedToolset(wrapped=cap_toolset, capability_id=capability.id))
+            toolsets.append(CapabilityScopedToolset(wrapped=cap_toolset, capability_id=capability.id))
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:

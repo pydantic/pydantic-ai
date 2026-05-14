@@ -62,7 +62,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
-        defer_loading: bool | None = None,
     ) -> None:
         # In v2, MCP's `native` default flips from True to False. Warn whenever the user is
         # relying on the default — passing only `local=False` today gives native-only behavior,
@@ -87,7 +86,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # call `super().__init__()`. Overwrite it here so that an unset `id` keeps the
         # URL-derived semantic in `_resolved_id` (empty string is falsy).
         self.id = id if id is not None else ''
-        self.defer_loading = defer_loading
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools

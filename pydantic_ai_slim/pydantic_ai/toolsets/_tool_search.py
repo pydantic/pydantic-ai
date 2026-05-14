@@ -280,7 +280,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered, ctx.loaded_capability_ids)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
 
         return result
 
@@ -288,24 +288,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self,
         deferred: dict[str, ToolsetTool[AgentDepsT]],
         discovered: set[str],
-        loaded_capability_ids: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
 
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
-        # search function sees, and what the local keywords search indexes. Tools whose
-        # owning capability isn't loaded yet stay out of the corpus so the model can't
-        # discover them through search; the capability's own `load_capability` step is
-        # the gate. The tool still sits in the toolset (and on the wire on providers
-        # that support native tool search) — only its discoverability is gated, which
-        # keeps the request prefix stable across the load boundary.
-        corpus = [
-            tool.tool_def
-            for name, tool in deferred.items()
-            if name not in discovered
-            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in loaded_capability_ids)
-        ]
+        # search function sees, and what the local keywords search indexes.
+        corpus = [tool.tool_def for name, tool in deferred.items() if name not in discovered]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the
