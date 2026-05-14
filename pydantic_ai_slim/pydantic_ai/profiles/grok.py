@@ -29,10 +29,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     # See https://docs.x.ai/docs/guides/reasoning
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
-    # grok-3-mini always reasons; the API only exposes `reasoning_effort='low'|'high'` to
-    # tune the level, with no `'none'` / disable value. Marking the profile as always-on
-    # routes `thinking=False` through the standard silent-drop path in `Model.prepare_request`,
-    # matching the precedent set by OpenAI o-series and Magistral. See #5379.
+    # grok-3-mini always reasons; the API has no `'none'` value for `reasoning_effort`,
+    # so route `thinking=False` through the standard always-on silent-drop path.
     thinking_always_enabled = supports_thinking_effort
 
     supported_native_tools: frozenset[type[AbstractNativeTool]] = (

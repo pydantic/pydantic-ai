@@ -82,6 +82,20 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+_QWEN_REASONING_MODEL_TOKENS = ('qwq', 'qwen3')
+"""Substrings identifying Bedrock-Qwen variants that expose `reasoning_config`."""
+
+
+def bedrock_qwen_model_profile(model_name: str) -> ModelProfile:
+    """Get the model profile for a Qwen model used via Bedrock."""
+    supports_reasoning = any(token in model_name for token in _QWEN_REASONING_MODEL_TOKENS)
+    return BedrockModelProfile(
+        bedrock_thinking_variant='qwen',
+        supports_thinking=supports_reasoning,
+        thinking_always_enabled=supports_reasoning,
+    )
+
+
 def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
     return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
 
@@ -134,23 +148,14 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            # Bedrock-Converse for OpenAI (gpt-oss) accepts `reasoning_effort` ∈
-            # `{minimal, low, medium, high}` — no `'none'` value is supported, so
-            # `thinking=False` cannot be expressed on the wire. Mark always-on so
-            # the unified setting is silently dropped via the standard gate path
-            # rather than the per-translator guard. See #5379.
+            # Converse rejects `reasoning_effort='none'`, so always-on routes
+            # `thinking=False` through the gate's silent-drop path.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
                 thinking_always_enabled=True,
             ),
-            # Bedrock-Converse for Qwen accepts `reasoning_config` ∈ `{low, high}`
-            # — no disable value. Same always-on treatment as the OpenAI variant.
-            'qwen': lambda mn: BedrockModelProfile(
-                bedrock_thinking_variant='qwen',
-                supports_thinking='qwq' in mn or 'qwen3' in mn,
-                thinking_always_enabled='qwq' in mn or 'qwen3' in mn,
-            ),
+            'qwen': bedrock_qwen_model_profile,
         }
 
         # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a

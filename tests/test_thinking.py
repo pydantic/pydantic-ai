@@ -688,9 +688,7 @@ class TestOpenRouterThinkingTranslation:
         assert extra_body.get('reasoning') == {'effort': 'high'}
 
     def test_thinking_false_emits_enabled_false(self):
-        """`thinking=False` must be forwarded to OpenRouter as `reasoning.enabled=False`
-        so the routing layer can disable reasoning on hybrid models whose default is on
-        (e.g. moonshotai/kimi-k2.6, claude-sonnet-4.5). See pydantic/pydantic-ai#5379."""
+        """`thinking=False` is forwarded to OpenRouter as `reasoning.enabled=False`."""
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _openrouter_settings_to_openai_settings(settings, params)
@@ -698,14 +696,11 @@ class TestOpenRouterThinkingTranslation:
         assert extra_body.get('reasoning') == {'enabled': False}
 
     def test_provider_profile_passes_thinking_through_gate(self):
-        """`OpenRouterProvider.model_profile()` must set `supports_thinking=True` so
-        `Model.prepare_request` doesn't strip `thinking` based on the underlying
-        model's profile — OpenRouter accepts the reasoning passthrough universally.
-        Regression for #5379."""
+        """`OpenRouterProvider.model_profile()` reports `supports_thinking=True` so
+        the unified setting survives the `prepare_request` gate even when the
+        underlying-model profile would otherwise strip it."""
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-        # Models whose intrinsic profiles report `supports_thinking=False`, but for
-        # which the user can still meaningfully request `thinking=False` via OpenRouter.
         for model_name in (
             'moonshotai/kimi-k2.6',
             'qwen/qwen3-235b-a22b',
@@ -796,6 +791,25 @@ class TestXaiThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         _, resolved_params = model.prepare_request(settings, params)
         assert resolved_params.thinking is True
+
+    def test_grok_3_mini_profile_drops_thinking_false_via_gate(self):
+        """grok-3-mini's profile is always-on, so `prepare_request` drops
+        `thinking=False` from params. With `thinking_always_enabled=False` the
+        same call would pass `False` through — this pins that the always-on flag
+        is what enforces the silent-drop, guarding against a profile revert."""
+        always_on = XaiModel.__new__(XaiModel)
+        always_on._profile = grok_model_profile('grok-3-mini')
+        always_on._settings = None
+        _, resolved = always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
+        assert resolved.thinking is None
+
+        # Inverse: a hypothetical profile that supports thinking but isn't always-on
+        # forwards `thinking=False` to the transformer instead.
+        non_always_on = XaiModel.__new__(XaiModel)
+        non_always_on._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+        non_always_on._settings = None
+        _, resolved = non_always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
+        assert resolved.thinking is False
 
 
 # ---------------------------------------------------------------------------
@@ -1109,17 +1123,15 @@ class TestProfileThinkingCapabilities:
         assert profile.thinking_always_enabled is True
 
     def test_grok_profile_thinking_always_enabled(self):
-        """grok-3-mini's API has no `'none'` value for reasoning_effort, so the
-        profile is marked always-on and `thinking=False` is silently dropped by
-        the gate. See pydantic/pydantic-ai#5379."""
+        """grok-3-mini's `reasoning_effort` has no `'none'` value, so the profile
+        is marked always-on and the gate drops `thinking=False`."""
         profile = grok_model_profile('grok-3-mini')
         assert profile is not None
         assert profile.supports_thinking is True
         assert profile.thinking_always_enabled is True
 
-        # grok-4 reasoning models reject the `reasoning_effort` parameter outright,
-        # so `supports_thinking` stays False — confirms we don't accidentally
-        # promote them to always-on.
+        # grok-4 reasoning models reject `reasoning_effort` outright, so the profile
+        # leaves thinking unsupported — guarding against accidental promotion to always-on.
         profile = grok_model_profile('grok-4')
         assert profile is not None
         assert profile.supports_thinking is False
@@ -1127,8 +1139,7 @@ class TestProfileThinkingCapabilities:
 
     @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
     def test_bedrock_openai_variant_thinking_always_enabled(self):
-        """Bedrock-Converse for OpenAI gpt-oss has no `reasoning_effort='none'`; marked
-        always-on so `thinking=False` is silently dropped. Regression for #5379."""
+        """Bedrock-Converse rejects `reasoning_effort='none'` for gpt-oss; marked always-on."""
         from pydantic_ai.providers.bedrock import BedrockProvider
 
         profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
@@ -1138,8 +1149,8 @@ class TestProfileThinkingCapabilities:
 
     @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
     def test_bedrock_qwen_variant_thinking_always_enabled(self):
-        """Bedrock-Converse for Qwen3 only exposes `reasoning_config` ∈ {low, high}
-        — no disable. Marked always-on for the same reason. Regression for #5379."""
+        """Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3;
+        marked always-on so the gate drops `thinking=False`."""
         from pydantic_ai.providers.bedrock import BedrockProvider
 
         profile = BedrockProvider.model_profile('qwen.qwen3-32b-v1:0')
@@ -1182,17 +1193,13 @@ class TestCrossProviderPortability:
         assert params.thinking is None
 
     def test_thinking_false_silently_dropped_on_always_enabled_models(self):
-        """thinking=False on always-on models → not resolved by prepare_request.
-
-        Codifies the standard the docs document at docs/thinking.md:31 ("`False` — disable
-        thinking (silently ignored on always-on models)") for the providers we updated in
-        #5379 (xAI grok-3-mini, Bedrock-OpenAI variant, Bedrock-Qwen variant). All three
-        delegate their silent-drop to this exact gate path."""
+        """`thinking=False` is stripped from params on always-on profiles, codifying
+        the contract advertised at docs/thinking.md ("silently ignored on always-on
+        models"). Non-False values flow through unchanged."""
         model = _make_model(supports_thinking=True, thinking_always_enabled=True)
         _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
         assert params.thinking is None
 
-        # Non-False thinking values still flow through unchanged on always-on models.
         _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
         assert params.thinking == 'high'
 

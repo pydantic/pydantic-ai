@@ -133,11 +133,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
-        # `supports_thinking=True` is set at the provider level: OpenRouter accepts the
-        # `reasoning` passthrough (effort / enabled / max_tokens / exclude) for every model it
-        # routes to. Underlying-model profiles that report `supports_thinking=False` would
-        # otherwise cause `prepare_request` to silently strip `thinking` before
-        # `_openrouter_settings_to_openai_settings` ever sees it (#5379).
+        # `supports_thinking=True` lives at the provider level because OpenRouter accepts
+        # the `reasoning` passthrough for every routed model, regardless of whether the
+        # underlying-model profile declares thinking support.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',

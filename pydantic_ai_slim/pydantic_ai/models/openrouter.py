@@ -558,11 +558,11 @@ def _openrouter_settings_to_openai_settings(
     # Fall back to unified thinking when openrouter_reasoning is not set
     if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
         thinking = model_request_parameters.thinking
-        unified_reasoning: OpenRouterReasoning = {}
+        openrouter_reasoning: OpenRouterReasoning = {}
         if thinking is False:
-            # Explicit disable: OpenRouter routes this to the underlying model's
-            # native disable mechanism where one exists; otherwise it silently no-ops.
-            unified_reasoning['enabled'] = False
+            # OpenRouter forwards `enabled: false` to the underlying model; downstream
+            # behavior varies (honor, reject, or no-op) — documented in docs/thinking.md.
+            openrouter_reasoning['enabled'] = False
         else:
             # OpenRouter only supports low/medium/high; map others to closest
             effort_map: dict[ThinkingLevel, str] = {
@@ -573,8 +573,8 @@ def _openrouter_settings_to_openai_settings(
                 'high': 'high',
                 'xhigh': 'high',
             }
-            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
-        model_settings['openrouter_reasoning'] = unified_reasoning
+            openrouter_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
+        model_settings['openrouter_reasoning'] = openrouter_reasoning
 
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning

@@ -47,10 +47,10 @@ The unified `thinking` setting maps to each provider's native format:
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | `thinking=False` → `reasoning.enabled=False`; via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI (grok-3-mini) | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'`; reasoning is always-on, `thinking=False` silently ignored |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'`, on `grok-3-mini` only; `thinking=False` silently ignored |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
-| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | No `'none'` value on Converse; reasoning is always-on, `thinking=False` silently ignored |
-| Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; reasoning is always-on, `thinking=False` silently ignored |
+| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 
 ## OpenAI
 
