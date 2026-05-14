@@ -3126,13 +3126,11 @@ async def test_openai_instructions_with_responses_logprobs_streaming(allow_model
         provider=OpenAIProvider(api_key=openai_api_key),
     )
     agent = Agent(m, instructions='You are a helpful assistant.')
-    events = [
-        event
-        async for event in agent.run_stream_events(
-            'What is the capital of Minas Gerais?',
-            model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
-        )
-    ]
+    async with agent.run_stream_events(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+    ) as event_stream:
+        events = [event async for event in event_stream]
     logprob_events = [
         event
         for event in events

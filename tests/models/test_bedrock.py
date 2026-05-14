@@ -2175,11 +2175,12 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
 
     result: AgentRunResult | None = None
     events: list[AgentStreamEvent] = []
-    async for event in agent.run_stream_events('Hi'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
-        else:
-            events.append(event)
+    async with agent.run_stream_events('Hi') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                events.append(event)
 
     assert result is not None
     # The response stream contains `{'contentBlockDelta': {'delta': {'text': ''}, 'contentBlockIndex': 0}}`, but our response should not have any empty text parts.

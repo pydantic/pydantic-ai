@@ -69,7 +69,7 @@ There are five ways to run an agent:
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
-4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — an async context manager which yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
 
 Here's a simple example demonstrating the first four:
@@ -96,11 +96,11 @@ async def main():
             #> The capital of the UK is
             #> The capital of the UK is London.
 
-    events: list[AgentStreamEvent | AgentRunResultEvent] = []
-    async with agent.run_stream_events('What is the capital of Mexico?') as stream:
-        async for event in stream:
-            events.append(event)
-    print(events)
+    collected: list[AgentStreamEvent | AgentRunResultEvent] = []
+    async with agent.run_stream_events('What is the capital of Mexico?') as events:
+        async for event in events:
+            collected.append(event)
+    print(collected)
     """
     [
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
@@ -238,7 +238,7 @@ Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_s
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
 
-For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`, which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
     As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
@@ -256,8 +256,8 @@ from run_stream_event_stream_handler import handle_event, output_messages, weath
 async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
-    async with weather_agent.run_stream_events(user_prompt) as stream:
-        async for event in stream:
+    async with weather_agent.run_stream_events(user_prompt) as events:
+        async for event in events:
             if isinstance(event, AgentRunResultEvent):
                 output_messages.append(f'[Final Output] {event.result.output}')
             else:

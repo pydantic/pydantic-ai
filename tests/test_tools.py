@@ -3042,8 +3042,9 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
             await agent.run('call tool')
 
         else:
-            async for _ in agent.run_stream_events('call tool'):
-                pass
+            async with agent.run_stream_events('call tool') as event_stream:
+                async for _ in event_stream:
+                    pass
 
     task = asyncio.create_task(run_agent())
     await asyncio.wait_for(is_called.wait(), timeout=1.0)
