@@ -73,10 +73,12 @@ _PROVIDER_TO_MODEL_NAMES = {
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
+    'openai-chat': OpenAIModelName,
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
     'openai': DEPRECATED_OPENAI_MODELS,
+    'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
