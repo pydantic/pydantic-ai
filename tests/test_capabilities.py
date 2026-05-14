@@ -36,6 +36,7 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ReinjectSystemPrompt,
     RequireToolApproval,
+    SetToolDescription,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -99,8 +100,6 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr, try_import
 
-from pydantic_ai.capabilities import SetToolDescription
-
 with try_import() as xai_imports:
     from pydantic_ai.models.xai import XSearch
 
@@ -121,7 +120,9 @@ def test_capability_types() -> None:
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
-            'RequireToolApproval': RequireToolApproval, 'SetToolDescription': SetToolDescription, 'SetToolMetadata': SetToolMetadata,
+            'RequireToolApproval': RequireToolApproval,
+            'SetToolDescription': SetToolDescription,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
@@ -1385,6 +1386,36 @@ Supported by:
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_DeferToolLoading': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'DeferToolLoading': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Defertoolloading',
+                        }
+                    },
+                    'title': 'short_spec_DeferToolLoading',
+                    'type': 'object',
+                },
+                'short_spec_FilterTools': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'FilterTools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Filtertools',
+                        }
+                    },
+                    'title': 'short_spec_FilterTools',
+                    'type': 'object',
+                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1481,7 +1512,22 @@ Supported by:
                     'required': ['SetToolMetadata'],
                     'title': 'spec_SetToolMetadata',
                     'type': 'object',
-                }, 'spec_SetToolDescription': {'additionalProperties': False, 'properties': {'SetToolDescription': {'$ref': '#/$defs/spec_params_SetToolDescription'}}, 'required': ['SetToolDescription'], 'title': 'spec_SetToolDescription', 'type': 'object'}, 'spec_PrefixTools': {
+                },
+                'spec_RequireToolApproval': {
+                    'additionalProperties': False,
+                    'properties': {'RequireToolApproval': {'$ref': '#/$defs/spec_params_RequireToolApproval'}},
+                    'required': ['RequireToolApproval'],
+                    'title': 'spec_RequireToolApproval',
+                    'type': 'object',
+                },
+                'spec_SetToolDescription': {
+                    'additionalProperties': False,
+                    'properties': {'SetToolDescription': {'$ref': '#/$defs/spec_params_SetToolDescription'}},
+                    'required': ['SetToolDescription'],
+                    'title': 'spec_SetToolDescription',
+                    'type': 'object',
+                },
+                'spec_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
                     'required': ['PrefixTools'],
@@ -1630,7 +1676,42 @@ Supported by:
                     },
                     'title': 'spec_params_SetToolMetadata',
                     'type': 'object',
-                }, 'spec_params_SetToolDescription': {'additionalProperties': False, 'properties': {'tools': {'anyOf': [{'const': 'all', 'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'additionalProperties': True, 'type': 'object'}], 'title': 'Tools'}, 'replace': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Replace'}, 'append': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Append'}, 'prepend': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Prepend'}}, 'title': 'spec_params_SetToolDescription', 'type': 'object'}, 'spec_params_PrefixTools': {
+                },
+                'spec_params_RequireToolApproval': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                        'handler': {'title': 'Handler', 'type': 'null'},
+                    },
+                    'title': 'spec_params_RequireToolApproval',
+                    'type': 'object',
+                },
+                'spec_params_SetToolDescription': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                        'replace': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Replace'},
+                        'append': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Append'},
+                        'prepend': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Prepend'},
+                    },
+                    'title': 'spec_params_SetToolDescription',
+                    'type': 'object',
+                },
+                'spec_params_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {
                         'prefix': {'title': 'Prefix', 'type': 'string'},
@@ -1639,7 +1720,9 @@ Supported by:
                                 {
                                     'anyOf': [
                                         {'const': 'DeferToolLoading', 'type': 'string'},
+                                        {'$ref': '#/$defs/short_spec_DeferToolLoading'},
                                         {'const': 'FilterTools', 'type': 'string'},
+                                        {'$ref': '#/$defs/short_spec_FilterTools'},
                                         {'const': 'NativeTool', 'type': 'string'},
                                         {'$ref': '#/$defs/short_spec_NativeTool'},
                                         {'const': 'ImageGeneration', 'type': 'string'},
@@ -1654,6 +1737,7 @@ Supported by:
                                         {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                         {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                         {'const': 'RequireToolApproval', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_RequireToolApproval'},
                                         {'const': 'SetToolDescription', 'type': 'string'},
                                         {'$ref': '#/$defs/spec_SetToolDescription'},
                                         {'const': 'SetToolMetadata', 'type': 'string'},
@@ -1663,7 +1747,10 @@ Supported by:
                                         {'const': 'ToolSearch', 'type': 'string'},
                                         {'$ref': '#/$defs/spec_ToolSearch'},
                                         {'const': 'WebFetch', 'type': 'string'},
-                                        {'$ref': '#/$defs/spec_WebFetch'}, {'const': 'WebSearch', 'type': 'string'}, {'$ref': '#/$defs/spec_WebSearch'}]
+                                        {'$ref': '#/$defs/spec_WebFetch'},
+                                        {'const': 'WebSearch', 'type': 'string'},
+                                        {'$ref': '#/$defs/spec_WebSearch'},
+                                    ]
                                 },
                                 {'type': 'null'},
                             ]
@@ -1693,7 +1780,17 @@ Supported by:
                         'parameter_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Parameter Description',
-                        }, 'tools': {'anyOf': [{'const': 'all', 'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'additionalProperties': True, 'type': 'object'}, {'type': 'null'}], 'title': 'Tools'}},
+                        },
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tools',
+                        },
+                    },
                     'title': 'spec_params_ToolSearch',
                     'type': 'object',
                 },
@@ -1823,7 +1920,9 @@ Supported by:
                     'items': {
                         'anyOf': [
                             {'const': 'DeferToolLoading', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_DeferToolLoading'},
                             {'const': 'FilterTools', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_FilterTools'},
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
@@ -1838,6 +1937,7 @@ Supported by:
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'RequireToolApproval', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_RequireToolApproval'},
                             {'const': 'SetToolDescription', 'type': 'string'},
                             {'$ref': '#/$defs/spec_SetToolDescription'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
@@ -1847,7 +1947,10 @@ Supported by:
                             {'const': 'ToolSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
-                            {'$ref': '#/$defs/spec_WebFetch'}, {'const': 'WebSearch', 'type': 'string'}, {'$ref': '#/$defs/spec_WebSearch'}]
+                            {'$ref': '#/$defs/spec_WebFetch'},
+                            {'const': 'WebSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebSearch'},
+                        ]
                     },
                     'title': 'Capabilities',
                     'type': 'array',
@@ -10439,9 +10542,7 @@ async def test_defer_tool_loading_capability():
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Record which tools have defer_loading=True
-        return ModelResponse(
-            parts=[TextPart(','.join(sorted(t.name for t in info.function_tools if t.defer_loading)))]
-        )
+        return ModelResponse(parts=[TextPart(','.join(sorted(t.name for t in info.function_tools if t.defer_loading)))])
 
     agent = Agent(FunctionModel(respond), capabilities=[DeferToolLoading(tools=['tool_b'])])
 

@@ -62,7 +62,7 @@ class SetToolDescription(AbstractCapability[AgentDepsT]):
     ) -> None:
         provided = [n for n, v in (('replace', replace), ('append', append), ('prepend', prepend)) if v is not None]
         if not provided:
-            raise TypeError("`SetToolDescription` requires exactly one of `replace`, `append`, or `prepend`.")
+            raise TypeError('`SetToolDescription` requires exactly one of `replace`, `append`, or `prepend`.')
         if len(provided) > 1:
             joined = ', '.join(f'`{name}`' for name in provided)
             raise TypeError(f'`SetToolDescription` cannot mix {joined} — pick exactly one.')
@@ -87,7 +87,9 @@ class SetToolDescription(AbstractCapability[AgentDepsT]):
             resolved: list[ToolDefinition] = []
             for td in tool_defs:
                 if await matches_tool_selector(selector, ctx, td):
-                    td = replace(td, description=_compose_description(td.description, replace_with, append_with, prepend_with))
+                    td = replace(
+                        td, description=_compose_description(td.description, replace_with, append_with, prepend_with)
+                    )
                 resolved.append(td)
             return resolved
 

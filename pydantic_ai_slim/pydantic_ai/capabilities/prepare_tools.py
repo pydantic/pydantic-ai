@@ -44,9 +44,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
 
-    async def prepare_tools(
-        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return await _apply_selector_and_prepare(self.tools, self.prepare_func, ctx, tool_defs)
 
 

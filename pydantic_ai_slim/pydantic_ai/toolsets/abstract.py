@@ -325,13 +325,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     ) -> SetMetadataToolset[AgentDepsT]:
         """Returns a new toolset that merges the given metadata onto selected tools.
 
-        Metadata can be provided as an explicit dict or as keyword arguments:
-
-        ```python
-        toolset.with_metadata(code_mode=True)
-        toolset.with_metadata({'code_mode': True})
-        toolset.with_metadata({'code_mode': True}, tools=['search'])
-        ```
+        Metadata can be provided as an explicit dict or as keyword arguments.
 
         Args:
             metadata: An explicit dict of metadata key-value pairs.
@@ -348,7 +342,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def with_description(
         self,
         *,
-        replace: str | None = None,  # noqa: A002 — public field name
+        replace: str | None = None,
         append: str | None = None,
         prepend: str | None = None,
         tools: ToolSelector[AgentDepsT] = 'all',
@@ -360,11 +354,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         - `replace`: overwrite the existing description.
         - `append`: add text after the existing description (joined with two newlines).
         - `prepend`: add text before the existing description (joined with two newlines).
-
-        ```python
-        toolset.with_description(replace='Search the knowledge base.', tools=['search'])
-        toolset.with_description(append='Use with care.', tools={'category': 'destructive'})
-        ```
 
         Args:
             replace: Replacement description.

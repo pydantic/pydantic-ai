@@ -2872,14 +2872,18 @@ def test_with_description_append_and_prepend():
     test_model = TestModel()
     agent = Agent(test_model, toolsets=[toolset_app.with_description(append='Extra.')])
     agent.run_sync('test')
-    td = next(td for td in test_model.last_model_request_parameters.function_tools if td.name == 'my_tool')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
     assert td.description == 'Base.\n\nExtra.'
 
     toolset_prep = FunctionToolset(tools=[my_tool])
     test_model2 = TestModel()
     agent2 = Agent(test_model2, toolsets=[toolset_prep.with_description(prepend='Hint.')])
     agent2.run_sync('test')
-    td2 = next(td for td in test_model2.last_model_request_parameters.function_tools if td.name == 'my_tool')
+    params2 = test_model2.last_model_request_parameters
+    assert params2 is not None
+    td2 = next(td for td in params2.function_tools if td.name == 'my_tool')
     assert td2.description == 'Hint.\n\nBase.'
 
 

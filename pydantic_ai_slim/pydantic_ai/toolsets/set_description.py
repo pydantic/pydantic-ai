@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from dataclasses import replace as _dc_replace
+from dataclasses import dataclass, field, replace as _dc_replace
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolSelector, ToolsPrepareFunc, matches_tool_selector
@@ -26,7 +25,7 @@ class SetDescriptionToolset(PreparedToolset[AgentDepsT]):
         self,
         wrapped: AbstractToolset[AgentDepsT],
         *,
-        replace: str | None = None,  # noqa: A002 — matches the public field name
+        replace: str | None = None,
         append: str | None = None,
         prepend: str | None = None,
         tools: ToolSelector[AgentDepsT] = 'all',
@@ -35,7 +34,7 @@ class SetDescriptionToolset(PreparedToolset[AgentDepsT]):
 
         provided = [n for n, v in (('replace', replace), ('append', append), ('prepend', prepend)) if v is not None]
         if not provided:
-            raise TypeError("`SetDescriptionToolset` requires exactly one of `replace`, `append`, or `prepend`.")
+            raise TypeError('`SetDescriptionToolset` requires exactly one of `replace`, `append`, or `prepend`.')
         if len(provided) > 1:
             joined = ', '.join(f'`{name}`' for name in provided)
             raise TypeError(f'`SetDescriptionToolset` cannot mix {joined} — pick exactly one.')
