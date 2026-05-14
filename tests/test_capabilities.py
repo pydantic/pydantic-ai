@@ -11513,7 +11513,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
     )
     # On the wire, `_clean_message_history` merges the rich tail + drained request,
     # sorting `ToolReturnPart` first; the injected `UserPromptPart` lands at the end.
-    from pydantic_ai._agent_graph import _clean_message_history
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 
     cleaned = _clean_message_history(agent_run.result.all_messages())
     last_request = next(msg for msg in reversed(cleaned) if isinstance(msg, ModelRequest))
