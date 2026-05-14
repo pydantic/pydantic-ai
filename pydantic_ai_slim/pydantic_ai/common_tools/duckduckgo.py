@@ -8,7 +8,10 @@ from typing_extensions import Any, TypedDict
 from pydantic_ai.tools import Tool
 
 try:
-    from ddgs.ddgs import DDGS
+    try:
+        from ddgs.ddgs import DDGS
+    except ImportError:  # Fallback for the legacy `duckduckgo_search` package, which `ddgs` was renamed from.
+        from duckduckgo_search import DDGS
 except ImportError as _import_error:
     raise ImportError(
         'Please install `ddgs` to use the DuckDuckGo search tool, '
