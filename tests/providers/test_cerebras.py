@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -72,45 +72,45 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('llama-3.3-70b')
     meta_model_profile_mock.assert_called_with('llama-3.3-70b')
     assert meta_profile is not None
-    assert isinstance(meta_profile, dict)
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert isinstance(meta_profile, OpenAIModelProfile)
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     # Test qwen model - uses qwen profile which has InlineDefsJsonSchemaTransformer
     qwen_profile = provider.model_profile('qwen-3-32b')
     qwen_model_profile_mock.assert_called_with('qwen-3-32b')
     assert qwen_profile is not None
-    assert isinstance(qwen_profile, dict)
-    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert isinstance(qwen_profile, OpenAIModelProfile)
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     # Test gpt-oss model (harmony) - uses OpenAIJsonSchemaTransformer
     harmony_profile = provider.model_profile('gpt-oss-120b')
     harmony_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert harmony_profile is not None
-    assert isinstance(harmony_profile, dict)
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert isinstance(harmony_profile, OpenAIModelProfile)
+    assert harmony_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
     zai_profile = provider.model_profile('zai-glm-4.6')
     zai_model_profile_mock.assert_called_with('zai-glm-4.6')
     assert zai_profile is not None
-    assert isinstance(zai_profile, dict)
-    assert zai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert isinstance(zai_profile, OpenAIModelProfile)
+    assert zai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test unknown model - should still return a profile with OpenAIJsonSchemaTransformer
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
-    assert isinstance(unknown_profile, dict)
-    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert isinstance(unknown_profile, OpenAIModelProfile)
+    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Verify unsupported model settings are set for all profiles
     for profile in [meta_profile, qwen_profile, harmony_profile, zai_profile, unknown_profile]:
-        assert isinstance(profile, dict)
-        assert 'frequency_penalty' in profile.get('openai_unsupported_model_settings', ())
-        assert 'logit_bias' in profile.get('openai_unsupported_model_settings', ())
-        assert 'presence_penalty' in profile.get('openai_unsupported_model_settings', ())
-        assert 'parallel_tool_calls' in profile.get('openai_unsupported_model_settings', ())
-        assert 'service_tier' in profile.get('openai_unsupported_model_settings', ())
-        assert 'openai_service_tier' in profile.get('openai_unsupported_model_settings', ())
+        assert isinstance(profile, OpenAIModelProfile)
+        assert 'frequency_penalty' in profile.openai_unsupported_model_settings
+        assert 'logit_bias' in profile.openai_unsupported_model_settings
+        assert 'presence_penalty' in profile.openai_unsupported_model_settings
+        assert 'parallel_tool_calls' in profile.openai_unsupported_model_settings
+        assert 'service_tier' in profile.openai_unsupported_model_settings
+        assert 'openai_service_tier' in profile.openai_unsupported_model_settings
 
 
 def test_infer_cerebras_model(env: TestEnv):

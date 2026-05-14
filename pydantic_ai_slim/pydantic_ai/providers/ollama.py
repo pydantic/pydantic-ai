@@ -7,7 +7,6 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -61,19 +60,18 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # `json_schema_transformer` is a fallback (upstream wins if it set one). The other Ollama-specific
-        # overrides win on top of upstream — Ollama's /v1/chat/completions endpoint supports response_format
-        # with json_schema natively, but strict mode is not supported (issue #4116).
-        return merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
-            profile,
-            OpenAIModelProfile(
-                openai_chat_thinking_field='reasoning',
-                openai_supports_strict_tool_definition=False,
-                supports_json_schema_output=True,
-                supports_json_object_output=True,
-            ),
-        )
+        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # Ollama's /v1/chat/completions endpoint supports response_format with json_schema natively.
+        # Strict mode is not supported (issue #4116).
+        base = OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_thinking_field='reasoning',
+            openai_supports_strict_tool_definition=False,
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
+        ).update(profile)
+        return base
 
     def __init__(
         self,

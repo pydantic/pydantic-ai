@@ -76,49 +76,49 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('openai/gpt-4o')
     openai_mock.assert_called_with('gpt-4o')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test anthropic provider
     profile = provider.model_profile('anthropic/claude-sonnet-4-5')
     anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
     profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')
     amazon_mock.assert_called_with('anthropic.claude-sonnet-4-5')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     # Test cohere provider
     profile = provider.model_profile('cohere/command-r-plus')
     cohere_mock.assert_called_with('command-r-plus')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test deepseek provider
     profile = provider.model_profile('deepseek/deepseek-chat')
     deepseek_mock.assert_called_with('deepseek-chat')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test mistral provider
     profile = provider.model_profile('mistral/mistral-large')
     mistral_mock.assert_called_with('mistral-large')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test vertex provider
     profile = provider.model_profile('vertex/gemini-1.5-pro')
     google_mock.assert_called_with('gemini-1.5-pro')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
     # Test xai provider
     profile = provider.model_profile('xai/grok-beta')
     grok_mock.assert_called_with('grok-beta')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_with_http_client():
@@ -131,7 +131,7 @@ def test_vercel_with_http_client():
 def test_vercel_provider_model_name_without_slash():
     profile = VercelProvider.model_profile('invalid-model-name')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_provider_unknown_provider():
@@ -139,4 +139,4 @@ def test_vercel_provider_unknown_provider():
 
     profile = provider.model_profile('unknown/gpt-4')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer

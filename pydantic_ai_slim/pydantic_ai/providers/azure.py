@@ -10,7 +10,6 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -68,19 +67,17 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
                 profile = profile_func(model_name)
 
-                # Three-layer merge: see OpenRouter for the rationale.
-                return merge_profile(
-                    OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
-                    profile,
-                    OpenAIModelProfile(openai_chat_supports_document_input=False),
-                )
+                # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+                # we need to maintain that behavior unless json_schema_transformer is set explicitly
+                # Azure Chat Completions API doesn't support document input
+                return OpenAIModelProfile(
+                    json_schema_transformer=OpenAIJsonSchemaTransformer,
+                    openai_chat_supports_document_input=False,
+                ).update(profile)
 
-        # OpenAI models are unprefixed.
-        # Azure Chat Completions API doesn't support document input — gateway override wins on top of upstream.
-        return merge_profile(
-            openai_model_profile(model_name),
-            OpenAIModelProfile(openai_chat_supports_document_input=False),
-        )
+        # OpenAI models are unprefixed
+        # Azure Chat Completions API doesn't support document input
+        return OpenAIModelProfile(openai_chat_supports_document_input=False).update(openai_model_profile(model_name))
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

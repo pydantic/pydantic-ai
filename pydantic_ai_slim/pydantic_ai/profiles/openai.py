@@ -55,14 +55,15 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class OpenAIModelProfile(ModelProfile, total=False):
+@dataclass(kw_only=True)
+class OpenAIModelProfile(ModelProfile):
     """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_chat_thinking_field: str | None
-    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses. Default: `None`.
+    openai_chat_thinking_field: str | None = None
+    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses.
 
     Plenty of providers use custom field names for thinking content. Ollama and newer versions of vLLM use `reasoning`,
     while DeepSeek, older vLLM and some others use `reasoning_content`.
@@ -71,8 +72,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
 
-    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False]
-    """Whether the model includes thinking content in requests. Default: `'auto'`.
+    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False] = 'auto'
+    """Whether the model includes thinking content in requests.
 
     This can be:
     * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
@@ -87,73 +88,73 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
-    openai_supports_strict_tool_definition: bool
-    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
+    openai_supports_strict_tool_definition: bool = True
+    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
 
-    openai_supports_sampling_settings: bool
-    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models. Default: `True`."""
+    openai_supports_sampling_settings: bool = True
+    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
-    openai_unsupported_model_settings: Sequence[str]
-    """A list of model settings that are not supported by this model. Default: `()`."""
+    openai_unsupported_model_settings: Sequence[str] = ()
+    """A list of model settings that are not supported by this model."""
 
     # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
     # `tool_choice="required"`.  This flag lets the calling model know whether it's
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
-    openai_supports_tool_choice_required: bool
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
+    openai_supports_tool_choice_required: bool = True
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
-    openai_system_prompt_role: OpenAISystemPromptRole | None
+    openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
-    openai_chat_supports_multiple_system_messages: bool
-    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation. Default: `True`.
+    openai_chat_supports_multiple_system_messages: bool = True
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
 
     OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
     Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
     exactly one initial system message; consecutive system messages at the start will be merged into one
     (joined with two newlines) before being sent."""
 
-    openai_chat_supports_web_search: bool
-    """Whether the model supports web search in Chat Completions API. Default: `False`."""
+    openai_chat_supports_web_search: bool = False
+    """Whether the model supports web search in Chat Completions API."""
 
-    openai_chat_audio_input_encoding: Literal['base64', 'uri']
-    """The encoding to use for audio input in Chat Completions requests. Default: `'base64'`.
+    openai_chat_audio_input_encoding: Literal['base64', 'uri'] = 'base64'
+    """The encoding to use for audio input in Chat Completions requests.
 
     - `'base64'`: Raw base64 encoded string. (Default, used by OpenAI)
     - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
     """
 
-    openai_chat_supports_file_urls: bool
-    """Whether the Chat API supports file URLs directly in the `file_data` field. Default: `False`.
+    openai_chat_supports_file_urls: bool = False
+    """Whether the Chat API supports file URLs directly in the `file_data` field.
 
     OpenAI's native Chat API only supports base64-encoded data, but some providers
     like OpenRouter support passing URLs directly.
     """
 
-    openai_supports_encrypted_reasoning_content: bool
-    """Whether the model supports including encrypted reasoning content in the response. Default: `False`."""
+    openai_supports_encrypted_reasoning_content: bool = False
+    """Whether the model supports including encrypted reasoning content in the response."""
 
-    openai_supports_reasoning: bool
-    """Whether the model supports reasoning (o-series, GPT-5+). Default: `False`.
+    openai_supports_reasoning: bool = False
+    """Whether the model supports reasoning (o-series, GPT-5+).
 
     When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
 
-    openai_supports_reasoning_effort_none: bool
-    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'. Default: `False`.
+    openai_supports_reasoning_effort_none: bool = False
+    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'.
 
     Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
     When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported."""
 
-    openai_responses_requires_function_call_status_none: bool
-    """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.
+    openai_responses_requires_function_call_status_none: bool = False
+    """Whether the Responses API requires the `status` field on function tool calls to be `None`.
 
     This is required by vLLM Responses API versions before https://github.com/vllm-project/vllm/pull/26706.
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
-    openai_supports_phase: bool
-    """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
+    openai_supports_phase: bool = False
+    """Whether the Responses API supports the `phase` field on assistant messages.
 
     `phase` labels an assistant message as intermediate `commentary` or the `final_answer`. When the model
     supports it, OpenAI recommends preserving and sending it back unchanged on every assistant message in
@@ -165,26 +166,25 @@ class OpenAIModelProfile(ModelProfile, total=False):
     unrecognized field to OpenAI-compatible APIs (vLLM, Bifrost, ...) that haven't been verified to accept it.
     """
 
-    openai_chat_supports_document_input: bool
-    """Whether the Chat Completions API supports document content parts (`type='file'`). Default: `True`.
+    openai_chat_supports_document_input: bool = True
+    """Whether the Chat Completions API supports document content parts (`type='file'`).
 
     Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
-
-def validate_openai_profile(profile: ModelProfile) -> None:
-    """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
-    if profile.get('openai_supports_sampling_settings') is False:  # pragma: no cover
-        warnings.warn(
-            'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
-            'Use `openai_unsupported_model_settings` instead.',
-            DeprecationWarning,
-        )
-    if profile.get('openai_chat_send_back_thinking_parts') == 'field' and not profile.get('openai_chat_thinking_field'):
-        raise UserError(
-            'If `openai_chat_send_back_thinking_parts` is "field", '
-            '`openai_chat_thinking_field` must be set to a non-None value.'
-        )
+    def __post_init__(self):  # pragma: no cover
+        if not self.openai_supports_sampling_settings:
+            warnings.warn(
+                'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
+                'Use `openai_unsupported_model_settings` instead.',
+                DeprecationWarning,
+            )
+        if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
+            raise UserError(
+                'If `openai_chat_send_back_thinking_parts` is "field", '
+                '`openai_chat_thinking_field` must be set to a non-None value.'
+            )
+        # Note: 'auto' mode doesn't require openai_chat_thinking_field since it detects dynamically
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:

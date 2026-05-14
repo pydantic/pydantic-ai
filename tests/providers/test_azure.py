@@ -114,47 +114,47 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('Llama-4-Scout-17B-16E')
     meta_model_profile_mock.assert_called_with('llama-4-scout-17b-16e')
     assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('Meta-Llama-3.1-405B-Instruct')
     meta_model_profile_mock.assert_called_with('llama-3.1-405b-instruct')
     assert meta_profile is not None
-    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistral-medium-2505')
     mistral_model_profile_mock.assert_called_with('mistral-medium-2505')
     assert mistral_profile is not None
-    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai-Mixtral-8x22B-Instruct-v0-1')
     mistral_model_profile_mock.assert_called_with('mixtral-8x22b-instruct-v0-1')
     assert mistral_profile is not None
-    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere-command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
-    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     grok_profile = provider.model_profile('grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     openai_profile = provider.model_profile('o4-mini')
     openai_model_profile_mock.assert_called_with('o4-mini')
     assert openai_profile is not None
-    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown-model')
     openai_model_profile_mock.assert_called_with('unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 async def test_azure_document_input_not_supported(allow_model_requests: None):

@@ -2,11 +2,11 @@
 
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 from urllib.parse import urlparse
 
-from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 
@@ -90,6 +90,6 @@ class OllamaModel(OpenAIChatModel):
         if profile is None and _routes_to_ollama_cloud(provider, model_name):
             base_profile = provider.model_profile(model_name)
             assert base_profile is not None  # OllamaProvider always returns a profile
-            profile = merge_profile(base_profile, ModelProfile(supports_json_schema_output=False))
+            profile = replace(base_profile, supports_json_schema_output=False)
 
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)

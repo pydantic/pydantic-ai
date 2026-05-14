@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
@@ -59,9 +59,9 @@ def test_grok_pass_openai_client() -> None:
 def test_grok_model_profile():
     provider = GrokProvider(api_key='api-key')
     model = OpenAIChatModel('grok-3', provider=provider)
-    assert isinstance(model.profile, dict)
-    assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-    assert model.profile.get('openai_supports_strict_tool_definition', True) is False
+    assert isinstance(model.profile, OpenAIModelProfile)
+    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert model.profile.openai_supports_strict_tool_definition is False
 
 
 def test_grok_provider_is_deprecated():
