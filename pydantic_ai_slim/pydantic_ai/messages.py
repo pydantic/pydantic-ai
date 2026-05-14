@@ -4,7 +4,6 @@ import base64
 import hashlib
 import mimetypes
 import os
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -2820,42 +2819,17 @@ class ToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False, init=False)
+@dataclass(repr=False)
 class FunctionToolResultEvent(ToolResultEvent):
     """An event indicating the result of a function tool call."""
+
+    _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
 
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
-
-    def __init__(
-        self,
-        part: ToolReturnPart | RetryPromptPart | None = None,
-        *,
-        content: str | Sequence[UserContent] | None = None,
-        result: ToolReturnPart | RetryPromptPart | None = None,
-    ) -> None:
-        if result is not None:
-            if part is not None:
-                raise TypeError('FunctionToolResultEvent: pass either `part` or `result` (deprecated alias), not both')
-            warnings.warn(
-                'Passing `result=...` to `FunctionToolResultEvent` is deprecated, use `part=...` instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            part = result
-        if part is None:
-            raise TypeError("FunctionToolResultEvent.__init__() missing required argument: 'part'")
-        self.part = part
-        self.content = content
-
-    @property
-    @deprecated('`result` is deprecated, use `part` instead.')
-    def result(self) -> ToolReturnPart | RetryPromptPart:
-        """The tool result part that will be sent back to the model."""
-        return self.part
 
 
 @dataclass(repr=False)

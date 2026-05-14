@@ -793,33 +793,6 @@ def install_deprecated_kwarg_alias(
     cls.__init__ = wrapper
 
 
-def consume_deprecated_instrument(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    stacklevel: int = 3,
-) -> Any:
-    """Pop a deprecated `instrument=` kwarg and warn.
-
-    Returns the legacy value (an `InstrumentationSettings | bool | None`) for the caller
-    to forward into the existing instrumentation resolution path, or `None` if the
-    kwarg was not passed. The `Instrumentation` capability is the preferred surface.
-    """
-    if 'instrument' not in deprecated_kwargs:
-        return None
-    legacy = deprecated_kwargs.pop('instrument')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-
-    warnings.warn(
-        f'`{owner}(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    return legacy
-
-
 def consume_deprecated_history_processors_as_capabilities(
     deprecated_kwargs: dict[str, Any],
     owner: str,

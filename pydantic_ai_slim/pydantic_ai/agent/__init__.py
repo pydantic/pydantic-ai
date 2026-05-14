@@ -411,7 +411,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
+        self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -655,7 +655,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
         # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
         # already fired in the consume helper.
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
@@ -684,14 +683,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
         if extra_capabilities:
             all_capabilities.extend(extra_capabilities)
-
-        # Read the deprecated spec field only when set so we don't trigger its warning
-        # for users who didn't opt in. The kwarg takes precedence over the spec field.
-        legacy_instrument = (
-            instrument
-            if instrument is not None
-            else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
-        )
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -726,7 +717,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
-        agent._instrument = legacy_instrument
         if legacy_event_stream_handler is not None:
             agent._event_stream_handler = legacy_event_stream_handler
         return agent
@@ -835,7 +825,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_file'
         )
@@ -868,9 +857,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
-        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
-        if instrument is not None:
-            agent._instrument = instrument
         if legacy_event_stream_handler is not None:
             agent._event_stream_handler = legacy_event_stream_handler
         return agent
@@ -2750,7 +2736,6 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'retries',
     'tool_retries',
     'tool_timeout',
-    'instrument',
     'output_schema',
     'deps_schema',
 )

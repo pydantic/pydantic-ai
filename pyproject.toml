@@ -55,11 +55,6 @@ examples = ["pydantic-ai-examples=={{ version }}"]
 a2a = ["fasta2a>=0.4.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
-outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
-outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
-outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
-outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 
@@ -91,7 +86,7 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
-constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7"]
+constraint-dependencies = ["authlib>=1.6.7"]
 
 [dependency-groups]
 dev = [
@@ -253,13 +248,6 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
-    # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
-    # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
-    # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in
-    # `tests/test_capabilities.py`) cover the deprecation warning itself.
-    "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
-    "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
@@ -268,7 +256,6 @@ filterwarnings = [
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
-    # happens only for python < 3.12 because of vllms pins
     "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
     # This is because of cohere.
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
@@ -277,7 +264,6 @@ filterwarnings = [
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
-    # happens only for python < 3.12 because of vllms pins
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",

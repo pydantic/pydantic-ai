@@ -42,7 +42,6 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
-          - models/outlines.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -179,7 +178,6 @@ nav:
           - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
-          - api/models/outlines.md
           - api/models/test.md
           - api/models/wrapper.md
           - api/output.md
