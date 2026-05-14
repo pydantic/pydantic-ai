@@ -1,0 +1,184 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '554'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1141'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1295
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              id: w71i0cbt
+              name: get_user_country
+            thoughtSignature: Es0DCsoDAQw51sf4ceGEX2Y8/rpMeG6cdLuYkNMby8I4y/ZkN+Vblkw8fRaWFN9Jf682+NRuWI5DKFLlNOsiNIapxOgUCMsYEtMQ/Tpm2bBuwt+XOhGqdgtUM5+DS0VGVVrMGoFVH+sz7CGgD5eRI+nBl+H3QWSF5mPnv04C7cTUeTnX48lLa0k4GyUKmkTrVM4SqMH/QWDzofWNDdqUowCxOUC3ZeDI3oRPDAug7hty20a6LJurfPQ1KAO8F9GqfRlGHHJv9iS8TwOlJ/LZMzeQpsV65b28Jr39WeEICcF+Vgn6C1KfYGsuqHMHmsY/+nquhxmESdQc3gNT2I+XwMtLHAyc/TYBPOkAr6E7LH67HnC9pFwUA9NwIt63qIQO3jlpllvdsF7Pn3xSa3OA4LRY5mP3rGb49tSLpSGiZwN0oT55wI2oBa4d2j+5L3NcLIEe+GpBpfKKXghA2j+nGwhkvltXI9jQEABZ70co8EQPGOGIhHzpKVDErNztUdw27Jh1JrgFDawnbt9O6OF8vRorLLyMvDjs3ioFPVu31aiS0uop2srOUl0y4huaxXJ+6B0Sx1FOaF7DwTNsParp79IQwdZkVNfzA6HJB9AzYnQ=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: wlP6af6uB-rBz7IP3s-7kAc
+      usageMetadata:
+        candidatesTokenCount: 12
+        promptTokenCount: 29
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 29
+        thoughtsTokenCount: 102
+        totalTokenCount: 143
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1445'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: w71i0cbt
+            name: get_user_country
+          thoughtSignature: Es0DCsoDAQw51sf4ceGEX2Y8_rpMeG6cdLuYkNMby8I4y_ZkN-Vblkw8fRaWFN9Jf682-NRuWI5DKFLlNOsiNIapxOgUCMsYEtMQ_Tpm2bBuwt-XOhGqdgtUM5-DS0VGVVrMGoFVH-sz7CGgD5eRI-nBl-H3QWSF5mPnv04C7cTUeTnX48lLa0k4GyUKmkTrVM4SqMH_QWDzofWNDdqUowCxOUC3ZeDI3oRPDAug7hty20a6LJurfPQ1KAO8F9GqfRlGHHJv9iS8TwOlJ_LZMzeQpsV65b28Jr39WeEICcF-Vgn6C1KfYGsuqHMHmsY_-nquhxmESdQc3gNT2I-XwMtLHAyc_TYBPOkAr6E7LH67HnC9pFwUA9NwIt63qIQO3jlpllvdsF7Pn3xSa3OA4LRY5mP3rGb49tSLpSGiZwN0oT55wI2oBa4d2j-5L3NcLIEe-GpBpfKKXghA2j-nGwhkvltXI9jQEABZ70co8EQPGOGIhHzpKVDErNztUdw27Jh1JrgFDawnbt9O6OF8vRorLLyMvDjs3ioFPVu31aiS0uop2srOUl0y4huaxXJ-6B0Sx1FOaF7DwTNsParp79IQwdZkVNfzA6HJB9AzYnQ=
+        role: model
+      - parts:
+        - functionResponse:
+            id: w71i0cbt
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '802'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=952
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "{\n  \"city\": \"Mexico City\",\n  \"country\": \"Mexico\"\n} "
+            thoughtSignature: EvcBCvQBAQw51sdeweWa3pgLf6yndMrdQuiZcs742r+ud8rZ62xsv0ykR5Pk57WQW/M5cN/GV6+34nBMyidBQ1ijJcfYIp8C/ByNxHfPcuDHsWm5txAhoSB5jzeLGWOXNxaxQ7fOXm6QY4T+ZabrqFnkycQ+aJwGwQrL6ByFHwxKXvDHzJl4YiYgLaPvQIShQrIjHyEGBLdFEaj6vgb3OZLWJTDI281X0ZJqEZ03Ax61NRA514xjYRkKuqYiD37dKYGXTFxzzmnA3EyWpTZS3hOAqTuXbNdu4toomoyL7O182o3dx2JQ+1D4rD8H2Sj6HQdImpOAcM0r1A==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: w1P6aZ3uJ9rTz7IPx-674Aw
+      usageMetadata:
+        candidatesTokenCount: 21
+        promptTokenCount: 161
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 161
+        thoughtsTokenCount: 51
+        totalTokenCount: 233
+    status:
+      code: 200
+      message: OK
+version: 1

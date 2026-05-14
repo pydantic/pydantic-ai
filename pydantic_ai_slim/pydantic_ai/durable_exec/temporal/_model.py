@@ -311,7 +311,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             # Unlike Model.profile, this returns the raw provider profile without intersecting
-            # supported_builtin_tools with the model class's supported_builtin_tools(). This is
+            # supported_native_tools with the model class's supported_native_tools(). This is
             # acceptable because TemporalModel delegates to the wrapped model for actual requests,
             # and this profile is only used for capability checks, not request preparation.
             return infer_model_profile(current)
@@ -343,6 +343,19 @@ class TemporalModel(WrapperModel):
             return Model.prepare_request(self, model_settings, model_request_parameters)
 
         return current.prepare_request(model_settings, model_request_parameters)
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process messages using the currently active model's profile.
+
+        Mirrors `prepare_request`: when `using_model()` overrides the runtime model, we
+        delegate to that model's profile (or to the grandparent default for unregistered
+        model strings) so cross-provider history shapes are translated against the right
+        `supported_builtin_tools`.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return Model.prepare_messages(self, messages)
+        return current.prepare_messages(messages)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

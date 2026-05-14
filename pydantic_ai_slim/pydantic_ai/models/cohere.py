@@ -11,8 +11,6 @@ from pydantic_ai.exceptions import ModelAPIError
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -21,6 +19,8 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -252,7 +252,7 @@ class CohereModel(Model[AsyncClientV2]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(
-                        item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | CompactionPart
+                        item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
                     else:

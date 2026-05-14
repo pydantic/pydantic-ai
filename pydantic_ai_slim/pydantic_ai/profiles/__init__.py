@@ -7,7 +7,7 @@ from typing import TypeAlias
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -105,8 +105,8 @@ class ModelProfile(TypedDict, total=False):
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
-    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]]
-    """The set of builtin tool types that this model/profile supports. Default: `SUPPORTED_BUILTIN_TOOLS` (all)."""
+    supported_native_tools: frozenset[type[AbstractNativeTool]]
+    """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
 
 DEFAULT_PROFILE: ModelProfile = {
@@ -123,7 +123,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_always_enabled': False,
     'thinking_tags': ('<think>', '</think>'),
     'ignore_streamed_leading_whitespace': False,
-    'supported_builtin_tools': SUPPORTED_BUILTIN_TOOLS,
+    'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 
