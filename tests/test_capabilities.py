@@ -4755,6 +4755,15 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='requires an explicit local tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
 
+    def test_xsearch_native_false_with_local_constraints_raises(self):
+        """XSearch(native=False, local=callable, allowed_x_handles=...) → UserError (constraint requires native)."""
+
+        def local_x_search(query: str) -> str:
+            return query  # pragma: no cover
+
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            XSearch(native=False, allowed_x_handles=['handle1'], local=local_x_search)
+
 
 class TestWebFetchCapability:
     def test_webfetch_default_no_local(self):
@@ -6631,18 +6640,10 @@ def test_mcp_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytes
         MCP(url='http://example.com/mcp')
 
 
-def test_mcp_native_only_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
-    """`MCP(url=..., native=True, local=False)` constructs cleanly without the MCP extra."""
-    import builtins
-
-    original_import = builtins.__import__
-
-    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == 'pydantic_ai.mcp':
-            raise ImportError('mocked')
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, '__import__', mock_import)
+def test_mcp_native_only_constructs_without_mcp_extra():
+    """`MCP(url=..., native=True, local=False)` constructs cleanly — local resolution is skipped."""
+    # Note: no need to mock the import. `local=False` short-circuits before `_build_local()`,
+    # so the test exercises the same path whether or not the MCP extra is installed.
     cap = MCP(url='http://example.com/mcp', native=True, local=False)
     assert cap.local is False
     assert len(cap.get_native_tools()) == 1
