@@ -236,7 +236,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.defer_loading:
+            cap = ctx.capabilities.get(tool.tool_def.capability_id) if tool.tool_def.capability_id is not None else None
+            deferred_cap_not_loaded = (
+                cap is not None
+                and cap.defer_loading is True
+                and tool.tool_def.capability_id not in ctx.loaded_capability_ids
+            )
+            if tool.tool_def.defer_loading or deferred_cap_not_loaded:
                 deferred[name] = tool
             else:
                 visible[name] = tool
@@ -280,12 +286,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, discovered)
 
         return result
 
     def _build_search_tool(
         self,
+        ctx: RunContext[AgentDepsT],
         deferred: dict[str, ToolsetTool[AgentDepsT]],
         discovered: set[str],
     ) -> _SearchTool[AgentDepsT]:
@@ -294,7 +301,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
         # search function sees, and what the local keywords search indexes.
-        corpus = [tool.tool_def for name, tool in deferred.items() if name not in discovered]
+
+        corpus = [
+            tool.tool_def
+            for name, tool in deferred.items()
+            if name not in discovered
+            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.loaded_capability_ids)
+        ]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the

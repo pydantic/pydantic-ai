@@ -25,10 +25,6 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
-        cap = ctx.capabilities.get(self.capability_id)
-        is_unloaded_deferred = (
-            cap is not None and cap.defer_loading is True and self.capability_id not in ctx.loaded_capability_ids
-        )
         return {
             name: replace(
                 tool,
@@ -37,7 +33,6 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
                     capability_id=tool.tool_def.capability_id
                     if tool.tool_def.capability_id is not None
                     else self.capability_id,
-                    defer_loading=True if is_unloaded_deferred else tool.tool_def.defer_loading,
                 ),
             )
             for name, tool in tools.items()
