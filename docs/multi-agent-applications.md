@@ -20,7 +20,7 @@ Since agents are stateless and designed to be global, you do not need to include
 You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
+    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
@@ -52,14 +52,14 @@ result = joke_selection_agent.run_sync(
 )
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
-print(result.usage())
+print(result.usage)
 #> RunUsage(input_tokens=165, output_tokens=24, requests=3, tool_calls=1)
 ```
 
 1. The "parent" or controlling agent.
 2. The "delegate" agent, which is called from within a tool of the parent agent.
 3. Call the delegate agent from within a tool of the parent agent.
-4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
+4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
 5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
@@ -143,7 +143,7 @@ async def main():
         result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
-        print(result.usage())  # (6)!
+        print(result.usage)  # (6)!
         #> RunUsage(input_tokens=220, output_tokens=32, requests=4, tool_calls=2)
 ```
 

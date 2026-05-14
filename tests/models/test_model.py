@@ -259,7 +259,7 @@ def test_infer_model_with_provider():
     from pydantic_ai.providers import openai
 
     provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
-    m = infer_model('openai:gpt-5', lambda x: provider_class)
+    m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
     assert m._provider is provider_class  # type: ignore

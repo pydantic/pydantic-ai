@@ -334,7 +334,60 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
                 'type': 'image_generation',
                 'action': 'generate',
                 'background': 'opaque',
-                'input_fidelity': None,
+                'moderation': 'auto',
+                'output_compression': 100,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'auto',
+                'size': '1536x1024',
+                'model': 'gpt-image-2',
+            }
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    action='generate',
+                    model='gpt-image-2',
+                    background='opaque',
+                    output_format='jpeg',
+                    size='1536x1024',
+                    input_fidelity='high',
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('Generate an image.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'generate',
+                'background': 'opaque',
+                'input_fidelity': 'high',
                 'moderation': 'auto',
                 'output_compression': 100,
                 'output_format': 'jpeg',
@@ -3181,7 +3234,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
         ]
     )
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
 
@@ -5552,17 +5605,17 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                 async with node.stream(run.ctx) as response_stream:
                     async for _ in response_stream:
                         pass
-                    assert response_stream.get().usage == snapshot(
+                    assert response_stream.response.usage == snapshot(
                         RequestUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448})
                     )
-                    assert response_stream.usage() == snapshot(
+                    assert response_stream.usage == snapshot(
                         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                     )
-                    assert run.usage() == snapshot(RunUsage(requests=1))
-                assert run.usage() == snapshot(
+                    assert run.usage == snapshot(RunUsage(requests=1))
+                assert run.usage == snapshot(
                     RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                 )
-    assert run.usage() == snapshot(
+    assert run.usage == snapshot(
         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
     )
 

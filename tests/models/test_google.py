@@ -155,7 +155,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
     result = await agent.run('Hello!')
     assert result.output == snapshot('Hello! How can I help you today?')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=9,
@@ -220,7 +220,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             input_tokens=160,

@@ -262,9 +262,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return SambaNovaProvider
     elif provider == 'outlines':
-        from .outlines import OutlinesProvider
+        from .outlines import OutlinesProvider  # pyright: ignore[reportDeprecated]
 
-        return OutlinesProvider
+        return OutlinesProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformersProvider
 

@@ -2,6 +2,7 @@
 # environment to load the associated dependencies
 
 # pyright: reportUnnecessaryTypeIgnoreComment = false
+# pyright: reportDeprecated = false
 
 from __future__ import annotations as _annotations
 
@@ -16,6 +17,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -79,6 +81,12 @@ with try_import() as mlxlm_imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings(
+        'ignore:`OutlinesModel` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`OutlinesProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
 ]
 
 skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
@@ -260,6 +268,12 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         ignore_streamed_leading_whitespace=False,
         supported_native_tools=frozenset(),
     )
+
+
+@pytest.mark.filterwarnings('default::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+def test_outlines_model_deprecation_warning(mock_async_model: OutlinesModel) -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`OutlinesModel` is deprecated'):
+        OutlinesModel(mock_async_model.model, profile=mock_async_model.profile)
 
 
 pydantic_ai_parameters = [
