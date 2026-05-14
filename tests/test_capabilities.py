@@ -4765,7 +4765,9 @@ class TestWebSearchCapability:
         # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
         assert toolset is not None
 
-    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_websearch_default_with_nonsupporting_model(
+        self, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+    ):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4781,6 +4783,14 @@ class TestWebSearchCapability:
                     ]
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        # Stub out the real DuckDuckGo network call to avoid rate-limit flakes in CI.
+        from pydantic_ai.common_tools import duckduckgo as _ddg
+
+        def _empty_text(self: Any, *a: Any, **kw: Any) -> list[Any]:
+            return []
+
+        monkeypatch.setattr(_ddg.DDGS, 'text', _empty_text, raising=True)
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
