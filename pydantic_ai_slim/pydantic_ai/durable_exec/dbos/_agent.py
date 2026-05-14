@@ -87,8 +87,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             )
 
         # Merge the config with the default DBOS config
-        self._mcp_step_config = mcp_step_config or {}
-        self._model_step_config = model_step_config or {}
+        self._mcp_step_config: StepConfig = mcp_step_config or {}
+        self._model_step_config: StepConfig = model_step_config or {}
 
         if not isinstance(wrapped.model, Model):
             raise UserError(

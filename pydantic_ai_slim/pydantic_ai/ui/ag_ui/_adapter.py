@@ -347,7 +347,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                                     user_prompt_content.append(multimodal_input_to_content(part))
                                 case _:
-                                    assert_never(part)
+                                    assert_never(part)  # ty: ignore[type-assertion-failure]
 
                         if user_prompt_content:
                             content_to_add = (

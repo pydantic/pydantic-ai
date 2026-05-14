@@ -10,7 +10,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import PrefectWrapperToolset
-from ._types import TaskConfig, default_task_config
+from ._types import TaskConfig, default_task_config, merge_task_configs
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult
@@ -26,7 +26,7 @@ class PrefectMCPServer(PrefectWrapperToolset[AgentDepsT], ABC):
         task_config: TaskConfig,
     ):
         super().__init__(wrapped)
-        self._task_config = default_task_config | (task_config or {})
+        self._task_config = merge_task_configs(default_task_config, task_config)
         self._mcp_id = wrapped.id
 
         @task

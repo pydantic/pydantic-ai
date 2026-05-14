@@ -1865,7 +1865,8 @@ async def _call_tools(  # noqa: C901
             if event := await handle_call_or_result(
                 _call_tool(
                     tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
+                    call,
+                    validated_calls.get(call.tool_call_id),
                     tool_call_results.get(call.tool_call_id),
                 ),
                 index,
@@ -1877,7 +1878,8 @@ async def _call_tools(  # noqa: C901
             asyncio.create_task(
                 _call_tool(
                     tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
+                    call,
+                    validated_calls.get(call.tool_call_id),
                     tool_call_results.get(call.tool_call_id),
                 ),
                 name=call.tool_name,
@@ -1943,16 +1945,10 @@ def _populate_deferred_calls(
 
 async def _call_tool(
     tool_manager: ToolManager[DepsT],
-    tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
+    call: _messages.ToolCallPart,
+    validated: ValidatedToolCall[DepsT] | None,
     tool_call_result: DeferredToolResult | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
-    if isinstance(tool_call, ValidatedToolCall):
-        validated = tool_call
-        call = tool_call.call
-    else:
-        validated = None
-        call = tool_call
-
     tool_result: Any
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):

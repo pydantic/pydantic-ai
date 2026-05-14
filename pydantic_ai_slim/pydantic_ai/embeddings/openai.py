@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic_ai import _utils
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -122,7 +122,6 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         inputs, settings = self.prepare_embed(inputs, settings)
-        settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
             response = await self._client.embeddings.create(

@@ -112,8 +112,8 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-        function_name = self.function.__name__ if self.function is not None else ''
-        stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
+        function_name = _utils.get_callable_name(self.function, '')
+        stream_function_name = _utils.get_callable_name(self.stream_function, '')
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
         # Use a default profile that supports JSON schema and object output if none provided

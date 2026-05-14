@@ -1,13 +1,23 @@
 import warnings
 from typing import Literal
 
-from typing_extensions import assert_never
+from typing_extensions import TypeIs, assert_never
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.settings import ModelSettings, ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 
 ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], set[str]]
+
+
+def _is_tool_choice_list(tool_choice: ToolChoice) -> TypeIs[list[str]]:
+    return isinstance(tool_choice, list)
+
+
+def is_restricted_tool_choice(
+    tool_choice: ResolvedToolChoice,
+) -> TypeIs[tuple[Literal['auto', 'required'], set[str]]]:
+    return isinstance(tool_choice, tuple)
 
 
 def resolve_tool_choice(  # noqa: C901
@@ -47,7 +57,7 @@ def resolve_tool_choice(  # noqa: C901
         - `('auto', tool_names)`: Only these tools are available, direct output is allowed.
         - `('required', tool_names)`: Only these tools are available, must use one.
     """
-    function_tool_choice = (model_settings or {}).get('tool_choice')
+    function_tool_choice: ToolChoice = model_settings.get('tool_choice') if model_settings is not None else None
 
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
 
@@ -106,7 +116,7 @@ def resolve_tool_choice(  # noqa: C901
         return 'required'
 
     # list[str]: required, restricted to these tools
-    elif isinstance(function_tool_choice, list):
+    elif _is_tool_choice_list(function_tool_choice):
         chosen_set = set(function_tool_choice)
         _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
 

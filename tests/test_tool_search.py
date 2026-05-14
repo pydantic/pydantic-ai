@@ -26,6 +26,7 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
+    _typed_tool_search_args,  # pyright: ignore[reportPrivateUsage]
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
@@ -2796,6 +2797,10 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
 
     already_narrowed = NativeToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
     assert NativeToolCallPart.narrow_type(already_narrowed) is already_narrowed
+
+
+def test_tool_search_args_rejects_runtime_non_string() -> None:
+    assert _typed_tool_search_args(1) is None  # pyright: ignore[reportArgumentType]
 
 
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:

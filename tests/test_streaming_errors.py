@@ -144,7 +144,7 @@ with try_import() as mistral_imports:
 with try_import() as xai_imports:
     import grpc
 
-    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.xai import XaiModel, _map_api_errors  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.xai import XaiProvider
 
     from .models.mock_xai import MockXai, get_grok_text_chunk
@@ -161,6 +161,12 @@ with try_import() as xai_imports:
 
         def details(self) -> str:
             return self._details
+
+    class _BareRpcError(grpc.RpcError):
+        """Stub gRPC error without status helpers."""
+
+        def __str__(self) -> str:
+            return 'bare gRPC error'
 
 
 # ---------------------------------------------------------------------------
@@ -926,6 +932,13 @@ async def test_xai_midstream_error(
     if expected_status is not None:
         assert isinstance(exc_info.value, ModelHTTPError)
         assert exc_info.value.status_code == expected_status
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai-sdk not installed')
+def test_xai_error_without_status_helpers() -> None:
+    with pytest.raises(ModelAPIError, match='bare gRPC error'):
+        with _map_api_errors('grok-test'):
+            raise _BareRpcError()
 
 
 # ---------------------------------------------------------------------------

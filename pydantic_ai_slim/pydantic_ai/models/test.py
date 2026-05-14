@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import httpx
 import pydantic_core
@@ -347,10 +347,11 @@ class TestStreamedResponse(StreamedResponse):
                 # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
                 # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
                 # the narrower union here.
+                args = dict(part.args) if isinstance(part.args, dict) else part.args
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i,
                     tool_name=part.tool_name,
-                    args=cast('str | dict[str, Any] | None', part.args),
+                    args=args,
                     tool_call_id=part.tool_call_id,
                 )
             elif isinstance(part, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover

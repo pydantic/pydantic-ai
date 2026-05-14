@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from typing_extensions import TypeIs
+
 from pydantic_ai._run_context import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
@@ -43,12 +45,22 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         return await capability.for_run(ctx)
 
 
+def _is_capability(
+    capability: AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT],
+) -> TypeIs[AbstractCapability[AgentDepsT]]:
+    return isinstance(capability, AbstractCapability)
+
+
 def wrap_capability_funcs(
     capabilities: Sequence[AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]] | None,
 ) -> list[AbstractCapability[AgentDepsT]]:
     """Wrap any [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] entries in a `DynamicCapability`."""
     if not capabilities:
         return []
-    return [
-        cap if isinstance(cap, AbstractCapability) else DynamicCapability(capability_func=cap) for cap in capabilities
-    ]
+    wrapped: list[AbstractCapability[AgentDepsT]] = []
+    for cap in capabilities:
+        if _is_capability(cap):
+            wrapped.append(cap)
+        else:
+            wrapped.append(DynamicCapability(capability_func=cap))
+    return wrapped

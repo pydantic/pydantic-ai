@@ -39,7 +39,7 @@ from ._toolset import prefectify_toolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
 
-from ._types import TaskConfig, default_task_config
+from ._types import TaskConfig, default_task_config, merge_task_configs
 
 
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -86,11 +86,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         # Merge the config with the default Prefect config
-        self._mcp_task_config = default_task_config | (mcp_task_config or {})
-        self._model_task_config = default_task_config | (model_task_config or {})
-        self._tool_task_config = default_task_config | (tool_task_config or {})
+        self._mcp_task_config = merge_task_configs(default_task_config, mcp_task_config)
+        self._model_task_config = merge_task_configs(default_task_config, model_task_config)
+        self._tool_task_config = merge_task_configs(default_task_config, tool_task_config)
         self._tool_task_config_by_name = tool_task_config_by_name or {}
-        self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
+        self._event_stream_handler_task_config = merge_task_configs(
+            default_task_config, event_stream_handler_task_config
+        )
 
         if not isinstance(wrapped.model, Model):
             raise UserError(

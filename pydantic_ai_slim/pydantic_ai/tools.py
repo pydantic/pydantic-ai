@@ -220,7 +220,7 @@ async def matches_tool_selector(
         return result
     if isinstance(selector, dict):
         metadata: dict[str, Any] = tool_def.metadata or {}
-        return _metadata_includes(metadata, selector)
+        return _metadata_includes(metadata, selector)  # ty: ignore[invalid-argument-type]
     if isinstance(selector, str):
         return tool_def.name == selector
     # Sequence[str] — match by tool name
@@ -440,7 +440,7 @@ ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[ToolAgentDepsT]
+    function: ToolFuncEither[ToolAgentDepsT, ...]
     takes_ctx: bool
     max_retries: int | None
     name: str
@@ -554,7 +554,7 @@ class Tool(Generic[ToolAgentDepsT]):
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
-        self.name = name or function.__name__
+        self.name = name or _utils.get_callable_name(function, 'tool')
         self.function_schema = function_schema or _function_schema.function_schema(
             function,
             schema_generator,

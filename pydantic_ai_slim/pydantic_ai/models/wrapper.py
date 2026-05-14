@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from types import TracebackType
 from typing import Any
 
 from typing_extensions import Self
@@ -79,8 +80,13 @@ class WrapperModel(Model):
         await self.wrapped.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return await self.wrapped.__aexit__(*args)
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
     async def request(
         self,

@@ -121,6 +121,31 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
     return await run_sync(wrapped_func)
 
 
+def get_callable_name(function: object, default: str) -> str:
+    value = getattr(function, '__name__', None)
+    if isinstance(value, str):
+        return value
+
+    if isinstance(function, functools.partial):
+        return get_callable_name(function.func, default)
+
+    return default
+
+
+def get_callable_qualname(function: object, default: str | None = None) -> str:
+    value = getattr(function, '__qualname__', None)
+    if isinstance(value, str):
+        return value
+
+    if isinstance(function, functools.partial):
+        return get_callable_qualname(function.func, default)
+
+    if default is not None:
+        return default
+
+    return type(function).__qualname__
+
+
 def is_async_generator_already_running(exc: RuntimeError) -> bool:
     return 'asynchronous generator is already running' in str(exc)
 
@@ -790,7 +815,7 @@ def install_deprecated_kwarg_alias(
             kwargs[new] = kwargs.pop(old)
         orig_init(self, *args, **kwargs)
 
-    cls.__init__ = wrapper
+    cls.__init__ = wrapper  # ty: ignore[invalid-assignment]
 
 
 _T = TypeVar('_T')

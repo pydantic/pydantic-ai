@@ -314,13 +314,7 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
+    ) -> None: ...
 
     @overload
     @deprecated(
@@ -335,13 +329,7 @@ class UsageLimits:
         response_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
+    ) -> None: ...
 
     def __init__(
         self,

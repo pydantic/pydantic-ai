@@ -141,7 +141,7 @@ class _SerializedNamedSpec(RootModel[str | dict[str, Any]]):
                 return cast(dict[str, Any], value)
 
         # Anything else is passed as a single positional argument
-        return (cast(Any, value),)
+        return (cast(Any, value),)  # ty: ignore[redundant-cast]
 
     def to_named_spec(self, cls: type[NamedSpec] = NamedSpec) -> NamedSpec:
         return cls(name=self._name, arguments=self._args)
@@ -336,7 +336,7 @@ def build_schema_types(
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:
-            schema_types.append(Literal[name])
+            schema_types.append(Literal[name])  # ty: ignore[invalid-type-form]
 
         # Short form: can be called with only one parameter
         if len(type_hints) == 1:

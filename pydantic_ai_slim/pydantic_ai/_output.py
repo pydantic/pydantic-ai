@@ -12,13 +12,12 @@ from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai._utils import get_callable_name, get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
-    DeferredToolRequests,
     NativeOutput,
     OutputContext,
     OutputDataT,
@@ -32,7 +31,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -426,16 +425,17 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         (`run_output_process_hooks`, `stream_text`, etc.) decides whether to wrap in
         `ToolRetryError` for retry handling or re-raise.
         """
-        if self._takes_ctx:
-            args = run_context, result
-        else:
-            args = (result,)
-
         if self._is_async:
-            function = cast(Callable[[Any], Awaitable[T]], self.function)
-            return await function(*args)
-        function = cast(Callable[[Any], T], self.function)
-        return await _utils.run_in_executor(function, *args)
+            if self._takes_ctx:
+                function_with_ctx = cast(Callable[[RunContext[AgentDepsT], T], Awaitable[T]], self.function)
+                return await function_with_ctx(run_context, result)
+            function_no_ctx = cast(Callable[[T], Awaitable[T]], self.function)
+            return await function_no_ctx(result)
+        if self._takes_ctx:
+            sync_function_with_ctx = cast(Callable[[RunContext[AgentDepsT], T], T], self.function)
+            return await _utils.run_in_executor(sync_function_with_ctx, run_context, result)
+        sync_function_no_ctx = cast(Callable[[T], T], self.function)
+        return await _utils.run_in_executor(sync_function_no_ctx, result)
 
 
 @dataclass(kw_only=True)
@@ -1094,7 +1094,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
 
-            object_key = object_def.name or output.__name__
+            object_key = object_def.name or get_callable_name(output, 'output')
             i = 1
             original_key = object_key
             while object_key in self._processors:

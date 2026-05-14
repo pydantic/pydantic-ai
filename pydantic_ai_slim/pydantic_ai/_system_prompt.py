@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Generic, cast
+from typing import Generic, cast
 
 from . import _utils
 from ._run_context import AgentDepsT, RunContext
@@ -23,17 +23,20 @@ class SystemPromptRunner(Generic[AgentDepsT]):
         self._is_async = _utils.is_async_callable(self.function)
 
     async def run(self, run_context: RunContext[AgentDepsT]) -> str | None:
-        if self._takes_ctx:
-            args = (run_context,)
-        else:
-            args = ()
-
         if self._is_async:
-            function = cast(Callable[[Any], Awaitable[str | None]], self.function)
-            return await function(*args)
+            if self._takes_ctx:
+                function_with_ctx = cast(Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], self.function)
+                return await function_with_ctx(run_context)
+            else:
+                function_no_ctx = cast(Callable[[], Awaitable[str | None]], self.function)
+                return await function_no_ctx()
         else:
-            function = cast(Callable[[Any], str | None], self.function)
-            return await _utils.run_in_executor(function, *args)
+            if self._takes_ctx:
+                sync_function_with_ctx = cast(Callable[[RunContext[AgentDepsT]], str | None], self.function)
+                return await _utils.run_in_executor(sync_function_with_ctx, run_context)
+            else:
+                sync_function_no_ctx = cast(Callable[[], str | None], self.function)
+                return await _utils.run_in_executor(sync_function_no_ctx)
 
 
 async def resolve_system_prompts(
@@ -51,7 +54,7 @@ async def resolve_system_prompts(
     for runner in runners:
         prompt = await runner.run(run_context)
         if runner.dynamic:
-            parts.append(SystemPromptPart(prompt or '', dynamic_ref=runner.function.__qualname__))
+            parts.append(SystemPromptPart(prompt or '', dynamic_ref=_utils.get_callable_qualname(runner.function)))
         elif prompt:
             parts.append(SystemPromptPart(prompt))
     return parts

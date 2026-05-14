@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, _utils
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from .._utils import install_deprecated_kwarg_alias
 from ..capabilities.native_or_local import NativeOrLocalTool
@@ -52,7 +51,15 @@ from ..models import (
     check_allow_model_requests,
     download_item,
 )
-from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    MCPServerTool,
+    WebSearchTool,
+    XSearchTool,
+)
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
@@ -92,8 +99,16 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
     try:
         yield
     except grpc.RpcError as e:
-        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-        details = e.details() or str(e)
+        code_method = getattr(e, 'code', None)
+        details_method = getattr(e, 'details', None)
+        if callable(code_method) and callable(details_method):
+            code = code_method()
+            status_code = _GRPC_STATUS_TO_HTTP.get(code) if isinstance(code, grpc.StatusCode) else None
+            details_value = details_method()
+            details = details_value if isinstance(details_value, str) and details_value else str(e)
+        else:
+            status_code = None
+            details = str(e)
         if status_code is not None:
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
         raise ModelAPIError(model_name=model_name, message=details) from e
@@ -344,7 +359,7 @@ class XaiModel(Model[AsyncClient]):
         return 'xai'
 
     @classmethod
-    def supported_native_tools(cls) -> frozenset[type]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 

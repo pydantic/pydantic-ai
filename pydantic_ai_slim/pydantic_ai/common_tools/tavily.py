@@ -1,5 +1,5 @@
 from dataclasses import KW_ONLY, dataclass
-from functools import partial
+from functools import partial, update_wrapper as copy_callable_metadata
 from inspect import signature
 from typing import Literal, overload
 
@@ -165,8 +165,7 @@ def tavily_search_tool(
     if kwargs:
         original = func
         func = partial(func, **kwargs)
-        func.__name__ = original.__name__  # type: ignore[union-attr]
-        func.__qualname__ = original.__qualname__
+        copy_callable_metadata(func, original)
         # partial with keyword args only updates defaults, not removes params.
         # Set __signature__ explicitly to exclude bound params from the tool schema.
         orig_sig = signature(original)
