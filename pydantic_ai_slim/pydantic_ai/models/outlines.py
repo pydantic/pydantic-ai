@@ -83,8 +83,8 @@ if TYPE_CHECKING:
 _DEPRECATION_MESSAGE = (
     '`OutlinesModel` is deprecated and will be removed in v2. '
     'If you would like to keep using Outlines with Pydantic AI, please open an issue at '
-    'https://github.com/pydantic/pydantic-ai/issues so we can gauge interest in a '
-    'community-maintained `pydantic-ai-outlines` package.'
+    'https://github.com/dottxt-ai/outlines/issues asking the Outlines maintainers to take ownership of a '
+    '`pydantic-ai-outlines` package.'
 )
 
 
