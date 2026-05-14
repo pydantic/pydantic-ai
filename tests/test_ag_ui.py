@@ -2514,6 +2514,28 @@ async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
     assert captured_results[0].conversation_id == 'explicit-conv-id'
 
 
+async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() -> None:
+    """`AGUIAdapter.run_stream_native(capabilities=[...])` extends the run-level capability
+    list passed through to `Agent.run_stream_events`."""
+    seen_tool_defs: list[ToolDefinition] = []
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_tool_defs.extend(tool_defs)
+        return tool_defs
+
+    def my_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    agent = Agent(TestModel(), tools=[my_tool])
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(adapter.run_stream_native(capabilities=[PrepareTools(prep)])):
+        pass
+
+    assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
+
+
 async def test_callback_async() -> None:
     """Test that async callbacks work correctly."""
 
