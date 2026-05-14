@@ -168,18 +168,6 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'google_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -219,17 +207,6 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'sphinx_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -277,18 +254,6 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'numpy_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -336,17 +301,6 @@ def test_google_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -392,17 +346,6 @@ def test_sphinx_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -454,17 +397,6 @@ def test_numpy_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -504,15 +436,6 @@ def test_only_returns_type():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'only_returns_type',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -543,15 +466,6 @@ def test_docstring_unknown():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'unknown_docstring',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -600,18 +514,6 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'google_style_docstring_no_body',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -653,18 +555,6 @@ def test_takes_just_model():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'takes_just_model',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'y': {'kind': 'param', 'name': 'y', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -715,65 +605,6 @@ def test_takes_model_and_int():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'takes_just_model',
-                'description': None,
-                'params': {
-                    'model': {
-                        'kind': 'param',
-                        'name': 'model',
-                        'type': {
-                            'kind': 'type',
-                            'name': 'Foo',
-                            'description': None,
-                            'fields': {
-                                'x': {
-                                    'kind': 'field',
-                                    'name': 'x',
-                                    'type': {'name': 'int', 'kind': 'simple'},
-                                    'required': True,
-                                    'description': None,
-                                },
-                                'y': {
-                                    'kind': 'field',
-                                    'name': 'y',
-                                    'type': {'name': 'str', 'kind': 'simple'},
-                                    'required': True,
-                                    'description': None,
-                                },
-                            },
-                        },
-                        'default': None,
-                    },
-                    'z': {'kind': 'param', 'name': 'z', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [
-                    {
-                        'kind': 'type',
-                        'name': 'Foo',
-                        'description': None,
-                        'fields': {
-                            'x': {
-                                'kind': 'field',
-                                'name': 'x',
-                                'type': {'name': 'int', 'kind': 'simple'},
-                                'required': True,
-                                'description': None,
-                            },
-                            'y': {
-                                'kind': 'field',
-                                'name': 'y',
-                                'type': {'name': 'str', 'kind': 'simple'},
-                                'required': True,
-                                'description': None,
-                            },
-                        },
-                    }
-                ],
-                'is_async': False,
-            },
         }
     )
 
@@ -789,14 +620,14 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], tool_retries=7, output_retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
     assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    agent_infer = Agent('test', tools=[plain_tool], tool_retries=7, output_retries=7)
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
@@ -810,7 +641,9 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, tool_retries=7, output_retries=7
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -1164,15 +997,6 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'tool_without_return_annotation_in_docstring',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -1250,18 +1074,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool',
-                    'description': None,
-                    'params': {
-                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
-                    },
-                    'return_type': {'name': 'int', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1282,18 +1094,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_plain',
-                    'description': None,
-                    'params': {
-                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
-                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    },
-                    'return_type': {'name': 'int', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1387,22 +1187,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_1',
-                    'description': None,
-                    'params': {
-                        'x': {
-                            'kind': 'param',
-                            'name': 'x',
-                            'type': {'name': 'str', 'kind': 'simple'},
-                            'default': 'None',
-                        }
-                    },
-                    'return_type': {'name': 'Any', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1422,22 +1206,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_2',
-                    'description': None,
-                    'params': {
-                        'x': {
-                            'kind': 'param',
-                            'name': 'x',
-                            'type': {'name': 'str', 'kind': 'simple'},
-                            'default': 'None',
-                        }
-                    },
-                    'return_type': {'name': 'Any', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1480,18 +1248,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'get_score',
-                'description': None,
-                'params': {
-                    'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'int', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -1564,7 +1320,7 @@ def test_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1593,7 +1349,7 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0, deps_type=str)
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
@@ -1615,7 +1371,7 @@ def test_function_tool_inconsistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
@@ -1640,7 +1396,7 @@ def test_async_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1662,7 +1418,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), tool_retries=3, output_retries=3, prepare_tools=prepare_tool_defs)
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
@@ -1750,6 +1506,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
@@ -1757,6 +1514,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1769,6 +1527,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -1776,6 +1535,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2143,6 +1903,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2158,6 +1919,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2198,6 +1960,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2238,6 +2001,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2253,6 +2017,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2293,6 +2058,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2322,6 +2088,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2329,6 +2096,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2363,6 +2131,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2370,6 +2139,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2385,6 +2155,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2400,6 +2171,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2591,6 +2363,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2602,6 +2375,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2614,6 +2388,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2646,6 +2421,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2657,6 +2433,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2669,6 +2446,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2688,6 +2466,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2695,6 +2474,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2815,7 +2595,7 @@ def test_tool_metadata():
 
 def test_retry_tool_until_last_attempt():
     model = TestModel()
-    agent = Agent(model, retries=2)
+    agent = Agent(model, tool_retries=2, output_retries=2)
 
     @agent.tool
     def always_fail(ctx: RunContext[None]) -> str:
@@ -2837,6 +2617,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2844,6 +2625,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2856,6 +2638,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2863,6 +2646,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2875,6 +2659,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2882,6 +2667,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2894,6 +2680,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
@@ -2901,6 +2688,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3009,7 +2797,7 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), retries=2)
+    agent = Agent(TestModel(), tool_retries=2, output_retries=2)
 
     call_count = 0
 
@@ -3103,7 +2891,7 @@ async def test_tool_timeout_exceeds_retry_limit():
         # Always try to call the slow tool
         return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
-    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+    agent = Agent(FunctionModel(model_logic), tool_retries=1, output_retries=1)  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
@@ -3427,6 +3215,7 @@ def test_args_validator_success():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3438,6 +3227,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3450,6 +3240,7 @@ def test_args_validator_success():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3457,6 +3248,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3505,6 +3297,7 @@ async def test_args_validator_async():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3516,6 +3309,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3528,6 +3322,7 @@ async def test_args_validator_async():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3535,6 +3330,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3592,6 +3388,7 @@ def test_args_validator_tool_direct():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3603,6 +3400,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3615,6 +3413,7 @@ def test_args_validator_tool_direct():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3622,6 +3421,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3657,6 +3457,7 @@ def test_args_validator_toolset():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3668,6 +3469,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3680,6 +3482,7 @@ def test_args_validator_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3687,6 +3490,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3719,6 +3523,7 @@ def test_args_validator_tool_plain():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3730,6 +3535,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3742,6 +3548,7 @@ def test_args_validator_tool_plain():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3749,6 +3556,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3974,6 +3782,54 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_single_base_model_arg():
+    """`args_validator` works when a tool has a single BaseModel parameter.
+
+    The tool's JSON schema is the BaseModel's fields directly (unwrapped), but the validated
+    args dict remains keyed by parameter name so `args_validator_func(ctx, **args)` unpacks correctly.
+    """
+
+    class MyArgs(BaseModel):
+        x: int
+        y: int
+
+    validator_calls: list[MyArgs] = []
+
+    def my_validator(ctx: RunContext[int], argument: MyArgs) -> None:
+        validator_calls.append(argument)
+
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], argument: MyArgs) -> int:
+        return argument.x + argument.y
+
+    agent.run_sync('call add_numbers', deps=42)
+    assert len(validator_calls) == 1
+    assert isinstance(validator_calls[0], MyArgs)
+
+
+def test_single_base_model_arg_validator_accepts_wrapped_input():
+    """The single-BaseModel-arg validator also accepts already-wrapped `{name: value}` input.
+
+    This shape arises when previously-validated args are serialized out (e.g. through Temporal's
+    activity boundary) and then re-validated with the same schema.
+    """
+
+    class Payload(BaseModel):
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)
@@ -3997,6 +3853,7 @@ def test_tool_ctx_agent():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
@@ -4004,6 +3861,7 @@ def test_tool_ctx_agent():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4016,6 +3874,7 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
@@ -4023,6 +3882,7 @@ def test_tool_ctx_agent():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4035,6 +3895,7 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4059,6 +3920,7 @@ def test_tool_ctx_agent_in_output_validator():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4066,6 +3928,7 @@ def test_tool_ctx_agent_in_output_validator():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

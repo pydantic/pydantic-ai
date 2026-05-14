@@ -81,12 +81,6 @@ _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
 
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
-        'gateway/anthropic:claude-3-5-haiku-20241022',
-        'gateway/anthropic:claude-3-5-haiku-latest',
-        'gateway/anthropic:claude-3-7-sonnet-20250219',
-        'gateway/anthropic:claude-3-7-sonnet-latest',
-        'gateway/anthropic:claude-3-opus-20240229',
-        'gateway/anthropic:claude-3-opus-latest',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',

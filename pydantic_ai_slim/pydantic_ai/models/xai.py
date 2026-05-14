@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,7 +13,8 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..capabilities.builtin_or_local import BuiltinOrLocalTool
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -21,6 +22,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -54,7 +56,10 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
+from ..tools import AgentDepsT, Tool, ToolDefinition
+from ..toolsets import AbstractToolset
 from ..usage import RequestUsage
+from ._tool_choice import resolve_tool_choice
 
 XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
     True: 'high',
@@ -70,9 +75,9 @@ try:
     import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
-    from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
+    from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
-    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+    from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
@@ -175,11 +180,100 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_include_x_search_output: bool
+    """Whether to include the X search results in the response.
+
+    Corresponds to the `x_search_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_collections_search_output: bool
+    """Whether to include the collections search results in the response.
+
+    Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
     xai_reasoning_effort: Literal['low', 'high']
     """Reasoning effort level for Grok reasoning models.
 
     See https://docs.x.ai for details.
     """
+
+
+@dataclass(init=False)
+class XSearch(BuiltinOrLocalTool[AgentDepsT]):
+    """X (Twitter) search capability for xAI models.
+
+    Uses the xAI model's native x_search builtin tool. Only works with xAI models.
+    """
+
+    allowed_x_handles: list[str] | None
+    """If provided, only posts from these X handles will be included (max 10). Requires builtin support."""
+
+    excluded_x_handles: list[str] | None
+    """If provided, posts from these X handles will be excluded (max 10). Requires builtin support."""
+
+    from_date: datetime | None
+    """If provided, only posts created on or after this datetime will be included."""
+
+    to_date: datetime | None
+    """If provided, only posts created on or before this datetime will be included."""
+
+    enable_image_understanding: bool
+    """Enable image analysis from X posts. Defaults to `False`."""
+
+    enable_video_understanding: bool
+    """Enable video analysis from X content. Defaults to `False`."""
+
+    include_output: bool
+    """Include raw X search results in the response as
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Defaults to `False`.
+    """
+
+    def __init__(
+        self,
+        *,
+        builtin: XSearchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
+        | bool = True,
+        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        allowed_x_handles: list[str] | None = None,
+        excluded_x_handles: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        enable_image_understanding: bool = False,
+        enable_video_understanding: bool = False,
+        include_output: bool = False,
+    ) -> None:
+        self.builtin = builtin
+        self.local = local
+        self.allowed_x_handles = allowed_x_handles
+        self.excluded_x_handles = excluded_x_handles
+        self.from_date = from_date
+        self.to_date = to_date
+        self.enable_image_understanding = enable_image_understanding
+        self.enable_video_understanding = enable_video_understanding
+        self.include_output = include_output
+        self.__post_init__()
+
+    def _default_builtin(self) -> XSearchTool:
+        return XSearchTool(
+            allowed_x_handles=self.allowed_x_handles,
+            excluded_x_handles=self.excluded_x_handles,
+            from_date=self.from_date,
+            to_date=self.to_date,
+            enable_image_understanding=self.enable_image_understanding,
+            enable_video_understanding=self.enable_video_understanding,
+            include_output=self.include_output,
+        )
+
+    def _builtin_unique_id(self) -> str:
+        return XSearchTool.kind
+
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        return None
+
+    def _requires_builtin(self) -> bool:
+        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
@@ -201,7 +295,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 }
 
 
-class XaiModel(Model):
+class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
     _model_name: str
@@ -228,9 +322,12 @@ class XaiModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+
+    @property
+    def client(self) -> 'AsyncClient':
+        return self._provider.client
 
     @property
     def model_name(self) -> str:
@@ -245,7 +342,7 @@ class XaiModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 
     async def _map_messages(
         self,
@@ -368,6 +465,9 @@ class XaiModel(Model):
             elif isinstance(item, FilePart):
                 # Files generated by models (e.g., from CodeExecutionTool) are not sent back
                 pass
+            elif isinstance(item, CompactionPart):  # pragma: no cover
+                # Compaction parts are not sent back to models that don't support compaction.
+                pass
             else:
                 assert_never(item)
 
@@ -442,6 +542,17 @@ class XaiModel(Model):
                     arguments=item.args_as_json_str(),
                 ),
             )
+        elif item.tool_name == XSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', XSearchTool.kind)
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=function_name,
+                    arguments=item.args_as_json_str(),
+                ),
+            )
         elif item.tool_name.startswith(MCPServerTool.kind):
             # Extract server label from tool_name (format: 'mcp_server:server_label')
             server_label = item.tool_name.split(':', 1)[1] if ':' in item.tool_name else item.tool_name
@@ -458,6 +569,17 @@ class XaiModel(Model):
                 function=chat_types.chat_pb2.FunctionCall(
                     name=function_name,
                     arguments=json.dumps(tool_args),
+                ),
+            )
+        elif item.tool_name == FileSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', FileSearchTool.kind)
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=function_name,
+                    arguments=item.args_as_json_str(),
                 ),
             )
         return None
@@ -547,6 +669,50 @@ class XaiModel(Model):
 
         return None
 
+    def _get_tool_choice(
+        self,
+        model_settings: XaiModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[dict[str, ToolDefinition], Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tool_defs, tool_choice).
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        profile = GrokModelProfile.from_profile(self.profile)
+
+        tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            tool_choice = 'required' if profile.grok_supports_tool_choice_required else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if profile.grok_supports_tool_choice_required:
+                    tool_choice = required_tool(next(iter(tool_names)))
+                else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but xAI doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = 'auto'
+            else:
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                if tool_choice_mode == 'required' and profile.grok_supports_tool_choice_required:
+                    tool_choice = 'required'
+                else:
+                    tool_choice = 'auto'
+        else:
+            assert_never(resolved_tool_choice)
+
+        if not tool_defs:
+            return tool_defs, None
+
+        return tool_defs, tool_choice
+
     async def _create_chat(
         self,
         messages: list[ModelMessage],
@@ -561,31 +727,37 @@ class XaiModel(Model):
         # Convert messages to xAI format
         xai_messages = await self._map_messages(messages, model_request_parameters)
 
+        # Resolve tool_choice and filter function tools
+        filtered_tool_defs, resolved_tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
+
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
         if model_request_parameters.builtin_tools:
             tools.extend(_get_builtin_tools(model_request_parameters))
-        if model_request_parameters.tool_defs:
-            tools.extend(_map_tools(model_request_parameters))
+        if filtered_tool_defs:
+            tools.extend(_map_tools(filtered_tool_defs))
         tools_param = tools if tools else None
 
-        # Set tool_choice based on whether tools are available and text output is allowed
-        profile = GrokModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
+        # Determine final tool_choice
+        tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice | None
+        if resolved_tool_choice is not None:
+            tool_choice = resolved_tool_choice
+        elif tools_param:
             tool_choice = 'auto'
+        else:
+            tool_choice = None
 
         # Set response_format based on the output_mode
+        profile = GrokModelProfile.from_profile(self.profile)
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = _map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted' and not tools and profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted'
+            and not tools_param
+            and profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = _map_json_object()
 
@@ -607,8 +779,12 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
-        # x_search not yet supported
-        # collections_search not yet supported (could be mapped to file search)
+        if model_settings.get('xai_include_x_search_output') or any(
+            isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.builtin_tools
+        ):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_collections_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
@@ -659,7 +835,12 @@ class XaiModel(Model):
 
         chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response_stream = chat.stream()
-        yield await self._process_streamed_response(response_stream, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response_stream, model_request_parameters)
+        finally:
+            aclose = getattr(response_stream, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
@@ -705,6 +886,14 @@ class XaiModel(Model):
                 )
                 parts.append(part)
 
+        # xAI returns x_search results as top-level `response.citations` (URL strings) rather than
+        # on the ROLE_TOOL message's `content`. Surface them on the corresponding return part so
+        # users who set `include_output=True` can actually see the citations.
+        _attach_x_search_citations(
+            (p for p in parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == XSearchTool.kind),
+            response.citations,
+        )
+
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
@@ -737,7 +926,10 @@ class XaiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            tuple[chat_types.Response, chat_types.Chunk],
+            AsyncIterator[tuple[chat_types.Response, Any]],
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_item = await peekable_response.peek()
         if isinstance(first_item, _utils.Unset):
@@ -759,9 +951,29 @@ class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
-    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
+    _response: _utils.PeekableAsyncStream[
+        tuple[chat_types.Response, chat_types.Chunk],
+        AsyncIterator[tuple[chat_types.Response, Any]],
+    ]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (grpc.RpcError,)
+
+    async def close_stream(self) -> None:
+        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
+        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
+        #
+        # Calling `aclose()` shuts down that local async-generator wrapper and
+        # stops consumption on our side, but the SDK does not expose the inner
+        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
+        # RPC cancellation hook.
+        try:
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     @property
     def system(self) -> str:
@@ -835,6 +1047,7 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
+        x_search_return_parts: dict[str, BuiltinToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
@@ -850,8 +1063,14 @@ class XaiStreamedResponse(StreamedResponse):
             else:
                 parsed_args = _parse_tool_args(tool_call.function.arguments)
             call_part = BuiltinToolCallPart(
-                tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
+                tool_name=builtin_tool_name,
+                args=parsed_args,
+                tool_call_id=tool_call.id,
+                provider_name=self.system,
+                provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
 
@@ -871,6 +1090,8 @@ class XaiStreamedResponse(StreamedResponse):
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
             )
+            if builtin_tool_name == XSearchTool.kind:
+                x_search_return_parts[return_vendor_id] = return_part
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -883,9 +1104,15 @@ class XaiStreamedResponse(StreamedResponse):
             last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
             # Track previous tool call args to compute deltas (like we do for reasoning content).
             prev_tool_call_args: dict[str, str] = {}
+            # xAI exposes x_search results as top-level `response.citations` that only arrive with the
+            # final chunk. Track the emitted x_search return parts so we can backfill their content
+            # once the stream completes.
+            x_search_return_parts: dict[str, BuiltinToolReturnPart] = {}
+            last_citations: Sequence[str] = ()
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
+                last_citations = response.citations
 
                 prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
                     response=response,
@@ -923,6 +1150,7 @@ class XaiStreamedResponse(StreamedResponse):
                                 seen_tool_call_ids=seen_tool_call_ids,
                                 seen_tool_return_ids=seen_tool_return_ids,
                                 last_tool_return_content=last_tool_return_content,
+                                x_search_return_parts=x_search_return_parts,
                             ):
                                 yield event
                         else:
@@ -955,6 +1183,13 @@ class XaiStreamedResponse(StreamedResponse):
                                 )
                                 if maybe_event is not None:  # pragma: no branch
                                     yield maybe_event
+
+            # Backfill x_search return parts with the top-level response citations, which xAI only
+            # populates alongside the final chunk. We mutate the existing part in place rather than
+            # re-emitting via `handle_part`: the parts manager holds the same object reference we
+            # tracked in `x_search_return_parts`, so the mutation is reflected in the final
+            # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
+            _attach_x_search_citations(x_search_return_parts.values(), last_citations)
 
     @property
     def model_name(self) -> str:
@@ -994,7 +1229,7 @@ def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
     }
 
 
-def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+def _map_tools(tool_defs: dict[str, ToolDefinition]) -> list[chat_types.chat_pb2.Tool]:
     """Convert pydantic_ai tool definitions to xAI SDK tools."""
     return [
         tool(
@@ -1002,7 +1237,7 @@ def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_ty
             description=tool_def.description or '',
             parameters=tool_def.parameters_json_schema,
         )
-        for tool_def in model_request_parameters.tool_defs.values()
+        for tool_def in tool_defs.values()
     ]
 
 
@@ -1011,24 +1246,17 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
     tools: list[chat_types.chat_pb2.Tool] = []
     for builtin_tool in model_request_parameters.builtin_tools:
         if isinstance(builtin_tool, WebSearchTool):
-            # xAI web_search supports:
-            # - excluded_domains (from blocked_domains)
-            # - allowed_domains
-            # Note: user_location and search_context_size are not supported by xAI SDK
+            # Note: user_location and search_context_size are not supported by xAI
             tools.append(
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
-                    enable_image_understanding=False,  # Not supported by PydanticAI
+                    enable_image_understanding=False,
                 )
             )
         elif isinstance(builtin_tool, CodeExecutionTool):
-            # xAI code_execution takes no parameters
             tools.append(code_execution())
         elif isinstance(builtin_tool, MCPServerTool):
-            # xAI mcp supports:
-            # - server_url, server_label, server_description
-            # - allowed_tool_names, authorization, extra_headers
             tools.append(
                 mcp(
                     server_url=builtin_tool.url,
@@ -1039,12 +1267,24 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                     extra_headers=builtin_tool.headers,
                 )
             )
+        elif isinstance(builtin_tool, XSearchTool):
+            tools.append(
+                x_search(
+                    from_date=builtin_tool.from_date,
+                    to_date=builtin_tool.to_date,
+                    allowed_x_handles=builtin_tool.allowed_x_handles,
+                    excluded_x_handles=builtin_tool.excluded_x_handles,
+                    enable_image_understanding=builtin_tool.enable_image_understanding,
+                    enable_video_understanding=builtin_tool.enable_video_understanding,
+                )
+            )
+        elif isinstance(builtin_tool, FileSearchTool):
+            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
         else:  # pragma: no cover
-            # Defensive fallback - validation in models/__init__.py catches unsupported tools earlier
+            supported = ', '.join(t.__name__ for t in XaiModel.supported_builtin_tools())
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
-                f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
-                f'If XSearchTool should be supported, please file an issue.'
+                f'Supported built-in tools: {supported}.'
             )
     return tools
 
@@ -1071,8 +1311,12 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         function_name = tool_call.function.name
         server_label = function_name.split('.', 1)[0] if '.' in function_name else function_name
         return f'{MCPServerTool.kind}:{server_label}'
+    elif tool_type == 'x_search_tool':
+        return XSearchTool.kind
+    elif tool_type == 'collections_search_tool':
+        return FileSearchTool.kind
     else:
-        # x_search, collections_search, or unknown - use function name
+        # Unknown tool type - use function name
         return tool_call.function.name
 
 
@@ -1089,8 +1333,8 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
         usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
-        usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: 'x_search',
-        usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
+        usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: XSearchTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: FileSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
     }
@@ -1158,6 +1402,24 @@ def _extract_usage(
         extracted.output_tokens = usage_data['completion_tokens']
 
     return extracted
+
+
+def _attach_x_search_citations(
+    x_search_return_parts: Iterable[BuiltinToolReturnPart],
+    citations: Sequence[str],
+) -> None:
+    """Populate x_search return parts' content with the top-level response citations.
+
+    xAI's API returns X search results as a flat list of URL strings on `response.citations`,
+    never on the ROLE_TOOL message's `content`, so this unconditionally overwrites each part's
+    `content`. Used by both the non-streaming and streaming paths after filtering upstream so
+    callers only pass `BuiltinToolReturnPart`s belonging to `XSearchTool`.
+    """
+    if not citations:
+        return
+    citations_list = list(citations)
+    for part in x_search_return_parts:
+        part.content = {'citations': citations_list}
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
@@ -1267,15 +1529,16 @@ def _create_tool_call_part(
                 args = _build_mcp_tool_call_args(tool_call)
             else:
                 args = _parse_tool_args(tool_call.function.arguments)
-            return (
-                tool_call.id,
-                BuiltinToolCallPart(
-                    tool_name=builtin_tool_name,
-                    args=args,
-                    tool_call_id=tool_call.id,
-                    provider_name=provider_name,
-                ),
+            call_part = BuiltinToolCallPart(
+                tool_name=builtin_tool_name,
+                args=args,
+                tool_call_id=tool_call.id,
+                provider_name=provider_name,
+                provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+            return (tool_call.id, call_part)
     else:
         # Client-side tool call
         return (

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
-from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -16,6 +15,7 @@ from ...messages import (
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -130,7 +130,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
-                    approval_id=str(uuid4()),
+                    approval_id=tool_call.tool_call_id,
                     tool_call_id=tool_call.tool_call_id,
                 )
             return
@@ -274,7 +274,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
-        part = event.result
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id
 
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':

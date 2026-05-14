@@ -1,0 +1,950 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - raw.githubusercontent.com
+    method: GET
+    uri: https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml
+  response:
+    body:
+      string: |
+        site_name: Pydantic AI
+        site_description: GenAI Agent Framework, the Pydantic way
+        strict: true
+        site_url: https://ai.pydantic.dev
+
+        repo_name: pydantic/pydantic-ai
+        repo_url: https://github.com/pydantic/pydantic-ai
+        edit_uri: edit/main/docs/
+
+        copyright: © Pydantic Services Inc. 2024 to present
+
+        nav:
+          - index.md
+          - install.md
+          - help.md
+          - troubleshooting.md
+          - Pydantic AI Gateway: gateway.md
+
+          - Documentation:
+              - Core Concepts:
+                  - Agents: agent.md
+                  - dependencies.md
+                  - tools.md
+                  - output.md
+                  - message-history.md
+                  - direct.md
+              - Models & Providers:
+                  - Overview: models/overview.md
+                  - models/openai.md
+                  - models/anthropic.md
+                  - models/google.md
+                  - models/xai.md
+                  - models/bedrock.md
+                  - models/cerebras.md
+                  - models/cohere.md
+                  - models/groq.md
+                  - models/huggingface.md
+                  - models/mistral.md
+                  - models/openrouter.md
+                  - models/outlines.md
+              - Tools & Toolsets:
+                  - tools.md
+                  - tools-advanced.md
+                  - toolsets.md
+                  - deferred-tools.md
+                  - builtin-tools.md
+                  - common-tools.md
+                  - third-party-tools.md
+              - Advanced Features:
+                  - input.md
+                  - thinking.md
+                  - retries.md
+              - MCP:
+                  - Overview: mcp/overview.md
+                  - mcp/client.md
+                  - mcp/fastmcp-client.md
+                  - mcp/server.md
+              - Multi-Agent Patterns: multi-agent-applications.md
+              - Web Chat UI: web.md
+              - Embeddings: embeddings.md
+              - Testing: testing.md
+
+          - Pydantic Evals:
+              - Overview: evals.md
+              - Getting Started:
+                  - Quick Start: evals/quick-start.md
+                  - Core Concepts: evals/core-concepts.md
+              - Evaluators:
+                  - Overview: evals/evaluators/overview.md
+                  - Built-in Evaluators: evals/evaluators/built-in.md
+                  - LLM Judge: evals/evaluators/llm-judge.md
+                  - Custom Evaluators: evals/evaluators/custom.md
+                  - Report Evaluators: evals/evaluators/report-evaluators.md
+                  - Span-Based: evals/evaluators/span-based.md
+              - How-To Guides:
+                  - Logfire Integration: evals/how-to/logfire-integration.md
+                  - Dataset Management: evals/how-to/dataset-management.md
+                  - Dataset Serialization: evals/how-to/dataset-serialization.md
+                  - Concurrency & Performance: evals/how-to/concurrency.md
+                  - Multi-Run Evaluation: evals/how-to/multi-run.md
+                  - Retry Strategies: evals/how-to/retry-strategies.md
+                  - Metrics & Attributes: evals/how-to/metrics-attributes.md
+              - Examples:
+                  - Simple Validation: evals/examples/simple-validation.md
+
+          - Pydantic Graph:
+              - Overview: graph.md
+              - Beta API:
+                  - Getting Started: graph/beta/index.md
+                  - Steps: graph/beta/steps.md
+                  - Joins & Reducers: graph/beta/joins.md
+                  - Decisions: graph/beta/decisions.md
+                  - Parallel Execution: graph/beta/parallel.md
+
+          - Integrations:
+              - Debugging & Monitoring with Pydantic Logfire: logfire.md
+              - Durable Execution:
+                  - Overview: durable_execution/overview.md
+                  - Temporal: durable_execution/temporal.md
+                  - DBOS: durable_execution/dbos.md
+                  - Prefect: durable_execution/prefect.md
+              - UI Event Streams:
+                  - Overview: ui/overview.md
+                  - AG-UI: ui/ag-ui.md
+                  - Vercel AI: ui/vercel-ai.md
+              - Agent2Agent (A2A): a2a.md
+
+          - Related Packages:
+              - clai: cli.md
+
+          - Examples:
+              - Setup: examples/setup.md
+              - Getting Started:
+                  - examples/pydantic-model.md
+                  - examples/weather-agent.md
+              - Conversational Agents:
+                  - examples/chat-app.md
+                  - examples/bank-support.md
+              - Data & Analytics:
+                  - examples/sql-gen.md
+                  - examples/data-analyst.md
+                  - examples/rag.md
+              - Streaming:
+                  - examples/stream-markdown.md
+                  - examples/stream-whales.md
+              - Complex Workflows:
+                  - examples/flight-booking.md
+                  - examples/question-graph.md
+              - Business Applications:
+                  - examples/slack-lead-qualifier.md
+              - UI Examples:
+                  - examples/ag-ui.md
+
+          - API Reference:
+              - pydantic_ai:
+                  - api/ag_ui.md
+                  - api/agent.md
+                  - api/builtin_tools.md
+                  - api/common_tools.md
+                  - api/concurrency.md
+                  - api/direct.md
+                  - api/durable_exec.md
+                  - api/embeddings.md
+                  - api/exceptions.md
+                  - api/ext.md
+                  - api/format_prompt.md
+                  - api/mcp.md
+                  - api/messages.md
+                  - api/models/anthropic.md
+                  - api/models/base.md
+                  - api/models/bedrock.md
+                  - api/models/cerebras.md
+                  - api/models/cohere.md
+                  - api/models/fallback.md
+                  - api/models/function.md
+                  - api/models/google.md
+                  - api/models/xai.md
+                  - api/models/groq.md
+                  - api/models/huggingface.md
+                  - api/models/instrumented.md
+                  - api/models/mcp-sampling.md
+                  - api/models/mistral.md
+                  - api/models/openai.md
+                  - api/models/openrouter.md
+                  - api/models/outlines.md
+                  - api/models/test.md
+                  - api/models/wrapper.md
+                  - api/output.md
+                  - api/profiles.md
+                  - api/providers.md
+                  - api/result.md
+                  - api/retries.md
+                  - api/run.md
+                  - api/settings.md
+                  - api/tools.md
+                  - api/toolsets.md
+                  - api/ui/ag_ui.md
+                  - api/ui/base.md
+                  - api/ui/vercel_ai.md
+                  - api/usage.md
+              - pydantic_evals:
+                  - api/pydantic_evals/dataset.md
+                  - api/pydantic_evals/evaluators.md
+                  - api/pydantic_evals/reporting.md
+                  - api/pydantic_evals/otel.md
+                  - api/pydantic_evals/generation.md
+              - pydantic_graph:
+                  - api/pydantic_graph/graph.md
+                  - api/pydantic_graph/nodes.md
+                  - api/pydantic_graph/persistence.md
+                  - api/pydantic_graph/mermaid.md
+                  - api/pydantic_graph/exceptions.md
+                  - Beta API:
+                      - api/pydantic_graph/beta.md
+                      - api/pydantic_graph/beta_graph.md
+                      - api/pydantic_graph/beta_graph_builder.md
+                      - api/pydantic_graph/beta_step.md
+                      - api/pydantic_graph/beta_join.md
+                      - api/pydantic_graph/beta_decision.md
+                      - api/pydantic_graph/beta_node.md
+              - fasta2a:
+                  - api/fasta2a.md
+
+          - Project:
+              - contributing.md
+              - changelog.md
+              - version-policy.md
+
+        extra:
+          # hide the "Made with Material for MkDocs" message
+          generator: false
+
+        theme:
+          name: "material"
+          custom_dir: docs/.overrides
+          palette:
+            - media: "(prefers-color-scheme)"
+              primary: pink
+              accent: pink
+              toggle:
+                icon: material/brightness-auto
+                name: "Switch to light mode"
+            - media: "(prefers-color-scheme: light)"
+              scheme: default
+              primary: pink
+              accent: pink
+              toggle:
+                icon: material/brightness-7
+                name: "Switch to dark mode"
+            - media: "(prefers-color-scheme: dark)"
+              scheme: slate
+              primary: pink
+              accent: pink
+              toggle:
+                icon: material/brightness-4
+                name: "Switch to system preference"
+          features:
+            - search.suggest
+            - search.highlight
+            - content.tabs.link
+            - content.code.annotate
+            - content.code.copy
+            - content.code.select
+            - navigation.path
+            - navigation.indexes
+            - navigation.sections
+            - navigation.tracking
+            - toc.follow
+            - announce.dismiss
+          logo: "img/logo-white.svg"
+          favicon: "favicon.ico"
+
+        # https://www.mkdocs.org/user-guide/configuration/#validation
+        validation:
+          omitted_files: warn
+          absolute_links: warn
+          unrecognized_links: warn
+          anchors: warn
+
+        extra_css:
+          - "extra/tweaks.css"
+        # used for analytics
+        extra_javascript:
+          - "/flarelytics/client.js"
+          - "https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js"
+          - "https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js"
+          - "/javascripts/algolia-search.js"
+
+        markdown_extensions:
+          - tables
+          - admonition
+          - attr_list
+          - md_in_html
+          - pymdownx.details
+          - pymdownx.caret
+          - pymdownx.critic
+          - pymdownx.mark
+          - pymdownx.superfences
+          - pymdownx.snippets
+          - pymdownx.tilde
+          - pymdownx.inlinehilite
+          - pymdownx.highlight:
+              pygments_lang_class: true
+          - pymdownx.extra:
+              pymdownx.superfences:
+                custom_fences:
+                  - name: mermaid
+                    class: mermaid
+                    format: !!python/name:pymdownx.superfences.fence_code_format
+          - pymdownx.emoji:
+              emoji_index: !!python/name:material.extensions.emoji.twemoji
+              emoji_generator: !!python/name:material.extensions.emoji.to_svg
+              options:
+                custom_icons:
+                  - docs/.overrides/.icons
+          - pymdownx.tabbed:
+              alternate_style: true
+          - pymdownx.tasklist:
+              custom_checkbox: true
+          - sane_lists # this means you can start a list from any number
+          - material.extensions.preview:
+              targets:
+                include:
+                  - '*'
+          - pydantic_docs.mdext
+
+        watch:
+          - pydantic_ai_slim
+          - pydantic_evals
+          - pydantic_graph
+          - examples
+
+        plugins:
+          - search
+          - social
+          - glightbox
+          - mkdocstrings:
+              handlers:
+                python:
+                  paths: [pydantic_ai_slim/pydantic_ai]
+                  options:
+                    docstring_options:
+                      # pydantic_graph/beta/graph.py uses "Type Parameters:" sections to document Generic type params
+                      # like StateT, OutputT, etc. Griffe can't extract these from Generic[T] base classes
+                      # (only from PEP 695 syntax), so we disable the validation warnings.
+                      warn_unknown_params: false
+                    relative_crossrefs: true
+                    members_order: source
+                    separate_signature: true
+                    show_signature_annotations: true
+                    signature_crossrefs: true
+                    group_by_category: false
+                    # 3 because docs are in pages with an H2 just above them
+                    heading_level: 3
+                    extensions:
+                      - griffe_warnings_deprecated:
+                          kind: warning
+                          title: Deprecated
+                  inventories:
+                    - url: https://logfire.pydantic.dev/docs/objects.inv
+                    - url: https://docs.python.org/3/objects.inv
+                    - url: https://docs.pydantic.dev/latest/objects.inv
+                    - url: https://dirty-equals.helpmanual.io/latest/objects.inv
+                    - url: https://fastapi.tiangolo.com/objects.inv
+                    - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
+                    - url: https://rich.readthedocs.io/en/stable/objects.inv
+                    - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
+                    # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+          - llmstxt:
+              enabled: !ENV [CI, false]
+              full_output: llms-full.txt
+              markdown_description: |-
+                Pydantic AI is a Python agent framework designed to make it less painful to build production grade
+                applications with Generative AI.
+              sections:
+                Introduction:
+                  - index.md
+                  - install.md
+                  - help.md
+                  - troubleshooting.md
+                Concepts documentation:
+                  - a2a.md
+                  - ag-ui.md
+                  - Agents: agent.md
+                  - builtin-tools.md
+                  - dependencies.md
+                  - deferred-tools.md
+                  - direct.md
+                  - embeddings.md
+                  - input.md
+                  - tools.md
+                  - common-tools.md
+                  - output.md
+                  - retries.md
+                  - message-history.md
+                  - multi-agent-applications.md
+                  - thinking.md
+                  - third-party-tools.md
+                  - tools-advanced.md
+                  - toolsets.md
+                Models:
+                  - models/*.md
+                Graphs:
+                  - graph.md
+                API Reference:
+                  - api/*.md
+                Evals:
+                  - evals.md
+                Durable Execution:
+                  - durable_execution/*.md
+                MCP:
+                  - mcp/*.md
+                UI Event Streams:
+                  - ui/*.md
+                Optional:
+                  - testing.md
+                  - cli.md
+                  - logfire.md
+                  - contributing.md
+                  - changelog.md
+                  - version-policy.md
+                Examples:
+                  - examples/*.md
+
+        # DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
+
+        hooks:
+          - "docs/.hooks/main.py"
+          - "docs/.hooks/algolia.py"
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - '*'
+      cache-control:
+      - max-age=300
+      connection:
+      - keep-alive
+      content-length:
+      - '12515'
+      content-security-policy:
+      - default-src 'none'; style-src 'unsafe-inline'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-resource-policy:
+      - cross-origin
+      etag:
+      - W/"47ff7a60801dae68c60a69f98b130a74b6dd4dfb3db1b821e16af94986ddafbd"
+      expires:
+      - Sun, 15 Feb 2026 15:14:24 GMT
+      source-age:
+      - '0'
+      strict-transport-security:
+      - max-age=31536000
+      vary:
+      - Authorization,Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '13250'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is the site_name in this YAML configuration?
+          type: text
+        - text: |-
+            -----BEGIN FILE id="f7e331" type="application/yaml"-----
+            site_name: Pydantic AI
+            site_description: GenAI Agent Framework, the Pydantic way
+            strict: true
+            site_url: https://ai.pydantic.dev
+
+            repo_name: pydantic/pydantic-ai
+            repo_url: https://github.com/pydantic/pydantic-ai
+            edit_uri: edit/main/docs/
+
+            copyright: © Pydantic Services Inc. 2024 to present
+
+            nav:
+              - index.md
+              - install.md
+              - help.md
+              - troubleshooting.md
+              - Pydantic AI Gateway: gateway.md
+
+              - Documentation:
+                  - Core Concepts:
+                      - Agents: agent.md
+                      - dependencies.md
+                      - tools.md
+                      - output.md
+                      - message-history.md
+                      - direct.md
+                  - Models & Providers:
+                      - Overview: models/overview.md
+                      - models/openai.md
+                      - models/anthropic.md
+                      - models/google.md
+                      - models/xai.md
+                      - models/bedrock.md
+                      - models/cerebras.md
+                      - models/cohere.md
+                      - models/groq.md
+                      - models/huggingface.md
+                      - models/mistral.md
+                      - models/openrouter.md
+                      - models/outlines.md
+                  - Tools & Toolsets:
+                      - tools.md
+                      - tools-advanced.md
+                      - toolsets.md
+                      - deferred-tools.md
+                      - builtin-tools.md
+                      - common-tools.md
+                      - third-party-tools.md
+                  - Advanced Features:
+                      - input.md
+                      - thinking.md
+                      - retries.md
+                  - MCP:
+                      - Overview: mcp/overview.md
+                      - mcp/client.md
+                      - mcp/fastmcp-client.md
+                      - mcp/server.md
+                  - Multi-Agent Patterns: multi-agent-applications.md
+                  - Web Chat UI: web.md
+                  - Embeddings: embeddings.md
+                  - Testing: testing.md
+
+              - Pydantic Evals:
+                  - Overview: evals.md
+                  - Getting Started:
+                      - Quick Start: evals/quick-start.md
+                      - Core Concepts: evals/core-concepts.md
+                  - Evaluators:
+                      - Overview: evals/evaluators/overview.md
+                      - Built-in Evaluators: evals/evaluators/built-in.md
+                      - LLM Judge: evals/evaluators/llm-judge.md
+                      - Custom Evaluators: evals/evaluators/custom.md
+                      - Report Evaluators: evals/evaluators/report-evaluators.md
+                      - Span-Based: evals/evaluators/span-based.md
+                  - How-To Guides:
+                      - Logfire Integration: evals/how-to/logfire-integration.md
+                      - Dataset Management: evals/how-to/dataset-management.md
+                      - Dataset Serialization: evals/how-to/dataset-serialization.md
+                      - Concurrency & Performance: evals/how-to/concurrency.md
+                      - Multi-Run Evaluation: evals/how-to/multi-run.md
+                      - Retry Strategies: evals/how-to/retry-strategies.md
+                      - Metrics & Attributes: evals/how-to/metrics-attributes.md
+                  - Examples:
+                      - Simple Validation: evals/examples/simple-validation.md
+
+              - Pydantic Graph:
+                  - Overview: graph.md
+                  - Beta API:
+                      - Getting Started: graph/beta/index.md
+                      - Steps: graph/beta/steps.md
+                      - Joins & Reducers: graph/beta/joins.md
+                      - Decisions: graph/beta/decisions.md
+                      - Parallel Execution: graph/beta/parallel.md
+
+              - Integrations:
+                  - Debugging & Monitoring with Pydantic Logfire: logfire.md
+                  - Durable Execution:
+                      - Overview: durable_execution/overview.md
+                      - Temporal: durable_execution/temporal.md
+                      - DBOS: durable_execution/dbos.md
+                      - Prefect: durable_execution/prefect.md
+                  - UI Event Streams:
+                      - Overview: ui/overview.md
+                      - AG-UI: ui/ag-ui.md
+                      - Vercel AI: ui/vercel-ai.md
+                  - Agent2Agent (A2A): a2a.md
+
+              - Related Packages:
+                  - clai: cli.md
+
+              - Examples:
+                  - Setup: examples/setup.md
+                  - Getting Started:
+                      - examples/pydantic-model.md
+                      - examples/weather-agent.md
+                  - Conversational Agents:
+                      - examples/chat-app.md
+                      - examples/bank-support.md
+                  - Data & Analytics:
+                      - examples/sql-gen.md
+                      - examples/data-analyst.md
+                      - examples/rag.md
+                  - Streaming:
+                      - examples/stream-markdown.md
+                      - examples/stream-whales.md
+                  - Complex Workflows:
+                      - examples/flight-booking.md
+                      - examples/question-graph.md
+                  - Business Applications:
+                      - examples/slack-lead-qualifier.md
+                  - UI Examples:
+                      - examples/ag-ui.md
+
+              - API Reference:
+                  - pydantic_ai:
+                      - api/ag_ui.md
+                      - api/agent.md
+                      - api/builtin_tools.md
+                      - api/common_tools.md
+                      - api/concurrency.md
+                      - api/direct.md
+                      - api/durable_exec.md
+                      - api/embeddings.md
+                      - api/exceptions.md
+                      - api/ext.md
+                      - api/format_prompt.md
+                      - api/mcp.md
+                      - api/messages.md
+                      - api/models/anthropic.md
+                      - api/models/base.md
+                      - api/models/bedrock.md
+                      - api/models/cerebras.md
+                      - api/models/cohere.md
+                      - api/models/fallback.md
+                      - api/models/function.md
+                      - api/models/google.md
+                      - api/models/xai.md
+                      - api/models/groq.md
+                      - api/models/huggingface.md
+                      - api/models/instrumented.md
+                      - api/models/mcp-sampling.md
+                      - api/models/mistral.md
+                      - api/models/openai.md
+                      - api/models/openrouter.md
+                      - api/models/outlines.md
+                      - api/models/test.md
+                      - api/models/wrapper.md
+                      - api/output.md
+                      - api/profiles.md
+                      - api/providers.md
+                      - api/result.md
+                      - api/retries.md
+                      - api/run.md
+                      - api/settings.md
+                      - api/tools.md
+                      - api/toolsets.md
+                      - api/ui/ag_ui.md
+                      - api/ui/base.md
+                      - api/ui/vercel_ai.md
+                      - api/usage.md
+                  - pydantic_evals:
+                      - api/pydantic_evals/dataset.md
+                      - api/pydantic_evals/evaluators.md
+                      - api/pydantic_evals/reporting.md
+                      - api/pydantic_evals/otel.md
+                      - api/pydantic_evals/generation.md
+                  - pydantic_graph:
+                      - api/pydantic_graph/graph.md
+                      - api/pydantic_graph/nodes.md
+                      - api/pydantic_graph/persistence.md
+                      - api/pydantic_graph/mermaid.md
+                      - api/pydantic_graph/exceptions.md
+                      - Beta API:
+                          - api/pydantic_graph/beta.md
+                          - api/pydantic_graph/beta_graph.md
+                          - api/pydantic_graph/beta_graph_builder.md
+                          - api/pydantic_graph/beta_step.md
+                          - api/pydantic_graph/beta_join.md
+                          - api/pydantic_graph/beta_decision.md
+                          - api/pydantic_graph/beta_node.md
+                  - fasta2a:
+                      - api/fasta2a.md
+
+              - Project:
+                  - contributing.md
+                  - changelog.md
+                  - version-policy.md
+
+            extra:
+              # hide the "Made with Material for MkDocs" message
+              generator: false
+
+            theme:
+              name: "material"
+              custom_dir: docs/.overrides
+              palette:
+                - media: "(prefers-color-scheme)"
+                  primary: pink
+                  accent: pink
+                  toggle:
+                    icon: material/brightness-auto
+                    name: "Switch to light mode"
+                - media: "(prefers-color-scheme: light)"
+                  scheme: default
+                  primary: pink
+                  accent: pink
+                  toggle:
+                    icon: material/brightness-7
+                    name: "Switch to dark mode"
+                - media: "(prefers-color-scheme: dark)"
+                  scheme: slate
+                  primary: pink
+                  accent: pink
+                  toggle:
+                    icon: material/brightness-4
+                    name: "Switch to system preference"
+              features:
+                - search.suggest
+                - search.highlight
+                - content.tabs.link
+                - content.code.annotate
+                - content.code.copy
+                - content.code.select
+                - navigation.path
+                - navigation.indexes
+                - navigation.sections
+                - navigation.tracking
+                - toc.follow
+                - announce.dismiss
+              logo: "img/logo-white.svg"
+              favicon: "favicon.ico"
+
+            # https://www.mkdocs.org/user-guide/configuration/#validation
+            validation:
+              omitted_files: warn
+              absolute_links: warn
+              unrecognized_links: warn
+              anchors: warn
+
+            extra_css:
+              - "extra/tweaks.css"
+            # used for analytics
+            extra_javascript:
+              - "/flarelytics/client.js"
+              - "https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js"
+              - "https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js"
+              - "/javascripts/algolia-search.js"
+
+            markdown_extensions:
+              - tables
+              - admonition
+              - attr_list
+              - md_in_html
+              - pymdownx.details
+              - pymdownx.caret
+              - pymdownx.critic
+              - pymdownx.mark
+              - pymdownx.superfences
+              - pymdownx.snippets
+              - pymdownx.tilde
+              - pymdownx.inlinehilite
+              - pymdownx.highlight:
+                  pygments_lang_class: true
+              - pymdownx.extra:
+                  pymdownx.superfences:
+                    custom_fences:
+                      - name: mermaid
+                        class: mermaid
+                        format: !!python/name:pymdownx.superfences.fence_code_format
+              - pymdownx.emoji:
+                  emoji_index: !!python/name:material.extensions.emoji.twemoji
+                  emoji_generator: !!python/name:material.extensions.emoji.to_svg
+                  options:
+                    custom_icons:
+                      - docs/.overrides/.icons
+              - pymdownx.tabbed:
+                  alternate_style: true
+              - pymdownx.tasklist:
+                  custom_checkbox: true
+              - sane_lists # this means you can start a list from any number
+              - material.extensions.preview:
+                  targets:
+                    include:
+                      - '*'
+              - pydantic_docs.mdext
+
+            watch:
+              - pydantic_ai_slim
+              - pydantic_evals
+              - pydantic_graph
+              - examples
+
+            plugins:
+              - search
+              - social
+              - glightbox
+              - mkdocstrings:
+                  handlers:
+                    python:
+                      paths: [pydantic_ai_slim/pydantic_ai]
+                      options:
+                        docstring_options:
+                          # pydantic_graph/beta/graph.py uses "Type Parameters:" sections to document Generic type params
+                          # like StateT, OutputT, etc. Griffe can't extract these from Generic[T] base classes
+                          # (only from PEP 695 syntax), so we disable the validation warnings.
+                          warn_unknown_params: false
+                        relative_crossrefs: true
+                        members_order: source
+                        separate_signature: true
+                        show_signature_annotations: true
+                        signature_crossrefs: true
+                        group_by_category: false
+                        # 3 because docs are in pages with an H2 just above them
+                        heading_level: 3
+                        extensions:
+                          - griffe_warnings_deprecated:
+                              kind: warning
+                              title: Deprecated
+                      inventories:
+                        - url: https://logfire.pydantic.dev/docs/objects.inv
+                        - url: https://docs.python.org/3/objects.inv
+                        - url: https://docs.pydantic.dev/latest/objects.inv
+                        - url: https://dirty-equals.helpmanual.io/latest/objects.inv
+                        - url: https://fastapi.tiangolo.com/objects.inv
+                        - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
+                        - url: https://rich.readthedocs.io/en/stable/objects.inv
+                        - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
+                        # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+              - llmstxt:
+                  enabled: !ENV [CI, false]
+                  full_output: llms-full.txt
+                  markdown_description: |-
+                    Pydantic AI is a Python agent framework designed to make it less painful to build production grade
+                    applications with Generative AI.
+                  sections:
+                    Introduction:
+                      - index.md
+                      - install.md
+                      - help.md
+                      - troubleshooting.md
+                    Concepts documentation:
+                      - a2a.md
+                      - ag-ui.md
+                      - Agents: agent.md
+                      - builtin-tools.md
+                      - dependencies.md
+                      - deferred-tools.md
+                      - direct.md
+                      - embeddings.md
+                      - input.md
+                      - tools.md
+                      - common-tools.md
+                      - output.md
+                      - retries.md
+                      - message-history.md
+                      - multi-agent-applications.md
+                      - thinking.md
+                      - third-party-tools.md
+                      - tools-advanced.md
+                      - toolsets.md
+                    Models:
+                      - models/*.md
+                    Graphs:
+                      - graph.md
+                    API Reference:
+                      - api/*.md
+                    Evals:
+                      - evals.md
+                    Durable Execution:
+                      - durable_execution/*.md
+                    MCP:
+                      - mcp/*.md
+                    UI Event Streams:
+                      - ui/*.md
+                    Optional:
+                      - testing.md
+                      - cli.md
+                      - logfire.md
+                      - contributing.md
+                      - changelog.md
+                      - version-policy.md
+                    Examples:
+                      - examples/*.md
+
+            # DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
+
+            hooks:
+              - "docs/.hooks/main.py"
+              - "docs/.hooks/algolia.py"
+
+            -----END FILE id="f7e331"-----
+          type: text
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '709'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '504'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The `site_name` in the provided YAML configuration is `"Pydantic AI"`.
+          refusal: null
+          role: assistant
+      created: 1771168168
+      id: chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_009ac31db9
+      usage:
+        completion_tokens: 18
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 3152
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 3170
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -9,17 +9,27 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
@@ -28,6 +38,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -47,6 +58,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT] | None = None
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        if self.wrapped is not None:
+            self.wrapped.apply(visitor)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
@@ -56,6 +71,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         if type(self).wrap_node_run is not WrapperCapability.wrap_node_run:
             return True
         return self.wrapped.has_wrap_node_run if self.wrapped is not None else False
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        if type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream:
+            return True
+        return self.wrapped.has_wrap_run_event_stream if self.wrapped is not None else False
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         if self.wrapped is None:
@@ -95,6 +116,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             await self.wrapped.prepare_tools(ctx, tool_defs)
             if self.wrapped is not None
             else await super().prepare_tools(ctx, tool_defs)
+        )
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        return (
+            await self.wrapped.prepare_output_tools(ctx, tool_defs)
+            if self.wrapped is not None
+            else await super().prepare_output_tools(ctx, tool_defs)
         )
 
     # --- Run lifecycle hooks ---
@@ -369,3 +401,117 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         if self.wrapped is not None:
             return await self.wrapped.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
         return await super().on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
+
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+    ) -> RawOutput:
+        if self.wrapped is not None:
+            return await self.wrapped.before_output_validate(ctx, output_context=output_context, output=output)
+        return await super().before_output_validate(ctx, output_context=output_context, output=output)
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.after_output_validate(ctx, output_context=output_context, output=output)
+        return await super().after_output_validate(ctx, output_context=output_context, output=output)
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        handler: WrapOutputValidateHandler,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.wrap_output_validate(
+                ctx, output_context=output_context, output=output, handler=handler
+            )
+        return await super().wrap_output_validate(ctx, output_context=output_context, output=output, handler=handler)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.on_output_validate_error(
+                ctx, output_context=output_context, output=output, error=error
+            )
+        return await super().on_output_validate_error(ctx, output_context=output_context, output=output, error=error)
+
+    # --- Output process lifecycle hooks ---
+
+    async def before_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.before_output_process(ctx, output_context=output_context, output=output)
+        return await super().before_output_process(ctx, output_context=output_context, output=output)
+
+    async def after_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.after_output_process(ctx, output_context=output_context, output=output)
+        return await super().after_output_process(ctx, output_context=output_context, output=output)
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.wrap_output_process(
+                ctx, output_context=output_context, output=output, handler=handler
+            )
+        return await super().wrap_output_process(ctx, output_context=output_context, output=output, handler=handler)
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        if self.wrapped is not None:
+            return await self.wrapped.on_output_process_error(
+                ctx, output_context=output_context, output=output, error=error
+            )
+        return await super().on_output_process_error(ctx, output_context=output_context, output=output, error=error)
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        if self.wrapped is not None:
+            return await self.wrapped.handle_deferred_tool_calls(ctx, requests=requests)
+        return await super().handle_deferred_tool_calls(ctx, requests=requests)

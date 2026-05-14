@@ -15,7 +15,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from ._utils import run_in_executor
-from .models import cached_async_http_client
+from .models import create_async_http_client
 
 __all__ = ['safe_download']
 
@@ -354,56 +354,56 @@ async def safe_download(
     original_hostname = urlparse(url).hostname
     effective_headers = dict(headers) if headers else {}
 
-    client = cached_async_http_client(timeout=timeout)
-    while True:
-        # Validate and resolve the current URL
-        resolved = await validate_and_resolve_url(current_url, allow_local)
+    async with create_async_http_client(timeout=timeout) as client:
+        while True:
+            # Validate and resolve the current URL
+            resolved = await validate_and_resolve_url(current_url, allow_local)
 
-        # Check domain restrictions (on every hop to prevent redirect bypass)
-        _check_domain(resolved.hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
+            # Check domain restrictions (on every hop to prevent redirect bypass)
+            _check_domain(resolved.hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
 
-        # Build URL with resolved IP
-        request_url = build_url_with_ip(resolved)
+            # Build URL with resolved IP
+            request_url = build_url_with_ip(resolved)
 
-        # For HTTPS, set sni_hostname so TLS uses the original hostname for SNI
-        # and certificate validation, even though we're connecting to the resolved IP.
-        extensions: dict[str, str] = {}
-        if resolved.is_https:
-            extensions['sni_hostname'] = resolved.hostname
+            # For HTTPS, set sni_hostname so TLS uses the original hostname for SNI
+            # and certificate validation, even though we're connecting to the resolved IP.
+            extensions: dict[str, str] = {}
+            if resolved.is_https:
+                extensions['sni_hostname'] = resolved.hostname
 
-        request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
-        request_headers['Host'] = resolved.hostname
+            request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
+            request_headers['Host'] = resolved.hostname
 
-        # Make request with Host header set to original hostname
-        response = await client.get(
-            request_url,
-            headers=request_headers,
-            extensions=extensions,
-            follow_redirects=False,
-        )
+            # Make request with Host header set to original hostname
+            response = await client.get(
+                request_url,
+                headers=request_headers,
+                extensions=extensions,
+                follow_redirects=False,
+            )
 
-        # Check if we need to follow a redirect
-        if response.is_redirect:
-            redirects_followed += 1
-            if redirects_followed > max_redirects:
-                raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
+            # Check if we need to follow a redirect
+            if response.is_redirect:
+                redirects_followed += 1
+                if redirects_followed > max_redirects:
+                    raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
 
-            # Get redirect location
-            location = response.headers.get('location')
-            if not location:
-                raise ValueError('Redirect response missing Location header')
+                # Get redirect location
+                location = response.headers.get('location')
+                if not location:
+                    raise ValueError('Redirect response missing Location header')
 
-            current_url = resolve_redirect_url(current_url, location)
+                current_url = resolve_redirect_url(current_url, location)
 
-            # Strip sensitive headers on cross-origin redirects (RFC 7235)
-            redirect_hostname = urlparse(current_url).hostname
-            if redirect_hostname != original_hostname:
-                effective_headers: dict[str, str] = {
-                    k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
-                }
+                # Strip sensitive headers on cross-origin redirects (RFC 7235)
+                redirect_hostname = urlparse(current_url).hostname
+                if redirect_hostname != original_hostname:
+                    effective_headers = {
+                        k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
+                    }
 
-            continue
+                continue
 
-        # Not a redirect, we're done
-        response.raise_for_status()
-        return response
+            # Not a redirect, we're done
+            response.raise_for_status()
+            return response

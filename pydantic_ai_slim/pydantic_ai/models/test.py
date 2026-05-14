@@ -8,6 +8,7 @@ from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
+import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -18,6 +19,7 @@ from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -147,6 +149,10 @@ class TestModel(Model):
             _messages=messages,
             _provider_name=self._system,
         )
+
+    @property
+    def provider(self) -> None:
+        return None
 
     @property
     def model_name(self) -> str:
@@ -324,6 +330,10 @@ class TestStreamedResponse(StreamedResponse):
                 for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
                     yield event
                 for word in words:
+                    # Simulate the transport error that real providers raise
+                    # when the HTTP connection is closed mid-stream by cancel().
+                    if self._cancelled:
+                        raise httpx.StreamClosed()
                     self._usage += _get_string_usage(word)
                     for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                         yield event
@@ -340,6 +350,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
+                assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
             else:
                 assert_never(part)
 
@@ -357,6 +370,10 @@ class TestStreamedResponse(StreamedResponse):
     def provider_url(self) -> str | None:
         """Get the provider base URL."""
         return self._provider_url
+
+    async def close_stream(self) -> None:
+        # TestModel has no underlying connection to close.
+        pass
 
     @property
     def timestamp(self) -> datetime:

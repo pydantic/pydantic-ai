@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -9,18 +8,28 @@ from pydantic import ValidationError
 
 from pydantic_ai import _system_prompt
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability
+from ._ordering import collect_leaves, sort_capabilities
+from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -32,12 +41,24 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
+    def __post_init__(self) -> None:
+        if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
+            self.capabilities = sort_capabilities(list(self.capabilities))
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        for cap in self.capabilities:
+            cap.apply(visitor)
+
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
 
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return any(c.has_wrap_run_event_stream for c in self.capabilities)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return replace(self, capabilities=list(new_caps))
@@ -101,14 +122,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
-        for capability in self.capabilities:
+        for capability in reversed(self.capabilities):
             result = capability.get_wrapper_toolset(wrapped)
             if result is not None:
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    # --- Tool preparation hook ---
+    # --- Tool preparation hooks ---
 
     async def prepare_tools(
         self,
@@ -117,6 +138,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
             tool_defs = await capability.prepare_tools(ctx, tool_defs)
+        return tool_defs
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        for capability in self.capabilities:
+            tool_defs = await capability.prepare_output_tools(ctx, tool_defs)
         return tool_defs
 
     # --- Run lifecycle hooks ---
@@ -394,6 +424,137 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+    ) -> RawOutput:
+        for capability in self.capabilities:
+            output = await capability.before_output_validate(ctx, output_context=output_context, output=output)
+        return output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            output = await capability.after_output_validate(ctx, output_context=output_context, output=output)
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        handler: WrapOutputValidateHandler,
+    ) -> Any:
+        chain = handler
+        for cap in reversed(self.capabilities):
+            chain = _make_output_validate_wrap(cap, ctx, output_context, chain)
+        return await chain(output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_output_validate_error(
+                    ctx, output_context=output_context, output=output, error=error
+                )
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
+            except Exception:  # pragma: no cover — defensive
+                raise
+        raise error
+
+    # --- Output process lifecycle hooks ---
+
+    async def before_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        for capability in self.capabilities:
+            output = await capability.before_output_process(ctx, output_context=output_context, output=output)
+        return output
+
+    async def after_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            output = await capability.after_output_process(ctx, output_context=output_context, output=output)
+        return output
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        chain = handler
+        for cap in reversed(self.capabilities):
+            chain = _make_output_process_wrap(cap, ctx, output_context, chain)
+        return await chain(output)
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_output_process_error(
+                    ctx, output_context=output_context, output=output, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        accumulated = DeferredToolResults()
+        remaining = requests
+        any_handled = False
+        for capability in self.capabilities:
+            result = await capability.handle_deferred_tool_calls(ctx, requests=remaining)
+            if result is None or not (result.approvals or result.calls):
+                continue
+            any_handled = True
+            accumulated.update(result)
+            remaining_or_none = remaining.remaining(result)
+            if remaining_or_none is None:
+                break
+            remaining = remaining_or_none
+        return accumulated if any_handled else None
+
 
 # --- Composition helpers ---
 # These create closures that bind the current capability and inner handler,
@@ -467,5 +628,29 @@ def _make_tool_execute_wrap(
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=inner)
+
+    return wrapped
+
+
+def _make_output_validate_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    inner: Callable[[RawOutput], Awaitable[Any]],
+) -> Callable[[RawOutput], Awaitable[Any]]:
+    async def wrapped(output: RawOutput) -> Any:
+        return await cap.wrap_output_validate(ctx, output_context=output_context, output=output, handler=inner)
+
+    return wrapped
+
+
+def _make_output_process_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    inner: Callable[[Any], Awaitable[Any]],
+) -> Callable[[Any], Awaitable[Any]]:
+    async def wrapped(output: Any) -> Any:
+        return await cap.wrap_output_process(ctx, output_context=output_context, output=output, handler=inner)
 
     return wrapped

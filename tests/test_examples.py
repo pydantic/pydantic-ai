@@ -84,6 +84,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+        if '.agents' in ex.path.parts:
+            continue
         if ex.path.name != '_utils.py':
             try:
                 path = ex.path.relative_to(root_dir)
@@ -292,6 +294,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
     return s
 
 
@@ -596,6 +599,16 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'Write a long essay about Python': (
+        'Python is a versatile, high-level programming language known for its readability and simplicity. '
+        'Created by Guido van Rossum and first released in 1991, Python has grown to become one of the most '
+        'popular programming languages in the world, used in web development, data science, artificial intelligence, '
+        'automation, and countless other domains.'
+    ),
+    'Tell me about Python': 'Python is a versatile programming language.',
+    'Continue from where you left off': 'Python is a versatile programming language.',
+    'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
+    'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -625,9 +638,21 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
+        return ModelResponse(parts=[])
     elif isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+            return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
-        if m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
+        if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
+            t.name == 'mark_task_done' for t in info.function_tools
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='mark_task_done', args={'task_id': 1}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        elif m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
@@ -798,11 +823,10 @@ async def model_logic(  # noqa: C901
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-                        },
+                        args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -810,11 +834,12 @@ async def model_logic(  # noqa: C901
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                            'type': 'code_execution_result',
+                            'stdout': '1307674368000\n',
+                            'type': 'bash_code_execution_result',
                         },
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
                 ]
@@ -1090,6 +1115,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'embed-v4.0': 1024,
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
     }

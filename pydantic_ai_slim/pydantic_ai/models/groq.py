@@ -23,6 +23,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -57,12 +58,15 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
+    from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
+    from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -137,15 +141,13 @@ class GroqModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class GroqModel(Model):
+class GroqModel(Model[AsyncGroq]):
     """A model that uses the Groq API.
 
     Internally, this uses the [Groq Python client](https://github.com/groq/groq-python) to interact with the API.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
-
-    client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
@@ -174,9 +176,12 @@ class GroqModel(Model):
         if isinstance(provider, str):
             provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncGroq:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -299,14 +304,8 @@ class GroqModel(Model):
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         tools += self._get_builtin_tools(model_request_parameters)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -388,7 +387,9 @@ class GroqModel(Model):
         self, response: AsyncStream[chat.ChatCompletionChunk], model_request_parameters: ModelRequestParameters
     ) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -406,8 +407,43 @@ class GroqModel(Model):
             _provider_timestamp=number_to_datetime(first_chunk.created),
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_tool_choice(
+        self,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: ChatCompletionToolChoiceOptionParam
+        if resolved_tool_choice in ('auto', 'required', 'none'):
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = resolved_tool_choice
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': next(iter(tool_names))},
+                )
+            else:
+                # Breaks caching, but Groq doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = tool_choice_mode
+        else:
+            assert_never(resolved_tool_choice)
+
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
+
+        if not tools:
+            return tools, None
+
+        return tools, tool_choice
 
     def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters
@@ -448,6 +484,9 @@ class GroqModel(Model):
                         pass
                     elif isinstance(item, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
+                        pass
+                    elif isinstance(item, CompactionPart):  # pragma: no cover
+                        # Compaction parts are not sent back to models that don't support compaction.
                         pass
                     else:
                         assert_never(item)
@@ -574,11 +613,14 @@ class GroqStreamedResponse(StreamedResponse):
 
     _model_name: GroqModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[chat.ChatCompletionChunk]
+    _response: _utils.PeekableAsyncStream[chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

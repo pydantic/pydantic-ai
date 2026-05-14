@@ -7,6 +7,7 @@ Built-in tools are native tools provided by LLM providers that can be used to en
 Pydantic AI supports the following built-in tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
+- **[`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool]**: Allows agents to search X/Twitter (xAI only)
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
@@ -163,6 +164,60 @@ _(This example is complete, it can be run "as is")_
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
+## X Search Tool
+
+The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
+
+### Usage
+
+```py {title="x_search_xai.py"}
+from pydantic_ai import Agent, XSearchTool
+
+agent = Agent('xai:grok-4-1-fast', builtin_tools=[XSearchTool()])
+
+result = agent.run_sync('What are people saying about AI on X today?')
+print(result.output)
+#> There's a lot of excitement about new AI models being released...
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Configuration Options
+
+The `XSearchTool` supports several configuration parameters:
+
+```py {title="x_search_configured.py"}
+from datetime import datetime
+
+from pydantic_ai import Agent, XSearchTool
+
+agent = Agent(
+    'xai:grok-4-1-fast',
+    builtin_tools=[
+        XSearchTool(
+            allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+        )
+    ],
+)
+
+result = agent.run_sync('What have AI companies been posting about?')
+print(result.output)
+"""
+OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! note "Handle Filtering"
+    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
+
+!!! note "Including raw search results"
+    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_x_search_output=True` on [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] exposed via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
 
 ## Code Execution Tool
 
@@ -175,7 +230,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -200,11 +255,10 @@ print(result.response.builtin_tool_calls)
     (
         BuiltinToolCallPart(
             tool_name='code_execution',
-            args={
-                'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-            },
+            args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
         BuiltinToolReturnPart(
             tool_name='code_execution',
@@ -212,12 +266,13 @@ print(result.response.builtin_tool_calls)
                 'content': [],
                 'return_code': 0,
                 'stderr': '',
-                'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                'type': 'code_execution_result',
+                'stdout': '1307674368000\n',
+                'type': 'bash_code_execution_result',
             },
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             timestamp=datetime.datetime(...),
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
     )
 ]
@@ -328,8 +383,10 @@ agent = Agent(
     'openai-responses:gpt-5.2',
     builtin_tools=[
         ImageGenerationTool(
+            action='generate',
             background='transparent',
             input_fidelity='high',
+            model='gpt-image-2',
             moderation='low',
             output_compression=100,
             output_format='png',
@@ -350,6 +407,11 @@ _(This example is complete, it can be run "as is")_
 OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
 Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
 results in an error, and if you also set `size` it must match the computed value.
+
+The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
+image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
+`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
 
@@ -391,9 +453,11 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
+| `action` | ✅ (auto (default), generate, edit) | ❌ |
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
+| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Vertex AI only) |
 | `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
@@ -726,6 +790,7 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
 | Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
 || Google (Vertex AI) | ❌ | Not supported |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
@@ -806,6 +871,29 @@ async def main():
     result = await agent.run('Summarize the key points from my uploaded documents.')
     print(result.output)
     #> The documents discuss the following key points: ...
+
+asyncio.run(main())
+```
+
+#### xAI
+
+With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collection-search) tool. Pass collection IDs as `file_store_ids`.
+
+```py {title="file_search_xai.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, FileSearchTool
+
+
+async def main():
+    agent = Agent(
+        'xai:grok-4-1-fast',
+        builtin_tools=[FileSearchTool(file_store_ids=['collection_abc123'])]
+    )
+
+    result = await agent.run('What does the collection say about pydantic?')
+    print(result.output)
+    #> Based on the collection, Pydantic is ...
 
 asyncio.run(main())
 ```

@@ -4,6 +4,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -116,6 +117,9 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
+"""Lifecycle state of a model response."""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -690,7 +694,9 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
 
 
 UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
@@ -1350,7 +1356,16 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
+            # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
+            # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
+            # so the model sees what arguments it sent alongside the error.
+            if self.tool_name is None:
+                exclude = {
+                    i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
+                }
+            else:
+                exclude = {'__all__': {'ctx'}}
+            json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
@@ -1460,6 +1475,13 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
@@ -1562,6 +1584,57 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
+class CompactionPart:
+    """A compaction part that summarizes previous conversation history.
+
+    Compaction parts contain an opaque or readable summary of prior messages,
+    produced by provider-specific compaction mechanisms. They must be round-tripped
+    back to the same provider in subsequent requests.
+
+    For Anthropic, `content` contains a readable text summary.
+    For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
+    """
+
+    content: str | None = None
+    """The compaction summary text, if available.
+
+    For Anthropic: a readable text summary of compacted messages.
+    For OpenAI: `None` (the compacted content is encrypted and stored in `provider_details`).
+    """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the compaction part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the compaction.
+
+    Compaction data is only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    For OpenAI: contains `encrypted_content` and other fields from `ResponseCompactionItem`.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['compaction'] = 'compaction'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the compaction content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class FilePart:
     """A file response from a model."""
 
@@ -1641,6 +1714,13 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    def __post_init__(self) -> None:
+        # Per-instance attribute populated by the instrumentation layer from
+        # `ToolDefinition.metadata` to drive OTel rendering hints (e.g. syntax highlighting).
+        # Declared here rather than as a dataclass field so it stays out of `__init__`,
+        # equality, repr, Pydantic JSON schema, and serialization.
+        self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
+
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1706,7 +1786,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | CompactionPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1766,8 +1846,18 @@ class ModelResponse:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    state: ModelResponseState = 'complete'
+    """Lifecycle state of the response."""
 
     @property
     def text(self) -> str | None:
@@ -1880,6 +1970,9 @@ class ModelResponse:
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
+            elif isinstance(part, CompactionPart):
+                # Compaction parts don't map to standard OTel GenAI convention types
+                pass
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
                     {
@@ -1927,6 +2020,11 @@ class ModelResponse:
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
+                if part.otel_metadata:
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                        call_part['code_arg_name'] = code_arg_name
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                        call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
@@ -1945,6 +2043,9 @@ class ModelResponse:
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
+            elif isinstance(part, CompactionPart):
+                # Compaction parts don't map to standard OTel message part types
+                pass
         return parts
 
     @property
@@ -2318,7 +2419,8 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -2358,7 +2460,8 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        | None
     ) = None
     """The kind of the next part, if any.
 
@@ -2392,11 +2495,15 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False)
-class FunctionToolCallEvent:
-    """An event indicating the start to a call to a function tool."""
+class ToolCallEvent:
+    """Base class for events emitted when a tool call is about to be invoked.
+
+    Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
+    and [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] together.
+    """
 
     part: ToolCallPart
-    """The (function) tool call to make."""
+    """The tool call to make."""
 
     _: KW_ONLY
 
@@ -2409,13 +2516,20 @@ class FunctionToolCallEvent:
     - `None`: Validation was not performed.
     """
 
-    event_kind: Literal['function_tool_call'] = 'function_tool_call'
-    """Event type identifier, used as a discriminator."""
-
     @property
     def tool_call_id(self) -> str:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FunctionToolCallEvent(ToolCallEvent):
+    """An event indicating the start to a call to a function tool."""
+
+    event_kind: Literal['function_tool_call'] = 'function_tool_call'
+    """Event type identifier, used as a discriminator."""
 
     @property
     @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
@@ -2423,17 +2537,37 @@ class FunctionToolCallEvent:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id  # pragma: no cover
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+
+@dataclass(repr=False)
+class OutputToolCallEvent(ToolCallEvent):
+    """An event indicating the start of a call to an output tool (the model's "submit final answer" call)."""
+
+    event_kind: Literal['output_tool_call'] = 'output_tool_call'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass(repr=False)
-class FunctionToolResultEvent:
+class ToolResultEvent:
+    """Base class for events emitted when a tool call has been completed.
+
+    Match against this in a `case` to handle [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]
+    and [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] together.
+    """
+
+    part: ToolReturnPart | RetryPromptPart
+    """The tool result part that will be sent back to the model."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.part.tool_call_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, init=False)
+class FunctionToolResultEvent(ToolResultEvent):
     """An event indicating the result of a function tool call."""
-
-    result: ToolReturnPart | RetryPromptPart
-    """The result of the call to the function tool."""
-
-    _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
@@ -2441,12 +2575,40 @@ class FunctionToolResultEvent:
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
-    @property
-    def tool_call_id(self) -> str:
-        """An ID used to match the result to its original call."""
-        return self.result.tool_call_id
+    def __init__(
+        self,
+        part: ToolReturnPart | RetryPromptPart | None = None,
+        *,
+        content: str | Sequence[UserContent] | None = None,
+        result: ToolReturnPart | RetryPromptPart | None = None,
+    ) -> None:
+        if result is not None:
+            if part is not None:
+                raise TypeError('FunctionToolResultEvent: pass either `part` or `result` (deprecated alias), not both')
+            warnings.warn(
+                'Passing `result=...` to `FunctionToolResultEvent` is deprecated, use `part=...` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            part = result
+        if part is None:
+            raise TypeError("FunctionToolResultEvent.__init__() missing required argument: 'part'")
+        self.part = part
+        self.content = content
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+    @property
+    @deprecated('`result` is deprecated, use `part` instead.')
+    def result(self) -> ToolReturnPart | RetryPromptPart:
+        """The tool result part that will be sent back to the model."""
+        return self.part
+
+
+@dataclass(repr=False)
+class OutputToolResultEvent(ToolResultEvent):
+    """An event indicating the result of an output tool call."""
+
+    event_kind: Literal['output_tool_result'] = 'output_tool_result'
+    """Event type identifier, used as a discriminator."""
 
 
 @deprecated(
@@ -2484,6 +2646,8 @@ class BuiltinToolResultEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
     | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
     | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),

@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -180,17 +181,27 @@ class FunctionModel(Model):
             'FunctionModel must receive a `stream_function` to support streamed requests'
         )
 
-        response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
+        response_stream: PeekableAsyncStream[
+            str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns,
+            AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns],
+        ] = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
         first = await response_stream.peek()
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _iter=response_stream,
-        )
+        try:
+            yield FunctionStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_name=self._model_name,
+                _iter=response_stream,
+            )
+        finally:
+            await response_stream.aclose()
+
+    @property
+    def provider(self) -> None:
+        return None
 
     @property
     def model_name(self) -> str:
@@ -346,6 +357,10 @@ class FunctionStreamedResponse(StreamedResponse):
                     else:
                         assert_never(delta)
 
+    async def close_stream(self) -> None:
+        # FunctionModel has no underlying connection to close.
+        pass
+
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
@@ -392,14 +407,14 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
                     response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):
+                elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, BuiltinToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
+                elif isinstance(part, CompactionPart):
+                    pass
                 else:
                     assert_never(part)
         else:
