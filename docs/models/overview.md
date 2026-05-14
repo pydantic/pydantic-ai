@@ -22,6 +22,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
+- [Doubleword](openai.md#doubleword)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)
 - [Heroku](openai.md#heroku-ai)
