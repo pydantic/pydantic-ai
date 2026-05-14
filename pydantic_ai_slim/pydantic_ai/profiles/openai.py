@@ -94,6 +94,13 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_sampling_settings: bool = True
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
+    openai_chat_max_tokens_parameter: Literal['max_completion_tokens', 'max_tokens'] = 'max_completion_tokens'
+    """Which Chat Completions token limit parameter should receive `ModelSettings.max_tokens`.
+
+    OpenAI reasoning models use `max_completion_tokens`, while some OpenAI-compatible providers still expect
+    the legacy `max_tokens` parameter and reject or ignore `max_completion_tokens`.
+    """
+
     openai_unsupported_model_settings: Sequence[str] = ()
     """A list of model settings that are not supported by this model."""
 

@@ -45,14 +45,49 @@ with try_import() as imports_successful:
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChoice,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterCompletionMessage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
     pytest.mark.anyio,
 ]
+
+
+async def test_openrouter_max_tokens_uses_chat_max_tokens_parameter(allow_model_requests: None) -> None:
+    completion = _OpenRouterChatCompletion(
+        id='123',
+        choices=[
+            _OpenRouterChoice(
+                finish_reason='stop',
+                index=0,
+                message=_OpenRouterCompletionMessage(content='world', role='assistant'),
+            )
+        ],
+        created=0,
+        model='google/gemma-4-26b-a4b-it',
+        object='chat.completion',
+        provider='openai',
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    provider = OpenRouterProvider(openai_client=mock_client)
+    model = OpenRouterModel('google/gemma-4-26b-a4b-it', provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=OpenRouterModelSettings(max_tokens=123),
+    )
+
+    assert response.parts == [TextPart(content='world')]
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request_kwargs['max_tokens'] == 123
+    assert 'max_completion_tokens' not in request_kwargs
 
 
 async def test_openrouter_with_preset(allow_model_requests: None, openrouter_api_key: str) -> None:
