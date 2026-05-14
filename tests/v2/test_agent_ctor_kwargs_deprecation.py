@@ -229,9 +229,9 @@ async def test_from_spec_event_stream_handler_kwarg_emits_warning_and_stores_han
     with pytest.warns(
         PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(event_stream_handler=\.\.\.\)` is deprecated'
     ):
-        agent = Agent.from_spec({'model': 'test'}, event_stream_handler=handler)  # pyright: ignore[reportCallIssue, reportUnknownMemberType, reportUnknownVariableType]
+        agent: Agent[Any, Any] = Agent.from_spec({'model': 'test'}, event_stream_handler=handler)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
 
-    assert agent.event_stream_handler is handler
+    assert agent.event_stream_handler is handler  # pyright: ignore[reportUnknownMemberType]
 
 
 async def test_from_file_event_stream_handler_kwarg_emits_warning_and_stores_handler(tmp_path: Any):
@@ -247,6 +247,6 @@ async def test_from_file_event_stream_handler_kwarg_emits_warning_and_stores_han
     with pytest.warns(
         PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(event_stream_handler=\.\.\.\)` is deprecated'
     ):
-        agent = Agent.from_file(spec_file, event_stream_handler=handler)  # pyright: ignore[reportCallIssue, reportUnknownMemberType, reportUnknownVariableType]
+        agent: Agent[Any, Any] = Agent.from_file(spec_file, event_stream_handler=handler)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
 
-    assert agent.event_stream_handler is handler
+    assert agent.event_stream_handler is handler  # pyright: ignore[reportUnknownMemberType]
