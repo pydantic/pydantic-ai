@@ -2367,21 +2367,12 @@ pass that as the payload — but be aware of the cross-provider behavior.
 """
 
 
-def coerce_enqueue_item(item: str | Sequence[UserContent]) -> UserPromptPart:
-    """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item (other than a [`ModelRequest`][pydantic_ai.messages.ModelRequest]) to a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
-
-    Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
-    [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
-    """
-    return UserPromptPart(content=item)
-
-
 def build_enqueue_payload(items: Sequence[EnqueueContent]) -> tuple[ModelRequestPart, ...] | ModelRequest:
     """Build the payload that will be stored on a [`PendingMessage`][pydantic_ai.messages.PendingMessage] from the args to `enqueue`.
 
     Returns the original [`ModelRequest`][pydantic_ai.messages.ModelRequest] when a single one was passed (passthrough);
-    otherwise returns a tuple of coerced [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s (which the drainer
-    merges with adjacent parts-style payloads of the same priority into one synthesized request, matching what
+    otherwise returns a tuple of [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s (one per item; the drainer
+    merges adjacent parts-style payloads of the same priority into one synthesized request, matching what
     the model sees).
 
     Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
@@ -2393,8 +2384,7 @@ def build_enqueue_payload(items: Sequence[EnqueueContent]) -> tuple[ModelRequest
         return items[0]
     if any(isinstance(item, ModelRequest) for item in items):
         raise ValueError('ModelRequest must be enqueued alone, not mixed with strings or `Sequence[UserContent]` items')
-    parts: list[ModelRequestPart] = [coerce_enqueue_item(item) for item in items]  # type: ignore[arg-type]
-    return tuple(parts)
+    return tuple(UserPromptPart(content=item) for item in items)  # type: ignore[arg-type]
 
 
 @dataclass
