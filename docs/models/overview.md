@@ -13,7 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
-* [Outlines](outlines.md)
+* [Outlines](outlines.md) (deprecated, will be removed in v2)
 
 ## OpenAI-compatible Providers
 
