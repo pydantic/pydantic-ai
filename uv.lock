@@ -17,10 +17,7 @@ members = [
     "pydantic-evals",
     "pydantic-graph",
 ]
-constraints = [
-    { name = "authlib", specifier = ">=1.6.7" },
-    { name = "ray", specifier = ">=2.54.0" },
-]
+constraints = [{ name = "authlib", specifier = ">=1.6.7" }]
 
 [[package]]
 name = "ag-ui-protocol"
