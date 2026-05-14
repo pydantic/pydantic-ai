@@ -696,20 +696,30 @@ class TestOpenRouterThinkingTranslation:
         assert extra_body.get('reasoning') == {'enabled': False}
 
     def test_provider_profile_passes_thinking_through_gate(self):
-        """`OpenRouterProvider.model_profile()` reports `supports_thinking=True` so
-        the unified setting survives the `prepare_request` gate even when the
-        underlying-model profile would otherwise strip it."""
+        """`OpenRouterProvider.model_profile()` reports `supports_thinking=True` and
+        `thinking_always_enabled=False` for every routed model — the former lets the
+        unified setting survive the gate, the latter ensures even sub-profiles that
+        declare always-on (o-series, magistral, deepseek-R1, gpt-5) don't strip
+        `thinking=False` at the gate. OpenRouter's `reasoning.enabled=False` disable
+        signal works at the routing layer regardless of the upstream API's contract."""
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+        # Mix of sub-profile types: bare ModelProfile (kimi), Anthropic, OpenAI o-series,
+        # OpenAI GPT-5, Mistral always-on, DeepSeek R1, hybrid (glm).
         for model_name in (
             'moonshotai/kimi-k2.6',
             'qwen/qwen3-235b-a22b',
             'z-ai/glm-4.6',
             'openai/gpt-oss-120b',
+            'openai/o3',
+            'openai/gpt-5',
+            'mistralai/magistral-medium-2509',
+            'deepseek/deepseek-r1',
         ):
             profile = OpenRouterProvider.model_profile(model_name)
             assert profile is not None
             assert profile.supports_thinking is True, model_name
+            assert profile.thinking_always_enabled is False, model_name
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""

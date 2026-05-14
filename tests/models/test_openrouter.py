@@ -1239,6 +1239,32 @@ async def test_openrouter_thinking_false_profile_gated_model(
     assert not any(isinstance(part, ThinkingPart) for part in response.parts)
 
 
+async def test_openrouter_thinking_false_on_always_on_route(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """OpenRouter routes whose underlying-model profile reports
+    `thinking_always_enabled=True` (here: `openai/o3`) used to have `thinking=False`
+    stripped at the gate because `ModelProfile.update()` propagated the flag from
+    the sub-profile into the merged OpenRouter profile. After the override, the
+    disable signal reaches OpenRouter's wire; whether the upstream honors,
+    rejects, or no-ops is downstream behavior."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/o3', provider=provider)
+    settings = OpenRouterModelSettings(thinking=False)
+
+    try:
+        await model_request(
+            model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+        )
+    except ModelHTTPError:
+        # Some always-on upstreams reject `enabled=False` with HTTP 4xx; the assertion
+        # below proves the disable signal made it to the wire, which is what we're testing.
+        pass
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['reasoning'] == {'enabled': False}
+
+
 async def test_openrouter_thinking_true_emits_effort_medium(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
