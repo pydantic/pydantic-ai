@@ -19,7 +19,7 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_extensions import Self, TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -1316,48 +1316,21 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-_LEGACY_MODEL_PREFIXES: dict[str, str] = {
-    'gpt': 'openai',
-    'o1': 'openai',
-    'o3': 'openai',
-    'claude': 'anthropic',
-    'gemini': 'google-gla',
-}
-"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
-
-
 def parse_model_id(model: str) -> tuple[str | None, str]:
     """Parse a model id string into its provider and model name components.
 
-    Handles both the modern `provider:model` format and legacy model names
-    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
-
-    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
-
     Args:
-        model: A model identifier string, either `provider:model_name` or a legacy
-            prefix-based name.
+        model: A model identifier string in the form `provider:model_name`.
 
     Returns:
-        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
-        returns `(None, model)` so callers can decide how to handle unknown providers.
+        A tuple of `(provider_name, model_name)`. If the model string contains no
+        `provider:` prefix, returns `(None, model)` so callers can decide how to
+        handle the unknown provider.
     """
     if ':' in model:
         provider_name, model_name = model.split(':', maxsplit=1)
         return provider_name, model_name
 
-    # Legacy model names without provider prefix
-    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
-        if model.startswith(prefix):
-            warnings.warn(
-                f'Specifying a model name without a provider prefix is deprecated. '
-                f"Instead of {model!r}, use '{provider_name}:{model}'.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return provider_name, model
-
-    # Unknown prefix: let callers decide how to handle this case.
     return None, model
 
 
@@ -1510,14 +1483,6 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
-
-
-@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
-    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)

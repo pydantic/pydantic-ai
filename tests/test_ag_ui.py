@@ -9,12 +9,9 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
-from http import HTTPStatus
 from typing import Any, Literal
 
-import httpx
 import pytest
-from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -55,7 +52,6 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import UserError
@@ -110,15 +106,6 @@ with try_import() as imports_successful:
     from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
-
-    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
-    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
-    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
-        )
-        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -186,7 +173,8 @@ async def run_and_collect_events(
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in run_ag_ui(agent, run_input, ag_ui_version=ag_ui_version, deps=deps, on_complete=on_complete):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -2206,7 +2194,8 @@ async def test_request_with_state() -> None:
         async def on_complete(result: AgentRunResult[Any]):
             seen_deps_states.append(deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
@@ -2230,7 +2219,8 @@ async def test_request_with_state_without_handler() -> None:
         match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream()):
             events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2248,7 +2238,8 @@ async def test_request_with_empty_state_without_handler() -> None:
     )
 
     events = list[dict[str, Any]]()
-    async for event in run_ag_ui(agent, run_input):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for event in adapter.encode_stream(adapter.run_stream()):
         events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2279,7 +2270,8 @@ async def test_request_with_state_with_custom_handler() -> None:
         state={'value': 42},
     )
 
-    async for _ in run_ag_ui(agent, run_input, deps=CustomStateDeps(state={'value': 0})):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for _ in adapter.encode_stream(adapter.run_stream(deps=CustomStateDeps(state={'value': 0}))):
         pass
 
     assert seen_states[-1] == {'value': 42}
@@ -2356,46 +2348,6 @@ async def test_concurrent_runs() -> None:
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
-
-
-@pytest.mark.anyio
-@pytest.mark.filterwarnings(
-    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
-async def test_to_ag_ui() -> None:
-    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
-
-    agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
-
-    deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
-    async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as client:
-            client.base_url = 'http://localhost:8000'
-            run_input = create_input(
-                UserMessage(
-                    id='msg_1',
-                    content='Hello, world!',
-                ),
-                state=StateInt(value=42),
-            )
-            async with client.stream(
-                'POST',
-                '/',
-                content=run_input.model_dump_json(),
-                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
-            ) as response:
-                assert response.status_code == HTTPStatus.OK, f'Unexpected status code: {response.status_code}'
-                events: list[dict[str, Any]] = []
-                async for line in response.aiter_lines():
-                    if line:
-                        events.append(json.loads(line.removeprefix('data: ')))
-
-            assert events == simple_result()
-
-    # Verify the state was not mutated by the run
-    assert deps.state.value == 0
 
 
 async def test_callback_sync() -> None:
@@ -3377,7 +3329,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
     assert custom_event['timestamp'] == custom_timestamp
 
 
-async def test_handle_ag_ui_request():
+async def test_dispatch_request():
     agent = Agent(model=TestModel())
     run_input = create_input(
         UserMessage(
@@ -3400,7 +3352,7 @@ async def test_handle_ag_ui_request():
         receive=receive,
     )
 
-    response = await handle_ag_ui_request(agent, starlette_request)
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
 
     assert isinstance(response, StreamingResponse)
 
@@ -4139,7 +4091,8 @@ async def test_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4183,7 +4136,8 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4593,7 +4547,8 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
