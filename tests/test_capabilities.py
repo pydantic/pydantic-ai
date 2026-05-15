@@ -17,6 +17,7 @@ from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
+from pydantic_ai._load_capability import LoadCapabilityCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -2546,12 +2547,16 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
         toolset=toolset,
         defer_loading=True,
     )
-    seen_tool_names: list[list[str]] = []
+    seen_tool_state: list[list[tuple[str, bool]]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen_tool_names.append([t.name for t in info.function_tools])
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        # Give up on the first signal of tool feedback — either a `ToolReturnPart`
+        # (success, which can't happen here) or a `RetryPromptPart` (the framework
+        # signaling the bad cap id). Without the retry branch, we'd loop past
+        # `max_retries` and raise `UnexpectedModelBehavior` instead of giving up.
         if not any(
-            isinstance(part, ToolReturnPart)
+            isinstance(part, (ToolReturnPart, RetryPromptPart))
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -2571,12 +2576,14 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     result = await agent.run('load missing')
 
     assert result.output == snapshot('done')
-    assert seen_tool_names == snapshot(
+    assert seen_tool_state == snapshot(
         [
-            ['search_tools', 'load_capability'],
-            ['search_tools', 'load_capability'],
+            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False), ('hidden_tool', True)],
         ]
     )
+    # History carries a `RetryPromptPart` (not a `LoadCapabilityReturnPart`) for the
+    # failed load.
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -2588,7 +2595,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
+                    LoadCapabilityCallPart(
                         tool_name='load_capability',
                         args={'id': 'missing'},
                         tool_call_id='load-missing',
@@ -2602,9 +2609,9 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
-                        tool_name='load_capability',
+                    RetryPromptPart(
                         content="No capability found with id 'missing'.",
+                        tool_name='load_capability',
                         tool_call_id='load-missing',
                         timestamp=IsDatetime(),
                     )
@@ -2616,7 +2623,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                usage=RequestUsage(input_tokens=65, output_tokens=6),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

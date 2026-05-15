@@ -38,9 +38,7 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     }
 
 
-async def tools_for_loaded_capabilities(
-    ctx: RunContext[Any], root: AbstractToolset[Any]
-) -> set[str]:
+async def tools_for_loaded_capabilities(ctx: RunContext[Any], root: AbstractToolset[Any]) -> set[str]:
     """Collect tool names exposed by every loaded deferred capability.
 
     Walks the toolset tree for ``CapabilityScopedToolset`` nodes whose ``capability_id``
@@ -67,9 +65,9 @@ async def tools_for_loaded_capabilities(
     root.apply(collect)
 
     out: set[str] = set()
-    for cap_id in ctx.loaded_capability_ids:
+    for cap_id in ctx.loaded_capability_ids:  # We only check for loaded capabilities here
         cap = ctx.capabilities.get(cap_id)
-        if cap is None or cap.defer_loading is not True:
+        if cap is None or cap.defer_loading is not True:  # Only for capabilities which are deferred_loading
             continue
         for ts in scoped_by_cap.get(cap_id, []):
             tools = await ts.wrapped.get_tools(ctx)

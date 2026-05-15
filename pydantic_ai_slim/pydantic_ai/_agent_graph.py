@@ -199,7 +199,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     capabilities: dict[str, AbstractCapability[DepsT]]
     loaded_capability_ids: set[str]
-    discovered_tools: set[str]
+
+    discovered_tools: set[str] = dataclasses.field(default_factory=set[str])
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -864,6 +865,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         #   registry rather than from `LoadCapabilityReturnPart.discovered_tools`, so
         #   the load-cap part stays a "this cap was loaded" signal and tool-search
         #   history remains the authoritative discovery record.
+        #
+        # One set, not two fields: downstream consumers only ask "is this tool
+        # callable this turn?" — discovery provenance is irrelevant to them, and
+        # splitting would force every consumer to union the two.
         ctx.deps.discovered_tools = parse_discovered_tools(ctx.state.message_history)
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -871,8 +876,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
-        # In-place `.update` so `run_context.discovered_tools` (same set object) sees
-        # the cap-loaded names without needing a rebuild.
+        # In-place `.update` (not reassignment) is load-bearing here:
+        # `build_run_context` above captured a reference to the set we just
+        # assigned, and `run_context.discovered_tools` aliases that same object.
+        # Reassigning `ctx.deps.discovered_tools = old | new` would point ctx.deps
+        # at a fresh set while leaving `run_context.discovered_tools` stranded on
+        # the pre-union set — the toolset filter (which reads via run_context)
+        # would then miss the cap-loaded names. Mutating in place keeps both
+        # references converged without a run_context rebuild.
         ctx.deps.discovered_tools.update(
             await tools_for_loaded_capabilities(run_context, ctx.deps.tool_manager.toolset)
         )

@@ -13,7 +13,7 @@ from pydantic_ai._deferred import (
 from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
@@ -92,10 +92,10 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
             return await self._load_capability(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn | str:
+    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn:
         capability_id = tool_args['id']
         if capability_id not in ctx.capabilities:
-            return f'No capability found with id {capability_id!r}.'
+            raise ModelRetry(f'No capability found with id {capability_id!r}.')
 
         parts: list[str] = []
 
