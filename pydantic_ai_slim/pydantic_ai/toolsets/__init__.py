@@ -1,14 +1,14 @@
 from typing import Union
 
 from .._run_context import AgentDepsT
+from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
 from .deferred_loading import DeferredLoadingToolset
-from .dynamic import DynamicToolset, ToolsetFunc
 from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
 from .filtered import FilteredToolset
-from .function import FunctionToolset, FunctionToolsetTool
+from .function import FunctionToolset
 from .include_return_schemas import IncludeReturnSchemasToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
@@ -26,11 +26,9 @@ __all__ = (
     'CombinedToolset',
     'DeferredLoadingToolset',
     'DeferredToolset',
-    'DynamicToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
-    'FunctionToolsetTool',
     'IncludeReturnSchemasToolset',
     'PrefixedToolset',
     'PreparedToolset',

@@ -20,7 +20,8 @@ from pydantic_ai.tools import (
     RunContext,
     ToolDefinition,
 )
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset, DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
