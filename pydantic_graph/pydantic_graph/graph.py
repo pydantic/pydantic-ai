@@ -157,7 +157,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         assert result is not None, 'GraphRun should have a result'
         return result
 
-    def run_sync(
+    def run_sync(  # pragma: no cover  -- deprecated; coverage tracked on `run`
         self,
         start_node: BaseNode[StateT, DepsT, RunEndT],
         *,
@@ -183,7 +183,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Returns:
             The result type from ending the run and the history of the run.
         """
-        if infer_name and self.name is None:  # pragma: no branch
+        if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
         return _utils.get_event_loop().run_until_complete(
@@ -327,7 +327,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             state: The start state of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
         """
-        if infer_name and self.name is None:
+        if infer_name and self.name is None:  # pragma: no branch
             self._infer_name(inspect.currentframe())
 
         persistence.set_graph_types(self)
@@ -653,7 +653,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     def result(self) -> GraphRunResult[StateT, RunEndT] | None:
         """The final result of the graph run if the run is completed, otherwise `None`."""
         if not isinstance(self._next_node, End):
-            return None  # The GraphRun has not finished running
+            return None  # pragma: no cover  -- deprecated path; only hit when a partial run is interrupted
         return GraphRunResult[StateT, RunEndT](
             self._next_node.data,
             state=self.state,

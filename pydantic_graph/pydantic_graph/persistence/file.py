@@ -96,7 +96,9 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         async with self._lock():
             snapshots = await self.load_all()
-            if snapshot := next((s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
+            if snapshot := next(
+                (s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None
+            ):  # pragma: no branch
                 snapshot.status = 'pending'
                 await self._save(snapshots)
                 return snapshot
