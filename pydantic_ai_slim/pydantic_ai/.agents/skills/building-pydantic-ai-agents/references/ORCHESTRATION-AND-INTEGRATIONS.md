@@ -105,16 +105,14 @@ from pydantic_ai import Embedder
 embedder = Embedder('openai:text-embedding-3-small')
 ```
 
-## Use LangChain or ACI.dev Tools
+## Use LangChain Tools
 
 Third-party integrations to reach for:
 
 - `tool_from_langchain`
 - `LangChainToolset`
-- `tool_from_aci`
-- `ACIToolset`
 
-Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools.
+Use these when the user explicitly wants the LangChain ecosystem instead of native Pydantic AI tools.
 
 ## Systematically Verify Agent Behavior with Evals
 
