@@ -25,7 +25,8 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, InstructionPart
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -137,7 +138,7 @@ def test_first_failed() -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     result = agent.run_sync('hello')
     assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
@@ -175,7 +176,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -248,7 +249,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     async with agent.run_stream('input') as result:
         assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
@@ -294,7 +295,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -389,7 +390,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -414,7 +415,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -879,7 +880,12 @@ Don't include any text or Markdown fencing before or after.
         prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
     )
     fallback_model = FallbackModel(tool_model, prompted_model)
-    agent = Agent(model=fallback_model, instrument=True, output_type=Foo, instructions='Be kind')
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        output_type=Foo,
+        instructions='Be kind',
+    )
     result = await agent.run('hello')
     assert result.output == snapshot(Foo(bar='baz'))
     assert result.all_messages() == snapshot(
@@ -931,7 +937,7 @@ Don't include any text or Markdown fencing before or after.
                     ],
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1216,8 +1222,8 @@ async def test_web_fetch_scenario() -> None:
         # Include multiple items to cover loop iteration branch
         return ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
+                NativeToolReturnPart(
                     tool_name='web_fetch',
                     tool_call_id='1',
                     content=[
@@ -1237,7 +1243,7 @@ async def test_web_fetch_scenario() -> None:
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
-        for call, result in response.builtin_tool_calls:  # pragma: no branch
+        for call, result in response.native_tool_calls:  # pragma: no branch
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):

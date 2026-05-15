@@ -7,7 +7,7 @@
 <!-- rule:912 -->
 - Document unsupported model settings in docstrings and silently ignore at runtime — prevents breaking client code when models have different capabilities — Different model providers support different features; failing noisily when a setting is unsupported would break code portability across models, while silent degradation with clear documentation lets users make informed choices
 <!-- rule:81 -->
-- Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `BuiltinToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
+- Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `NativeToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
 <!-- rule:598 -->
 - Expose provider-specific data via `ModelResponse.provider_details` or `TextPart.provider_details` — prevents API bloat and maintains consistent provider integration patterns — Keeps the core response interface clean while allowing providers to expose logprobs, safety filters, content filtering, and usage metrics without breaking consistency across integrations
 <!-- rule:26 -->

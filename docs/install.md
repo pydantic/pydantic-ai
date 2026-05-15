@@ -53,11 +53,11 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
 * `sentence-transformers` - installs [Sentence Transformers Embedding Model](embeddings.md#sentence-transformers-local) dependency `sentence-transformers` [PyPI ↗](https://pypi.org/project/sentence-transformers){:target="_blank"}
 * `voyageai` - installs [VoyageAI Embedding Model](embeddings.md#voyageai) dependency `voyageai` [PyPI ↗](https://pypi.org/project/voyageai){:target="_blank"}
-* `outlines-transformers` - installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-llamacpp` - installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-mlxlm` - installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-sglang` - installs [Outlines Model](models/outlines.md) dependency `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-vllm-offline` - installs [Outlines Model](models/outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
+* `outlines-transformers` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-llamacpp` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-mlxlm` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-sglang` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-vllm-offline` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
 * `duckduckgo` - installs [DuckDuckGo Search Tool](common-tools.md#duckduckgo-search-tool) dependency `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs [Tavily Search Tool](common-tools.md#tavily-search-tool) dependency `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 * `exa` - installs [Exa Search Tool](common-tools.md#exa-search-tool) dependency `exa-py` [PyPI ↗](https://pypi.org/project/exa-py){:target="_blank"}
