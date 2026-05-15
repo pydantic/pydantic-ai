@@ -206,28 +206,22 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 To use model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. If the agent doesn't have a model set at construction time, the first registered model will be used as the default.
 
-Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys from deps), you can pass a `provider_factory` to the capability, which is passed the [`RunContext`][pydantic_ai.tools.RunContext] and provider name.
+Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys loaded at startup), you can pass a `provider_factory` to the capability, which receives the provider name and returns a [`Provider`][pydantic_ai.providers.Provider]. Because `resolve_model_id` runs outside any active run, the factory doesn't receive a [`RunContext`][pydantic_ai.tools.RunContext] — close over your config at construction time.
 
 Here's an example showing how to pre-register and use multiple models:
 
 ```python {title="multi_model_temporal.py" test="skip"}
-from dataclasses import dataclass
+import os
 from typing import Any
 
 from temporalio import workflow
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers import Provider
-
-
-@dataclass
-class Deps:
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
 
 
 # Create models from different providers
@@ -236,17 +230,18 @@ fast_model = AnthropicModel('claude-sonnet-4-5')
 reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
-# Optional: provider factory for dynamic model configuration
-def my_provider_factory(run_context: RunContext[Deps], provider_name: str) -> Provider[Any]:
-    """Create providers with custom configuration based on run context."""
+# Optional: provider factory for dynamic model configuration.
+# Closes over config loaded at startup; the factory has no access to RunContext.
+def my_provider_factory(provider_name: str) -> Provider[Any]:
+    """Create providers with custom configuration."""
     if provider_name == 'openai':
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=run_context.deps.openai_api_key)
+        return OpenAIProvider(api_key=os.environ['OPENAI_API_KEY'])
     elif provider_name == 'anthropic':
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
-        return AnthropicProvider(api_key=run_context.deps.anthropic_api_key)
+        return AnthropicProvider(api_key=os.environ['ANTHROPIC_API_KEY'])
     else:
         raise ValueError(f'Unknown provider: {provider_name}')
 
@@ -254,7 +249,6 @@ def my_provider_factory(run_context: RunContext[Deps], provider_name: str) -> Pr
 agent = Agent(
     default_model,
     name='multi_model_agent',
-    deps_type=Deps,
     capabilities=[
         TemporalDurability(
             models={

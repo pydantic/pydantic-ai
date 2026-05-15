@@ -261,14 +261,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use with this agent.
 
-        Called once at agent construction time, after the agent is fully
-        initialized (model, name, toolsets are all available). Override to
-        discover agent configuration and return a bound instance.
+        Called once at agent construction time. The agent's model, name, and
+        user-registered toolsets are available; toolsets contributed by other
+        capabilities are not yet (this hook runs before any capability's
+        `get_toolset()` / `get_instructions()` / `get_native_tools()` /
+        `get_model_settings()`, so the returned instance's own contributions
+        feed into the agent's initial configuration on equal footing).
 
-        This runs before `get_*()` methods are called, so the returned
-        instance's `get_toolset()`, `get_instructions()`, etc. will be
-        used for the agent's initial configuration.
-
+        Override to discover agent configuration and return a bound instance.
         Default: return `self` (no agent-specific setup needed).
         """
         return self
