@@ -2443,7 +2443,7 @@ To proceed with your refund request, you should be eligible as long as the order
                         tool_name='lookup_refund_policy',
                         args={'order_id': 'order-456'},
                         tool_call_id='97jsdanw',
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={
                             'thought_signature': 'EtMCCtACAQw51sdIX8LSHeeGmbfTsOu23TmPb1vm7o1E9m6BS1ke7fG9AKr9UpJMYm6z23wx0R/4ftJw11zYZWwzoT1J/zEE3d2AQeGA3awITRYcq1i4gVWN1DR244ZtY5TVhSe9raGmBRrdd5Y+wPggl0oCRifWCF+Zd7/Bzgjc+uWsIGFRskRMiz2Lfnj5A3pxo4fYWYNEb0jYEJCDaI9fJeokgEowYY/xN7zcl+hGhzF7Q99uClsL/JHd0gougG5qriXuwDrDRECfNn9Kaqg9byqqRGaAhg6FxIgGyR7pVRMDlM3hwi0rt1tKKpQwG1mfGIRoscD4g30L6Xj8adVTaTY6VCRBV3kTroKOq1nzAPSJ93zPMdna2kPuiHep8aDvHoE/lDNSs8X47RXzw15zuj+aTl4/Cu1BzUXnSqUxOMYwM9zUEEDVaS4jJSdp7BSHVCEf'
                         },
@@ -2454,7 +2454,7 @@ To proceed with your refund request, you should be eligible as long as the order
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='RS8Hav7GDsPKqfkPgLLdiQw',
@@ -2489,7 +2489,7 @@ Are you looking to initiate a refund for this order as well?\
                 usage=RequestUsage(input_tokens=648, output_tokens=41, details={'text_prompt_tokens': 648}),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='Ry8HasaVD56Vg8UPi76BkQw',
