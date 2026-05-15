@@ -385,24 +385,23 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
         async for response in result.stream_response(debounce_by=None):
-            if response.state != 'incomplete':
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='The capital of France is Paris.\n')],
-                        usage=RequestUsage(
-                            input_tokens=13,
-                            output_tokens=8,
-                            details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
-                        ),
-                        model_name='gemini-2.0-flash-exp',
-                        timestamp=IsDatetime(),
-                        provider_name='google',
-                        provider_url='https://generativelanguage.googleapis.com/',
-                        provider_details={'finish_reason': 'STOP'},
-                        provider_response_id=IsStr(),
-                        finish_reason='stop',
-                    )
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='The capital of France is Paris.\n')],
+                    usage=RequestUsage(
+                        input_tokens=13,
+                        output_tokens=8,
+                        details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                    ),
+                    model_name='gemini-2.0-flash-exp',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
                 )
+            )
     assert data == snapshot('The capital of France is Paris.\n')
 
 

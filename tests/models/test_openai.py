@@ -607,23 +607,22 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         )
         assert result.is_complete
         async for response in result.stream_response(debounce_by=None):
-            if response.state != 'incomplete':
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o-123',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1',
-                        provider_details={
-                            'finish_reason': 'stop',
-                            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='123',
-                        finish_reason='stop',
-                    )
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=6, output_tokens=3),
+                    model_name='gpt-4o-123',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='123',
+                    finish_reason='stop',
                 )
+            )
 
 
 def struc_chunk(

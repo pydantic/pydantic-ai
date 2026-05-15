@@ -965,19 +965,18 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
         )
         assert result.is_complete
         async for response in result.stream_response(debounce_by=None):
-            if response.state != 'incomplete':
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name=XAI_NON_REASONING_MODEL,
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                        provider_url='https://api.x.ai/v1',
-                        provider_response_id='grok-123',
-                        finish_reason='stop',
-                    )
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=2, output_tokens=1),
+                    model_name=XAI_NON_REASONING_MODEL,
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id='grok-123',
+                    finish_reason='stop',
                 )
+            )
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -3295,8 +3294,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         # Ensure the final accumulated response contains the expected ThinkingPart (reasoning + signature).
         final_response: ModelResponse | None = None
         async for response in result.stream_response(debounce_by=None):
-            if response.state != 'incomplete':
-                final_response = response
+            final_response = response
         assert final_response is not None
         assert any(
             isinstance(p, ThinkingPart) and p.content == '...' and p.signature == 'sig' and p.provider_name == 'xai'
