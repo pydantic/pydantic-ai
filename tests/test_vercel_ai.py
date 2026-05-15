@@ -3976,6 +3976,59 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     )
 
 
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'0': 0, '1': 1, '2': 2}, id='uint8array-numeric-keyed-dict'),
+        pytest.param({'type': 'Buffer', 'data': [0, 1, 2]}, id='node-buffer-shape'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_payload: Any):
+    """Frontends that JSON-stringify a `Uint8Array`/`Buffer` instead of base64-encoding it
+    still produce a usable `BinaryContent` after load.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5255 review comment from
+    sadra-barikbin: a deferred frontend-executed tool returned `data` as a numeric-keyed
+    dict (`JSON.stringify(uint8Array)`), and `tool_return_content_ta.validate_python`
+    raised `ValidationError: Input should be a valid bytes` because pydantic's bytes
+    validator does not accept dicts.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(
+            id='m1',
+            role='user',
+            parts=[TextUIPart(text='give me a file')],
+        ),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    content = tool_returns[0].content
+    assert isinstance(content, BinaryContent)
+    assert content.data == b'\x00\x01\x02'
+    assert content.media_type == 'application/pdf'
+
+
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
