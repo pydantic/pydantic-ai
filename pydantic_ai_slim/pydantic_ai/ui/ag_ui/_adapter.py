@@ -81,7 +81,7 @@ try:
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'

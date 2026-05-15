@@ -19,11 +19,11 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
-print(result.usage())
+print(result.usage)
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
@@ -518,7 +518,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     validation_context=10,
 )
@@ -533,7 +533,7 @@ class Deps:
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -573,7 +573,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -738,7 +738,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')  # (1)!
+agent = Agent('google:gemini-3-flash-preview')  # (1)!
 
 
 async def main():
@@ -764,7 +764,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')
+agent = Agent('google:gemini-3-flash-preview')
 
 
 async def main():

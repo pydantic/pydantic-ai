@@ -884,7 +884,7 @@ def test_uploaded_file_identifier_property():
     # Test with URL file_id (should still be hashed)
     uploaded_file_url = UploadedFile(
         file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        provider_name='google-gla',
+        provider_name='google',
     )
     assert uploaded_file_url.identifier == snapshot('d8d637')
 
@@ -945,7 +945,7 @@ def test_uploaded_file_in_otel_message_parts():
             'analyze this',
             UploadedFile(
                 file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-                provider_name='google-gla',
+                provider_name='google',
             ),
         ]
     )

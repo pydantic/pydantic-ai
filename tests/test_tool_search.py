@@ -372,7 +372,7 @@ class ModelCase:
 
 _CASES = [
     ModelCase(
-        model_name='openai:gpt-5.4-mini',
+        model_name='openai-chat:gpt-5.4-mini',
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
@@ -418,10 +418,8 @@ _CASES = [
         ),
     ),
     ModelCase(
-        model_name='google-gla:gemini-3-flash-preview',
-        marks=[
-            pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
-        ],
+        model_name='google:gemini-3-flash-preview',
+        marks=[pytest.mark.skipif(not google_available(), reason='google-genai not installed')],
         scenario_summary=snapshot(
             {
                 'exchange_rate': {

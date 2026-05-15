@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -38,6 +39,7 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
@@ -1587,7 +1589,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
 
-    # TODO (v2): Remove in favor of using `AGUIApp` directly -- we don't have `to_temporal()` or `to_vercel_ai()` either.
+    @deprecated(
+        '`Agent.to_ag_ui()` is deprecated and will be removed in 2.0. Replace:\n'
+        '    app = agent.to_ag_ui()\n'
+        'with a Starlette/FastAPI route:\n'
+        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
+        '    @app.post("/")\n'
+        '    async def run_agent(request):\n'
+        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
+        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
+        category=PydanticAIDeprecationWarning,
+    )
     def to_ag_ui(
         self,
         *,
@@ -1615,13 +1627,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Returns an ASGI application that handles every AG-UI request by running the agent.
 
         Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
         To provide different `deps` for each request (e.g. based on the authenticated user),
-        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
-        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
+        compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly via [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] instead.
 
         Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
@@ -1676,29 +1687,33 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-        return AGUIApp(
-            agent=self,
-            # Agent.iter parameters
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            # Starlette
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            lifespan=lifespan,
-        )
+        # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
+        # one warning from `to_ag_ui()` itself, not a second one from internal construction.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=PydanticAIDeprecationWarning)
+            return AGUIApp(  # pyright: ignore[reportDeprecated]
+                agent=self,
+                # Agent.iter parameters
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                # Starlette
+                debug=debug,
+                routes=routes,
+                middleware=middleware,
+                exception_handlers=exception_handlers,
+                on_startup=on_startup,
+                on_shutdown=on_shutdown,
+                lifespan=lifespan,
+            )
 
     def to_a2a(
         self,

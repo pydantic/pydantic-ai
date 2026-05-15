@@ -4,7 +4,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
+* [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
 * [xAI](xai.md)
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
@@ -13,7 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
-* [Outlines](outlines.md)
+* [Outlines](outlines.md) (deprecated, will be removed in v2)
 
 ## OpenAI-compatible Providers
 
