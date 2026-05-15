@@ -143,9 +143,13 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
 
         If the run is about to end, drain `'asap'` messages first (anything that arrived
         after the most recent `before_model_request` and would otherwise be lost), then
-        `'when_idle'` messages. Adjacent parts-style payloads merge into one synthesized
-        [`ModelRequest`][pydantic_ai.messages.ModelRequest]; each passthrough `ModelRequest`
-        payload becomes its own message. The last resulting request becomes the redirect
+        `'when_idle'` messages. Each priority is flattened independently so parts-style
+        payloads of different priorities don't get merged into one synthesized request —
+        the history keeps the priority split visible (matches pi-mono's separate
+        steering / follow-up turns). On the wire, `_clean_message_history` re-merges
+        adjacent requests with compatible instructions, so the model still sees one turn.
+
+        The last resulting request becomes the redirect
         [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
         earlier ones are appended to `ctx.messages` so they appear in history before the
         redirect.
@@ -165,11 +169,18 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not leftover_asap and not when_idle:
             return result
 
-        requests = _flatten_drained(
-            [*leftover_asap, *when_idle],
-            fallback_run_id=ctx.run_id,
-            fallback_conversation_id=ctx.conversation_id,
-        )
+        requests = [
+            *_flatten_drained(
+                leftover_asap,
+                fallback_run_id=ctx.run_id,
+                fallback_conversation_id=ctx.conversation_id,
+            ),
+            *_flatten_drained(
+                when_idle,
+                fallback_run_id=ctx.run_id,
+                fallback_conversation_id=ctx.conversation_id,
+            ),
+        ]
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
         # will re-stamp it during the graph lifecycle. `_flatten_drained` already
         # stamped it, which is harmless (the lifecycle stamp overwrites).

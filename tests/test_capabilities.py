@@ -11649,6 +11649,95 @@ async def test_enqueue_when_idle_drains_after_leftover_asap():
     assert contents == [['A'], ['B']], f'expected A before B in separate requests, got {contents}'
 
 
+async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
+    """When both `'asap'` and `'when_idle'` parts-style payloads drain together at end-of-run,
+    they land in separate `ModelRequest`s — the priority split stays visible in history.
+
+    Reaches the case Devin flagged: a tool enqueues `'when_idle'` (which sits until
+    end-of-run), and a capability `after_model_request` hook enqueues `'asap'` during the
+    final step (after that step's `before_model_request` drain has already fired). Both
+    arrive at `after_node_run`. Without the per-priority split they'd merge into one
+    synthesized request, blurring the priority distinction in the persisted history.
+    On the wire `_clean_message_history` still merges them for the model.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        if call_count == 2:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class LateAsapCap(AbstractCapability[Any]):
+        """Enqueues an `'asap'` message during `after_model_request` of the no-tool-call step.
+
+        Fires after the step's `before_model_request` drain, so the message can only be
+        delivered via the end-of-run drain in `after_node_run`.
+        """
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired and any(
+                isinstance(p, TextPart) and p.content == 'would-have-ended' for p in response.parts
+            ):
+                ctx.enqueue('asap-from-cap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[LateAsapCap()])
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('when-idle-from-tool', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final'
+
+    # Find the two end-of-run drained requests: one with the 'asap' content, one with 'when_idle'.
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(
+            isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool') for p in msg.parts
+        )
+    ]
+    contents = [
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool')
+        )
+        for r in drained
+    ]
+    assert contents == ['asap-from-cap', 'when-idle-from-tool'], (
+        f'asap and when_idle should land in separate ModelRequests with asap first, got {contents}'
+    )
+    # Each priority bucket got its own ModelRequest (not merged into one).
+    assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
+
+
 # --- Output hook tests ---
 
 
