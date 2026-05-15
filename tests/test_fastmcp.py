@@ -53,6 +53,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
     pytest.mark.anyio,
+    # Entire file exercises the deprecated `FastMCPToolset` for v2 coverage.
+    pytest.mark.filterwarnings('ignore:`FastMCPToolset` is deprecated:DeprecationWarning'),
 ]
 
 

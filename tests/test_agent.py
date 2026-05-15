@@ -7968,6 +7968,7 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
     assert seen_max_retries == [2]
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_explicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
@@ -7988,6 +7989,7 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_implicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
@@ -8004,6 +8006,7 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_parallel_mcp_calls():
     try:
         from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
@@ -8280,6 +8283,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     assert integer_holder == 2
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_set_mcp_sampling_model():
     try:
         from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]

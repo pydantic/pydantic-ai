@@ -287,15 +287,6 @@ filterwarnings = [
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
     "ignore:Found propagated trace context:RuntimeWarning",
-    # v2 prep: legacy MCP classes & helper. Targeted per-class filters (vs a wildcard) so
-    # *unintentional* uses of any other v2-deprecated API still surface as errors. Tests that
-    # exercise the legacy hierarchy directly (test_mcp.py, test_fastmcp.py) and tests that build
-    # MCP fixtures at module level (test_dbos.py, test_temporal.py, etc.) need these.
-    "ignore:`MCPServerStdio` is deprecated and will be removed in v2:DeprecationWarning",
-    "ignore:`MCPServerSSE` is deprecated and will be removed in v2:DeprecationWarning",
-    "ignore:`MCPServerStreamableHTTP` is deprecated and will be removed in v2:DeprecationWarning",
-    "ignore:`FastMCPToolset` is deprecated and will be removed in v2:DeprecationWarning",
-    "ignore:`load_mcp_servers` is deprecated and will be removed in v2:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

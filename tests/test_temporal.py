@@ -321,6 +321,7 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
     complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,
@@ -1368,7 +1369,9 @@ def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:  #
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
     """
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')  # pyright: ignore[reportDeprecated]
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'`MCPServerStreamableHTTP` is deprecated', DeprecationWarning)
+        return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')  # pyright: ignore[reportDeprecated]
 
 
 mcp_dynamic_toolset_temporal_agent = TemporalAgent(
@@ -2608,11 +2611,13 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
-    FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    mcp_instructions_agent = Agent(
+        FunctionModel(return_mcp_instructions),
+        name='mcp_instructions_agent',
+        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
+    )
 
 mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
@@ -2956,11 +2961,13 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
+    fastmcp_agent = Agent(
+        model,
+        name='fastmcp_agent',
+        toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
+    )
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

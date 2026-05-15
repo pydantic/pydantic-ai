@@ -227,6 +227,7 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
     complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,
@@ -1610,11 +1611,13 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
-    FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    mcp_instructions_agent = Agent(
+        FunctionModel(return_mcp_instructions),
+        name='mcp_instructions_agent',
+        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
+    )
 mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
 
 
@@ -1629,11 +1632,13 @@ class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
-_uninit_instructions_toolset = _TestDBOSMCPToolset(
-    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),  # pyright: ignore[reportDeprecated]
-    step_name_prefix='coverage_test',
-    step_config={},
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    _uninit_instructions_toolset = _TestDBOSMCPToolset(
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),  # pyright: ignore[reportDeprecated]
+        step_name_prefix='coverage_test',
+        step_config={},
+    )
 
 
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
@@ -1698,11 +1703,13 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert tools['foo'].tool_def.name == 'foo'
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
+    fastmcp_agent = Agent(
+        model,
+        name='fastmcp_agent',
+        toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
+    )
 
 fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
 

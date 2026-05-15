@@ -86,6 +86,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
+    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
 ]
 
 

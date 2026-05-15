@@ -631,6 +631,7 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
@@ -654,6 +655,7 @@ class InitializationError(Exception):
     pass
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
     try:

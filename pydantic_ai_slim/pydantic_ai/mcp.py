@@ -2506,7 +2506,11 @@ def load_mcp_servers(
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
     expanded_config_data = _expand_env_vars(config_data)
-    config = _MCPServerConfig.model_validate(expanded_config_data)
+    # Discriminator constructs deprecated `MCPServer*` instances; suppressing the warnings here
+    # is intentional — `load_mcp_servers` is itself deprecated and returns these classes.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'`MCPServer\w+` is deprecated', DeprecationWarning)
+        config = _MCPServerConfig.model_validate(expanded_config_data)
 
     servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []  # pyright: ignore[reportDeprecated]
     for name, server in config.mcp_servers.items():
@@ -2551,7 +2555,11 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
     expanded_config_data = _expand_env_vars(config_data)
-    config = _MCPServerConfig.model_validate(expanded_config_data)
+    # `_MCPServerConfig` validates into deprecated `MCPServer*` subclasses; we only use them to
+    # extract `command`/`args`/`url` and build fresh `MCPToolset`s below.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'`MCPServer\w+` is deprecated', DeprecationWarning)
+        config = _MCPServerConfig.model_validate(expanded_config_data)
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in config.mcp_servers.items():
