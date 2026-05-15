@@ -233,7 +233,7 @@ exclude = [
 ]
 
 [tool.mypy]
-files = "tests/typed_agent.py,tests/typed_graph.py"
+files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]

@@ -24,9 +24,8 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
-from pydantic_graph.basenode import End, NodeRunEndT
-from pydantic_graph.graph_builder import Graph
+from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
+from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context

@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
 from typing import Any, ClassVar, Generic, get_origin, get_type_hints
-from uuid import uuid4
 
 from typing_extensions import Never, Self, TypeVar
 
@@ -63,17 +62,6 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             The next node to run or [`End`][pydantic_graph.basenode.End] to signal the end of the graph.
         """
         ...
-
-    def get_snapshot_id(self) -> str:
-        if snapshot_id := getattr(self, '__snapshot_id', None):
-            return snapshot_id
-        else:
-            snapshot_id = generate_snapshot_id(self.get_node_id())
-            object.__setattr__(self, '__snapshot_id', snapshot_id)
-            return snapshot_id
-
-    def set_snapshot_id(self, snapshot_id: str) -> None:
-        object.__setattr__(self, '__snapshot_id', snapshot_id)
 
     @classmethod
     @cache
@@ -146,30 +134,6 @@ class End(Generic[RunEndT]):
 
     data: RunEndT
     """Data to return from the graph."""
-
-    def deep_copy_data(self) -> End[RunEndT]:
-        """Returns a deep copy of the end of the run."""
-        if self.data is None:
-            return self
-        else:
-            end = End(copy.deepcopy(self.data))
-            end.set_snapshot_id(self.get_snapshot_id())
-            return end
-
-    def get_snapshot_id(self) -> str:
-        if snapshot_id := getattr(self, '__snapshot_id', None):
-            return snapshot_id
-        else:
-            self.__dict__['__snapshot_id'] = snapshot_id = generate_snapshot_id('end')
-            return snapshot_id
-
-    def set_snapshot_id(self, set_id: str) -> None:
-        self.__dict__['__snapshot_id'] = set_id
-
-
-def generate_snapshot_id(node_id: str) -> str:
-    # module method to allow mocking
-    return f'{node_id}:{uuid4().hex}'
 
 
 @dataclass(frozen=True)
