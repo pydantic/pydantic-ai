@@ -297,6 +297,7 @@ async def test_iter():
     node_reprs: list[str] = []
     async with my_graph.iter(Float2String(3.14)) as graph_iter:
         assert repr(graph_iter) == snapshot('<GraphRun graph=my_graph>')
+        assert graph_iter.result is None  # not finished yet
         async for node in graph_iter:
             node_reprs.append(repr(node))
         # len('3.14') * 2 == 8

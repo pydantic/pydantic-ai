@@ -653,7 +653,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     def result(self) -> GraphRunResult[StateT, RunEndT] | None:
         """The final result of the graph run if the run is completed, otherwise `None`."""
         if not isinstance(self._next_node, End):
-            return None  # pragma: no cover  -- deprecated path; only hit when a partial run is interrupted
+            return None  # The GraphRun has not finished running
         return GraphRunResult[StateT, RunEndT](
             self._next_node.data,
             state=self.state,
