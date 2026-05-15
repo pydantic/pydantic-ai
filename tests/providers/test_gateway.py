@@ -36,8 +36,8 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
-        ('openai', OpenAIProvider, 'openai'),
-        ('openai-chat', OpenAIProvider, 'openai'),
+        ('openai', OpenAIProvider, 'openai-responses'),
+        ('openai-chat', OpenAIProvider, 'openai-chat'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
     ],
 )
@@ -88,8 +88,8 @@ def vcr_config():
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
-        ('openai', OpenAIProvider, 'openai'),
-        ('openai-chat', OpenAIProvider, 'openai'),
+        ('openai', OpenAIProvider, 'openai-responses'),
+        ('openai-chat', OpenAIProvider, 'openai-chat'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
         ('groq', GroqProvider, 'groq'),
         ('google-vertex', GoogleProvider, 'google-vertex'),
@@ -112,7 +112,7 @@ def test_gateway_provider_unknown():
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('openai-chat', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 

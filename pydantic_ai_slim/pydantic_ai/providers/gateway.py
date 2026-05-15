@@ -246,9 +246,9 @@ def normalize_gateway_provider(provider: str) -> str:
     """
     provider = provider.removeprefix('gateway/')
 
-    if provider in ('openai', 'openai-chat', 'chat'):
-        return 'openai'
-    elif provider in ('openai-responses', 'responses'):
+    if provider in ('openai-chat', 'chat'):
+        return 'openai-chat'
+    elif provider in ('openai', 'openai-responses', 'responses'):
         return 'openai-responses'
     elif provider in ('gemini', 'google-vertex'):
         return 'google-vertex'

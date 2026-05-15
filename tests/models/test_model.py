@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
@@ -88,7 +87,7 @@ TEST_CASES = [
         'gpt-3.5-turbo',
         'openai',
         'openai',
-        OpenAIChatModel,
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
@@ -96,7 +95,7 @@ TEST_CASES = [
         'gpt-3.5-turbo',
         'openai',
         'openai',
-        OpenAIChatModel,
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
@@ -104,7 +103,7 @@ TEST_CASES = [
         'o1',
         'openai',
         'openai',
-        OpenAIChatModel,
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {
@@ -241,7 +240,6 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
-            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)

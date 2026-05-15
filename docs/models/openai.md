@@ -10,7 +10,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 ## Configuration
 
-To use `OpenAIChatModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
+To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 ## Environment variable
 
@@ -20,7 +20,7 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-You can then use `OpenAIChatModel` by name:
+The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the modern [Responses API](https://platform.openai.com/docs/api-reference/responses)). Use `'openai-chat:'` to pin to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] (the Chat Completions API).
 
 ```python
 from pydantic_ai import Agent
@@ -33,14 +33,14 @@ Or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model)
 ...
 ```
 
-By default, the `OpenAIChatModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
+By default, the model uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
 
 ## Configure the provider
 
@@ -122,7 +122,7 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 ## OpenAI Responses API
 
-Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]:
+Pydantic AI uses OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) by default through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. Both `'openai:'` and `'openai-responses:'` resolve to it:
 
 ```python
 from pydantic_ai import Agent
@@ -130,12 +130,6 @@ from pydantic_ai import Agent
 agent = Agent('openai-responses:gpt-5.2')
 ...
 ```
-
-!!! note "v2 default change"
-    In Pydantic AI v2, the bare `'openai:'` prefix will resolve to `OpenAIResponsesModel` instead of `OpenAIChatModel`. Before v2, `pydantic-ai` emits a `PydanticAIDeprecationWarning` whenever bare `'openai:'` is used; pick an explicit prefix to silence the warning and pin behavior:
-
-    - `'openai-chat:gpt-5.2'` keeps the Chat Completions routing.
-    - `'openai-responses:gpt-5.2'` opts in to the Responses API today (and matches the upcoming v2 default).
 
 Or initialise the model directly with just the model name:
 
