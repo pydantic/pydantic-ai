@@ -2139,7 +2139,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_role = profile.openai_system_prompt_role or 'system'
+            system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
@@ -2575,7 +2575,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(
                             responses.EasyInputMessageParam(
-                                role=profile.openai_system_prompt_role or 'system', content=part.content
+                                role=profile.get('openai_system_prompt_role', None) or 'system', content=part.content
                             )
                         )
                     elif isinstance(part, UserPromptPart):
