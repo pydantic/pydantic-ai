@@ -107,7 +107,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                 if resolved is not None:
                     parts.append(resolved)
 
-        instructions, discovered_tools = await self._collect_scoped_toolset_instructions(capability_id, ctx)
+        instructions = await self._collect_scoped_toolset_instructions(capability_id, ctx)
 
         for resolved in instructions:
             parts.append(resolved)
@@ -117,14 +117,10 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         # TODO: let us make it a property and read from message history instead
         ctx.loaded_capability_ids.add(capability_id)
         return ToolReturn(
-            return_value=LoadCapabilityReturn(
-                capability_id=capability_id, instructions=instructions_text, discovered_tools=discovered_tools
-            )
+            return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )
 
-    async def _collect_scoped_toolset_instructions(
-        self, capability_id: str, ctx: RunContext[AgentDepsT]
-    ) -> tuple[list[str], list[str]]:
+    async def _collect_scoped_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
         """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
 
         Bypasses each wrapper's own gate (still closed because the cap isn't yet
@@ -140,15 +136,12 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         self.apply(collect)
 
         out: list[str] = []
-        discovered_tools: list[str] = []
         for ts in scoped:
             result = await ts.wrapped.get_instructions(ctx)
-            tools = await ts.wrapped.get_tools(ctx)
-            discovered_tools.extend([name for name in tools.keys()])
             if result is None:
                 continue
             for item in [result] if isinstance(result, (str, InstructionPart)) else result:
                 content = item.content if isinstance(item, InstructionPart) else item
                 if content and content.strip():
                     out.append(content)
-        return out, discovered_tools
+        return out

@@ -603,8 +603,6 @@ def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
                     # surfacing a user-defined `search_tools` whose metadata has no legacy
                     # shape.
                     _collect_legacy(part.metadata, discovered)
-                elif isinstance(part, LoadCapabilityReturnPart):
-                    discovered.update(part.discovered_tools)
 
         else:  # ModelResponse — the only other variant of ModelMessage.
             for part in msg.parts:

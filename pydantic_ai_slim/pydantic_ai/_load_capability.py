@@ -68,9 +68,6 @@ class LoadCapabilityReturn(TypedDict):
     instructions: str | None
     """Instructions for the model to follow when using the loaded capability, or ``None`` if the capability declared none."""
 
-    discovered_tools: list[str]
-    """The tools that are exposed by this capability."""
-
 
 @dataclass(repr=False)
 class LoadCapabilityCallPart(ToolCallPart):
@@ -167,10 +164,6 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     def loaded_capability(self) -> str:
         """Subfield accessor for ``content['capability_id']``."""
         return self.content['capability_id']
-
-    @property
-    def discovered_tools(self) -> list[str]:
-        return self.content['discovered_tools']
 
     @property
     def instructions(self) -> str | None:
