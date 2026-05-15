@@ -661,11 +661,14 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
+                # `UploadedFile.provider_name` is a `Literal[...]` that postdates `GrokProvider` —
+                # legacy `'grok'` could never have been serialized into it (Pydantic rejects at deserialize).
+                # The `_LEGACY_PROVIDER_NAMES` check is kept here for self-consistency with the rest of the file;
+                # in practice this branch always sees a non-legacy value.
                 if item.provider_name != self.system and item.provider_name not in _LEGACY_PROVIDER_NAMES:
                     raise UserError(
                         f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
-                        f'Expected `provider_name` to be `{self.system!r}` '
-                        f'(legacy {sorted(_LEGACY_PROVIDER_NAMES)!r} also accepted).'
+                        f'Expected `provider_name` to be `{self.system!r}`.'
                     )
                 content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
