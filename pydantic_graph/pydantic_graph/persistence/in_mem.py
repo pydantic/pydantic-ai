@@ -15,7 +15,7 @@ from typing import Any
 import pydantic
 
 from .. import exceptions
-from ..nodes import BaseNode, End
+from ..basenode import BaseNode, End
 from . import (
     BaseStatePersistence,
     EndSnapshot,
