@@ -58,13 +58,15 @@ Useful `RunContext` fields include:
 
 ## Use MCP Servers
 
-Attach an MCP server as a toolset on the agent.
+Attach an MCP server as an `MCPToolset` on the agent. `MCPToolset` accepts a URL string, a script path, a `fastmcp.client.transports.*Transport` instance, or a pre-built `fastmcp.Client`.
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
+from fastmcp.client.transports import StdioTransport
 
-server = MCPServerStdio('python', args=['mcp_server.py'], timeout=10)
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+server = MCPToolset(StdioTransport(command='python', args=['mcp_server.py']))
 agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 
@@ -74,12 +76,7 @@ async def main():
         print(result.output)
 ```
 
-Default transport choices:
-
-- `MCPServerStdio` for local subprocess servers
-- `MCPServerStreamableHTTP` for HTTP servers
-
-`MCPServerSSE` still exists, but Streamable HTTP is the better default.
+For HTTP servers, pass the URL directly: `MCPToolset('https://example.com/mcp')` (Streamable HTTP) or `MCPToolset('https://example.com/sse')` (SSE).
 
 ## Search with DuckDuckGo, Tavily, or Exa
 

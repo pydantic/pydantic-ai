@@ -56,8 +56,6 @@ nav:
           - retries.md
       - MCP:
           - Overview: mcp/overview.md
-          - mcp/client.md
-          - mcp/fastmcp-client.md
           - mcp/server.md
       - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md

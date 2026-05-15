@@ -660,7 +660,7 @@ _(This example is complete, it can be run "as is")_
 
 The [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] allows your agent to use remote MCP servers with communication handled by the model provider.
 
-This requires the MCP server to live at a public URL the provider can reach and does not support many of the advanced features of Pydantic AI's agent-side [MCP support](mcp/client.md),
+This requires the MCP server to live at a public URL the provider can reach and does not support many of the advanced features of Pydantic AI's agent-side [MCP support](mcp/overview.md),
 but can result in optimized context use and caching, and faster performance due to the lack of a round-trip back to Pydantic AI.
 
 ### Provider Support

@@ -631,15 +631,17 @@ async def test_comprehensive_toolset_composition():
     )
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
     async with toolset:
@@ -655,15 +657,16 @@ class InitializationError(Exception):
     pass
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
     server2.__aenter__.side_effect = InitializationError
 

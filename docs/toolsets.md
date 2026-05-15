@@ -3,7 +3,7 @@
 
 A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called. Toolsets can also be provided via [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings.
 
-Toolsets are used (among many other things) to define [MCP servers](mcp/client.md) available to an agent. Pydantic AI includes many kinds of toolsets which are described below, and you can define a [custom toolset](#building-a-custom-toolset) by inheriting from the [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] class.
+Toolsets are used (among many other things) to define [MCP servers](mcp/overview.md) available to an agent. Pydantic AI includes many kinds of toolsets which are described below, and you can define a [custom toolset](#building-a-custom-toolset) by inheriting from the [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] class.
 
 The toolsets that will be available during an agent run can be specified in four different ways:
 
@@ -884,10 +884,7 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities.md), whi
 
 ### MCP Servers
 
-Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
-
-1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
-2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers. See the [MCP overview](./mcp/overview.md) for details.
 
 ### Agent Skills
 
@@ -912,7 +909,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 

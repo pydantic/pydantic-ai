@@ -98,7 +98,6 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..mcp import MCPServer
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -270,7 +269,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        mcp_servers: Sequence[MCPServer] = (),
+        mcp_servers: Sequence[AbstractToolset[AgentDepsT]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -303,7 +302,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
-    ):
+    ) -> None:
         """Create an agent.
 
         Args:
@@ -2590,7 +2589,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        This will start all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered as `toolsets` so they are ready to be used,
         and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
@@ -2615,24 +2614,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if self._entered_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
                 self._exit_stack = None
-
-    def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
-        """Set the sampling model on all MCP servers registered with the agent.
-
-        If no sampling model is provided, the agent's model will be used.
-        """
-        try:
-            sampling_model = models.infer_model(model) if model else self._get_model(None)
-        except exceptions.UserError as e:
-            raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
-
-        from ..mcp import MCPServer
-
-        def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(toolset, MCPServer):
-                toolset.sampling_model = sampling_model
-
-        self._get_toolset().apply(_set_sampling_model)
 
     def to_web(
         self,
@@ -2705,29 +2686,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             html_source=html_source,
         )
-
-    @asynccontextmanager
-    @deprecated(
-        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
-    )
-    async def run_mcp_servers(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> AsyncIterator[None]:
-        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
-
-        Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
-        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
-
-        Returns: a context manager to start and shutdown the servers.
-        """
-        try:
-            self.set_mcp_sampling_model(model)
-        except exceptions.UserError:
-            if model is not None:
-                raise
-
-        async with self:
-            yield
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (

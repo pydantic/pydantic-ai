@@ -7530,38 +7530,13 @@ def test_many_multimodal_tool_response():
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')  # type: ignore[call-arg]
+        Agent('test', usage_limits='invalid')  # pyright: ignore[reportCallIssue]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')  # type: ignore[call-arg]
+        Agent('test', invalid_kwarg='value')  # pyright: ignore[reportCallIssue]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
-
-
-def test_deprecated_kwargs_still_work():
-    """Test that valid deprecated kwargs still work with warnings."""
-    import warnings
-
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-
-            Agent(  # pyright: ignore[reportDeprecated]
-                'test',
-                mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],  # pyright: ignore[reportDeprecated]
-            )
-            mcp_servers_warnings = [
-                warning
-                for warning in w
-                if issubclass(warning.category, DeprecationWarning)
-                and '`mcp_servers` is deprecated' in str(warning.message)
-            ]
-            assert len(mcp_servers_warnings) == 1
-    except ImportError:
-        pass
+        Agent('test', foo='value1', bar='value2')  # pyright: ignore[reportCallIssue]
 
 
 def test_override_toolsets():
@@ -7968,15 +7943,17 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
     assert seen_max_retries == [2]
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_explicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -7989,15 +7966,17 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_implicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -8006,10 +7985,11 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_parallel_mcp_calls():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
@@ -8024,7 +8004,7 @@ def test_parallel_mcp_calls():
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
@@ -8281,41 +8261,6 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
     )
     assert integer_holder == 2
-
-
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
-def test_set_mcp_sampling_model():
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    test_model = TestModel()
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)  # pyright: ignore[reportDeprecated]
-    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
-    agent = Agent(None, toolsets=[toolset])
-
-    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
-        agent.set_mcp_sampling_model()
-    assert server1.sampling_model is None
-    assert server2.sampling_model is test_model
-
-    agent.model = test_model
-    agent.set_mcp_sampling_model()
-    assert server1.sampling_model is test_model
-    assert server2.sampling_model is test_model
-
-    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
-    with agent.override(model=function_model):
-        agent.set_mcp_sampling_model()
-        assert server1.sampling_model is function_model
-        assert server2.sampling_model is function_model
-
-    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
-    agent.set_mcp_sampling_model(function_model2)
-    assert server1.sampling_model is function_model2
-    assert server2.sampling_model is function_model2
 
 
 def test_toolsets():

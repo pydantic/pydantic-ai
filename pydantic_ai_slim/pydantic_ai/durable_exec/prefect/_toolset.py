@@ -52,16 +52,15 @@ def prefectify_toolset(
         )
 
     try:
-        from pydantic_ai.mcp import MCPServer
+        from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_server import PrefectMCPServer
+        from ._mcp_toolset import PrefectMCPToolset
     except ImportError:
-        pass
-    else:
-        if isinstance(toolset, MCPServer):
-            return PrefectMCPServer(
-                wrapped=toolset,
-                task_config=mcp_task_config,
-            )
+        return toolset
+    if isinstance(toolset, MCPToolset):
+        return PrefectMCPToolset(
+            wrapped=toolset,
+            task_config=mcp_task_config,
+        )
 
     return toolset

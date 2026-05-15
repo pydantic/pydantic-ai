@@ -346,7 +346,7 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
 
-Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
+Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/overview.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
 
 ### Options
 
@@ -606,7 +606,7 @@ For more information on how `end_strategy` works with both function tools and ou
 
 ## Tool Search
 
-Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
+Agents with many tools (e.g. [MCP servers](mcp/overview.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
 Reach for it when:
 
@@ -616,7 +616,7 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
