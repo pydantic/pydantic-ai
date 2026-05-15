@@ -125,6 +125,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     This is `None` outside capability hook dispatch, where there is no current capability.
     """
 
+    discovered_tools: set[str] = field(default_factory=set[str])
+    """The tools that have been for this capability."""
+
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""

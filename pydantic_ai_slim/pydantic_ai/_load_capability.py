@@ -68,6 +68,9 @@ class LoadCapabilityReturn(TypedDict):
     instructions: str | None
     """Instructions for the model to follow when using the loaded capability, or ``None`` if the capability declared none."""
 
+    discovered_tools: list[str]
+    """The tools that are exposed by this capability."""
+
 
 @dataclass(repr=False)
 class LoadCapabilityCallPart(ToolCallPart):
@@ -166,6 +169,10 @@ class LoadCapabilityReturnPart(ToolReturnPart):
         return self.content['capability_id']
 
     @property
+    def discovered_tools(self) -> list[str]:
+        return self.content['discovered_tools']
+
+    @property
     def instructions(self) -> str | None:
         """Subfield accessor for ``content['instructions']``.
 
@@ -177,7 +184,9 @@ class LoadCapabilityReturnPart(ToolReturnPart):
 _LOAD_CAPABILITY_CALL_ARGS_TA: pydantic.TypeAdapter[str | LoadCapabilityArgs | None] = pydantic.TypeAdapter(
     Union[str, LoadCapabilityArgs, None]  # noqa: UP007
 )
-_LOAD_CAPABILITY_RETURN_CONTENT_TA: pydantic.TypeAdapter[LoadCapabilityReturn] = pydantic.TypeAdapter(LoadCapabilityReturn)
+_LOAD_CAPABILITY_RETURN_CONTENT_TA: pydantic.TypeAdapter[LoadCapabilityReturn] = pydantic.TypeAdapter(
+    LoadCapabilityReturn
+)
 
 
 def _narrow_load_capability_call(part: ToolCallPart) -> LoadCapabilityCallPart:

@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pydantic_ai import ModelRequestContext
-
 from .._run_context import AgentDepsT, RunContext
+from .._tool_search import parse_discovered_tools
+from ..messages import (
+    LoadCapabilityReturnPart,
+    ModelRequest,
+    ModelResponse,
+    ToolSearchCallPart,
+    ToolSearchReturnContent,
+    ToolSearchReturnPart,
+)
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
@@ -29,6 +36,9 @@ from ..tools import (
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
+
+if TYPE_CHECKING:
+    from ..models import ModelRequestContext
 
 
 @dataclass
@@ -196,3 +206,82 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
         )
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Splice synthetic tool-search parts into history for any newly-loaded deferred capability.
+
+        After the model calls `load_capability(id)`, the tools that capability exposes
+        are not yet recorded in history as "discovered" — `parse_discovered_tools`
+        (on the local fallback path) and provider server-side state (on native paths)
+        both key off `ToolSearch{Call,Return}Part`s in the message history. We forge
+        that exchange here so the tools become callable on this turn: a
+        `ToolSearchCallPart` appended to each load-capability `ModelResponse` and a
+        matching `ToolSearchReturnPart` appended to the load-capability `ModelRequest`.
+
+        Walks each load-capability pair in history order and synthesizes locally for
+        the still-missing tools at that pair. Updates `discovered` as it goes so a
+        same-turn multi-load scenario synthesizes once per pair without redundancy.
+        Idempotent across turns: once a pair has been synthesized, its tools are in
+        the `discovered` set on subsequent runs and the diff is empty.
+        """
+        # TODO(v2.x): parse_discovered_tools is also called from ToolSearchToolset.get_tools
+        # earlier this turn — same input, same output. When ctx.loaded_tools moves to a
+        # history-derived agent-graph pre-step, this duplicate goes away and both consumers
+        # read from ctx.
+        discovered = parse_discovered_tools(request_context.messages)
+
+        for i, message in enumerate(request_context.messages):
+            if not isinstance(message, ModelRequest):
+                continue
+            if i == 0:
+                continue
+            # Narrow into a local so the `isinstance` carries through to the `.parts.append`
+            # below — pyright doesn't track narrowing across re-indexing of the messages list.
+            prev_message = request_context.messages[i - 1]
+            if not isinstance(prev_message, ModelResponse):
+                continue
+
+            load_call_msg = prev_message
+            load_return_msg = message
+
+            load_returns = [p for p in message.parts if isinstance(p, LoadCapabilityReturnPart)]
+            if not load_returns:
+                continue
+
+            expected_here: set[str] = set()
+            for part in load_returns:
+                expected_here.update(part.discovered_tools)
+
+            missing_here = expected_here - discovered
+            if not missing_here:
+                continue
+
+            # Pair the synthetic call/return by a shared tool_call_id. The id is invented
+            # client-side — providers don't validate that they emitted it, they just match
+            # call/return parts by id when serializing to native shape.
+            #
+            # `parts` is typed `Sequence[...]` (immutable view), so we rebuild each message
+            # with `dataclasses.replace` and re-bind at its index. `request_context.messages`
+            # itself is `list[ModelMessage]` and is meant to be mutated by this hook.
+            call_id = f'auto_load_{uuid.uuid4().hex[:8]}'
+            new_call_part = ToolSearchCallPart(
+                args={'queries': ['<auto-discovered>']},
+                tool_call_id=call_id,
+            )
+            content: ToolSearchReturnContent = {
+                'discovered_tools': [{'name': n, 'description': None} for n in sorted(missing_here)],
+            }
+            new_return_part = ToolSearchReturnPart(content=content, tool_call_id=call_id)
+
+            request_context.messages[i - 1] = replace(
+                load_call_msg, parts=[*load_call_msg.parts, new_call_part]
+            )
+            request_context.messages[i] = replace(
+                load_return_msg, parts=[*load_return_msg.parts, new_return_part]
+            )
+            # Reflect this synthesis in `discovered` so the next iteration's diff is correct.
+            discovered |= missing_here
+
+        return request_context

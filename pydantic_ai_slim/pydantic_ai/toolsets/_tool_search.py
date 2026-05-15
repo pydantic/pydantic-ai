@@ -34,18 +34,11 @@ from dataclasses import dataclass, replace
 from functools import cache
 from typing import Annotated, Any
 
-from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import TypedDict
+from pydantic import Field
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE, parse_discovered_tools  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
-from ..messages import (
-    ModelRequest,
-    NativeToolSearchReturnPart,
-    ToolReturnPart,
-    ToolSearchReturnPart,
-)
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
@@ -61,21 +54,6 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
-
-
-class _LegacyDiscoveryMetadata(TypedDict):
-    """Pre-typed-content metadata sideband shape.
-
-    Earlier versions stashed discovered tool names on
-    `ToolReturnPart.metadata['discovered_tools']` instead of on the typed `content`.
-    Validating against this shape via Pydantic keeps the legacy reader honest about
-    what it accepts; new writes always go through the typed content.
-    """
-
-    discovered_tools: list[str]
-
-
-_LEGACY_METADATA_TA = TypeAdapter(_LegacyDiscoveryMetadata)
 
 
 _MAX_SEARCH_RESULTS = 10
@@ -249,7 +227,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered = self._parse_discovered_tools(ctx)
+        # TODO: Discovered list should expose tools which are now loaded from the caps
+
+        # Can I move this out of here to somewhere else
+        # Was that what Douwe meant yesterday he was talking about something similar?
+        discovered = parse_discovered_tools(ctx.messages)
+        print('We have already discovered these tools: ', discovered)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
@@ -329,52 +312,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             args_validator=args_validator,
             corpus=corpus,
         )
-
-    def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
-        """Scan message history for previously-discovered tool names.
-
-        Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
-        [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
-        in the history has a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]:
-        Pydantic's discriminator dispatch promotes from base parts on deserialization,
-        and direct construction goes through the typed-class `__init__` (which Pydantic
-        validates). No defensive isinstance walks needed.
-
-        Also reads the legacy `metadata['discovered_tools']` sideband (validated against
-        a TypedDict) so histories serialized before the typed-content migration continue
-        to surface previously-discovered tools.
-        """
-        discovered: set[str] = set()
-        for msg in ctx.messages:
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, ToolSearchReturnPart):
-                        self._collect_typed(part.content, discovered)
-                    elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        # Legacy histories carry discoveries on `metadata['discovered_tools']`
-                        # rather than typed content. Narrowing tool_name + metadata shape avoids
-                        # surfacing a user-defined `search_tools` whose metadata has no legacy
-                        # shape.
-                        self._collect_legacy(part.metadata, discovered)
-            else:  # ModelResponse — the only other variant of ModelMessage.
-                for part in msg.parts:
-                    if isinstance(part, NativeToolSearchReturnPart):
-                        self._collect_typed(part.content, discovered)
-        return discovered
-
-    @staticmethod
-    def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
-        """Add discovered tool names from a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
-        discovered.update(match['name'] for match in content['discovered_tools'])
-
-    @staticmethod
-    def _collect_legacy(metadata: Any, discovered: set[str]) -> None:
-        """Backward-compat reader for the pre-typed-content metadata sideband."""
-        try:
-            validated = _LEGACY_METADATA_TA.validate_python(metadata)
-        except ValidationError:
-            return
-        discovered.update(validated['discovered_tools'])
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

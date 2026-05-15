@@ -24,7 +24,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Union
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolSearchArgs, ToolSearchMatch, ToolSearchReturnContent
+from .._tool_search import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME as TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchArgs as ToolSearchArgs,
+    ToolSearchMatch as ToolSearchMatch,
+    ToolSearchReturnContent as ToolSearchReturnContent,
+)
 from . import AbstractNativeTool
 
 if TYPE_CHECKING:
@@ -90,13 +95,6 @@ ToolSearchStrategy = Union[ToolSearchFunc[AgentDepsT], ToolSearchLocalStrategy, 
 [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy] field and means
 "let Pydantic AI pick"; see that field's docstring for details.
 """
-
-
-TOOL_SEARCH_FUNCTION_TOOL_NAME = 'search_tools'
-"""Name of the local function tool that backs [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
-for keyword-based discovery when native tool search isn't available, and that model adapters
-route to for provider-side "client-executed" custom callable modes (Anthropic tool-reference
-blocks; OpenAI `execution='client'`)."""
 
 
 @dataclass(kw_only=True)
