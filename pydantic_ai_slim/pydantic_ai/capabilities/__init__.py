@@ -32,7 +32,9 @@ from .abstract import (
     WrapToolValidateHandler,
 )
 from .combined import CombinedCapability
+from .defer_tool_loading import DeferToolLoading
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .filter_tools import FilterTools
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -48,6 +50,8 @@ from .process_history import (
     ProcessHistory,
 )
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .require_tool_approval import RequireToolApproval
+from .set_tool_description import SetToolDescription
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -67,6 +71,8 @@ Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.Dynami
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
+        DeferToolLoading,
+        FilterTools,
         NativeTool,
         ImageGeneration,
         IncludeToolReturnSchemas,
@@ -76,6 +82,8 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RequireToolApproval,
+        SetToolDescription,
         SetToolMetadata,
         Thinking,
         ToolSearch,
@@ -112,17 +120,27 @@ __all__ = [
     'NativeTool',
     'NativeOrLocalTool',
     'CAPABILITY_TYPES',
-    'ImageGeneration',
-    'Instrumentation',
+    'CombinedCapability',
+    'DeferToolLoading',
+    'DynamicCapability',
+    'FilterTools',
+    'HandleDeferredToolCalls',
     'HistoryProcessor',
+    'HookTimeoutError',
+    'Hooks',
+    'ImageGeneration',
     'IncludeToolReturnSchemas',
+    'Instrumentation',
     'MCP',
+    'OutputContext',
     'PrefixTools',
     'PrepareOutputTools',
     'PrepareTools',
     'ProcessEventStream',
     'ProcessHistory',
     'ReinjectSystemPrompt',
+    'RequireToolApproval',
+    'SetToolDescription',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
@@ -135,12 +153,6 @@ __all__ = [
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
-    'CombinedCapability',
-    'DynamicCapability',
-    'HandleDeferredToolCalls',
-    'HookTimeoutError',
-    'Hooks',
-    'OutputContext',
 ]
 
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition, ToolsPrepareFunc
+from ..tools import ToolDefinition, ToolSelector, ToolsPrepareFunc
 from .abstract import AbstractToolset
 from .prepared import PreparedToolset
 
@@ -16,22 +18,27 @@ class DeferredLoadingToolset(PreparedToolset[AgentDepsT]):
     """
 
     prepare_func: ToolsPrepareFunc[AgentDepsT] = field(init=False, repr=False)
-    tool_names: frozenset[str] | None = None
-    """Optional set of tool names to mark for deferred loading. If `None`, all tools are marked for deferred loading."""
+    tools: ToolSelector[AgentDepsT]
 
     def __init__(
         self,
         wrapped: AbstractToolset[AgentDepsT],
         *,
-        tool_names: frozenset[str] | None = None,
+        tools: ToolSelector[AgentDepsT] = 'all',
+        tool_names: frozenset[str] | Sequence[str] | None = None,
     ):
-        self.tool_names = tool_names
+        if tool_names is not None:
+            warnings.warn(
+                "'tool_names' is deprecated, use 'tools' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if tools != 'all':
+                raise TypeError("Cannot specify both 'tools' and 'tool_names'.")
+            # Convert frozenset/sequence to list for ToolSelector (Sequence[str])
+            tools = list(tool_names)
 
-        async def _mark_deferred(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [
-                replace(td, defer_loading=True) if (tool_names is None or td.name in tool_names) else td
-                for td in tool_defs
-            ]
+        async def _mark_deferred(ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(td, defer_loading=True) for td in tool_defs]
 
-        self.wrapped = wrapped
-        self.prepare_func = _mark_deferred
+        super().__init__(wrapped=wrapped, prepare_func=_mark_deferred, tools=tools)

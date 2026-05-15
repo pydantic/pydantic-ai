@@ -53,7 +53,7 @@ from ..native_tools._tool_search import (
     ToolSearchReturnContent,
     ToolSearchTool,
 )
-from ..tools import Tool, ToolDefinition
+from ..tools import Tool, ToolDefinition, ToolSelector, matches_tool_selector
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -230,13 +230,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
 
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Optional [`ToolSelector`][pydantic_ai.tools.ToolSelector] adding tools to the deferred
+    set in addition to those marked `defer_loading=True` on the tool itself. See the
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability for details. Union semantics:
+    a tool is deferred if either the per-tool flag is set OR it matches this selector."""
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.defer_loading:
+            should_defer = tool.tool_def.defer_loading or (
+                self.tools is not None and await matches_tool_selector(self.tools, ctx, tool.tool_def)
+            )
+            if should_defer:
                 deferred[name] = tool
             else:
                 visible[name] = tool

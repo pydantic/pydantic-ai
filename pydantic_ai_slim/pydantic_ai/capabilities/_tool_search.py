@@ -21,6 +21,7 @@ from ..native_tools._tool_search import (
 from ..tools import (
     AgentNativeTool,
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
+    ToolSelector,
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
@@ -124,6 +125,24 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter on the local `search_tools` function."""
 
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Tools to defer in addition to those marked `defer_loading=True` on the tool itself.
+
+    Use this to opt tools into deferred loading from outside the [`Tool`][pydantic_ai.tools.Tool]
+    definition — useful for tools coming from external toolsets (MCP servers, third-party
+    [`Toolset`][pydantic_ai.toolsets.AbstractToolset] implementations) where you can't add the
+    per-tool flag, or to flip the default to "defer everything, opt out per-tool" via
+    `tools='all'`.
+
+    Semantics are **additive** (union) with per-tool `defer_loading=True`: a tool is deferred
+    if either the tool's own flag is set OR the tool matches this selector. The per-tool flag
+    is always respected; the capability-level selector only ever adds tools to the deferred
+    set, never removes them.
+
+    Defaults to `None` (no additional selection — only the per-tool flag controls deferral),
+    preserving backwards compatibility.
+    """
+
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
@@ -191,4 +210,5 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
+            tools=self.tools,
         )

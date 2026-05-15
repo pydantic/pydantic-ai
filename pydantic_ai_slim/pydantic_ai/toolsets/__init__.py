@@ -13,6 +13,7 @@ from .include_return_schemas import IncludeReturnSchemasToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
+from .set_description import SetDescriptionToolset
 from .set_metadata import SetMetadataToolset
 from .wrapper import WrapperToolset
 
@@ -35,6 +36,7 @@ __all__ = (
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'SetDescriptionToolset',
     'SetMetadataToolset',
     'WrapperToolset',
 )
