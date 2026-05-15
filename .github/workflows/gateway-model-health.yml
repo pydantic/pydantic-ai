@@ -35,7 +35,7 @@ jobs:
           cache-suffix: gateway-model-health
 
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra outlines-vllm-offline
+        run: uv sync --all-extras
 
       - name: Run gateway model catalog checks
         run: uv run pytest tests/providers/test_gateway_catalog.py -q --run-gateway-live

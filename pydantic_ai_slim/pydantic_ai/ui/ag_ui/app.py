@@ -82,7 +82,6 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
@@ -135,13 +134,6 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
                 the other, not both.
         """
-        from ... import _utils
-
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'AGUIApp')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         super().__init__(
             debug=debug,
             routes=routes,

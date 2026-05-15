@@ -84,7 +84,6 @@ def create_api_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-    **_deprecated_kwargs: object,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -103,11 +102,6 @@ def create_api_app(
     Returns:
         A Starlette application with the API endpoints.
     """
-    from ... import _utils
-
-    native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-    _utils.validate_empty_kwargs(_deprecated_kwargs)
-
     # Build model ID → original reference mapping and ModelInfo list for frontend
     model_id_to_ref: dict[str, Model | str] = {}
     model_infos: list[ModelInfo] = []

@@ -10,10 +10,8 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
-import pytest
 from pydantic import BaseModel
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile, google_model_profile
 
 from .._inline_snapshot import snapshot
@@ -214,22 +212,6 @@ def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     assert isinstance(profile, GoogleModelProfile)
     assert profile.google_supports_tool_combination is False
     assert profile.google_supports_server_side_tool_invocations is False
-
-
-def test_deprecated_native_output_with_builtin_tools_alias():
-    with pytest.warns(PydanticAIDeprecationWarning, match='google_supports_tool_combination'):
-        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
-    assert profile.google_supports_tool_combination is True
-
-
-def test_deprecated_alias_does_not_overwrite_explicit_new_flag():
-    """If the user sets both, the new flag wins — silently dropping an explicit `True` would surprise users."""
-    with pytest.warns(PydanticAIDeprecationWarning):
-        profile = GoogleModelProfile(
-            google_supports_tool_combination=True,
-            google_supports_native_output_with_builtin_tools=False,
-        )
-    assert profile.google_supports_tool_combination is True
 
 
 def test_model_profile_image_model():

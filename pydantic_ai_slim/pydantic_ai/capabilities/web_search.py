@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -98,6 +97,3 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
-
-
-install_deprecated_kwarg_alias(WebSearch, old='builtin', new='native')

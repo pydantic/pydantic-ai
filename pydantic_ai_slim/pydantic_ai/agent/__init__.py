@@ -395,7 +395,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
         capabilities.extend(legacy_history_processor_capabilities)
 
-        capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
         capabilities.extend(_utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
         capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
         # `event_stream_handler` is NOT auto-remapped to a `ProcessEventStream` capability: the
@@ -412,7 +411,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
+        self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -507,8 +506,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
-            '_override_builtin_tools', default=None
+        self._override_native_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
+            '_override_native_tools', default=None
         )
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
@@ -647,11 +646,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+        extra_capabilities = _utils.consume_deprecated_prepare_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
         extra_capabilities.extend(
             _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
@@ -659,7 +655,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
         # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
         # already fired in the consume helper.
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
@@ -688,14 +683,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
         if extra_capabilities:
             all_capabilities.extend(extra_capabilities)
-
-        # Read the deprecated spec field only when set so we don't trigger its warning
-        # for users who didn't opt in. The kwarg takes precedence over the spec field.
-        legacy_instrument = (
-            instrument
-            if instrument is not None
-            else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
-        )
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -730,7 +717,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
-        agent._instrument = legacy_instrument
         if legacy_event_stream_handler is not None:
             agent._event_stream_handler = legacy_event_stream_handler
         return agent
@@ -830,11 +816,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
+        extra_capabilities = _utils.consume_deprecated_prepare_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
         extra_capabilities.extend(
             _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
@@ -842,7 +825,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_file'
         )
@@ -875,9 +857,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
-        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
-        if instrument is not None:
-            agent._instrument = instrument
         if legacy_event_stream_handler is not None:
             agent._event_stream_handler = legacy_event_stream_handler
         return agent
@@ -1032,7 +1011,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -1124,11 +1102,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1354,7 +1327,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
         # `capabilities=[NativeTool(...)]`) on top.
-        if some_native_tools := self._override_builtin_tools.get():
+        if some_native_tools := self._override_native_tools.get():
             extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
             for cap in extra_capabilities:
                 extra_native_tools.extend(cap.get_native_tools())
@@ -1709,7 +1682,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         output_retries: int | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -1737,9 +1709,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         resolved = self._resolve_spec(spec)
 
         # Apply spec values as defaults where explicit params are not set
@@ -1783,7 +1752,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools_token = None
 
         if _utils.is_set(native_tools):
-            native_tools_token = self._override_builtin_tools.set(_utils.Some(native_tools))
+            native_tools_token = self._override_native_tools.set(_utils.Some(native_tools))
         else:
             native_tools_token = None
 
@@ -1833,7 +1802,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
             if native_tools_token is not None:
-                self._override_builtin_tools.reset(native_tools_token)
+                self._override_native_tools.reset(native_tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
@@ -2673,7 +2642,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -2727,19 +2695,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        # Legacy `builtin_tools=` on `to_web` historically forwarded to the UI's `native_tools=`
-        # (additional native tools shown as options in the UI). Continue to forward there to
-        # preserve behavior, but emit a deprecation warning encouraging the
-        # `capabilities=[NativeTool(...)]` migration path on the underlying agent.
-        legacy_native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, None)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         from ..ui._web import create_web_app
 
         return create_web_app(
             self,
             models=models,
-            native_tools=legacy_native_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
@@ -2776,7 +2736,6 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'retries',
     'tool_retries',
     'tool_timeout',
-    'instrument',
     'output_schema',
     'deps_schema',
 )
@@ -2852,7 +2811,6 @@ def _capabilities_from_spec(
                 label='capability',
                 custom_types_param='custom_capability_types',
                 instantiate=_instantiate_cap,
-                legacy_aliases=_agent_spec.LEGACY_CAPABILITY_NAMES,
             )
             capabilities.append(capability)
         return capabilities
