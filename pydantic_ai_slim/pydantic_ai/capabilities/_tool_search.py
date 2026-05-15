@@ -226,20 +226,15 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         Idempotent across turns: once a pair has been synthesized, its tools are in
         the `discovered` set on subsequent runs and the diff is empty.
         """
-        # TODO(v2.x): parse_discovered_tools is also called from ToolSearchToolset.get_tools
+        # TODO: parse_discovered_tools is also called from ToolSearchToolset.get_tools
         # earlier this turn — same input, same output. When ctx.loaded_tools moves to a
         # history-derived agent-graph pre-step, this duplicate goes away and both consumers
         # read from ctx.
         discovered = parse_discovered_tools(request_context.messages)
 
-        # Start at index 1 — the load_capability exchange spans two adjacent messages
-        # (the call lives on the previous Response, the return on the current Request),
-        # so there's nothing to do at index 0.
         for i, message in enumerate(request_context.messages[1:], start=1):
             if not isinstance(message, ModelRequest):
                 continue
-            # Narrow into a local so the `isinstance` carries through to the `replace`
-            # below — pyright doesn't track narrowing across re-indexing of the messages list.
             prev_message = request_context.messages[i - 1]
             if not isinstance(prev_message, ModelResponse):
                 continue
@@ -259,13 +254,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             if not missing_here:
                 continue
 
-            # Pair the synthetic call/return by a shared tool_call_id. The id is invented
-            # client-side — providers don't validate that they emitted it, they just match
-            # call/return parts by id when serializing to native shape.
-            #
-            # `parts` is typed `Sequence[...]` (immutable view), so we rebuild each message
-            # with `dataclasses.replace` and re-bind at its index. `request_context.messages`
-            # itself is `list[ModelMessage]` and is meant to be mutated by this hook.
             call_id = f'auto_load_{uuid.uuid4().hex[:8]}'
             new_call_part = ToolSearchCallPart(
                 args={'queries': ['<auto-discovered>']},
