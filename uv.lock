@@ -8,6 +8,13 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[options]
+exclude-newer = "2026-05-12T15:49:39.888254Z"
+exclude-newer-span = "P3D"
+
+[options.exclude-newer-package]
+plaine = "2099-01-01T00:00:00Z"
+
 [manifest]
 members = [
     "clai",

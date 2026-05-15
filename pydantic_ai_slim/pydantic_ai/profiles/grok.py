@@ -8,7 +8,7 @@ from . import ModelProfile
 
 @dataclass(kw_only=True)
 class GrokModelProfile(ModelProfile):
-    """Profile for Grok models (used with both GrokProvider and XaiProvider).
+    """Profile for Grok models (used with XaiProvider and various OpenAI-compatible providers).
 
     ALL FIELDS MUST BE `grok_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """

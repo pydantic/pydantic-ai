@@ -6,6 +6,10 @@ In September 2025, Pydantic AI reached V1, which means we're committed to API st
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0 (unreleased)
+
+- Drop `pydantic_ai.providers.grok.GrokProvider` (use `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel('grok-N', ...)` instead). The `'grok:'` model-string prefix is also removed; use `'xai:'` instead. `pydantic_ai.providers.grok.GrokModelName` is removed; use `pydantic_ai.models.xai.XaiModelName`.
+
 ### v1.0.1 (2025-09-05)
 
 The following breaking change was accidentally left out of v1.0.0:
