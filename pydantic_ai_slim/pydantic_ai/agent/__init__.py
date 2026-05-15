@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar
+from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -246,6 +246,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+    ) -> None: ...
+
+    @overload
+    @deprecated('`event_stream_handler` is deprecated, use `capabilities=[ProcessEventStream(...)]` instead.')
+    def __init__(
+        self,
+        model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        output_type: OutputSpec[OutputDataT] = str,
+        instructions: AgentInstructions[AgentDepsT] = None,
+        system_prompt: str | Sequence[str] = (),
+        deps_type: type[AgentDepsT] = NoneType,
+        name: str | None = None,
+        description: TemplateStr[AgentDepsT] | str | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        retries: int | None = None,
+        tool_retries: int | None = None,
+        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy = 'early',
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
