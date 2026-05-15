@@ -6884,6 +6884,8 @@ def test_mcp_local_string_must_be_url_raises_user_error():
 
 def test_mcp_local_url_string_override_uses_provided_url():
     """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    pytest.importorskip('fastmcp', reason='fastmcp package not installed')
     from pydantic_ai.mcp import MCPToolset
 
     cap = MCP(
