@@ -11301,6 +11301,7 @@ async def test_enqueue_accepts_model_request_passthrough():
         instructions='preserve me',
         timestamp=preset_timestamp,
         run_id='caller-run-id',
+        conversation_id='caller-conv-id',
     )
 
     @agent.tool
@@ -11317,16 +11318,18 @@ async def test_enqueue_accepts_model_request_passthrough():
         if isinstance(msg, ModelRequest) and msg.instructions == 'do this carefully'
     )
     assert injected_unstamped.metadata == {'origin': 'webhook-42'}
-    # Drain should have stamped timestamp/run_id since the user didn't set them.
+    # Drain should have stamped timestamp/run_id/conversation_id since the user didn't set them.
     assert injected_unstamped.timestamp is not None
     assert injected_unstamped.run_id is not None
+    assert injected_unstamped.conversation_id is not None
 
     injected_prestamped = next(
         msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
     )
-    # Producer-supplied timestamp/run_id are preserved (drain doesn't overwrite).
+    # Producer-supplied timestamp/run_id/conversation_id are preserved (drain doesn't overwrite).
     assert injected_prestamped.timestamp == preset_timestamp
     assert injected_prestamped.run_id == 'caller-run-id'
+    assert injected_prestamped.conversation_id == 'caller-conv-id'
 
 
 def test_pending_message_drain_capability_is_not_spec_constructible():
