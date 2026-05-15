@@ -126,7 +126,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @deprecated(
         '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. '
         'Replace `async for r in stream.stream_responses(...)` with '
-        '`async for r in stream.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        '`async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots: '
+        "`state='incomplete'` while streaming and a final `state='complete'` (or `'interrupted'`) snapshot.",
         category=PydanticAIDeprecationWarning,
     )
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:

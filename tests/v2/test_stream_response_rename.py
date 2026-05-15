@@ -4,8 +4,8 @@ In 1.x, calling `stream_responses()` (plural) on `AgentStream`,
 `StreamedRunResult`, or `StreamedRunResultSync` emits a
 `PydanticAIDeprecationWarning`.
 
-`AgentStream.stream_response()` is a pure rename: both names yield
-`ModelResponse` items.
+On `AgentStream`, singular and plural yield identical `ModelResponse`
+items — the plural is just an alias for the singular.
 
 `StreamedRunResult.stream_response()` and `StreamedRunResultSync.stream_response()`
 ship the new yield shape directly in 1.x: the singular yields `ModelResponse`,
