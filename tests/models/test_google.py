@@ -70,7 +70,6 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
     ImageGenerationTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
 )
@@ -1409,19 +1408,10 @@ There is a high chance of rain throughout the day, with some reports stating a 6
     )
 
 
-@pytest.mark.parametrize('use_deprecated_url_context_tool', [False, True])
-async def test_google_model_web_fetch_tool(
-    allow_model_requests: None, google_provider: GoogleProvider, use_deprecated_url_context_tool: bool
-):
+async def test_google_model_web_fetch_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
-    if use_deprecated_url_context_tool:
-        with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
-            tool = UrlContextTool()  # pyright: ignore[reportDeprecated]
-    else:
-        tool = WebFetchTool()
-
-    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(tool)])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebFetchTool())])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
