@@ -3750,7 +3750,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         token_threshold: int | None = None,
         message_count_threshold: int | None = None,
         trigger: Callable[[list[ModelMessage]], bool] | None = None,
-        instructions: str | None = None,
     ) -> None:
         """Initialize the OpenAI compaction capability.
 
@@ -3769,24 +3768,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             trigger: Stateless-mode only. Custom callable that decides whether
                 to compact based on the current messages. Takes precedence
                 over `message_count_threshold`.
-            instructions: Deprecated. OpenAI's `/compact` endpoint treats
-                `instructions` as a system/developer message inserted into
-                the compaction model's context, not as a directive for how
-                to summarize the conversation. This does not match
-                [`AnthropicCompaction.instructions`][pydantic_ai.models.anthropic.AnthropicCompaction]
-                semantics, so the field is deprecated and will be removed
-                in a future version.
         """
-        if instructions is not None:
-            warnings.warn(
-                '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '
-                "OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted "
-                "into the compaction model's context, not as a directive for how to summarize the conversation, "
-                'so this field does not match `AnthropicCompaction(instructions=...)` semantics.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         has_stateless_only = message_count_threshold is not None or trigger is not None
         has_stateful_only = token_threshold is not None
 
@@ -3816,7 +3798,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         self.token_threshold = token_threshold
         self.message_count_threshold = message_count_threshold
         self.trigger = trigger
-        self.instructions = instructions
 
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         if self.stateless:
@@ -3876,7 +3857,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
-        compacted_response = await request_context.model.compact_messages(compact_ctx, instructions=self.instructions)
+        compacted_response = await request_context.model.compact_messages(compact_ctx)
 
         # Replace message history with compaction + last request
         request_context.messages = [compacted_response, request_context.messages[-1]]

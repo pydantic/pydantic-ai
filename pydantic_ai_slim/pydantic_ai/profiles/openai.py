@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import re
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -91,9 +90,6 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
 
-    openai_supports_sampling_settings: bool = True
-    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
-
     openai_unsupported_model_settings: Sequence[str] = ()
     """A list of model settings that are not supported by this model."""
 
@@ -172,13 +168,7 @@ class OpenAIModelProfile(ModelProfile):
     Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
-    def __post_init__(self):  # pragma: no cover
-        if not self.openai_supports_sampling_settings:
-            warnings.warn(
-                'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
-                'Use `openai_unsupported_model_settings` instead.',
-                DeprecationWarning,
-            )
+    def __post_init__(self):
         if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
             raise UserError(
                 'If `openai_chat_send_back_thinking_parts` is "field", '
