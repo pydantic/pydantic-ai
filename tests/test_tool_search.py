@@ -2422,7 +2422,7 @@ To proceed with your refund request, you should be eligible as long as the order
     )
 
     google_agent: Agent[None, str] = Agent(
-        model='google-gla:gemini-3-flash-preview',
+        model='google:gemini-3-flash-preview',
         capabilities=[make_refunds_cap()],
     )
     google_result = await google_agent.run(
