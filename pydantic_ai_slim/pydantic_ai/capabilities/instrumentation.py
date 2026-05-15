@@ -56,9 +56,8 @@ class Instrumentation(AbstractCapability[Any]):
     When added to an agent via `capabilities=[Instrumentation(...)]`, this capability
     creates OpenTelemetry spans for the agent run, model requests, and tool executions.
 
-    Other capabilities can add attributes to these spans using either the OpenTelemetry API
-    (`opentelemetry.trace.get_current_span().set_attribute(key, value)`) or the Logfire SDK
-    (`logfire.current_span().set_attribute(key, value)`).
+    Other capabilities can add attributes to these spans using the OpenTelemetry API
+    (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
     """
 
     _safe_at_runtime: ClassVar[bool] = True

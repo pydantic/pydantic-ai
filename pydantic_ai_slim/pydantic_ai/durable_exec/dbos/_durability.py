@@ -256,13 +256,13 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                     return wrapped
 
             try:
-                from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+                from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 
                 from ._fastmcp_toolset import DBOSFastMCPToolset
             except ImportError:
                 pass
             else:
-                if isinstance(ts, FastMCPToolset):
+                if isinstance(ts, FastMCPToolset):  # pyright: ignore[reportDeprecated]
                     wrapped = DBOSFastMCPToolset(
                         wrapped=ts,
                         step_name_prefix=self.name,

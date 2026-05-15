@@ -265,6 +265,10 @@ filterwarnings = [
     # on a regular `Agent`. Tests for the wrapper-agent path (`tests/test_temporal.py`,
     # `tests/test_dbos.py`, `tests/test_prefect.py`) exercise it on purpose.
     "ignore:`(TemporalAgent|DBOSAgent|PrefectAgent)` is deprecated:DeprecationWarning",
+    # MCP server classes (`MCPServerStdio` / `MCPServerSSE` / `MCPServerStreamableHTTP` /
+    # `FastMCPToolset`) are deprecated in favor of `MCPToolset`. Durability tests still
+    # exercise the legacy MCP server classes on purpose to validate they keep working.
+    "ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",

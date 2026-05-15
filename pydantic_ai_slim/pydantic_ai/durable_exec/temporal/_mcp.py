@@ -26,7 +26,7 @@ from ._toolset import (
 )
 
 
-class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
+class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
     def __init__(
         self,
         toolset: AbstractToolset[AgentDepsT],
@@ -123,15 +123,15 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         # If instructions are enabled, fetch via activity (the server isn't initialized locally in workflows).
         _mcp_types: tuple[type, ...] = ()
         try:
-            from pydantic_ai.mcp import MCPServer
+            from pydantic_ai.mcp import MCPServer, MCPToolset
 
-            _mcp_types += (MCPServer,)
+            _mcp_types += (MCPServer, MCPToolset)
         except ImportError:
             pass
         try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+            from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 
-            _mcp_types += (FastMCPToolset,)
+            _mcp_types += (FastMCPToolset,)  # pyright: ignore[reportDeprecated]
         except ImportError:
             pass
         if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]

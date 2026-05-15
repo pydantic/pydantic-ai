@@ -55,7 +55,7 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSMCPServer, DBOSModel
-    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
+    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -67,7 +67,9 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPServerStdio, MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -230,6 +232,7 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
     complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,
@@ -1613,11 +1616,13 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
-    FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    mcp_instructions_agent = Agent(
+        FunctionModel(return_mcp_instructions),
+        name='mcp_instructions_agent',
+        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+    )
 mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
 
 
@@ -1627,16 +1632,18 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
     assert result.output == snapshot('Be a helpful assistant.')
 
 
-class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
+class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
-_uninit_instructions_toolset = _TestDBOSMCPToolset(
-    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
-    step_name_prefix='coverage_test',
-    step_config={},
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    _uninit_instructions_toolset = _TestDBOSMCPToolset(
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
+        step_name_prefix='coverage_test',
+        step_config={},
+    )
 
 
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
@@ -1647,11 +1654,67 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
     assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+# Parallel to `mcp_instructions_agent` above, using `MCPToolset` instead of `MCPServerStdio`.
+# Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path.
+mcptoolset_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
+        )
+    ],
 )
+mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)
+
+
+async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
+    """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper.
+
+    Parallel to `test_dbos_mcp_toolset_instructions_propagate`; exercises the new
+    `MCPToolset`/`DBOSMCPToolset` path instead of the legacy `MCPServerStdio`/`DBOSMCPServer`.
+    """
+    result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
+    assert result.output == snapshot('Be a helpful assistant.')
+
+
+def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
+    """`DBOSAgent` wraps `MCPToolset` in `DBOSMCPToolset`."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    dbos_agent = DBOSAgent(agent)
+    wrapped = next(ts for ts in dbos_agent._toolsets if isinstance(ts, DBOSMCPToolset))  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.wrapped is toolset
+
+
+async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
+    """When `_cached_tool_defs` is populated, `DBOSMCPToolset.get_tools` skips the step and returns from cache."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
+    wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
+    wrapper._cached_tool_defs = {  # pyright: ignore[reportPrivateUsage]
+        'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
+    }
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    tools = await wrapper.get_tools(run_context)
+    assert list(tools.keys()) == ['foo']
+    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
+    assert tools['foo'].tool_def.name == 'foo'
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
+    fastmcp_agent = Agent(
+        model,
+        name='fastmcp_agent',
+        toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    )
 
 fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
 

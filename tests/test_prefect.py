@@ -205,6 +205,7 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
     complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,

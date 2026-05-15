@@ -147,7 +147,7 @@ agent = Agent(
 To force native-only (errors on unsupported models instead of falling back to local):
 
 ```python {title="native_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', local=False)
+MCP(url='https://mcp.example.com/api', native=True, local=False)
 ```
 
 To force local-only (never use the native tool, even when the model supports it):
