@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -600,7 +601,14 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
 
     try:
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
-    except (NameError, TypeError, AttributeError):
+    except (NameError, TypeError, AttributeError) as e:
+        warnings.warn(
+            f'Could not resolve type hints for {callable_obj!r}: {e}. '
+            f'If the first parameter is annotated as `RunContext` under '
+            f'`if TYPE_CHECKING:`, move the import to module scope.',
+            UserWarning,
+            stacklevel=2,
+        )
         return None
 
     return type_hints.get(first_param_name)
