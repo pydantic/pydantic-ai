@@ -13,12 +13,12 @@ from .abstract import AbstractCapability, CapabilityOrdering
 
 @dataclass
 class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
-    """Framework capability that provides the ``load_capability`` tool for deferred capabilities.
+    """Framework capability that provides the `load_capability` tool for deferred capabilities.
 
     Added by the agent for a run when any capability has loadable deferred outputs.
     Its instructions include a stable catalog of deferred capabilities, while
     :class:`~pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset`
-    exposes the ``load_capability(id)`` tool that loads a selected capability.
+    exposes the `load_capability(id)` tool that loads a selected capability.
     """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

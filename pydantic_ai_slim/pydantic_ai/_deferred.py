@@ -22,7 +22,7 @@ LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via ``load_capability``.
+    """Parse message history to find capabilities loaded via `load_capability`.
 
     Relies on the agent loop's typed-promotion path (`_agent_graph` reading
     `ToolDefinition.tool_kind` and calling `ToolReturnPart.narrow_type`) to surface
@@ -41,15 +41,15 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
 async def tools_for_loaded_capabilities(ctx: RunContext[Any], root: AbstractToolset[Any]) -> set[str]:
     """Collect tool names exposed by every loaded deferred capability.
 
-    Walks the toolset tree for ``CapabilityScopedToolset`` nodes whose ``capability_id``
-    is in ``ctx.loaded_capability_ids`` and whose owning capability has
-    ``defer_loading=True``, then asks each wrapped toolset for its tools.
+    Walks the toolset tree for `CapabilityScopedToolset` nodes whose `capability_id`
+    is in `ctx.loaded_capability_ids` and whose owning capability has
+    `defer_loading=True`, then asks each wrapped toolset for its tools.
 
-    Source-of-truth pairs with ``parse_discovered_tools`` (which reads
-    ``ToolSearchReturnPart`` history): this helper is what tells the rest of the system
+    Source-of-truth pairs with `parse_discovered_tools` (which reads
+    `ToolSearchReturnPart` history): this helper is what tells the rest of the system
     "these names are unlocked because their owning capability was loaded," while
-    ``parse_discovered_tools`` reports "these names are unlocked because tool search
-    discovered them." Together they form ``ctx.discovered_tools``.
+    `parse_discovered_tools` reports "these names are unlocked because tool search
+    discovered them." Together they form `ctx.discovered_tools`.
     """
     # Local import to avoid a module-level cycle: `_capability_scoped` lives under
     # `toolsets/` which imports from `_run_context`, which is itself referenced via

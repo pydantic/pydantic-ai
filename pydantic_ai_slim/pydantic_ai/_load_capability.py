@@ -1,19 +1,19 @@
 """Load-capability typed message parts.
 
-``load_capability`` is a framework-emitted function tool used by deferred capabilities
+`load_capability` is a framework-emitted function tool used by deferred capabilities
 to gate hidden tools behind an explicit load step. There is no native server-side
 counterpart — capability loading is always client-executed.
 
-This module follows the same leaf-module pattern as ``_tool_search.py``: it is
-late-imported by :mod:`pydantic_ai.messages` after the base ``ToolCallPart`` /
-``ToolReturnPart`` types are defined, registers its typed subclasses with the
+This module follows the same leaf-module pattern as `_tool_search.py`: it is
+late-imported by :mod:`pydantic_ai.messages` after the base `ToolCallPart` /
+`ToolReturnPart` types are defined, registers its typed subclasses with the
 shared narrower and discriminator-tag tables, and is then re-exported via
-``messages.py`` for public consumption.
+`messages.py` for public consumption.
 
 User code can match the typed
 [`LoadCapabilityCallPart`][pydantic_ai.messages.LoadCapabilityCallPart] /
 [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart]
-subclasses via ``isinstance`` (e.g. for UI rendering) or synthesize them directly
+subclasses via `isinstance` (e.g. for UI rendering) or synthesize them directly
 to inject loads mid-run.
 """
 
@@ -48,7 +48,7 @@ class LoadCapabilityArgs(TypedDict):
 
     Carried on
     [`LoadCapabilityCallPart.args`][pydantic_ai.messages.LoadCapabilityCallPart.args]
-    as the canonical shape of the framework-emitted ``load_capability`` function tool.
+    as the canonical shape of the framework-emitted `load_capability` function tool.
     """
 
     id: str
@@ -56,30 +56,30 @@ class LoadCapabilityArgs(TypedDict):
 
 
 class LoadCapabilityReturn(TypedDict):
-    """Typed return value of the framework-managed ``load_capability`` builtin.
+    """Typed return value of the framework-managed `load_capability` builtin.
 
     Carried on
     [`LoadCapabilityReturnPart.content`][pydantic_ai.messages.LoadCapabilityReturnPart.content].
     """
 
     capability_id: str
-    """ID of the loaded capability. Mirrors the call's ``id`` arg on success."""
+    """ID of the loaded capability. Mirrors the call's `id` arg on success."""
 
     instructions: str | None
-    """Instructions for the model to follow when using the loaded capability, or ``None`` if the capability declared none."""
+    """Instructions for the model to follow when using the loaded capability, or `None` if the capability declared none."""
 
 
 @dataclass(repr=False)
 class LoadCapabilityCallPart(ToolCallPart):
-    """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the framework-emitted ``load_capability`` function call.
+    """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the framework-emitted `load_capability` function call.
 
-    Emitted when the model invokes ``load_capability(id=...)`` to load a deferred
+    Emitted when the model invokes `load_capability(id=...)` to load a deferred
     capability. There is no native server-side counterpart — capability loading is
     always client-executed.
 
-    Shadows ``args`` with the canonical typed shape. The ``str`` variant covers the
-    streaming / partial-args case before parsing completes; once parsed, ``args`` is
-    a [`LoadCapabilityArgs`][pydantic_ai.messages.LoadCapabilityArgs] ``TypedDict``.
+    Shadows `args` with the canonical typed shape. The `str` variant covers the
+    streaming / partial-args case before parsing completes; once parsed, `args` is
+    a [`LoadCapabilityArgs`][pydantic_ai.messages.LoadCapabilityArgs] `TypedDict`.
     """
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -88,24 +88,24 @@ class LoadCapabilityCallPart(ToolCallPart):
     args: str | LoadCapabilityArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
     """Load-capability call payload.
 
-    Narrows the parent's ``str | dict[str, Any] | None`` to a typed
+    Narrows the parent's `str | dict[str, Any] | None` to a typed
     [`LoadCapabilityArgs`][pydantic_ai.messages.LoadCapabilityArgs] when parsed.
-    Streaming / partial-args still arrive as ``str`` until they're complete.
+    Streaming / partial-args still arrive as `str` until they're complete.
     """
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (framework-emitted ``load_capability`` call)."""
+    """Discriminator for the typed subclass (framework-emitted `load_capability` call)."""
 
     @property
     def typed_args(self) -> LoadCapabilityArgs | None:
-        """Typed view of the validated load-capability arguments, or ``None`` if not yet parseable.
+        """Typed view of the validated load-capability arguments, or `None` if not yet parseable.
 
         In non-streaming code (a typed call part on a finalized
         [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its ``args``
+        populated — once a part is narrowed to this typed subclass, its `args`
         have been parsed and validated.
 
-        Returns ``None`` only in streaming-partial state, where ``args`` is still an
+        Returns `None` only in streaming-partial state, where `args` is still an
         in-progress JSON string the model hasn't finished emitting.
         """
         if self.args is None:
@@ -122,10 +122,10 @@ class LoadCapabilityCallPart(ToolCallPart):
 
     @property
     def capability_id(self) -> str | None:
-        """Subfield accessor for ``typed_args['id']``.
+        """Subfield accessor for `typed_args['id']`.
 
-        Returns ``None`` if args haven't been parsed yet (streaming-partial,
-        i.e. ``typed_args`` is ``None``).
+        Returns `None` if args haven't been parsed yet (streaming-partial,
+        i.e. `typed_args` is `None`).
         """
         typed = self.typed_args
         if typed is None:
@@ -135,13 +135,13 @@ class LoadCapabilityCallPart(ToolCallPart):
 
 @dataclass(repr=False)
 class LoadCapabilityReturnPart(ToolReturnPart):
-    """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the framework-emitted ``load_capability`` function return.
+    """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the framework-emitted `load_capability` function return.
 
     Carries the loaded capability's id and any instructions it declared. There is no
     native server-side counterpart — capability loading is always client-executed.
 
-    Shadows ``content`` with a narrower
-    [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn] ``TypedDict``.
+    Shadows `content` with a narrower
+    [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn] `TypedDict`.
     """
 
     # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
@@ -150,7 +150,7 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     content: LoadCapabilityReturn = field(kw_only=True)
     """Load-capability return payload.
 
-    Narrows the parent's ``ToolReturnContent`` to a typed
+    Narrows the parent's `ToolReturnContent` to a typed
     [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn].
     """
 
@@ -158,18 +158,18 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (framework-emitted ``load_capability`` return)."""
+    """Discriminator for the typed subclass (framework-emitted `load_capability` return)."""
 
     @property
     def loaded_capability(self) -> str:
-        """Subfield accessor for ``content['capability_id']``."""
+        """Subfield accessor for `content['capability_id']`."""
         return self.content['capability_id']
 
     @property
     def instructions(self) -> str | None:
-        """Subfield accessor for ``content['instructions']``.
+        """Subfield accessor for `content['instructions']`.
 
-        ``None`` when the capability declared no instructions.
+        `None` when the capability declared no instructions.
         """
         return self.content['instructions']
 
