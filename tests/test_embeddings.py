@@ -113,7 +113,7 @@ class TestOpenAI:
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
-        assert 'azure.com' in model.base_url
+        assert model.base_url.startswith('https://project-id.openai.azure.com')
 
         assert await model.max_input_tokens() is None
         with pytest.raises(UserError, match='Counting tokens is not supported for non-OpenAI embedding models'):
@@ -128,7 +128,7 @@ class TestOpenAI:
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
-        assert 'gateway.pydantic.dev' in model.base_url
+        assert model.base_url.startswith('https://gateway.pydantic.dev')
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
