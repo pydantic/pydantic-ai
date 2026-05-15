@@ -275,12 +275,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             }
             new_return_part = ToolSearchReturnPart(content=content, tool_call_id=call_id)
 
-            request_context.messages[i - 1] = replace(
-                load_call_msg, parts=[*load_call_msg.parts, new_call_part]
-            )
-            request_context.messages[i] = replace(
-                load_return_msg, parts=[*load_return_msg.parts, new_return_part]
-            )
+            request_context.messages[i - 1] = replace(load_call_msg, parts=[*load_call_msg.parts, new_call_part])
+            request_context.messages[i] = replace(load_return_msg, parts=[*load_return_msg.parts, new_return_part])
             # Reflect this synthesis in `discovered` so the next iteration's diff is correct.
             discovered |= missing_here
 
