@@ -1218,7 +1218,7 @@ class TestGoogle:
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google'
-        assert 'generativelanguage.googleapis.com' in model.base_url
+        assert model.base_url.startswith('https://generativelanguage.googleapis.com')
 
     async def test_infer_model_google(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
@@ -1226,7 +1226,7 @@ class TestGoogle:
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google'
-        assert 'generativelanguage.googleapis.com' in model.base_url
+        assert model.base_url.startswith('https://generativelanguage.googleapis.com')
 
     async def test_infer_model_vertex(self):
         # Google Cloud requires project setup, so we just test the model creation
