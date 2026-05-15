@@ -70,8 +70,10 @@ def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
         provider_name='google-gla',
     )
 
-    assert _content_model_response(response, 'google-gla') == snapshot({'role': 'model', 'parts': [{'text': 'hello'}]})
-    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
+    assert _content_model_response(response, frozenset({'google-gla'})) == snapshot(
+        {'role': 'model', 'parts': [{'text': 'hello'}]}
+    )
+    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -125,7 +127,7 @@ def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(native_only, 'google-gla') is None
+    assert _content_model_response(native_only, frozenset({'google-gla'})) is None
 
 
 def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
@@ -152,7 +154,7 @@ def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
+    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
         {'role': 'model', 'parts': [{'text': 'hello'}]}
     )
 
@@ -178,7 +180,7 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
     )
 
     assert _content_model_response(
-        response, 'google-gla', supports_tool_combination=supports_tool_combination
+        response, frozenset({'google-gla'}), supports_tool_combination=supports_tool_combination
     ) == snapshot(
         {
             'role': 'model',
