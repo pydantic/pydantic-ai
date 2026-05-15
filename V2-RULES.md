@@ -44,8 +44,16 @@ Instead:
 Titles end up in the [release changelog](https://github.com/pydantic/pydantic-ai/releases). Write them for users reading at merge time, not for us tracking work:
 
 - **No card refs** in titles (`card-08`, `[card 23]`, `(cards 15, 19)`). Cards are internal bookkeeping.
-- The title should say what the change *does for the user* — e.g. `Split GoogleProvider into GoogleProvider + GoogleCloudProvider` instead of `v2 prep: card 08 google-vertex split`.
-- The `v2 prep:` / `v2-exec:` prefix stays — it's how the changelog groups breaking-change prep work.
+- **No `v2 prep:` / `v2-exec:` prefix.** The PR label (`v2:prep` or `v2:exec`) does the grouping for the changelog tooling; the title doesn't need to repeat it. Practice as of the merged v2-exec wave ([#5396](https://github.com/pydantic/pydantic-ai/pull/5396), [#5434](https://github.com/pydantic/pydantic-ai/pull/5434), [#5444](https://github.com/pydantic/pydantic-ai/pull/5444), [#5458](https://github.com/pydantic/pydantic-ai/pull/5458), [#5459](https://github.com/pydantic/pydantic-ai/pull/5459), [#5460](https://github.com/pydantic/pydantic-ai/pull/5460)): titles read as plain change descriptions.
+- **Wrap code symbols in backticks** — class / function / kwarg / prefix names get backticks so they render as code in the changelog. Good:
+
+  > Drop `GrokProvider` in favor of `XaiProvider`
+
+  Not:
+
+  > Drop GrokProvider in favor of XaiProvider
+
+- The title should say what the change *does for the user* — e.g. `Split GoogleProvider into GoogleProvider + GoogleCloudProvider` (with backticks around the class names) instead of `card 08 google-vertex split`.
 - If the title claims multiple cards and the body defers some, **split the PR** or rewrite the body to explicitly state what's in scope vs deferred.
 
 ### 3. Code comment on every `provider.name` method
