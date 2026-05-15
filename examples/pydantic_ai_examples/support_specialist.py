@@ -44,7 +44,7 @@ class Store:
 orders_tools = FunctionToolset[Store]()
 
 
-@orders_tools.tool(defer_loading=True)
+@orders_tools.tool()
 def order_status(ctx: RunContext[Store], order_id: str) -> str:
     """Look up the current status of an order."""
     order = ctx.deps.orders.get(order_id)
@@ -65,7 +65,7 @@ orders_capability = Capability[Store](
 returns_tools = FunctionToolset[Store]()
 
 
-@returns_tools.tool(defer_loading=True)
+@returns_tools.tool()
 def start_return(ctx: RunContext[Store], order_id: str, reason: str) -> str:
     """Open a return request. Only delivered orders can be returned."""
     order = ctx.deps.orders.get(order_id)
@@ -87,7 +87,7 @@ returns_capability = Capability[Store](
 
 support_agent = Agent(
     model='anthropic:claude-sonnet-4-6',
-    model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    model_settings=AnthropicModelSettings(anthropic_cache=True),
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders_capability, returns_capability],
@@ -98,13 +98,11 @@ async def main() -> None:
     store = Store()
     for prompt in [
         'Where is order A-1042?',
-        "I'd like to return A-1042 — it arrived damaged.",
+        # "I'd like to return A-1042 — it arrived damaged.",
     ]:
         print(f'\n> {prompt}')
         result = await support_agent.run(prompt, deps=store)
         print(result.output)
-
-        print(result.usage())
 
 
 if __name__ == '__main__':
