@@ -82,14 +82,14 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
-_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': None,
     'refusal': 'content_filter',
 }
 
@@ -832,6 +832,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
                 return cid
             return container
+        # On pause_turn continuation, pass just the container ID string to reconnect.
+        # Re-passing BetaContainerParams triggers a prefill rejection on some models
+        # (e.g. Sonnet 4-6) even though plain string ID works fine.
+        if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
+            if messages[-1].provider_details:
+                return messages[-1].provider_details.get('container_id')
+            return None  # pragma: lax no cover
+
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -948,6 +956,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -2298,6 +2307,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                        self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id

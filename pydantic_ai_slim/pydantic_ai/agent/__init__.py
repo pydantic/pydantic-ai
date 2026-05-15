@@ -42,6 +42,7 @@ from .._agent_graph import (
     UserPromptNode,
     build_run_context,
     capture_run_messages,
+    set_agent_graph_sleep,
 )
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
@@ -118,6 +119,7 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'set_agent_graph_sleep',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
 )

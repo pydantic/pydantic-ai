@@ -6389,10 +6389,11 @@ def test_binary_content_serializable():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'finish_reason': None,
+                'state': 'complete',
+                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
-                'state': 'complete',
             },
         ]
     )
@@ -6462,10 +6463,11 @@ def test_image_url_serializable_missing_media_type():
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
+                'state': 'complete',
+                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
-                'state': 'complete',
             },
         ]
     )
@@ -6542,10 +6544,11 @@ def test_image_url_serializable():
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
+                'state': 'complete',
+                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
-                'state': 'complete',
             },
         ]
     )
@@ -11188,6 +11191,126 @@ async def test_image_output_validators_run_stream():
             ),
         ]
     )
+
+
+# endregion
+
+
+# region agent graph sleep
+
+
+def test_continuation_request_reuses_history_instructions() -> None:
+    call_count = 0
+    instruction_parts_by_call: list[list[str] | None] = []
+    instructions_by_call: list[str | None] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        instruction_parts = info.model_request_parameters.instruction_parts
+        instruction_parts_by_call.append([part.content for part in instruction_parts] if instruction_parts else None)
+        instructions_by_call.append(info.instructions)
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), instructions='Agent instructions.')
+
+    result = agent.run_sync('test')
+
+    assert result.output.endswith('done')
+    assert instruction_parts_by_call == [['Agent instructions.'], ['Agent instructions.']]
+    assert instructions_by_call == ['Agent instructions.', 'Agent instructions.']
+
+
+def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When no custom sleep is registered, ContinueRequestNode uses asyncio.sleep."""
+    call_count = 0
+    slept_delays: list[float] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=0.01)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    original_sleep = asyncio.sleep
+
+    async def tracking_sleep(delay: float) -> None:
+        slept_delays.append(delay)
+        await original_sleep(delay)
+
+    monkeypatch.setattr(asyncio, 'sleep', tracking_sleep)
+    result = agent.run_sync('test')
+    assert 'done' in result.output
+    assert 0.01 in slept_delays
+
+
+def test_agent_graph_sleep_custom_function() -> None:
+    """A custom sleep function registered via set_agent_graph_sleep is used instead of asyncio.sleep."""
+    from pydantic_ai import set_agent_graph_sleep
+
+    call_count = 0
+    custom_delays: list[float] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=5.0)
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def custom_sleep(delay: float) -> None:
+        custom_delays.append(delay)
+
+    agent = Agent(FunctionModel(model_fn))
+
+    with set_agent_graph_sleep(custom_sleep):
+        result = agent.run_sync('test')
+
+    assert 'done' in result.output
+    assert custom_delays == [5.0]
+
+
+async def test_agent_graph_sleep_streaming_with_delay() -> None:
+    """Streaming continuation path also uses the pluggable sleep when suspended_retry_delay is set."""
+    from pydantic_ai import set_agent_graph_sleep
+    from pydantic_ai._agent_graph import ContinueRequestNode
+    from pydantic_graph.nodes import End
+
+    request_count = 0
+    stream_count = 0
+    custom_delays: list[float] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_count
+        stream_count += 1
+        yield 'done'
+
+    def result_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal request_count
+        request_count += 1
+        return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=2.5)
+
+    async def custom_sleep(delay: float) -> None:
+        custom_delays.append(delay)
+
+    agent = Agent(FunctionModel(result_fn, stream_function=stream_fn))
+
+    with set_agent_graph_sleep(custom_sleep):
+        async with agent.iter('test') as run:
+            node = run.next_node
+            while not isinstance(node, End):
+                if isinstance(node, ContinueRequestNode):
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:
+                            pass
+                node = await run.next(node)
+
+    assert 2.5 in custom_delays
 
 
 # endregion
