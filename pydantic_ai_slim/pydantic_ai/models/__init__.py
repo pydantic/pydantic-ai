@@ -41,6 +41,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
@@ -1160,6 +1161,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1241,11 +1243,20 @@ class StreamedResponse(ABC):
                 # async generator body so it's active at every `await` during
                 # iteration.
                 try:
-                    async for event in iterator:
-                        yield event
-                except self.get_stream_cancel_errors():
-                    if not self.cancelled:
-                        raise
+                    try:
+                        async for event in iterator:
+                            yield event
+                    except self.get_stream_cancel_errors():
+                        if not self.cancelled:
+                            raise
+                finally:
+                    # Mark the stream as finished on every exit path so post-stream
+                    # `get()` reads `state='complete'`. The `'incomplete'` value is
+                    # reserved for the in-flight case (`get()` between yields).
+                    # Non-cancel exceptions still land on `state='complete'` here;
+                    # see #3219 / PR #5364 for the follow-up that flips the
+                    # interrupted-run capture path to `state='interrupted'`.
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1305,6 +1316,12 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
@@ -1315,7 +1332,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
     # TODO (v2): Make this a property

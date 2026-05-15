@@ -417,6 +417,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
@@ -424,6 +425,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
@@ -431,6 +433,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
@@ -438,6 +441,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
@@ -445,6 +449,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -452,6 +457,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -459,6 +465,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -540,6 +547,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat ')],
@@ -547,6 +555,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat ')],
@@ -554,6 +563,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on ')],
@@ -561,6 +571,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the ')],
@@ -568,6 +579,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -575,6 +587,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -582,6 +595,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -2988,6 +3002,7 @@ async def test_iter_stream_responses():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='test',
+            state='incomplete',
         )
         for text in [
             '',
@@ -4587,6 +4602,29 @@ async def test_completed_streamed_response_cancel_noop():
     assert streamed_response.cancelled
     assert streamed_response.get() is response
     assert response.state == 'complete'
+
+
+async def test_stream_response_state_incomplete_until_finished():
+    """`response.state` reads `'incomplete'` mid-stream and flips to `'complete'` once iteration ends."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            assert result.response.state == 'incomplete'
+        await result.get_output()
+
+    assert result.response.state == 'complete'
+
+
+async def test_stream_responses_yields_incomplete_then_complete():
+    """`stream_responses` yields `state='incomplete'` mid-stream; the trailing `is_last=True` yield is `'complete'`."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        states = [(msg.state, is_last) async for msg, is_last in result.stream_responses(debounce_by=None)]
+
+    assert states[-1] == ('complete', True)
+    assert all(state == 'incomplete' and not is_last for state, is_last in states[:-1])
 
 
 async def test_run_stream_events_aclose():
