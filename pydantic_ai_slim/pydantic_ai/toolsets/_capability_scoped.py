@@ -38,7 +38,7 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
                     capability_id=tool.tool_def.capability_id
                     if tool.tool_def.capability_id is not None
                     else self.capability_id,
-                    defer_loading=defer_loading,
+                    defer_loading=defer_loading or tool.tool_def.defer_loading,
                 ),
             )
             for name, tool in tools.items()
