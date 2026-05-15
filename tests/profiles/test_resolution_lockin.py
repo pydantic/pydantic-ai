@@ -52,22 +52,22 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as cohere_imports:
-    from pydantic_ai.providers.cohere import CohereProvider  # noqa: F401
+    from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as google_imports:
-    from pydantic_ai.providers.google import GoogleProvider  # noqa: F401
+    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as huggingface_imports:
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider  # noqa: F401
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 with try_import() as mistral_imports:
-    from pydantic_ai.providers.mistral import MistralProvider  # noqa: F401
+    from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as xai_imports:
-    from pydantic_ai.providers.xai import XaiProvider  # noqa: F401
+    from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -331,8 +331,6 @@ def test_openai_o3_mini():
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_3_pro():
-    from pydantic_ai.providers.google import GoogleProvider
-
     profile = GoogleProvider.model_profile('gemini-3.0-pro')
     assert _normalize(profile) == snapshot(
         {
@@ -358,8 +356,6 @@ def test_google_gemini_3_pro():
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_2_5_flash():
-    from pydantic_ai.providers.google import GoogleProvider
-
     profile = GoogleProvider.model_profile('gemini-2.5-flash')
     assert _normalize(profile) == snapshot(
         {
@@ -374,8 +370,6 @@ def test_google_gemini_2_5_flash():
 
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_4():
-    from pydantic_ai.providers.xai import XaiProvider
-
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {'supports_json_schema_output': True, 'supports_json_object_output': True, 'grok_supports_builtin_tools': True}
@@ -384,8 +378,6 @@ def test_xai_grok_4():
 
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_3_mini():
-    from pydantic_ai.providers.xai import XaiProvider
-
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
@@ -399,16 +391,12 @@ def test_xai_grok_3_mini():
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
-    from pydantic_ai.providers.mistral import MistralProvider
-
     profile = MistralProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot(None)
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
-    from pydantic_ai.providers.cohere import CohereProvider
-
     profile = CohereProvider.model_profile('command-r-plus')
     assert _normalize(profile) == snapshot(None)
 
@@ -1388,23 +1376,18 @@ def test_nebius_moonshotai():
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_bare_name_returns_none():
     """HF requires `provider/model` form; bare name → `None`."""
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     assert HuggingFaceProvider.model_profile('some-model') is None
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_meta_llama():
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-
     profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_deepseek():
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-
     profile = HuggingFaceProvider.model_profile('deepseek-ai/DeepSeek-R1')
     assert _normalize(profile) == snapshot(
         {'supports_thinking': True, 'thinking_always_enabled': True, 'ignore_streamed_leading_whitespace': True}
@@ -1413,8 +1396,6 @@ def test_huggingface_deepseek():
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_qwen():
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-
     profile = HuggingFaceProvider.model_profile('Qwen/Qwen3-235B-A22B')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
@@ -1423,8 +1404,6 @@ def test_huggingface_qwen():
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_moonshotai():
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-
     profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot({'ignore_streamed_leading_whitespace': True})
 
@@ -1432,7 +1411,6 @@ def test_huggingface_moonshotai():
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     assert HuggingFaceProvider.model_profile('unknown/some-model') is None
 
