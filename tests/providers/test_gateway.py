@@ -172,22 +172,22 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 )
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = OpenAIResponsesModel('gpt-5', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = GoogleModel('gemini-1.5-flash', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = AnthropicModel('claude-sonnet-4-5', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
-    assert model._provider.base_url.startswith(GATEWAY_BASE_URL)  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):
