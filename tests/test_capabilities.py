@@ -2748,6 +2748,68 @@ Use the refund tool with the order id, not the customer id.\
 """)
 
 
+async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:
+    """Empty/whitespace instructions returned by a deferred capability's toolset are filtered out of the load return.
+
+    Mirrors the filter applied to live (already-loaded) toolset instructions in `_agent_graph._get_instructions`,
+    keeping the emitted hint set consistent between the just-loaded and steady-state phases.
+    """
+    from dataclasses import dataclass
+
+    from pydantic_ai.messages import InstructionPart
+    from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+    @dataclass
+    class _LiteralInstructionsToolset(WrapperToolset[None]):
+        """Returns its `raw` instructions verbatim — bypasses `FunctionToolset`'s upstream empty-content filter."""
+
+        raw: tuple[str | InstructionPart, ...] = ()
+
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart]:
+            return list(self.raw)
+
+    toolset = _LiteralInstructionsToolset(
+        wrapped=FunctionToolset[None](),
+        raw=(
+            InstructionPart(content='   ', dynamic=False),
+            InstructionPart(content='Real hint from toolset.', dynamic=False),
+            '',
+        ),
+    )
+    cap = Capability[None](id='cap', description='Custom-toolset cap.', toolset=toolset, defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'cap'},
+                        tool_call_id='load',
+                    )
+                ]
+            )
+        return make_text_response('ok')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('hi')
+
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == 'Real hint from toolset.'
+
+
 async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
     toolset = FunctionToolset[None]()
 
@@ -17428,7 +17490,7 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
     from pydantic_ai.capabilities import DynamicCapability
 
     def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
-        return _RecordingCapability(label='x')
+        return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
         DynamicCapability(capability_func=factory, defer_loading=True, description='x')

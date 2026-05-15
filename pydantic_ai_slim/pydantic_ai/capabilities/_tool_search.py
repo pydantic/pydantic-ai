@@ -234,7 +234,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             return request_context
 
         should_be = await tools_for_loaded_capabilities(ctx, ctx.tool_manager.toolset)
-        in_history = parse_discovered_tools(request_context.messages)
+        in_history = ctx.discovered_tools
         newly_loaded = should_be - in_history
         if not newly_loaded:
             return request_context
