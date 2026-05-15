@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1313,7 +1314,7 @@ def test_dynamic_tools_agent_wide():
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1341,7 +1342,7 @@ def test_sync_prepare_tools_agent_wide():
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1469,7 +1470,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), tool_retries=3, output_retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), tool_retries=3, output_retries=3, capabilities=[PrepareTools(prepare_tool_defs)])
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries

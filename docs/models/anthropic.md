@@ -237,8 +237,8 @@ result1 = agent.run_sync('What is the capital of France?')
 result2 = agent.run_sync(
     'What is the capital of Germany?', message_history=result1.all_messages()
 )
-print(f'Cache write: {result1.usage().cache_write_tokens}')
-print(f'Cache read: {result2.usage().cache_read_tokens}')
+print(f'Cache write: {result1.usage.cache_write_tokens}')
+print(f'Cache read: {result2.usage.cache_read_tokens}')
 ```
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
@@ -374,7 +374,7 @@ print(result.output)
 
 ### Accessing Cache Usage Statistics
 
-Access cache usage statistics via `result.usage()`:
+Access cache usage statistics via `result.usage`:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -389,7 +389,7 @@ agent = Agent(
 )
 
 result = agent.run_sync('Your question')
-usage = result.usage()
+usage = result.usage
 print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
@@ -440,7 +440,7 @@ result = agent.run_sync([
     'Question'
 ])
 print(result.output)
-usage = result.usage()
+usage = result.usage
 print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
@@ -478,7 +478,7 @@ result = agent.run_sync([
 ])
 # Final cache points: instructions + tools + Context 2 + Context 3 = 4
 print(result.output)
-usage = result.usage()
+usage = result.usage
 print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```

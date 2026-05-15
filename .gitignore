@@ -34,3 +34,6 @@ CLAUDE.local.md
 /.cursor/
 /.devcontainer/
 .claude/plans/
+
+# AICA mini-PR diagnostic scratch (see team.pydantic.work)
+local-notes/
