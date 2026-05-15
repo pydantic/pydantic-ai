@@ -486,9 +486,6 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
