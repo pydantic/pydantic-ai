@@ -274,6 +274,20 @@ Broken anchor links in docs CI must fail the build, not warn. Renames silently b
 
 **Status:** CI-tightening task on the harness side (David SF / harness). Listed here so PR authors who add anchors know to verify their links resolve locally.
 
+### 27. v2:exec PRs don't touch `changelog.md` — a final sweep generates it (v2:exec)
+
+Individual `v2:exec` PRs targeting `v2-main` do NOT add `changelog.md` entries. The final v2-cut integration PR (#5451 or its successor) runs a `changelog.md` sweep against the full `v2-main` diff before it merges into `main`, generating the v2.0 release notes from the actual landed changes.
+
+Practice as of the merged wave on `v2-main`: [#5396](https://github.com/pydantic/pydantic-ai/pull/5396), [#5434](https://github.com/pydantic/pydantic-ai/pull/5434), [#5444](https://github.com/pydantic/pydantic-ai/pull/5444), [#5332](https://github.com/pydantic/pydantic-ai/pull/5332), [#5340](https://github.com/pydantic/pydantic-ai/pull/5340) all merged without `changelog.md` entries. The wave of David-SF v2-exec PRs (#5458–#5469) follows the same pattern.
+
+**Why:** v2-exec PRs are mostly mechanical drops on a non-released branch. Per-PR changelog churn would (a) cause merge conflicts whenever two PRs touch the same section, (b) bloat individual PR diffs with prose changes orthogonal to the code change, (c) duplicate work because the integrator needs to do a final pass anyway to assemble the v2.0 release narrative. Defer the prose to the integration step where the full set of changes is visible at once.
+
+**Exceptions** (rare): A `v2:exec` PR MAY add a `changelog.md` entry if the migration story is genuinely non-obvious AND the entry survives unedited through to release (i.e. won't be rewritten by the final sweep). Most v2-exec PRs won't qualify.
+
+**`v2:prep` PRs are different**: prep PRs target `main` and ship to users on the next 1.x minor release, so they DO populate the `1.x.y` section of `changelog.md` when their warning links out (per rule 8). This rule only applies to `v2:exec`.
+
+(Inverts the default reading of rules 8 / 14 / 16 for `v2:exec` PRs; rules 8 / 14 / 16 still govern entry SHAPE when an entry exists.)
+
 ### 26. Use `PydanticAIDeprecationWarning`, not stdlib `DeprecationWarning` (v2:prep)
 
 Every `warnings.warn(...)` call introduced by a `v2:prep` PR uses `pydantic_ai._warnings.PydanticAIDeprecationWarning` (a `UserWarning` subclass), not the stdlib `DeprecationWarning`. The matching `pytest.warns(...)` calls and `pytest.mark.filterwarnings(...)` markers swap accordingly.
