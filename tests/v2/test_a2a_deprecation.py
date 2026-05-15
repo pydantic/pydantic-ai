@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='fasta2a not in
 
 
 def test_agent_to_a2a_emits_deprecation_warning():
-    """`Agent.to_a2a(...)` emits a `PydanticAIDeprecationWarning` pointing at datalayer/fasta2a."""
+    """`Agent.to_a2a(...)` emits a `PydanticAIDeprecationWarning` pointing at the upstream bridge."""
     agent = Agent(TestModel())
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'datalayer/fasta2a'):
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'fasta2a\.pydantic_ai import agent_to_a2a'):
         agent.to_a2a()  # pyright: ignore[reportDeprecated]

@@ -1717,7 +1717,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @deprecated(
         '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
-        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it and use it directly.',
+        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — '
+        "install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) "
+        'and use `from fasta2a.pydantic_ai import agent_to_a2a` directly.',
         category=PydanticAIDeprecationWarning,
     )
     def to_a2a(
