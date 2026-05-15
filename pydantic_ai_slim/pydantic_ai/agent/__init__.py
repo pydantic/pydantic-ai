@@ -2139,7 +2139,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -2161,7 +2161,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -2274,7 +2274,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -2296,7 +2296,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.

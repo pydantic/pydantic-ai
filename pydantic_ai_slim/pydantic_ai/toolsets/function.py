@@ -578,7 +578,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
-            defer_loading=defer_loading if defer_loading is not None else self._defer_loading,
+            defer_loading=bool(defer_loading if defer_loading is not None else self._defer_loading),
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)

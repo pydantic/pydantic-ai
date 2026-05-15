@@ -455,7 +455,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
-    defer_loading: bool | None
+    defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -482,7 +482,7 @@ class Tool(Generic[ToolAgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -745,7 +745,7 @@ class ToolDefinition:
     Defaults to None (no timeout).
     """
 
-    defer_loading: bool | None = None
+    defer_loading: bool = False
     """Whether this tool should be hidden from the model until something explicitly surfaces it.
 
     Carries two meanings depending on where in the pipeline you observe it:
