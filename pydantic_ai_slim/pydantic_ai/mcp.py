@@ -1683,6 +1683,31 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     client = Client(StreamableHttpTransport('http://localhost:8000/mcp'), auth='oauth')
     toolset = MCPToolset(client)
     ```
+
+    ## Background tasks
+
+    For tools that declare `task=TaskConfig(mode='required'|'optional')` server-side,
+    `MCPToolset` supports MCP task-augmented execution per
+    [SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) — the
+    server wraps the call in a durable, cancelable, pollable task. Each task-supporting tool exposes
+    `task=True` (and `task_required=True` for `mode='required'`) in its `ToolDefinition.metadata` so
+    a capability can opt them in by setting `background=True`:
+
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.mcp import MCPToolset
+
+    agent = Agent(
+        'openai:gpt-5',
+        toolsets=[MCPToolset('http://localhost:8000/mcp')],
+        capabilities=[SetToolMetadata(tools={'task': True}, background=True)],
+    )
+    ```
+
+    Without an opt-in, `mode='required'` tools raise `UserError` (since the server would otherwise
+    return `-32601: requires task-augmented execution`) and `mode='optional'` tools fall back to the
+    regular sync path.
     """
 
     client: FastMCPClient[Any]
