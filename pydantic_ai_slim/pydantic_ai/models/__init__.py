@@ -1243,19 +1243,18 @@ class StreamedResponse(ABC):
                 # async generator body so it's active at every `await` during
                 # iteration.
                 try:
-                    try:
-                        async for event in iterator:
-                            yield event
-                    except self.get_stream_cancel_errors():
-                        if not self.cancelled:
-                            raise
-                finally:
-                    # Mark the stream as finished on every exit path so post-stream
-                    # `get()` reads `state='complete'`. The `'incomplete'` value is
-                    # reserved for the in-flight case (`get()` between yields).
-                    # Non-cancel exceptions still land on `state='complete'` here;
-                    # see #3219 / PR #5364 for the follow-up that flips the
-                    # interrupted-run capture path to `state='interrupted'`.
+                    async for event in iterator:
+                        yield event
+                except self.get_stream_cancel_errors():
+                    if not self.cancelled:
+                        raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
                     self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(

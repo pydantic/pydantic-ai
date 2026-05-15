@@ -4627,6 +4627,25 @@ async def test_stream_responses_yields_incomplete_then_complete():
     assert all(state == 'incomplete' and not is_last for state, is_last in states[:-1])
 
 
+async def test_stream_response_state_incomplete_after_early_break():
+    """Breaking out of the stream early must not flip `state` to `'complete'`.
+
+    `aclose()` on the underlying async generator raises `GeneratorExit` at the
+    suspended `yield`, so `_finished` must stay `False` and the truncated
+    response must keep reporting `'incomplete'`.
+    """
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:  # pragma: no branch
+                        break
+                    assert stream.response.state == 'incomplete'
+                return
+
+
 async def test_run_stream_events_aclose():
     agent = Agent(TestModel())
 
