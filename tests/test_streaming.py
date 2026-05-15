@@ -338,8 +338,10 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_response(debounce_by=None):
-            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
+        async for structured_response in result.stream_response(debounce_by=None):
+            response_data = await result.validate_response_output(
+                structured_response, allow_partial=structured_response.state == 'incomplete'
+            )
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -409,7 +411,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_response(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -540,7 +542,7 @@ def test_streamed_text_stream_sync():
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_response(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_response(debounce_by=None)] == snapshot(
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -3478,7 +3480,7 @@ async def test_tool_raises_call_deferred():
         assert await result.get_output() == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        responses = [c async for c, _is_last in result.stream_response(debounce_by=None)]
+        responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
             [
                 ModelResponse(
@@ -4022,8 +4024,10 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_response(debounce_by=None):
-        response_data = result.validate_response_output(structured_response, allow_partial=not last)
+    for structured_response in result.stream_response(debounce_by=None):
+        response_data = result.validate_response_output(
+            structured_response, allow_partial=structured_response.state == 'incomplete'
+        )
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -4618,15 +4622,15 @@ async def test_stream_response_state_incomplete_until_finished():
     assert result.response.state == 'complete'
 
 
-async def test_stream_responses_yields_incomplete_then_complete():
-    """`stream_responses` yields `state='incomplete'` mid-stream; the trailing `is_last=True` yield is `'complete'`."""
+async def test_stream_response_yields_incomplete_then_complete():
+    """`stream_response` yields `state='incomplete'` mid-stream; the trailing yield is `'complete'`."""
     agent = Agent(TestModel(custom_output_text='hello world'))
 
     async with agent.run_stream('Hello') as result:
-        states = [(msg.state, is_last) async for msg, is_last in result.stream_responses(debounce_by=None)]
+        states = [msg.state async for msg in result.stream_response(debounce_by=None)]
 
-    assert states[-1] == ('complete', True)
-    assert all(state == 'incomplete' and not is_last for state, is_last in states[:-1])
+    assert states[-1] == 'complete'
+    assert all(state == 'incomplete' for state in states[:-1])
 
 
 async def test_stream_response_state_incomplete_after_early_break():

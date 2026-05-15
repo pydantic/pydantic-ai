@@ -582,13 +582,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg, last in self.stream_response(debounce_by=debounce_by):
-            yield msg, last
+        async for msg in self.stream_response(debounce_by=debounce_by):
+            yield msg, msg.state != 'incomplete'
 
-    async def stream_response(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        """Stream the response as an async iterable of Structured LLM Messages.
+    async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
+        """Stream the response as an async iterable of `ModelResponse` snapshots.
+
+        Each yielded `ModelResponse` is the current state of the response: `response.state` is
+        `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
+        [`cancel()`][pydantic_ai.result.AgentStream.cancel] was called) on the final yield.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -596,18 +598,17 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 performing validation as each token is received.
 
         Returns:
-            An async iterable of the structured response message and whether that is the last message.
+            An async iterable of `ModelResponse` snapshots.
         """
         if self._run_result is not None:
-            yield self.response, True
+            yield self.response
             await self._marked_completed()
         elif self._stream_response is not None:
-            # if the message currently has any parts with content, yield before streaming
             async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
-                yield msg, False
+                yield msg
 
             msg = self.response
-            yield msg, True
+            yield msg
 
             await self._marked_completed(msg)
         else:
@@ -616,14 +617,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     @deprecated(
         '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0. '
         'Replace `async for msg, is_last in result.stream_responses(...)` with '
-        '`async for msg, is_last in result.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        "`async for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
+        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
         category=PydanticAIDeprecationWarning,
     )
     async def stream_responses(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for item in self.stream_response(debounce_by=debounce_by):
-            yield item
+        async for msg in self.stream_response(debounce_by=debounce_by):
+            yield msg, msg.state != 'incomplete'
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -861,8 +863,12 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """
         return _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
 
-    def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
-        """Stream the response as an iterable of Structured LLM Messages.
+    def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[_messages.ModelResponse]:
+        """Stream the response as an iterable of `ModelResponse` snapshots.
+
+        Each yielded `ModelResponse` is the current state of the response: `response.state` is
+        `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
+        [`cancel()`][pydantic_ai.result.AgentStream.cancel] was called) on the final yield.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -870,18 +876,20 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 performing validation as each token is received.
 
         Returns:
-            An iterable of the structured response message and whether that is the last message.
+            An iterable of `ModelResponse` snapshots.
         """
         return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
 
     @deprecated(
         '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0. '
         'Replace `for msg, is_last in result.stream_responses(...)` with '
-        '`for msg, is_last in result.stream_response(...)` (singular). The yielded items are unchanged in 1.x.',
+        "`for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
+        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
         category=PydanticAIDeprecationWarning,
     )
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
-        return self.stream_response(debounce_by=debounce_by)
+        for msg in self.stream_response(debounce_by=debounce_by):
+            yield msg, msg.state != 'incomplete'
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""

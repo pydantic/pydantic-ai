@@ -855,11 +855,11 @@ agent = Agent('openai:gpt-5.2', output_type=UserProfile)
 async def main():
     user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
-        async for message, last in result.stream_response(debounce_by=0.01):  # (1)!
+        async for message in result.stream_response(debounce_by=0.01):  # (1)!
             try:
                 profile = await result.validate_response_output(  # (2)!
                     message,
-                    allow_partial=not last,
+                    allow_partial=message.state == 'incomplete',
                 )
             except ValidationError:
                 continue

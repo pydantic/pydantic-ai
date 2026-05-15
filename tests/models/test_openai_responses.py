@@ -687,8 +687,8 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     async with agent.run_stream('What is the capital of France?') as result:
         async for output in result.stream_text():
             output_text.append(output)
-        async for response, is_last in result.stream_response(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 assert response == snapshot(
                     ModelResponse(
                         parts=[

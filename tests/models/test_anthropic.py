@@ -2405,8 +2405,8 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
-        async for response, is_last in result.stream_response(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 assert response == snapshot(
                     ModelResponse(
                         parts=[TextPart(content='FINAL_PAYLOAD')],
