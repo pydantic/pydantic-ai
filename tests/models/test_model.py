@@ -120,7 +120,7 @@ TEST_CASES = [
     ),
     pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
-        'google-gla:gemini-1.5-flash',
+        'google:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google',
         'google',
@@ -325,21 +325,12 @@ def test_infer_model_profile(model_id: str, is_default: bool):
             id='anthropic',
         ),
         pytest.param(
-            'google-gla:gemini-2.0-flash',
-            'pydantic_ai.providers.google.GoogleProvider',
-            'gemini-2.0-flash',
-            id='google-gla',
-        ),
-        pytest.param(
             'google:gemini-2.0-flash',
             'pydantic_ai.providers.google.GoogleProvider',
             'gemini-2.0-flash',
-            id='google-shorthand',
+            id='google',
         ),
     ],
-)
-@pytest.mark.filterwarnings(
-    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""

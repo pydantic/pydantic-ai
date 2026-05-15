@@ -62,7 +62,6 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
-    from pydantic_ai._warnings import PydanticAIDeprecationWarning
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
         GoogleEmbeddingSettings,
@@ -1211,15 +1210,6 @@ class TestGoogle:
             GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         )
 
-    async def test_infer_model_gla(self, gemini_api_key: str):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-gla:' prefix is deprecated"):
-                model = infer_embedding_model('google-gla:gemini-embedding-001')
-        assert isinstance(model, GoogleEmbeddingModel)
-        assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google'
-        assert 'generativelanguage.googleapis.com' in model.base_url
-
     async def test_infer_model_google(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
             model = infer_embedding_model('google:gemini-embedding-001')
@@ -1227,16 +1217,6 @@ class TestGoogle:
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google'
         assert 'generativelanguage.googleapis.com' in model.base_url
-
-    async def test_infer_model_vertex(self):
-        # Google Cloud requires project setup, so we just test the model creation
-        # without actually calling the API.
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
-            with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-vertex:' prefix is deprecated"):
-                model = infer_embedding_model('google-vertex:gemini-embedding-001')
-        assert isinstance(model, GoogleEmbeddingModel)
-        assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-cloud'
 
     async def test_infer_model_google_cloud(self):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):

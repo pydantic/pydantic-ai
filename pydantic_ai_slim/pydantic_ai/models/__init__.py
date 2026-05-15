@@ -1470,7 +1470,9 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud', 'google-vertex'):
+        # `'google-vertex'` is the internal wire value returned by `normalize_gateway_provider`
+        # for `gateway/google-cloud:` / `gateway/gemini:` until the Gateway team renames their side (rule 17).
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

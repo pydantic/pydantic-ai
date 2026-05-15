@@ -8,9 +8,6 @@ Two providers wrap those endpoints:
 - [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini API (Google AI Studio), surfaced under the `'google:'` prefix.
 - [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] — Google Cloud (formerly known as Vertex AI), surfaced under the `'google-cloud:'` prefix.
 
-!!! note "Renamed prefixes (1.x → v2)"
-    The `'google-gla:'` and `'google-vertex:'` prefixes still work in 1.x but emit a `DeprecationWarning`. Use `'google:'` and `'google-cloud:'` instead. Likewise `GoogleProvider(...)` with any Google Cloud-only argument (`vertexai=True`, `location`, `project`, or `credentials`) is deprecated in favor of `GoogleCloudProvider(...)`.
-
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:

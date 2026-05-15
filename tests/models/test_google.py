@@ -107,9 +107,9 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
+        GoogleCloudServiceTier,
         GoogleModel,
         GoogleModelSettings,
-        GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -6329,7 +6329,7 @@ async def test_google_cloud_service_tier_auto_maps_to_default(allow_model_reques
 )
 async def test_google_service_tier_vertex_headers(
     allow_model_requests: None,
-    service_tier: GoogleVertexServiceTier,
+    service_tier: GoogleCloudServiceTier,
     expected_headers: dict[str, str],
 ):
     """Test that Google Cloud `google_cloud_service_tier` values set the expected HTTP headers."""
@@ -6370,22 +6370,6 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
     assert 'service_tier' not in config_dict
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
-
-
-async def test_google_service_tier_deprecation_warning(allow_model_requests: None):
-    """Reading the deprecated `google_service_tier` field emits a `DeprecationWarning`."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
-    model_settings = GoogleModelSettings(google_service_tier='pt_then_flex')
-
-    with pytest.warns(DeprecationWarning, match=r'`google_service_tier` is deprecated'):
-        _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
-            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
-            model_settings=model_settings,
-            model_request_parameters=ModelRequestParameters(),
-        )
-
-    headers = cast(dict[str, Any], config)['http_options']['headers']
-    assert headers.get('X-Vertex-AI-LLM-Shared-Request-Type') == 'flex'
 
 
 @pytest.mark.vcr()

@@ -118,7 +118,9 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud', 'google-vertex'):
+        # `'google-vertex'` is the internal wire value returned by `normalize_gateway_provider`
+        # for `gateway/google-cloud:` / `gateway/gemini:` until the Gateway team renames their side (rule 17).
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)

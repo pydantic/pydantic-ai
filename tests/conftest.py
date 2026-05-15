@@ -888,11 +888,6 @@ def model(
             from pydantic_ai.providers.cohere import CohereProvider
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
-        elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
