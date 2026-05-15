@@ -4029,6 +4029,44 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
     assert content.media_type == 'application/pdf'
 
 
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'type': 'Buffer', 'data': 'not-a-list'}, id='buffer-envelope-non-list-data'),
+        pytest.param({'0': 1, '2': 3}, id='uint8array-non-contiguous-indices'),
+        pytest.param({'0': 'a'}, id='uint8array-non-int-values'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
+    """Unrecognized binary `data` shapes pass through `_js_binary_to_bytes` unchanged so
+    pydantic surfaces a clean `ValidationError` rather than the helper raising
+    `KeyError`/`TypeError` on malformed input."""
+    from pydantic import ValidationError
+
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+    with pytest.raises(ValidationError, match='Input should be a valid bytes'):
+        VercelAIAdapter.load_messages(ui_messages)
+
+
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
