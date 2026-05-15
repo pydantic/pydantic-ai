@@ -5,7 +5,6 @@ import os
 import re
 import time
 import uuid
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,7 +32,6 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -218,29 +216,26 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-# See note in `tests/test_temporal.py`: `DBOSAgent` reads `agent.event_stream_handler`,
-# which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
-# the handler through capabilities.
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
-    )
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-        ],
-        tools=[get_weather],
-        event_stream_handler=event_stream_handler,
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
-        name='complex_agent',
-    )
-complex_dbos_agent = DBOSAgent(complex_agent)
-seq_complex_dbos_agent = DBOSAgent(complex_agent, parallel_execution_mode='sequential', name='seq_complex_agent')
+complex_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='country'),
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+    ],
+    tools=[get_weather],
+    capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
+    name='complex_agent',
+)
+complex_dbos_agent = DBOSAgent(complex_agent, event_stream_handler=event_stream_handler)
+seq_complex_dbos_agent = DBOSAgent(
+    complex_agent,
+    event_stream_handler=event_stream_handler,
+    parallel_execution_mode='sequential',
+    name='seq_complex_agent',
+)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
