@@ -232,12 +232,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # read from ctx.
         discovered = parse_discovered_tools(request_context.messages)
 
-        for i, message in enumerate(request_context.messages):
+        # Start at index 1 — the load_capability exchange spans two adjacent messages
+        # (the call lives on the previous Response, the return on the current Request),
+        # so there's nothing to do at index 0.
+        for i, message in enumerate(request_context.messages[1:], start=1):
             if not isinstance(message, ModelRequest):
                 continue
-            if i == 0:
-                continue
-            # Narrow into a local so the `isinstance` carries through to the `.parts.append`
+            # Narrow into a local so the `isinstance` carries through to the `replace`
             # below — pyright doesn't track narrowing across re-indexing of the messages list.
             prev_message = request_context.messages[i - 1]
             if not isinstance(prev_message, ModelResponse):
