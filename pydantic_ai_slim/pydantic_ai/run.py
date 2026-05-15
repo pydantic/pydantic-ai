@@ -18,6 +18,8 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._deprecated_callable import deprecated_callable_property
+from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -68,6 +70,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ],
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             CallToolsNode(
@@ -77,6 +80,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -103,6 +107,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
         traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
+        if traceparent is None:
+            # Fall back to the active OTel span, which is the agent run span
+            # when the Instrumentation capability is active.
+            traceparent = current_otel_traceparent()
         if traceparent is None and required:  # pragma: no cover
             raise AttributeError('No span was created for this agent run')
         return traceparent
@@ -350,6 +358,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             ],
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -359,6 +368,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -379,7 +389,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
         return await self._run_node_with_hooks(node, self._advance_graph)
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRun.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
@@ -394,10 +406,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._graph_run.state.conversation_id
+
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
-        return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'
+        return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
 @dataclasses.dataclass
@@ -518,12 +535,16 @@ class AgentRunResult(Generic[OutputDataT]):
                 return message
         raise ValueError('No response found in the message history')  # pragma: no cover
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRunResult.timestamp` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
@@ -537,6 +558,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._state.conversation_id
 
 
 @dataclasses.dataclass(repr=False)

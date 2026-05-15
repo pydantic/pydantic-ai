@@ -1,15 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
-from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -19,6 +18,11 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers._bedrock_model_names import (
+    BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
+    split_bedrock_model_id,
+)
 
 try:
     import boto3
@@ -51,20 +55,20 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     - `NativeOutput` is used as the `output_type` of the Agent
     - `strict=True` is set on the `Tool`
 
-    When ``strict=None`` (the default), simple schemas without incompatible constraints are
-    auto-promoted to ``strict=True``. Schemas with incompatible numeric or array constraints
-    remain ``strict=False``.
+    When `strict=None` (the default), simple schemas without incompatible constraints are
+    auto-promoted to `strict=True`. Schemas with incompatible numeric or array constraints
+    remain `strict=False`.
 
-    When ``strict=True``:
-    - Strips numeric constraints (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``)
-    - Strips ``maxItems`` and ``minItems > 1`` on arrays
-    - Appends stripped constraint info to the ``description`` field as a hint to the model
+    When `strict=True`:
+    - Strips numeric constraints (`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`)
+    - Strips `maxItems` and `minItems > 1` on arrays
+    - Appends stripped constraint info to the `description` field as a hint to the model
 
     The following are preserved — Bedrock accepts them under strict validation:
-    - String constraints: ``minLength``, ``maxLength``, ``pattern``
-    - String ``format`` (all values including ``date-time``, ``date``, ``email``, ``uri``, etc.)
-    - ``enum``, ``const``, ``default``, ``$defs``/``$ref``, ``anyOf``
-    - ``minItems`` of 0 or 1 on arrays
+    - String constraints: `minLength`, `maxLength`, `pattern`
+    - String `format` (all values including `date-time`, `date`, `email`, `uri`, etc.)
+    - `enum`, `const`, `default`, `$defs`/`$ref`, `anyOf`
+    - `minItems` of 0 or 1 on arrays
     """
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -162,7 +166,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
         ).update(profile)
 
     if 'nova-2' in model_name:
-        profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+        profile.supported_native_tools = frozenset({CodeExecutionTool})
 
     return profile
 
@@ -221,7 +225,7 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     models_that_support_json_schema_output = ('minimax-m2',)
     return replace(
         BedrockModelProfile(),
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
     )
@@ -232,34 +236,14 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     models_that_support_json_schema_output = ('nemotron-nano',)
     return replace(
         BedrockModelProfile(),
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
     )
 
 
-# Known geo prefixes for cross-region inference profile IDs
-BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
-
-
-def remove_bedrock_geo_prefix(model_name: str) -> str:
-    """Remove inference geographic prefix from model ID if present.
-
-    Bedrock supports cross-region inference using geographic prefixes like
-    'us.', 'eu.', 'apac.', etc. This function strips those prefixes.
-
-    Example:
-        'us.amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-        'amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-    """
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if model_name.startswith(f'{prefix}.'):
-            return model_name.removeprefix(f'{prefix}.')
-    return model_name
-
-
 def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
+    return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -276,6 +260,16 @@ class BedrockProvider(Provider[BaseClient]):
     @property
     def client(self) -> BaseClient:
         return self._client
+
+    @client.setter
+    def client(self, client: BaseClient) -> None:
+        """Replace the underlying boto3 client.
+
+        Useful for rotating short-lived credentials (e.g. temporary STS credentials) in a long-running service:
+        construct a fresh `bedrock-runtime` client and assign it here, and every [`BedrockConverseModel`]
+        [pydantic_ai.models.bedrock.BedrockConverseModel] using this provider will pick it up.
+        """
+        self._client = client
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
@@ -296,27 +290,9 @@ class BedrockProvider(Provider[BaseClient]):
             'nvidia': bedrock_nvidia_model_profile,
         }
 
-        # Split the model name into parts
-        parts = model_name.split('.', 2)
-
-        # Handle regional prefixes
-        if len(parts) > 2 and parts[0] in BEDROCK_GEO_PREFIXES:
-            parts = parts[1:]
-
-        # required format is provider.model-name-with-version
-        if len(parts) < 2:
-            return None
-
-        provider = parts[0]
-        model_name_with_version = parts[1]
-
-        # Remove version suffix if it matches the format (e.g. "-v1:0" or "-v14")
-        version_match = re.match(r'(.+)-v\d+(?::\d+)?$', model_name_with_version)
-        if version_match:
-            model_name = version_match.group(1)
-        else:
-            model_name = model_name_with_version
-
+        # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a
+        # cross-region inference geo prefix (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
+        provider, model_name = split_bedrock_model_id(model_name)
         if provider in provider_to_profile:
             return provider_to_profile[provider](model_name)
 

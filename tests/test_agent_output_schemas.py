@@ -416,6 +416,11 @@ async def test_deferred_output_json_schema():
                             'title': 'Args',
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                        'tool_kind': {
+                            'anyOf': [{'const': 'tool-search', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Tool Kind',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -540,6 +545,11 @@ distinguish multiple files.\
                             'title': 'Args',
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                        'tool_kind': {
+                            'anyOf': [{'const': 'tool-search', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Tool Kind',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],

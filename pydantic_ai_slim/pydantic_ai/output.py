@@ -23,6 +23,7 @@ __all__ = (
     'TextOutput',
     'StructuredDict',
     'OutputObjectDefinition',
+    'OutputContext',
     # types
     'OutputDataT',
     'OutputMode',
@@ -113,10 +114,10 @@ class ToolOutput(Generic[OutputDataT]):
     description: str | None
     """The description of the tool that will be passed to the model. If not specified, the docstring of the output type or function will be used."""
     max_retries: int | None
-    """The maximum number of retries for this specific output tool.
+    """Per-tool retry limit for this output tool.
 
-    Overrides the agent-level `retries`/`output_retries` for this tool.
-    If not set, the agent-level value is used as the default.
+    Overrides the agent-level `output_retries` default (which itself acts as the per-tool default
+    for output tools that do not specify their own limit). If not set, the agent-level value is used.
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
@@ -270,6 +271,38 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+
+
+@dataclass
+class OutputContext:
+    """Context about the output being processed, passed to output hooks."""
+
+    mode: OutputMode
+    """The schema's output mode ('text', 'native', 'prompted', 'tool', 'image', 'auto').
+
+    This reflects the configured schema, not the format of this particular response. For
+    example, a `ToolOutputSchema` with a `text_processor` (hybrid mode) reports `'tool'`
+    even if the model returned text — check [`tool_call`][pydantic_ai.output.OutputContext.tool_call]
+    to distinguish."""
+    output_type: type[Any] | None
+    """The resolved output type (e.g. MyModel, str). For output functions, the function's input type (what the model produces)."""
+    object_def: OutputObjectDefinition | None
+    """The output object definition (schema, name, description), if structured output."""
+    has_function: bool
+    """Whether there's an output function to call in the execute step."""
+    function_name: str | None = None
+    """Name of the output function that will run, when known. `None` for union processors that dispatch
+    by output subtype, or when the schema has no function."""
+    tool_call: ToolCallPart | None = None
+    """The tool call part, for tool-based output. `None` when the current output did not arrive via a tool call (text or image)."""
+    tool_def: ToolDefinition | None = None
+    """The tool definition, for tool-based output. `None` when the current output did not arrive via a tool call."""
+    allows_text: bool = False
+    """Whether the schema accepts text output (including via a `text_processor` on a `ToolOutputSchema`)."""
+    allows_image: bool = False
+    """Whether the schema accepts image output."""
+    allows_deferred_tools: bool = False
+    """Whether the schema accepts deferred tool requests as output."""
 
 
 @dataclass

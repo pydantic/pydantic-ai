@@ -26,8 +26,9 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -60,7 +61,9 @@ pytestmark = [
 
 
 def test_init():
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    provider = CohereProvider(api_key='foobar')
+    m = CohereModel('command-r7b-12-2024', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'
@@ -120,20 +123,21 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -144,11 +148,13 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -159,6 +165,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -181,7 +188,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=1,
@@ -220,6 +227,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -236,6 +244,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -248,6 +257,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -315,6 +325,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -331,6 +342,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -343,6 +355,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -360,6 +373,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -372,6 +386,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -382,10 +397,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=3,
             input_tokens=5,
@@ -507,6 +523,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -524,6 +541,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -556,6 +574,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -576,6 +595,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -596,6 +616,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -612,6 +633,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -619,6 +641,6 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
 
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')
