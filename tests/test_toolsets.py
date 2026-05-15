@@ -2010,22 +2010,28 @@ async def test_no_input_raises_without_toolset_instructions():
         await agent.run()
 
 
-def test_tool_without_runctx_raises_warning():
+def test_tool_without_runctx_raises():
     toolset = FunctionToolset()
-    with pytest.warns(
-        DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'
+    with pytest.raises(
+        UserError,
+        match=r'`FunctionToolset\.tool\(\)` requires a function whose first parameter is annotated with `RunContext`',
     ):
 
-        @toolset.tool  # type: ignore[arg-type]  # pragma: no cover
-        def add(x: int):
+        @toolset.tool  # type: ignore[arg-type]
+        def add(x: int):  # pragma: no cover
             return x + 1
 
-        @toolset.tool(retries=2)  # type: ignore[arg-type]  # pragma: no cover
-        def sub(x: int):
+    with pytest.raises(
+        UserError,
+        match=r'`FunctionToolset\.tool\(\)` requires a function whose first parameter is annotated with `RunContext`',
+    ):
+
+        @toolset.tool(retries=2)  # type: ignore[arg-type]
+        def sub(x: int):  # pragma: no cover
             return x - 1
 
-    assert 'add' in toolset.tools
-    assert 'sub' in toolset.tools
+    assert 'add' not in toolset.tools
+    assert 'sub' not in toolset.tools
 
 
 class StatefulToolset(AbstractToolset[None]):

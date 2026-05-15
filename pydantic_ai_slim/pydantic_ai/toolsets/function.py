@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
@@ -10,6 +9,7 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
+from .._utils import takes_run_context
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionPart
 from ..tools import (
@@ -266,15 +266,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            # TODO(v2): Remove this deprecation fallback
-            #  and let takes_ctx=True propagate, which will raise a runtime error
-            #  in function_schema if the function doesn't accept RunContext.
-
-            # Is the func actually taking RunContext or is it a plain function in disguise?
-
-            tool = self.add_function(
+            if not takes_run_context(func_):
+                raise UserError(
+                    f'`FunctionToolset.tool()` requires a function whose first parameter is annotated with `RunContext`. '
+                    f'For tools that do not need run context, use `FunctionToolset.tool_plain()` instead. '
+                    f'Got: {func_.__qualname__}'
+                )
+            self.add_function(
                 func=func_,
-                takes_ctx=None,
+                takes_ctx=True,
                 name=name,
                 description=description,
                 retries=retries,
@@ -291,13 +291,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
-            if not tool.function_schema.takes_ctx:
-                warnings.warn(
-                    'Passing a function without `RunContext` to `FunctionToolset.tool()` is deprecated, use `tool_plain()` instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
