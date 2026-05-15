@@ -5312,7 +5312,7 @@ try:
 
     has_mcp = True
     del _mcp
-except ImportError:
+except ImportError:  # pragma: no cover
     has_mcp = False
 
 

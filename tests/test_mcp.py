@@ -887,6 +887,27 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
                 load_mcp_toolsets(config_path)
 
+    async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):
+        """Non-string/dict/list values (ints, bools, null) in the config flow through
+        `_expand_env_vars` unchanged."""
+        config = {
+            'mcpServers': {
+                'alpha': {
+                    'command': 'python',
+                    'args': ['-m', 'tests.mcp_server'],
+                    # Primitive values: `_expand_env_vars` should return these as-is.
+                    'startup_timeout': 30,
+                    'enable_telemetry': True,
+                    'log_file': None,
+                },
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config))
+            toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == 1
+
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
     """Building an `MCPToolset` from a URL must not emit `FastMCPDeprecationWarning` for the
