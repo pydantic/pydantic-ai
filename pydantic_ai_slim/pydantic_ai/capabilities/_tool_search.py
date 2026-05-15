@@ -229,8 +229,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # `ctx.tool_manager` is guaranteed populated in model-request hooks (see
         # `RunContext.tool_manager` docstring), so walking its toolset here is safe.
 
-        if ctx.tool_manager is None:
-            # This cannot happen because it is guranteed to be populated in model-request hooks
+        if ctx.tool_manager is None:  # pragma: no cover
+            # This cannot happen because it is guaranteed to be populated in model-request hooks
             return request_context
 
         should_be = await tools_for_loaded_capabilities(ctx, ctx.tool_manager.toolset)

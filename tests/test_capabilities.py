@@ -2437,6 +2437,65 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    'args,expected_id',
+    [
+        pytest.param(None, None, id='partial-stream-no-args'),
+        pytest.param({'id': 'refunds'}, 'refunds', id='validated-dict'),
+        pytest.param('{"id": "billing"}', 'billing', id='complete-json-string'),
+        pytest.param('{"id":', None, id='partial-stream-json'),
+        pytest.param('[1, 2, 3]', None, id='non-dict-json'),
+    ],
+)
+def test_load_capability_call_part_typed_args(args: Any, expected_id: str | None) -> None:
+    """`typed_args` parses `args` into a `LoadCapabilityArgs` dict, returning `None` for streaming-partial or non-conforming payloads."""
+    part = LoadCapabilityCallPart(tool_call_id='c', args=args)
+    assert part.capability_id == expected_id
+    if expected_id is None:
+        assert part.typed_args is None
+    else:
+        assert part.typed_args == {'id': expected_id}
+
+
+def test_load_capability_return_part_accessors() -> None:
+    """`LoadCapabilityReturnPart.loaded_capability` and `.instructions` are typed views over `content`."""
+    with_instructions = LoadCapabilityReturnPart(
+        tool_call_id='c',
+        content={'capability_id': 'refunds', 'instructions': 'Use refunds carefully.'},
+    )
+    assert with_instructions.loaded_capability == 'refunds'
+    assert with_instructions.instructions == 'Use refunds carefully.'
+
+    without_instructions = LoadCapabilityReturnPart(
+        tool_call_id='c',
+        content={'capability_id': 'refunds', 'instructions': None},
+    )
+    assert without_instructions.instructions is None
+
+
+def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
+    """`narrow_type` promotes a base part tagged `capability-load` and is a no-op on an already-typed part."""
+    base_call = ToolCallPart(
+        tool_name='load_capability',
+        tool_call_id='c',
+        args={'id': 'refunds'},
+        tool_kind='capability-load',
+    )
+    promoted_call = ToolCallPart.narrow_type(base_call)
+    assert isinstance(promoted_call, LoadCapabilityCallPart)
+    assert ToolCallPart.narrow_type(promoted_call) is promoted_call
+
+    base_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c',
+        content={'capability_id': 'refunds', 'instructions': None},
+        tool_kind='capability-load',
+    )
+    promoted_return = ToolReturnPart.narrow_type(base_return)
+    assert isinstance(promoted_return, LoadCapabilityReturnPart)
+    assert ToolReturnPart.narrow_type(promoted_return) is promoted_return
+
+
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
     toolset = FunctionToolset[None]()
@@ -2629,6 +2688,64 @@ The following capabilities are deferred and can be loaded via load_capability: r
             ),
         ]
     )
+
+
+async def test_deferred_capability_load_includes_toolset_instructions() -> None:
+    """Instructions declared on a deferred capability's toolset surface via the `load_capability` return.
+
+    The wrapping `CapabilityScopedToolset` silences `get_instructions` while the capability is unloaded
+    (so toolset hints don't leak into the prompt), then re-emits them on load alongside the capability's
+    own instructions.
+    """
+    toolset = FunctionToolset[None](instructions='Use the refund tool with the order id, not the customer id.')
+
+    @toolset.tool_plain
+    def lookup_refund(order_id: str) -> str:
+        return f'{order_id}: ok'  # pragma: no cover
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Quote the refund policy verbatim.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+        return make_text_response('ok')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('hi')
+
+    assert result.output == 'ok'
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == snapshot("""\
+Quote the refund policy verbatim.
+
+Use the refund tool with the order id, not the customer id.\
+""")
 
 
 async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
@@ -7261,6 +7378,26 @@ def test_native_or_local_preserves_passed_tool_instance():
     tool = ToolDirect(my_search)
     cap = NativeOrLocalTool(native=WebSearchTool(), local=tool)
     assert cap.local is tool
+
+
+def test_native_or_local_id_kwarg_overrides_default():
+    """`id=` overrides the auto-derived capability id across `NativeOrLocalTool` subclasses.
+
+    The id is the wire-side identifier (used in `ctx.capabilities` lookup and surfaced to the model
+    in the deferred-capability catalog), so users need a way to disambiguate when they instantiate
+    the same capability twice in one agent.
+    """
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+    from pydantic_ai.tools import Tool as ToolDirect
+
+    def _nop() -> None:
+        return None  # pragma: no cover
+
+    nop = ToolDirect(_nop)
+
+    assert NativeOrLocalTool(native=WebSearchTool(), local=nop, id='custom').id == 'custom'
+    assert WebFetch(local=nop, id='custom').id == 'custom'
+    assert ImageGeneration(local=False, id='custom').id == 'custom'
 
 
 def test_websearch_unknown_strategy_raises():
