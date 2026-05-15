@@ -2016,17 +2016,22 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if self._running_count == 0:
                 # Build the exit stack inside an `async with` so any failure after
                 # `enter_async_context(self.client)` cleans up the open session — only commit the
-                # stack to `self._exit_stack` once initialization fully succeeds.
+                # stack and write `_server_info`/`_server_capabilities`/`_instructions` to `self`
+                # once initialization fully succeeds, so `_initialized` can't see stale data from a
+                # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self.client)
                     init_result = self.client.initialize_result
                     assert init_result is not None, 'FastMCP Client initialization returned no result'
-                    self._server_info = init_result.serverInfo
-                    self._server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
-                    self._instructions = init_result.instructions
+                    server_info = init_result.serverInfo
+                    server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
+                    instructions = init_result.instructions
                     if self.log_level is not None:
                         await self.client.session.set_logging_level(self.log_level)
                     self._exit_stack = exit_stack.pop_all()
+                    self._server_info = server_info
+                    self._server_capabilities = server_capabilities
+                    self._instructions = instructions
             self._running_count += 1
         return self
 
