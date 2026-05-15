@@ -1157,6 +1157,11 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+    state: ModelResponseState = field(default='complete', init=False)
+    """Lifecycle state of the response."""
+    suspended_retry_delay: float | None = field(default=None, init=False)
+    """Seconds the graph should wait before retrying a suspended response."""
+    metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
@@ -1317,6 +1322,8 @@ class StreamedResponse(ABC):
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         if self._cancelled:
             state: ModelResponseState = 'interrupted'
+        elif self.state != 'complete':
+            state = self.state
         elif self._finished:
             state = 'complete'
         else:
@@ -1332,6 +1339,8 @@ class StreamedResponse(ABC):
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
             state=state,
+            suspended_retry_delay=self.suspended_retry_delay,
+            metadata=self.metadata,
         )
 
     # TODO (v2): Make this a property

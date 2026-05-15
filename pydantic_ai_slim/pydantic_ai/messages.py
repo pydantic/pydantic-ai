@@ -118,19 +118,26 @@ FinishReason: TypeAlias = Literal[
     'tool_call',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
 
-ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
-"""Lifecycle state of a model response.
+Mostly normalized to OpenTelemetry semantic convention values.
+Whether the agent should automatically continue is determined by `ModelResponse.state`, not by this field.
+"""
 
-- `'complete'`: the response has been fully received from the model.
-- `'incomplete'`: the response is still being streamed and may receive more parts.
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', 'interrupted']
+"""The state of a model response, indicating whether the response is final or requires further action.
+
+- `'complete'` — The response is done. This is the default state.
+- `'incomplete'` — The response is still being streamed and may receive more parts.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses]
-  while iteration is in flight.
-- `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
-  finished generating.
+  while iteration is in flight, or after iteration stopped before the stream finished.
+- `'suspended'` — The model paused mid-turn and expects a continuation request.
+  Used by Anthropic `pause_turn` and OpenAI background mode.
+- `'interrupted'` — The response was intentionally cancelled before completion.
+  Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+
+Additional states may be added in the future, e.g. model-side truncation.
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -2125,6 +2132,29 @@ class ModelResponse:
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+    state: ModelResponseState = 'complete'
+    """The state of this response, indicating whether it is final or requires further action.
+
+    - `'complete'` — The response is done. This is the default.
+    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'suspended'` — The model paused mid-turn and expects a continuation request.
+      The agent graph will automatically send a continuation request.
+      Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+      or return background/async responses (e.g. OpenAI background mode).
+    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    """
+
+    suspended_retry_delay: float | None = None
+    """Seconds the graph should wait before retrying a suspended response.
+
+    This is only meaningful when `state == 'suspended'`. `None` means the graph should
+    retry immediately. Set by providers that return suspended (in-progress) responses,
+    e.g. OpenAI background mode. The agent graph reads this value to determine how long
+    to wait before making a continuation request, so durable execution frameworks can
+    intercept the sleep.
+    """
+
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
@@ -2137,9 +2167,6 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
-
-    state: ModelResponseState = 'complete'
-    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
     @property
     def text(self) -> str | None:

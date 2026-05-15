@@ -1,0 +1,168 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      background: true
+      input:
+      - content: What is 2 + 2?
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '839'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '307'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: true
+      completed_at: null
+      created_at: 1771881594
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e1eedd011e1e4c200699cc47a9ec481998df8ee139d308590
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      status: queued
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      cookie:
+      - __cf_bm=_om2rsrvT2UKO5DRxtKYnRL9QdoZTFhahvwMpslMQ38-1771881594.5690382-1.0.1.1-BPptJgqUUHjPPygw5tKNuHownYp1AATwV7gaFVJenAIwrxS_aMn8PmVjPMKGGdWKKWaEcOZX2ypgQOaKGD3.PTipHhStYAsnFk.1JvFDmFf39F_HjDyVgovFH2J0XWMq
+      host:
+      - api.openai.com
+    method: GET
+    uri: https://api.openai.com/v1/responses/resp_0e1eedd011e1e4c200699cc47a9ec481998df8ee139d308590?stream=false
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '839'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '134'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: true
+      completed_at: null
+      created_at: 1771881594
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e1eedd011e1e4c200699cc47a9ec481998df8ee139d308590
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      status: queued
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
