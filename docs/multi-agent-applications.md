@@ -33,7 +33,7 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-3-flash-preview', output_type=list[str]
+    'google:gemini-3-flash-preview', output_type=list[str]
 )
 
 
@@ -106,7 +106,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     instructions=(
