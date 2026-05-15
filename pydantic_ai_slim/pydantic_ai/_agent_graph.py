@@ -852,8 +852,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
-        discovered_tools = parse_discovered_tools(ctx.state.message_history)
-        ctx.deps.discovered_tools = discovered_tools
+        ctx.deps.discovered_tools.update(parse_discovered_tools(ctx.state.message_history))
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
@@ -864,6 +863,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts.
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
+
+        # Added discovery before this so that get_tools can use it and behaviour remains consistent with existing ToolSearch
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
