@@ -9,7 +9,7 @@ The package exposes two graph APIs:
 - The builder-based API ([`GraphBuilder`][pydantic_graph.GraphBuilder] and
   friends), which is the recommended way to build graphs and is the future of
   this library.
-- The original `BaseNode`-based [`Graph`][pydantic_graph.basenode.Graph] runner,
+- The original `BaseNode`-based [`Graph`][pydantic_graph.graph.Graph] runner,
   kept for backwards compatibility and now deprecated. Importing the runner,
   its result types, snapshot types, or persistence helpers from
   `pydantic_graph` (top level) emits a

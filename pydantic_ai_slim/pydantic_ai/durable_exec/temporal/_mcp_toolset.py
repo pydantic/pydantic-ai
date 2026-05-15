@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.mcp import MCPServer
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 if TYPE_CHECKING:
@@ -15,16 +15,16 @@ from ._mcp import TemporalMCPToolsetBase
 from ._run_context import TemporalRunContext
 
 
-class TemporalMCPServer(TemporalMCPToolsetBase[AgentDepsT]):
-    """A wrapper for MCPServer that integrates with Temporal, turning get_tools and call_tool into activities.
+class TemporalMCPToolset(TemporalMCPToolsetBase[AgentDepsT]):
+    """A wrapper for `MCPToolset` that integrates with Temporal, turning `get_tools` and `call_tool` into activities.
 
     Tool definitions are cached across activities to avoid redundant MCP server round-trips,
-    respecting the wrapped server's `cache_tools` setting.
+    respecting the wrapped toolset's `cache_tools` setting.
     """
 
     def __init__(
         self,
-        server: MCPServer,
+        toolset: MCPToolset[AgentDepsT],
         *,
         activity_name_prefix: str,
         activity_config: ActivityConfig,
@@ -34,7 +34,7 @@ class TemporalMCPServer(TemporalMCPToolsetBase[AgentDepsT]):
         agent: AbstractAgent[AgentDepsT, Any] | None = None,
     ):
         super().__init__(
-            server,
+            toolset,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config,
             tool_activity_config=tool_activity_config,
@@ -48,18 +48,18 @@ class TemporalMCPServer(TemporalMCPToolsetBase[AgentDepsT]):
         self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
-    def _server(self) -> MCPServer:
-        assert isinstance(self.wrapped, MCPServer)
+    def _toolset(self) -> MCPToolset[AgentDepsT]:
+        assert isinstance(self.wrapped, MCPToolset)
         return self.wrapped
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._server.tool_for_tool_def(tool_def)
+        return self._toolset.tool_for_tool_def(tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self._server.cache_tools and self._cached_tool_defs is not None:
+        if self._toolset.cache_tools and self._cached_tool_defs is not None:
             return {name: self.tool_for_tool_def(td) for name, td in self._cached_tool_defs.items()}
 
         result = await super().get_tools(ctx)
-        if self._server.cache_tools:  # pragma: no branch
+        if self._toolset.cache_tools:  # pragma: no branch
             self._cached_tool_defs = {name: tool.tool_def for name, tool in result.items()}
         return result
