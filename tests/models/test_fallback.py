@@ -30,10 +30,7 @@ from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import (
-    InstrumentationSettings,
-    InstrumentedModel,  # pyright: ignore[reportDeprecated]
-)
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -261,18 +258,21 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -281,6 +281,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -522,18 +523,21 @@ async def test_first_success_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -542,6 +546,7 @@ async def test_first_success_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -559,18 +564,21 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -579,6 +587,7 @@ async def test_first_failed_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -1679,7 +1688,7 @@ async def test_fallback_model_instrumented_lifecycle():
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
 
     fallback = FallbackModel(model1, model2)
-    instrumented = InstrumentedModel(fallback, InstrumentationSettings())  # pyright: ignore[reportDeprecated]
+    instrumented = InstrumentedModel(fallback, InstrumentationSettings())
 
     async with instrumented:
         assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
