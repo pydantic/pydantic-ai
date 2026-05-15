@@ -122,6 +122,16 @@ def test_google_cloud_provider_no_warning_on_construction() -> None:
     assert isinstance(provider, GoogleCloudProvider)
 
 
+def test_google_cloud_provider_custom_client_no_warning() -> None:
+    """`GoogleCloudProvider(client=...)` short-circuits construction and stores the supplied client."""
+    client = Client(vertexai=False, api_key='mock-api-key')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        provider = GoogleCloudProvider(client=client)
+    assert isinstance(provider, GoogleCloudProvider)
+    assert provider.client is client
+
+
 def test_google_cloud_provider_shares_base_with_google_provider() -> None:
     """Both classes inherit from `BaseGoogleProvider` (which owns the shared client wiring),
     rather than `GoogleCloudProvider` subclassing `GoogleProvider`. This avoids the trap
