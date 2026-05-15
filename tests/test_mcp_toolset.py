@@ -719,3 +719,23 @@ def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
     MCPToolset('https://example.com/mcp', headers={'X-Key': 'foo'})
     deprecation_messages = [str(w.message) for w in recwarn if 'sse_read_timeout' in str(w.message)]
     assert deprecation_messages == [], deprecation_messages
+
+
+def test_mcpserverconfig_access_emits_deprecation_warning() -> None:
+    """`from pydantic_ai.mcp import MCPServerConfig` (or attribute access) warns and returns the
+    private `_MCPServerConfig`."""
+    import pydantic_ai.mcp as mcp_module
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`pydantic_ai\.mcp\.MCPServerConfig` is deprecated'):
+        cls = mcp_module.MCPServerConfig
+    assert cls is mcp_module._MCPServerConfig  # pyright: ignore[reportPrivateUsage]
+
+
+def test_mcp_module_unknown_attribute_raises() -> None:
+    """Accessing an undefined attribute on `pydantic_ai.mcp` raises `AttributeError`, not a
+    deprecation warning."""
+    import pydantic_ai.mcp as mcp_module
+
+    with pytest.raises(AttributeError, match='no attribute'):
+        mcp_module.does_not_exist
