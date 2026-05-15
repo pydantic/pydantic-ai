@@ -493,6 +493,89 @@ async def test_evaluate_decorator_multiple_evaluators():
 
 
 @pytest.mark.anyio
+async def test_evaluate_decorator_async_default_skips_dispatch_on_exception():
+    """By default, evaluators are not dispatched when the decorated async function raises."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        raise RuntimeError(f'boom: {x}')
+
+    with pytest.raises(RuntimeError, match='boom: 42'):
+        await my_func(42)
+    await wait_for_evaluations()
+
+    assert collector.calls == []
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_async_run_on_errors_dispatches():
+    """`run_on_errors=True` dispatches the evaluator with the raised exception as `output`."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True))
+    async def my_func(x: int) -> int:
+        raise RuntimeError(f'boom: {x}')
+
+    with pytest.raises(RuntimeError, match='boom: 42'):
+        await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert isinstance(ctx.output, RuntimeError)
+    assert str(ctx.output) == 'boom: 42'
+    assert ctx.inputs == {'x': 42}
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_async_run_on_errors_filters_evaluators():
+    """When some evaluators opt in and some don't, only the opted-in ones run on error."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True),
+        AlwaysFalse(),  # default run_on_errors=False
+    )
+    async def my_func(x: int) -> int:
+        raise RuntimeError('boom')
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, _ = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_sync_run_on_errors_dispatches():
+    """Sync decorator: `run_on_errors=True` dispatches with the exception as `output`."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True))
+    def my_func(x: int) -> int:
+        raise RuntimeError(f'boom: {x}')
+
+    with pytest.raises(RuntimeError, match='boom: 42'):
+        my_func(42)
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert isinstance(ctx.output, RuntimeError)
+
+
+@pytest.mark.anyio
 async def test_evaluate_decorator_with_failure():
     """evaluate() decorator handles evaluator failures gracefully."""
     collector = Collector()

@@ -13,6 +13,8 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.capabilities.instrumentation import Instrumentation
+    from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.models.test import TestModel
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
@@ -273,6 +275,86 @@ async def test_multiple_evaluators():
     results, _, _ = collector.calls[0]
     assert len(results) == 2
     assert all(r.value is True for r in results)
+
+
+if TYPE_CHECKING or imports_successful():
+
+    def _failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+
+@pytest.mark.anyio
+async def test_run_on_errors_default_skips_dispatch_on_exception():
+    """By default, sampled evaluators are not dispatched when the agent run raises."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
+    )
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert collector.calls == []
+
+
+@pytest.mark.anyio
+async def test_run_on_errors_dispatches_with_exception_as_output():
+    """`run_on_errors=True` dispatches the evaluator with the raised exception as `output`."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=config,
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _failures, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert isinstance(ctx.output, RuntimeError)
+    assert str(ctx.output) == 'model exploded'
+
+
+@pytest.mark.anyio
+async def test_run_on_errors_only_dispatches_opted_in_evaluators():
+    """When some evaluators opt in and some don't, only the opted-in ones run on error."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[
+                    OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True),
+                    AlwaysTrue(),  # default run_on_errors=False
+                ],
+                config=config,
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, _ = collector.calls[0]
+    assert len(results) == 1
 
 
 @pytest.mark.anyio
