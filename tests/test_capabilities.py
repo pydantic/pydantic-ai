@@ -17,7 +17,7 @@ from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
-from pydantic_ai._load_capability import LoadCapabilityCallPart
+from pydantic_ai._load_capability import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -99,6 +99,16 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr, try_import
+
+from pydantic_ai._tool_search import ToolSearchCallPart
+from pydantic_ai._tool_search import ToolSearchReturnPart
+from pydantic_ai import ModelRequest
+from pydantic_ai import ModelResponse
+from pydantic_ai import RequestUsage
+from pydantic_ai import TextPart
+from pydantic_ai import ToolCallPart
+from pydantic_ai import ToolReturnPart
+from dirty_equals import IsDatetime
 
 with try_import() as xai_imports:
     from pydantic_ai.models.xai import XSearch
@@ -2346,8 +2356,7 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
     message_history = [
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                LoadCapabilityReturnPart(
                     content={'capability_id': 'missing', 'instructions': None},
                     tool_call_id='load-missing',
                 )
@@ -2439,7 +2448,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     assert result.output == snapshot('final: order-123: refund allowed for 30 days')
     assert seen_tool_names == snapshot(
         [
-            ['search_tools', 'load_capability'],
+            ['load_capability', 'lookup_refund_policy'],
             ['lookup_refund_policy'],
             ['lookup_refund_policy'],
         ]
@@ -2458,7 +2467,7 @@ The following capabilities are deferred and can be loaded via load_capability: r
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
+                    LoadCapabilityCallPart(
                         tool_name='load_capability',
                         args={'id': 'refunds'},
                         tool_call_id='load-refunds',
@@ -2472,7 +2481,7 @@ The following capabilities are deferred and can be loaded via load_capability: r
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    LoadCapabilityReturnPart(
                         tool_name='load_capability',
                         content={
                             'capability_id': 'refunds',
@@ -2491,15 +2500,37 @@ The following capabilities are deferred and can be loaded via load_capability: r
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            # Synthesized by `ToolSearch.before_model_request` after the cap load —
+            # `auto_load_*` id is uuid4-randomized so it's matched as `IsStr()`.
+            ModelResponse(
+                parts=[
+                    ToolSearchCallPart(
+                        args={'queries': ['<auto-discovered>']},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(),
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='lookup_refund_policy',
-                        args={'order_id': 'order-123'},
-                        tool_call_id='lookup-refund',
+                        tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=75, output_tokens=10),
+                usage=RequestUsage(input_tokens=82, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2518,13 +2549,14 @@ The following capabilities are deferred and can be loaded via load_capability: r
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.\
+""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=81, output_tokens=17),
+                usage=RequestUsage(input_tokens=88, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

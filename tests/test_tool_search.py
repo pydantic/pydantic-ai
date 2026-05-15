@@ -951,7 +951,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
                 parts=[
                     ToolCallPart(
                         tool_name=_SEARCH_TOOLS_NAME,
-                        args={'keywords': 'eager'},
+                        args={'queries': ['eager']},
                         tool_call_id='search-1',
                     )
                 ]
@@ -1048,7 +1048,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
                 parts=[
                     ToolCallPart(
                         tool_name=_SEARCH_TOOLS_NAME,
-                        args={'keywords': 'special'},
+                        args={'queries': ['special']},
                         tool_call_id='search-special',
                     )
                 ]
@@ -1117,7 +1117,12 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         'non_string_capability_id': {'capability_id': 123, 'instructions': None},
         'non_string_instructions': {'capability_id': 'reports', 'instructions': ['bad']},
     }
-    visible_tools: dict[str, list[str]] = {}
+    # Capture (name, defer_loading) per case — the load-bearing check is that
+    # `inherited_tool` stays `defer_loading=True` even with malformed load history.
+    # The toolset keeps deferred tools in its dict (post-#5143; the wire filter
+    # is what hides them on real providers), so checking presence alone wouldn't
+    # prove the "did not unlock" claim.
+    visible_tool_state: dict[str, list[tuple[str, bool]]] = {}
 
     for case_name, content in cases.items():
         messages: list[ModelMessage] = [
@@ -1125,14 +1130,14 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         ]
         ctx = _build_run_context(None, messages=messages, capabilities={'reports': capability})
         tools = await searchable.get_tools(ctx)
-        visible_tools[case_name] = list(tools)
+        visible_tool_state[case_name] = [(name, bool(t.tool_def.defer_loading)) for name, t in tools.items()]
 
-    assert visible_tools == snapshot(
+    assert visible_tool_state == snapshot(
         {
-            'not_a_dict': ['search_tools'],
-            'missing_capability_id': ['search_tools'],
-            'non_string_capability_id': ['search_tools'],
-            'non_string_instructions': ['search_tools'],
+            'not_a_dict': [('inherited_tool', True), ('search_tools', False)],
+            'missing_capability_id': [('inherited_tool', True), ('search_tools', False)],
+            'non_string_capability_id': [('inherited_tool', True), ('search_tools', False)],
+            'non_string_instructions': [('inherited_tool', True), ('search_tools', False)],
         }
     )
 
