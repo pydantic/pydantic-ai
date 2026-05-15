@@ -620,6 +620,115 @@ class TestSamplingHandler:
         assert result.model == model.model_name
 
 
+class TestSamplingMessageMapping:
+    """Cover the mapping helpers in `pydantic_ai._mcp` that translate MCP sampling messages
+    to/from PAI message parts. Exercised via the sampling handler that `MCPToolset(sampling_model=...)` installs."""
+
+    async def test_map_handles_image_audio_and_role_transitions(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hello')),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='hi back')),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.ImageContent(
+                        type='image',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='image/png',
+                    ),
+                ),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.AudioContent(
+                        type='audio',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='audio/wav',
+                    ),
+                ),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='final')),
+            ],
+            systemPrompt='you are helpful',
+            maxTokens=10,
+        )
+        pai_messages = _mcp_helpers.map_from_mcp_params(params)
+        # Should alternate Request/Response, with the trailing assistant becoming the final ModelResponse.
+        kinds = [type(m).__name__ for m in pai_messages]
+        assert kinds == ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+
+    async def test_map_rejects_unsupported_content_types(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        list_content_params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='user', content=[]),
+            ],
+            maxTokens=10,
+        )
+        with pytest.raises(NotImplementedError, match='list content'):
+            _mcp_helpers.map_from_mcp_params(list_content_params)
+
+        # `ToolUseContent` / `ToolResultContent` from the user side aren't legal sampling input.
+        tool_use_params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.ToolUseContent(type='tool_use', id='t', name='foo', input={}),
+                ),
+            ],
+            maxTokens=10,
+        )
+        with pytest.raises(NotImplementedError, match='cannot be used as user content'):
+            _mcp_helpers.map_from_mcp_params(tool_use_params)
+
+        # Audio sampling responses are also explicitly unsupported.
+        audio_response_params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=mcp_types.AudioContent(
+                        type='audio',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='audio/wav',
+                    ),
+                ),
+            ],
+            maxTokens=10,
+        )
+        with pytest.raises(NotImplementedError):
+            _mcp_helpers.map_from_sampling_content(audio_response_params.messages[0].content)  # type: ignore[arg-type]
+
+    async def test_map_handles_consecutive_assistant_messages(self):
+        """Two assistant messages in a row append into the same `ModelResponse` (no intervening request)."""
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='one')),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='two')),
+            ],
+            maxTokens=10,
+        )
+        pai_messages = _mcp_helpers.map_from_mcp_params(params)
+        assert [type(m).__name__ for m in pai_messages] == ['ModelResponse']
+
+    async def test_map_from_model_response_skips_thinking_and_rejects_unknown(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
+
+        # `ThinkingPart` is silently skipped, leaving the text content.
+        result = _mcp_helpers.map_from_model_response(
+            ModelResponse(parts=[ThinkingPart(content='hidden'), TextPart(content='visible')])
+        )
+        assert result.text == 'visible'
+
+        # Unsupported parts (e.g. tool calls) raise a clear error.
+        with pytest.raises(UnexpectedModelBehavior):
+            _mcp_helpers.map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='foo', args='{}')]))
+
+
 class TestResourceMethodErrorPaths:
     async def test_list_resources_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
         """Server errors from `list_resources` are wrapped in `MCPError`."""

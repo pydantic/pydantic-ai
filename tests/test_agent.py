@@ -7539,6 +7539,18 @@ def test_deprecated_kwargs_validation_agent_init():
         Agent('test', foo='value1', bar='value2')  # pyright: ignore[reportCallIssue]
 
 
+def test_deprecated_mcp_servers_kwarg_warns():
+    """Passing `mcp_servers=` is deprecated in favor of `toolsets=`. The kwarg keeps working but emits a `DeprecationWarning`."""
+    import warnings as _warnings
+
+    foo_toolset = FunctionToolset[None]()
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        Agent('test', mcp_servers=[foo_toolset])  # type: ignore[call-arg]
+    deprecation = [w for w in caught if 'mcp_servers' in str(w.message)]
+    assert len(deprecation) == 1
+
+
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 

@@ -2640,3 +2640,15 @@ async def test_toolset_empty_instructions_filtered():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
+
+
+def test_apply_walks_combined_and_wrapper_toolsets():
+    """`apply()` walks through `CombinedToolset` children and unwraps `WrapperToolset` (e.g. `PrefixedToolset`)."""
+    inner1 = FunctionToolset[None]()
+    inner2 = FunctionToolset[None]()
+    combined = CombinedToolset([inner1, PrefixedToolset(inner2, 'p')])
+
+    visited: list[AbstractToolset[None]] = []
+    combined.apply(visited.append)
+    assert inner1 in visited
+    assert inner2 in visited

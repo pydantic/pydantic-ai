@@ -1683,6 +1683,16 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert tools['foo'].tool_def.name == 'foo'
 
 
+async def test_dbos_mcp_toolset_get_instructions_uses_local_when_initialized(dbos: DBOS):
+    """When the wrapped MCP toolset is already initialized, the DBOS wrapper short-circuits and returns the local instructions."""
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
+
+    # Entering the wrapped toolset populates `_instructions` so the local fast-path returns the part directly.
+    async with _uninit_instructions_toolset.wrapped:
+        instructions = await _uninit_instructions_toolset.get_instructions(run_context)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+
+
 def test_dbos_mcp_wrapper_visit_and_replace():
     """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
     toolsets = mcptoolset_instructions_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
