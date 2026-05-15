@@ -1743,12 +1743,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> FastA2A:
         """Convert the agent to a FastA2A application.
 
-        Example:
-        ```python
+        Deprecated in 1.x and removed in 2.0; use
+        [`agent_to_a2a`][fasta2a.pydantic_ai.agent_to_a2a] from
+        [`fasta2a`](https://github.com/datalayer/fasta2a) (v0.6.1+) instead:
+
+        ```python {test="skip" lint="skip"}
+        from fasta2a.pydantic_ai import agent_to_a2a
+
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
-        app = agent.to_a2a()
+        app = agent_to_a2a(agent)
         ```
 
         The `app` is an ASGI application that can be used with any ASGI server.
