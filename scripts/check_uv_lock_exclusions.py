@@ -16,7 +16,9 @@ else:
 
 TomlValue: TypeAlias = bool | int | float | str | list['TomlValue'] | dict[str, 'TomlValue']
 
-_ALLOWED_EXCLUDE_NEWER_PACKAGES = frozenset({'pydantic-harness'})
+# Pydantic-owned packages whose cooldown bypass is safe to commit. Keep in sync with
+# git deps from `https://github.com/pydantic/*` referenced by this repo's pyproject.toml.
+_ALLOWED_EXCLUDE_NEWER_PACKAGES = frozenset({'pydantic-harness', 'pydantic-docs', 'strict-no-cover'})
 
 
 def _load_lockfile(path: Path) -> dict[str, TomlValue] | None:
