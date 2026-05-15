@@ -48,7 +48,7 @@ nav:
           - tools-advanced.md
           - toolsets.md
           - deferred-tools.md
-          - builtin-tools.md
+          - native-tools.md
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
@@ -149,7 +149,7 @@ nav:
       - pydantic_ai:
           - api/ag_ui.md
           - api/agent.md
-          - api/builtin_tools.md
+          - api/native_tools.md
           - api/capabilities.md
           - api/common_tools.md
           - api/concurrency.md
@@ -392,7 +392,7 @@ plugins:
           - a2a.md
           - agent.md
           - agent-spec.md
-          - builtin-tools.md
+          - native-tools.md
           - capabilities.md
           - dependencies.md
           - deferred-tools.md

@@ -25,7 +25,8 @@ time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
     output_type=TimeRangeResponse,  # type: ignore  # we can't yet annotate something as receiving a TypeForm
     deps_type=TimeRangeDeps,
     system_prompt="Convert the user's request into a structured time range.",
-    retries=1,
+    tool_retries=1,
+    output_retries=1,
     instrument=True,
 )
 

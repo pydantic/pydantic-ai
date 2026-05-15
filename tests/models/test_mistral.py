@@ -227,13 +227,13 @@ async def test_multiple_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.output == 'hello again'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -297,18 +297,18 @@ async def test_three_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.output == 'hello again'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
     assert result.output == 'final message'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -404,8 +404,8 @@ async def test_stream_text(allow_model_requests: None):
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 5
-        assert result.usage().output_tokens == 5
+        assert result.usage.input_tokens == 5
+        assert result.usage.output_tokens == 5
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -440,8 +440,8 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage().input_tokens == 3
-        assert result.usage().output_tokens == 3
+        assert result.usage.input_tokens == 3
+        assert result.usage.output_tokens == 3
 
 
 #####################
@@ -475,8 +475,8 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 2
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 2
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -551,9 +551,9 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
-    assert result.usage().details == {}
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
+    assert result.usage.details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -622,9 +622,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
     result = await agent.run('User prompt value')
 
     assert result.output == 42
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
-    assert result.usage().details == {}
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
+    assert result.usage.details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -774,11 +774,11 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 10
-        assert result.usage().output_tokens == 10
+        assert result.usage.input_tokens == 10
+        assert result.usage.output_tokens == 10
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_dict(allow_model_requests: None):
@@ -861,11 +861,11 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
@@ -890,11 +890,11 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
         assert result.is_complete
-        assert result.usage().input_tokens == 6
-        assert result.usage().output_tokens == 6
+        assert result.usage.input_tokens == 6
+        assert result.usage.output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -983,11 +983,11 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 35
-        assert result.usage().output_tokens == 35
+        assert result.usage.input_tokens == 35
+        assert result.usage.output_tokens == 35
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
@@ -1068,11 +1068,11 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
@@ -1136,11 +1136,11 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check cost matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 #####################
@@ -1202,9 +1202,9 @@ async def test_request_tool_call(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == 'final response'
-    assert result.usage().input_tokens == 6
-    assert result.usage().output_tokens == 4
-    assert result.usage().total_tokens == 10
+    assert result.usage.input_tokens == 6
+    assert result.usage.output_tokens == 4
+    assert result.usage.total_tokens == 10
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1381,8 +1381,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == {'lat': 51, 'lng': 0}
-    assert result.usage().input_tokens == 7
-    assert result.usage().output_tokens == 4
+    assert result.usage.input_tokens == 7
+    assert result.usage.output_tokens == 4
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1562,12 +1562,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 4
-        assert result.usage().output_tokens == 4
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 4
+        assert result.usage.output_tokens == 4
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 4
+        assert result.usage.output_tokens == 4
 
     assert result.all_messages() == snapshot(
         [
@@ -1693,12 +1693,12 @@ async def test_stream_tool_call(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 6
-        assert result.usage().output_tokens == 6
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 6
+        assert result.usage.output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 6
+        assert result.usage.output_tokens == 6
 
     assert result.all_messages() == snapshot(
         [
@@ -1824,12 +1824,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 7
-        assert result.usage().output_tokens == 7
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 7
+        assert result.usage.output_tokens == 7
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 7
+        assert result.usage.output_tokens == 7
 
     assert result.all_messages() == snapshot(
         [
@@ -2787,3 +2787,41 @@ def test_map_content_handles_reference_chunk() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                model_name='gpt-4',
+                timestamp=IsDatetime(),
+                provider_name='mistral',
+                provider_url='https://api.mistral.ai',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='x',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
