@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from fastmcp.client.progress import ProgressHandler
     from fastmcp.client.roots import RootsHandler, RootsList
     from fastmcp.client.sampling import SamplingHandler
+    from fastmcp.client.tasks import ToolTask
     from fastmcp.client.transports import (
         ClientTransport,
         SSETransport,
@@ -2084,8 +2085,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
-        return {
-            mcp_tool.name: ToolsetTool[AgentDepsT](
+        tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        for mcp_tool in await self.list_tools():
+            task_support = mcp_tool.execution.taskSupport if mcp_tool.execution else None
+            tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
                 toolset=self,
                 tool_def=ToolDefinition(
                     name=mcp_tool.name,
@@ -2094,6 +2097,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                        'task': task_support in ('required', 'optional'),
+                        'task_required': task_support == 'required',
                     },
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
@@ -2101,8 +2106,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
-            for mcp_tool in await self.list_tools()
-        }
+        return tools
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
@@ -2118,6 +2122,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         args: dict[str, Any],
         *,
         metadata: dict[str, Any] | None = None,
+        use_task: bool = False,
     ) -> Any:
         """Call a tool on the server directly.
 
@@ -2125,6 +2130,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             name: The name of the tool to call.
             args: The arguments to pass to the tool.
             metadata: Optional request-level `_meta` payload sent alongside the call.
+            use_task: When `True`, send the call with `task=True` per MCP
+                [SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) so
+                the server wraps execution in a durable, cancelable, pollable task; the result is awaited via
+                `tasks/result`. Only valid for tools whose `execution.taskSupport` is `'required'` or `'optional'`.
 
         Raises:
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
@@ -2132,7 +2141,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         async with self:
             try:
-                result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                if use_task:
+                    tool_task: ToolTask = await self.client.call_tool(
+                        name=name, arguments=args, task=True, meta=metadata
+                    )
+                    result: CallToolResult = await tool_task.result()
+                else:
+                    result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
@@ -2159,9 +2174,29 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
+        metadata = tool.tool_def.metadata or {}
+        supports_task = bool(metadata.get('task'))
+        task_required = bool(metadata.get('task_required'))
+
+        # Whether to opt in to the MCP task path is read from the *runtime* tool metadata
+        # (post-capability augmentation, e.g. by `SetToolMetadata`), not the static toolset view.
+        runtime_tool = ctx.tool_manager.tools.get(name) if ctx.tool_manager and ctx.tool_manager.tools else None
+        background = bool((runtime_tool.tool_def.metadata or {}).get('background')) if runtime_tool else False
+
+        if task_required and not background:
+            raise exceptions.UserError(
+                f'Tool {name!r} requires MCP task-augmented execution but no capability has opted it in. '
+                f"Add `SetToolMetadata(tools={{'task': True}}, background=True)` to your agent's capabilities, "
+                f"or any equivalent that sets `background=True` on the tool's metadata."
+            )
+
+        use_task = supports_task and background
+
         if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
-        return await self.direct_call_tool(name, tool_args)
+            return await self.process_tool_call(
+                ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
+            )
+        return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
     async def list_resources(self) -> list[Resource]:
         """Retrieve the resources currently exposed by the server.
