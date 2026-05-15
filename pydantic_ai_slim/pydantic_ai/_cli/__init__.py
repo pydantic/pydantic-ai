@@ -138,7 +138,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 
 
 def cli(
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai-chat:gpt-5'
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai-responses:gpt-5'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
