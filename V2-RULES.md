@@ -266,6 +266,22 @@ Broken anchor links in docs CI must fail the build, not warn. Renames silently b
 
 **Status:** CI-tightening task on the harness side (David SF / harness). Listed here so PR authors who add anchors know to verify their links resolve locally.
 
+### 26. Use `PydanticAIDeprecationWarning`, not stdlib `DeprecationWarning` (v2:prep)
+
+Every `warnings.warn(...)` call introduced by a `v2:prep` PR uses `pydantic_ai._warnings.PydanticAIDeprecationWarning` (a `UserWarning` subclass), not the stdlib `DeprecationWarning`. The matching `pytest.warns(...)` calls and `pytest.mark.filterwarnings(...)` markers swap accordingly.
+
+```python
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+warnings.warn('`X(...)` is deprecated...', PydanticAIDeprecationWarning, stacklevel=2)
+```
+
+**Why:** stdlib `DeprecationWarning` is silenced by default in user code (only shown when running under `pytest` or with `python -W`), so end users never see our warnings before v2 lands. `UserWarning` is shown by default. Per Seth Larson's [Deprecations via warnings don't work for Python libraries](https://sethmlarson.dev/deprecations-via-warnings-dont-work).
+
+**`@deprecated` decorators stay as-is.** `typing_extensions.deprecated` only fires `DeprecationWarning` (no class kwarg). Migrating those is a library-wide change, separate from v2:prep scope. Leave them alone.
+
+**How to apply:** swap in every v2:prep PR that introduces a `warnings.warn(...)`. Pattern surfaced 2026-05-12 by @DouweM in [#5338](https://github.com/pydantic/pydantic-ai/pull/5338#discussion_r3229851341); applied across all open v2:prep PRs in the same wave.
+
 ## v2:exec phase — what's different
 
 The rules above are written from the perspective of a `v2:prep` PR (add deprecation, keep both paths). The `v2:exec` phase removes the deprecated paths and ships the breaking changes. A few rules invert or drop:
@@ -275,7 +291,7 @@ The rules above are written from the perspective of a `v2:prep` PR (add deprecat
 - **Changelog entries describe REMOVALS, not deprecations.** Rule 8's "link to `changelog.md`" still applies; rule 14's "no verbose paragraphs for niche features" still applies; rule 16's "repeat full symbol names" still applies. What flips is the voice: from "X will be removed in v2.0, use Y" to "X has been removed; use Y".
 - **Default-behavior flips happen here.** Examples queued for `v2:exec`: `openai:` prefix → Responses API default (deferred from [#5334](https://github.com/pydantic/pydantic-ai/pull/5334)), `End.data` → `End.output` (per Slack thread). Rule 10's forward-compat warnings stop firing because the default has actually changed.
 - **Legacy `Literal[...]` values stay forever.** Rule 23 doesn't relax in `v2:exec` — old `provider_name` values in stored `ModelMessage` histories still need to validate. Removing them from the alias is a v3 conversation at the earliest.
-- **Target branch is a future `v2-master` on upstream.** That branch doesn't exist yet — DouweM creates it when the first `v2:exec` PR is ready. Until then, `v2:exec` PRs target `main` and get retargeted/rebased.
+- **Target branch is `v2-main` on upstream.** Created 2026-05-15 as part of [#5451 "Pydantic AI V2"](https://github.com/pydantic/pydantic-ai/pull/5451) (the integration PR that lands on `main` at v2-cut). All `v2:exec` PRs target `v2-main`, not `main`.
 
 ## Process
 
