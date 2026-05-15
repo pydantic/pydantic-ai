@@ -18,11 +18,16 @@ from typing import TYPE_CHECKING, Any
 from pydantic_graph._warnings import PydanticGraphDeprecationWarning
 
 if TYPE_CHECKING:
+    # `Graph` is imported from `pydantic_graph.graph_builder` because at
+    # type-check time `pydantic_graph.Graph` resolves to the legacy
+    # `BaseNode`-based runner, while at runtime
+    # `pydantic_graph.beta.Graph` forwards to the builder `Graph` (per
+    # `_FORWARDS` below). Importing the builder one here keeps type-check
+    # and runtime in sync. The other names are unambiguous at the top level.
     from pydantic_graph import (
         Decision,
         EndNode,
         Fork,
-        Graph,
         GraphBuilder,
         Join,
         JoinNode,
@@ -40,6 +45,7 @@ if TYPE_CHECKING:
         reduce_null,
         reduce_sum,
     )
+    from pydantic_graph.graph_builder import Graph
 
 __all__ = (
     'Decision',
@@ -99,8 +105,7 @@ def __getattr__(name: str) -> Any:
 
         target_module = _FORWARDS[name]
         warnings.warn(
-            f'Importing {name!r} from `pydantic_graph.beta` is deprecated, '
-            f'import it from `{target_module}` (or `pydantic_graph`) instead.',
+            f'Importing {name!r} from `pydantic_graph.beta` is deprecated, import it from `{target_module}` instead.',
             PydanticGraphDeprecationWarning,
             stacklevel=2,
         )
