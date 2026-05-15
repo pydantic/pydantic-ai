@@ -251,6 +251,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
+    # NOTE: this overload exists solely to keep pyright in N>=2-overload mode after the `mcp_servers=` overload was dropped.
+    # When `event_stream_handler=` is itself removed (PR #5475), drop this overload too — but verify there's another
+    # `@deprecated` overload still in place, or pyright will collapse and a different unrelated site will start failing.
     @overload
     @deprecated('`event_stream_handler` is deprecated, use `capabilities=[ProcessEventStream(...)]` instead.')
     def __init__(
