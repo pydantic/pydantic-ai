@@ -386,7 +386,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-gla:gemini-3-pro-preview',
+    'google:gemini-3-pro-preview',
     output_type=Email,
     instructions='Write a welcome email to our tech blog.',
 )

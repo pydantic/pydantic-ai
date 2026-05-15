@@ -418,10 +418,8 @@ _CASES = [
         ),
     ),
     ModelCase(
-        model_name='google-gla:gemini-3-flash-preview',
-        marks=[
-            pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
-        ],
+        model_name='google:gemini-3-flash-preview',
+        marks=[pytest.mark.skipif(not google_available(), reason='google-genai not installed')],
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
