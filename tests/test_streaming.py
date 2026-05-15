@@ -475,9 +475,9 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    state='complete',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    state='complete',
                 ),
             ]
         )
@@ -606,9 +606,9 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
+                state='complete',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                state='complete',
             ),
         ]
     )
@@ -2999,26 +2999,36 @@ async def test_iter_stream_response():
                     async for chunk in stream.stream_response(debounce_by=None):
                         messages.append(chunk)
 
+    incomplete_texts = [
+        '',
+        '',
+        'The ',
+        'The cat ',
+        'The cat sat ',
+        'The cat sat on ',
+        'The cat sat on the ',
+        'The cat sat on the mat.',
+        'The cat sat on the mat.',
+    ]
     assert messages == [
+        *(
+            ModelResponse(
+                parts=[TextPart(content=text)],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                state='incomplete',
+            )
+            for text in incomplete_texts
+        ),
         ModelResponse(
-            parts=[TextPart(content=text)],
+            parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='test',
-            state='incomplete',
-        )
-        for text in [
-            '',
-            '',
-            'The ',
-            'The cat ',
-            'The cat sat ',
-            'The cat sat on ',
-            'The cat sat on the ',
-            'The cat sat on the mat.',
-            'The cat sat on the mat.',
-        ]
+        ),
     ]
 
     # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:

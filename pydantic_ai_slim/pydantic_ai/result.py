@@ -103,17 +103,25 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             yield deepcopy(self._cached_output)
 
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
-        """Asynchronously stream the (unvalidated) model responses for the agent."""
-        # if the message currently has any parts with content, yield before streaming
+        """Asynchronously stream the (unvalidated) model responses for the agent.
+
+        Yields `ModelResponse` snapshots — `state='incomplete'` while streaming is in flight,
+        followed by one final `state='complete'` snapshot (or `'interrupted'` if `cancel()` was
+        called). If the underlying response already has accumulated content when this is called,
+        a pre-stream yield surfaces it before iteration begins.
+        """
         msg = self.response
-        for part in msg.parts:
-            if part.has_content():
-                yield msg
-                break
+        if msg.state == 'incomplete':
+            for part in msg.parts:
+                if part.has_content():
+                    yield msg
+                    break
 
         async with _utils.group_by_temporal(self, debounce_by) as group_iter:
             async for _items in group_iter:
-                yield self.response  # current state of the response
+                yield self.response  # state='incomplete' during streaming
+
+        yield self.response  # final state='complete' (or 'interrupted')
 
     @deprecated(
         '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. '
@@ -590,7 +598,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
-        [`cancel()`][pydantic_ai.result.AgentStream.cancel] was called) on the final yield.
+        [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -604,13 +612,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self.response
             await self._marked_completed()
         elif self._stream_response is not None:
+            last_msg: _messages.ModelResponse | None = None
             async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
                 yield msg
-
-            msg = self.response
-            yield msg
-
-            await self._marked_completed(msg)
+                last_msg = msg
+            # `AgentStream.stream_response` always yields the final response, so `last_msg` is set.
+            # Pass it to `_marked_completed` so `run_id` and `conversation_id` are stamped onto the
+            # same instance the caller still holds a reference to in their iteration.
+            assert last_msg is not None
+            await self._marked_completed(last_msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -867,8 +877,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """Stream the response as an iterable of `ModelResponse` snapshots.
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
-        `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
-        [`cancel()`][pydantic_ai.result.AgentStream.cancel] was called) on the final yield.
+        `'incomplete'` while streaming is in flight and `'complete'` on the final yield.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.

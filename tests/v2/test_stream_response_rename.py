@@ -17,7 +17,8 @@ backwards compatibility. Callers migrating to the singular read `is_last` as
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
@@ -29,10 +30,16 @@ from pydantic_ai.models.test import TestModel
 pytestmark = pytest.mark.anyio
 
 
-def _assert_no_deprecation(getter: Any) -> Any:
+@contextmanager
+def _no_deprecation() -> Iterator[None]:
+    """Promote `PydanticAIDeprecationWarning` to errors inside the block.
+
+    A `with`-style context manager (rather than a function wrapping a getter) so
+    the filter stays active across `await` points in async iteration.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        return getter()
+        yield
 
 
 # AgentStream ────────────────────────────────────────────────────────────────
@@ -48,12 +55,9 @@ async def test_agent_stream_stream_response_singular_silent_and_plural_warns():
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-
-                    async def collect_singular():
+                    with _no_deprecation():
                         async for r in stream.stream_response(debounce_by=None):
                             singular.append(r)
-
-                    await _assert_no_deprecation(lambda: collect_singular())
 
     async with agent.iter('hi') as run:
         async for node in run:
@@ -84,13 +88,10 @@ async def test_streamed_run_result_stream_response_singular_yields_modelresponse
     agent = Agent(TestModel(custom_output_text='hello world'))
 
     items: list[ModelResponse] = []
-
-    async def collect():
+    with _no_deprecation():
         async with agent.run_stream('hi') as result:
             async for item in result.stream_response(debounce_by=None):
                 items.append(item)
-
-    await _assert_no_deprecation(lambda: collect())
 
     assert len(items) > 0
     assert all(isinstance(item, ModelResponse) for item in items)
@@ -124,7 +125,8 @@ def test_streamed_run_result_sync_stream_response_singular_yields_modelresponse(
     agent = Agent(TestModel(custom_output_text='hello world'))
 
     result = agent.run_stream_sync('hi')
-    items = list(_assert_no_deprecation(lambda: list(result.stream_response(debounce_by=None))))
+    with _no_deprecation():
+        items = list(result.stream_response(debounce_by=None))
 
     assert len(items) > 0
     assert all(isinstance(item, ModelResponse) for item in items)
