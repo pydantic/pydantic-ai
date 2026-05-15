@@ -19,11 +19,11 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
-print(result.usage())
+print(result.usage)
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
@@ -518,7 +518,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     validation_context=10,
 )
@@ -533,7 +533,7 @@ class Deps:
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -573,7 +573,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -643,9 +643,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Image output
 
-Some models can generate images as part of their response, for example those that support the [Image Generation built-in tool](builtin-tools.md#image-generation-tool) and OpenAI models using the [Code Execution built-in tool](builtin-tools.md#code-execution-tool) when told to generate a chart.
+Some models can generate images as part of their response, for example those that support the [Image Generation native tool](native-tools.md#image-generation-tool) and OpenAI models using the [Code Execution native tool](native-tools.md#code-execution-tool) when told to generate a chart.
 
-To use the generated image as the output of the agent run, you can set `output_type` to [`BinaryImage`][pydantic_ai.messages.BinaryImage]. If no image-generating built-in tool is explicitly specified, the [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] will be enabled automatically.
+To use the generated image as the output of the agent run, you can set `output_type` to [`BinaryImage`][pydantic_ai.messages.BinaryImage]. If no image-generating native tool is explicitly specified, the [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] will be enabled automatically.
 
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage
@@ -738,7 +738,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')  # (1)!
+agent = Agent('google:gemini-3-flash-preview')  # (1)!
 
 
 async def main():
@@ -764,7 +764,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')
+agent = Agent('google:gemini-3-flash-preview')
 
 
 async def main():
@@ -855,11 +855,11 @@ agent = Agent('openai:gpt-5.2', output_type=UserProfile)
 async def main():
     user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
-        async for message, last in result.stream_responses(debounce_by=0.01):  # (1)!
+        async for message in result.stream_response(debounce_by=0.01):  # (1)!
             try:
                 profile = await result.validate_response_output(  # (2)!
                     message,
-                    allow_partial=not last,
+                    allow_partial=message.state == 'incomplete',
                 )
             except ValidationError:
                 continue
@@ -874,7 +874,7 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
-1. [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
+1. [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
 2. [`validate_response_output`][pydantic_ai.result.StreamedRunResult.validate_response_output] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_

@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 
 @dataclass

@@ -292,7 +292,7 @@ _(This example is complete, it can be run "as is")_
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.
 
-In many scenarios, you don't need to worry about pydantic-graph at all; calling `agent.run(...)` simply traverses the underlying graph from start to finish. However, if you need deeper insight or control — for example to inject your own logic at specific stages — Pydantic AI exposes the lower-level iteration process via [`Agent.iter`][pydantic_ai.agent.Agent.iter]. This method returns an [`AgentRun`][pydantic_ai.agent.AgentRun], which you can async-iterate over, or manually drive node-by-node via the [`next`][pydantic_ai.agent.AgentRun.next] method. Once the agent's graph returns an [`End`][pydantic_graph.nodes.End], you have the final result along with a detailed history of all steps.
+In many scenarios, you don't need to worry about pydantic-graph at all; calling `agent.run(...)` simply traverses the underlying graph from start to finish. However, if you need deeper insight or control — for example to inject your own logic at specific stages — Pydantic AI exposes the lower-level iteration process via [`Agent.iter`][pydantic_ai.agent.Agent.iter]. This method returns an [`AgentRun`][pydantic_ai.agent.AgentRun], which you can async-iterate over, or manually drive node-by-node via the [`next`][pydantic_ai.agent.AgentRun.next] method. Once the agent's graph returns an [`End`][pydantic_graph.basenode.End], you have the final result along with a detailed history of all steps.
 
 #### `async for` iteration
 
@@ -425,7 +425,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -601,7 +601,7 @@ result_sync = agent.run_sync(
 )
 print(result_sync.output)
 #> Rome
-print(result_sync.usage())
+print(result_sync.usage)
 #> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
@@ -749,7 +749,7 @@ agent = Agent(
 ```
 
 !!! note "Model Settings Support"
-    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
+    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model) and [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] don't have their own settings - they use the settings of their underlying models.
 
 #### Run metadata
 
@@ -842,7 +842,7 @@ For example:
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google-gla:gemini-3-flash-preview')
+agent = Agent('google:gemini-3-flash-preview')
 
 try:
     result = agent.run_sync(
