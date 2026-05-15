@@ -1432,13 +1432,6 @@ def infer_model(  # noqa: C901
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
 
-    if provider_name == 'vertexai':  # pragma: no cover
-        warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
-            PydanticAIDeprecationWarning,
-        )
-        provider_name = 'google-cloud'
-
     provider = provider_factory(provider_name)
 
     model_kind = provider_name
@@ -1477,7 +1470,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
-import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -15,7 +14,6 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -214,28 +212,6 @@ Controls Google Cloud HTTP headers for [Provisioned Throughput](https://cloud.go
 Not every model or region supports every value; see the linked Google docs.
 """
 
-GoogleVertexServiceTier = GoogleCloudServiceTier
-"""Deprecated alias for [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier].
-
-Use `GoogleCloudServiceTier` instead — Google Cloud is the new name for the platform formerly
-known as Vertex AI.
-"""
-
-GoogleServiceTier = Literal[
-    'pt_then_on_demand',
-    'pt_only',
-    'pt_then_flex',
-    'pt_then_priority',
-    'on_demand',
-    'flex_only',
-    'priority_only',
-]
-"""Deprecated alias for service tier values.
-
-Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
-or [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] for Google Cloud.
-"""
-
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -302,44 +278,6 @@ class GoogleModelSettings(ModelSettings, total=False):
     headers sent, and links to Google docs.
     """
 
-    google_vertex_service_tier: GoogleCloudServiceTier
-    """Deprecated: use `google_cloud_service_tier`. Will be removed in v2."""
-
-    google_service_tier: GoogleServiceTier
-    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_cloud_service_tier` for Google Cloud."""
-
-
-def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
-    """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
-    if (deprecated := model_settings.get('google_service_tier')) is not None:
-        # stacklevel=2 points at the resolver (caller of this helper); the warning text already
-        # names the field so users can identify the source from the message itself.
-        warnings.warn(
-            '`google_service_tier` is deprecated; use `google_cloud_service_tier` for Google Cloud '
-            'or the top-level `service_tier` for the Gemini API (GLA).',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return deprecated
-    return None
-
-
-def _get_deprecated_google_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier | None:
-    """Return `google_vertex_service_tier`, emitting a `PydanticAIDeprecationWarning` when it is set.
-
-    Google retired the "Vertex AI" brand for "Google Cloud"; the field is renamed accordingly. The old
-    key keeps working in 1.x but warns; v2 will drop it.
-    """
-    if (deprecated := model_settings.get('google_vertex_service_tier')) is not None:
-        warnings.warn(
-            '`google_vertex_service_tier` is deprecated; use `google_cloud_service_tier` instead. '
-            'Google Cloud is the new name for the platform formerly known as Vertex AI.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return deprecated
-    return None
-
 
 _GlaServiceTier = Literal['standard', 'flex', 'priority']
 _TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
@@ -352,12 +290,9 @@ _TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
 def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
     """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
 
-    The deprecated `google_service_tier` only covers Vertex-shaped values, so on GLA we
-    ignore it (after triggering the warning) and map the top-level `service_tier`
-    (`'default'` → `'standard'`, `'flex'`/`'priority'` pass through, `'auto'` is dropped
-    so the server picks the default).
+    Maps the top-level `service_tier` (`'default'` → `'standard'`, `'flex'`/`'priority'`
+    pass through, `'auto'` is dropped so the server picks the default).
     """
-    _get_deprecated_google_service_tier(model_settings)
     if unified := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GLA_SERVICE_TIER.get(unified)
     return None
@@ -378,17 +313,12 @@ _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER: dict[ServiceTier, GoogleCloudServiceTie
 def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier:
     """Resolve the Google Cloud tier to use for this request.
 
-    Per-provider `google_cloud_service_tier` wins, then the deprecated `google_vertex_service_tier`
-    (with warning), then the deprecated `google_service_tier` (with warning), then the top-level
-    `service_tier` mapped via [`_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER`][]. Defaults to
-    `'pt_then_on_demand'` so Google Cloud's built-in PT-with-spillover behavior is the baseline.
+    Per-provider `google_cloud_service_tier` wins, then the top-level `service_tier` mapped via
+    [`_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Google
+    Cloud's built-in PT-with-spillover behavior is the baseline.
     """
     if tier := model_settings.get('google_cloud_service_tier'):
         return tier
-    if vertex_tier := _get_deprecated_google_vertex_service_tier(model_settings):
-        return vertex_tier
-    if deprecated := _get_deprecated_google_service_tier(model_settings):
-        return deprecated
     if top_level := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
