@@ -509,6 +509,44 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+@pytest.mark.anyio
+async def test_legacy_vendor_message_history_replays_through_agent():
+    """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
+
+    Backstop for the V2-RULES rule 4 (cross-history-replay): the deprecated `vendor_*` read properties
+    are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
+    stored histories load.
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    legacy_history: list[dict[str, Any]] = [
+        {
+            'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Hello!', 'part_kind': 'text'}],
+            'kind': 'response',
+            'model_name': 'gpt-5',
+            'provider_name': 'openai',
+            'vendor_details': {'finish_reason': 'stop'},
+            'vendor_id': 'chatcmpl-legacy',
+        },
+    ]
+    message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
+    response = cast(ModelResponse, message_history[1])
+    assert response.provider_details == {'finish_reason': 'stop'}
+    assert response.provider_response_id == 'chatcmpl-legacy'
+
+    agent = Agent(TestModel())
+    result = await agent.run('And now?', message_history=message_history)
+
+    replayed_response = next(m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5')
+    assert replayed_response.provider_details == {'finish_reason': 'stop'}
+    assert replayed_response.provider_response_id == 'chatcmpl-legacy'
+
+
 def test_file_part_has_content():
     filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
     assert not filepart.has_content()
