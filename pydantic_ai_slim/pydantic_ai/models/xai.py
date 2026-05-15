@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from .._utils import install_deprecated_kwarg_alias
 from ..capabilities.native_or_local import NativeOrLocalTool
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
@@ -275,9 +274,6 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
-
-
-install_deprecated_kwarg_alias(XSearch, old='builtin', new='native')
 
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.

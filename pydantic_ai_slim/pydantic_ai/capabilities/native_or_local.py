@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -178,17 +175,3 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
-
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated alias for read access to the renamed `builtin=` field.
-        if name == 'builtin':
-            warnings.warn(
-                f'`{type(self).__name__}.builtin` is deprecated, use `.native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.native
-        raise AttributeError(name)
-
-
-install_deprecated_kwarg_alias(NativeOrLocalTool, old='builtin', new='native')

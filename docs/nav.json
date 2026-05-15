@@ -56,8 +56,7 @@
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter",
-      "models/outlines"
+      "models/openrouter"
     ]
   },
   {
@@ -426,7 +425,6 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
-              "api/models/outlines",
               "api/models/test",
               "api/models/wrapper"
             ]

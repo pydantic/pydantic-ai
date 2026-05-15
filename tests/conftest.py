@@ -910,23 +910,6 @@ def model(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
-        elif request.param == 'outlines':
-            import warnings
-
-            from outlines.models.transformers import from_transformers
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            from pydantic_ai._warnings import PydanticAIDeprecationWarning
-            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-                return OutlinesModel(  # pyright: ignore[reportDeprecated]
-                    from_transformers(
-                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    )
-                )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:

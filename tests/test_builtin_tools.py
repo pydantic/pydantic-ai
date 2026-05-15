@@ -17,7 +17,7 @@ from pydantic_ai.native_tools import (
 )
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test', 'outlines'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test'), indirect=True)
 async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -25,7 +25,7 @@ async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_
         await agent.run('What day is tomorrow?')
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'outlines'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface'), indirect=True)
 async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -34,7 +34,7 @@ async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow
             ...  # pragma: no cover
 
 
-@pytest.mark.parametrize('model', ('groq', 'openai', 'outlines'), indirect=True)
+@pytest.mark.parametrize('model', ('groq', 'openai'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
 
@@ -42,7 +42,7 @@ async def test_builtin_tools_not_supported_code_execution(model: Model, allow_mo
         await agent.run('What day is tomorrow?')
 
 
-@pytest.mark.parametrize('model', ('groq', 'openai', 'outlines'), indirect=True)
+@pytest.mark.parametrize('model', ('groq', 'openai'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
 
@@ -52,7 +52,7 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
 
 
 @pytest.mark.parametrize(
-    'model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test', 'outlines'), indirect=True
+    'model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test'), indirect=True
 )
 async def test_builtin_tools_not_supported_file_search(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(FileSearchTool(file_store_ids=['test-id']))])
@@ -61,7 +61,7 @@ async def test_builtin_tools_not_supported_file_search(model: Model, allow_model
         await agent.run('Search my files')
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic', 'outlines'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic'), indirect=True)
 async def test_builtin_tools_not_supported_file_search_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, capabilities=[NativeTool(FileSearchTool(file_store_ids=['test-id']))])
 
