@@ -66,6 +66,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -11160,16 +11161,49 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
     result = await agent.run('hi', message_history=history)
 
     assert enqueued
-    # The enqueued when_idle message should appear in the persisted history as a
-    # ModelRequest before the second model response — proving the threading
+    # The enqueued when_idle message reaches the persisted history as its own
+    # ModelRequest before the redirect's response — proving the threading
     # through Agent.system_prompt_parts → synthetic RunContext → live queue.
-    found = any(
-        isinstance(part, UserPromptPart) and part.content == 'from system prompt callback'
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='base prompt', timestamp=IsDatetime()),
+                    SystemPromptPart(content='extra prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='earlier', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='earlier response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='ok')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='from system prompt callback', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='ok')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
-    assert found, 'enqueued when_idle message did not reach the conversation'
 
 
 async def test_enqueue_coerces_string_to_user_prompt():
@@ -11473,7 +11507,10 @@ async def test_enqueue_asap_with_rich_message_history_tail():
             pass
 
     assert agent_run.result is not None
-    # `all_messages()` keeps the un-merged view.
+    # `all_messages()` keeps the un-merged view (drain's request is a separate
+    # `ModelRequest` after the rich tail). See `test_messages.py` for the
+    # wire-level assertion that `_clean_message_history` merges the two adjacent
+    # `ModelRequest`s and sorts `ToolReturnPart`s first.
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
@@ -11506,18 +11543,6 @@ async def test_enqueue_asap_with_rich_message_history_tail():
             ),
         ]
     )
-    # On the wire, `_clean_message_history` merges the rich tail + drained request,
-    # sorting `ToolReturnPart` first; the injected `UserPromptPart` lands at the end.
-    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-
-    cleaned = _clean_message_history(agent_run.result.all_messages())
-    last_request = next(msg for msg in reversed(cleaned) if isinstance(msg, ModelRequest))
-    kinds_and_contents = [(type(p).__name__, getattr(p, 'content', None)) for p in last_request.parts]
-    assert kinds_and_contents == [
-        ('ToolReturnPart', 'ok'),
-        ('UserPromptPart', 'follow-up question'),
-        ('UserPromptPart', 'injected after rich tail'),
-    ]
 
 
 async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():

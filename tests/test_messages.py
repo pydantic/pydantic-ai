@@ -1599,3 +1599,50 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_clean_message_history_merges_adjacent_requests_tool_returns_first():
+    """`_clean_message_history` merges adjacent `ModelRequest`s and sorts `ToolReturnPart`/`RetryPromptPart` first.
+
+    This is what the model sees on the wire when the pending-message-queue drain emits a
+    separate `ModelRequest` after a step's `ModelRequest` (e.g. `'asap'` enqueue after
+    a step that already had `ToolReturnPart`s and a `UserPromptPart`). Non-tool parts
+    keep arrival order — the drained content lands at the *end* of the merged turn,
+    not interleaved between the existing tool returns and user prompt.
+    """
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1'),
+                UserPromptPart(content='follow-up question'),
+            ]
+        ),
+        # Drain-emitted, separate ModelRequest with the enqueued content
+        ModelRequest(parts=[UserPromptPart(content='injected after rich tail')]),
+    ]
+
+    cleaned = _clean_message_history(messages)
+
+    assert cleaned == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='hint',
+                        content='ok',
+                        tool_call_id='call-1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                    UserPromptPart(content='injected after rich tail', timestamp=IsDatetime()),
+                ]
+            ),
+        ]
+    )
