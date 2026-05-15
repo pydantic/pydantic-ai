@@ -148,10 +148,10 @@ def test_model_request_stream_sync_without_context_manager():
         _ = stream_cm.timestamp
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.get()
+        _ = stream_cm.response
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.usage()
+        _ = stream_cm.usage
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
         list(stream_cm)
@@ -187,7 +187,7 @@ def test_model_request_stream_sync_timeout():
     with patch('pydantic_ai.direct.STREAM_INITIALIZATION_TIMEOUT', 0.01):
         with stream_sync:
             with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
-                stream_sync.get()
+                _ = stream_sync.response
 
 
 def test_model_request_stream_sync_intermediate_get():
@@ -195,10 +195,10 @@ def test_model_request_stream_sync_intermediate_get():
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
     with model_request_stream_sync('test', messages) as stream:
-        response = stream.get()
+        response = stream.response
         assert response is not None
 
-        usage = stream.usage()
+        usage = stream.usage
         assert usage is not None
 
 

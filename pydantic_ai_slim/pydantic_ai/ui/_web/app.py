@@ -9,7 +9,7 @@ from typing import TypeVar
 import httpx
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
 from .api import ModelsParam, create_api_app
@@ -110,11 +110,12 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
+    **_deprecated_kwargs: object,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -129,7 +130,7 @@ def create_web_app(
             - A dict mapping display labels to model names/instances
                 (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
             If not provided, the UI will have no model options.
-        builtin_tools: Optional list of additional builtin tools to make available in the UI.
+        native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
@@ -143,10 +144,15 @@ def create_web_app(
     Returns:
         A configured Starlette application ready to be served
     """
+    from ... import _utils
+
+    native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+    _utils.validate_empty_kwargs(_deprecated_kwargs)
+
     api_app = create_api_app(
         agent=agent,
         models=models,
-        builtin_tools=builtin_tools,
+        native_tools=native_tools,
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,

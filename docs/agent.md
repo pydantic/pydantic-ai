@@ -187,7 +187,7 @@ async def handle_event(event: AgentStreamEvent):
             f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
         )
     elif isinstance(event, FunctionToolResultEvent):
-        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.part.content}')
     elif isinstance(event, FinalResultEvent):
         output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
 
@@ -425,7 +425,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -539,7 +539,7 @@ async def main():
                             )
                         elif isinstance(event, FunctionToolResultEvent):
                             output_messages.append(
-                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
+                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.part.content}'
                             )
             elif Agent.is_end_node(node):
                 # Once an End node is reached, the agent run is complete
@@ -601,7 +601,7 @@ result_sync = agent.run_sync(
 )
 print(result_sync.output)
 #> Rome
-print(result_sync.usage())
+print(result_sync.usage)
 #> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
@@ -749,7 +749,7 @@ agent = Agent(
 ```
 
 !!! note "Model Settings Support"
-    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
+    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model) and [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] don't have their own settings - they use the settings of their underlying models.
 
 #### Run metadata
 
