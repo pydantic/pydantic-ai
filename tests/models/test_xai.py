@@ -64,8 +64,6 @@ from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
     UploadedFile,
 )
@@ -117,12 +115,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 # Test model constants
@@ -2107,42 +2099,6 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'browse_page'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -2334,24 +2290,6 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(2 + 2)'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -3051,55 +2989,6 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 part=TextPart(
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='mcp_server:deepwiki',
-                    args={
-                        'action': 'call_tool',
-                        'tool_name': 'ask_question',
-                        'tool_args': {
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
-                        },
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'deepwiki.ask_question'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='mcp_server:deepwiki',
-                    content="""\
-This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
-
-## Purpose
-The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
-
-## Main Features
-The `pydantic-ai` repository offers several core features:
-*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
-*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
-*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
-*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
-*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
-*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
-*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
-
-## Notes
-The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
-
-Wiki pages you might want to explore:
-- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
-- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
-
-View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
-""",
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
             ),
         ]
     )

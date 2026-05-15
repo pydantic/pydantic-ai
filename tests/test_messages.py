@@ -542,7 +542,9 @@ async def test_legacy_vendor_message_history_replays_through_agent():
     agent = Agent(TestModel())
     result = await agent.run('And now?', message_history=message_history)
 
-    replayed_response = next(m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5')
+    replayed_response = next(
+        m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5'
+    )
     assert replayed_response.provider_details == {'finish_reason': 'stop'}
     assert replayed_response.provider_response_id == 'chatcmpl-legacy'
 

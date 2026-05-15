@@ -2751,9 +2751,6 @@ class WebSearchAgentWorkflow:
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
-)
 async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,

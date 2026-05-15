@@ -47,12 +47,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 

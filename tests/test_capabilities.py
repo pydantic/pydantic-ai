@@ -5136,8 +5136,6 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -5218,8 +5216,6 @@ class TestImageGenerationCapability:
         )
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
