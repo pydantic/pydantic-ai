@@ -76,7 +76,7 @@ from pydantic_ai.toolsets._tool_search import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, try_import
+from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
@@ -2260,17 +2260,22 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 parts=[UserPromptPart(content='Can I get a refund on order-123?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='toolu_01XffFMgRc3QBnP51xXRUHXV')],
+                parts=[
+                    TextPart(
+                        content="I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you."
+                    ),
+                    LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='toolu_0182L4vMNwQewrjJ5fgGrThD'),
+                ],
                 usage=RequestUsage(
                     input_tokens=805,
-                    output_tokens=54,
+                    output_tokens=81,
                     details={
                         'input_tokens': 805,
-                        'output_tokens': 54,
+                        'output_tokens': 81,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -2280,10 +2285,10 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01WZYNRf9MHtqfYEVA59jq78',
+                provider_response_id='msg_01MXk52rtTmCTTLPPFdbjUAX',
                 finish_reason='tool_call',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2292,44 +2297,44 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                             'capability_id': 'refunds',
                             'instructions': 'Use the refund policy tool before answering refund questions.',
                         },
-                        tool_call_id='toolu_01XffFMgRc3QBnP51xXRUHXV',
+                        tool_call_id='toolu_0182L4vMNwQewrjJ5fgGrThD',
                         timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
                 instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolSearchCallPart(args={'queries': ['<auto-discovered>']}, tool_call_id='auto_load_bb3453ff')],
+                parts=[ToolSearchCallPart(args={'queries': ['<auto-discovered>']}, tool_call_id=IsStr())],
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
                         content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
-                        tool_call_id='auto_load_bb3453ff',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='lookup_refund_policy',
                         args={'order_id': 'order-123'},
-                        tool_call_id='toolu_01PFExXNks14qm5JWeHwai7C',
+                        tool_call_id='toolu_01GeFuxZ84ypvxwH3Aqn8XmM',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=968,
+                    input_tokens=994,
                     output_tokens=60,
                     details={
-                        'input_tokens': 968,
+                        'input_tokens': 994,
                         'output_tokens': 60,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -2340,43 +2345,43 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01Mk2WpNug99Z1t3LhpWnMXC',
+                provider_response_id='msg_01SNgiqBC9aaLnH44ebdZxAz',
                 finish_reason='tool_call',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='lookup_refund_policy',
                         content='order-123: refund allowed for 30 days',
-                        tool_call_id='toolu_01PFExXNks14qm5JWeHwai7C',
+                        tool_call_id='toolu_01GeFuxZ84ypvxwH3Aqn8XmM',
                         timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
                 instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
                         content="""\
-Based on the refund policy for order-123, you are eligible for a refund within 30 days of your purchase. If you're still within that timeframe, you should be able to get a refund. \n\
+Good news! According to the refund policy for order-123, refunds are allowed for 30 days from the date of purchase. \n\
 
-Would you like me to help you process the refund for order-123?\
+To proceed with your refund request, you should be eligible as long as the order is within the 30-day window. Would you like me to help you initiate the refund process, or do you have any questions about the refund policy?\
 """
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=1052,
-                    cache_write_tokens=1046,
-                    output_tokens=67,
+                    input_tokens=1078,
+                    cache_write_tokens=1072,
+                    output_tokens=86,
                     details={
                         'input_tokens': 6,
-                        'output_tokens': 67,
-                        'cache_creation_input_tokens': 1046,
+                        'output_tokens': 86,
+                        'cache_creation_input_tokens': 1072,
                         'cache_read_input_tokens': 0,
                     },
                 ),
@@ -2385,10 +2390,10 @@ Would you like me to help you process the refund for order-123?\
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01LasPMKio1giX7gvYabwfpb',
+                provider_response_id='msg_01YLSpGBXyUcJEn14x4jJeMX',
                 finish_reason='stop',
-                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
-                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2398,18 +2403,18 @@ Would you like me to help you process the refund for order-123?\
     # the dict form — captures every RunUsage field including the provider-detail dict.
     assert asdict(anthropic_result.usage) == snapshot(
         {
-            'input_tokens': 2825,
-            'cache_write_tokens': 0,
-            'cache_read_tokens': 1046,
-            'output_tokens': 205,
+            'input_tokens': 2877,
+            'cache_write_tokens': 1072,
+            'cache_read_tokens': 0,
+            'output_tokens': 227,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {
-                'input_tokens': 1779,
-                'output_tokens': 205,
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 1046,
+                'input_tokens': 1805,
+                'output_tokens': 227,
+                'cache_creation_input_tokens': 1072,
+                'cache_read_input_tokens': 0,
             },
             'requests': 3,
             'tool_calls': 2,
@@ -2431,89 +2436,89 @@ Would you like me to help you process the refund for order-123?\
                 parts=[UserPromptPart(content='And what about order-456?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
-                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='lookup_refund_policy',
                         args={'order_id': 'order-456'},
-                        tool_call_id='u8e6rdhu',
+                        tool_call_id='97jsdanw',
                         provider_name='google-gla',
                         provider_details={
-                            'thought_signature': 'Er0CCroCAQw51sceTJW57SLT5bXMWelA8Tv9S/cZWbafHfLdSmxoyik36xSJDa3BGFCI4ihLeVN6c98p+y7PXNcUAcPnV+sXSjMeaLdvB7TrHp3HzwBA1spPTPMsRfzpboDHA4Iu2E0rZ+SkvaakB3z9LhvRb1qa4i7fdspclyMd1fdz9axwXNx5RsinUapRmn0Poq5uFY0wDRVFmbqSImKDIF1y90h1ZAcEbFHGcULOakQF4fqH8E4/N0i8MtIbhLsYiPuHK5a50TTfOEjRKoIX2y3mPG/oH4wCdg78UsKKQ/sT3JVq9YairqSeVeT7QPd1m333QaHseQJYIf63Y8p5W3VQhRhxhxsoGQOmK789ElGxAyb+iVWj8rRVYCPZzr39QLDKgQgmDBtFB5SJhxQPIqhV0q2brSywrgL85v0='
+                            'thought_signature': 'EtMCCtACAQw51sdIX8LSHeeGmbfTsOu23TmPb1vm7o1E9m6BS1ke7fG9AKr9UpJMYm6z23wx0R/4ftJw11zYZWwzoT1J/zEE3d2AQeGA3awITRYcq1i4gVWN1DR244ZtY5TVhSe9raGmBRrdd5Y+wPggl0oCRifWCF+Zd7/Bzgjc+uWsIGFRskRMiz2Lfnj5A3pxo4fYWYNEb0jYEJCDaI9fJeokgEowYY/xN7zcl+hGhzF7Q99uClsL/JHd0gougG5qriXuwDrDRECfNn9Kaqg9byqqRGaAhg6FxIgGyR7pVRMDlM3hwi0rt1tKKpQwG1mfGIRoscD4g30L6Xj8adVTaTY6VCRBV3kTroKOq1nzAPSJ93zPMdna2kPuiHep8aDvHoE/lDNSs8X47RXzw15zuj+aTl4/Cu1BzUXnSqUxOMYwM9zUEEDVaS4jJSdp7BSHVCEf'
                         },
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=468, output_tokens=96, details={'thoughts_tokens': 72, 'text_prompt_tokens': 468}
+                    input_tokens=517, output_tokens=101, details={'thoughts_tokens': 77, 'text_prompt_tokens': 517}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'service_tier': 'standard'},
-                provider_response_id='ECMHarjgJJGqjuMPk-m88Qo',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='RS8Hav7GDsPKqfkPgLLdiQw',
                 finish_reason='stop',
-                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
-                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='lookup_refund_policy',
                         content='order-456: refund allowed for 30 days',
-                        tool_call_id='u8e6rdhu',
+                        tool_call_id='97jsdanw',
                         timestamp=IsDatetime(),
                     )
                 ],
                 timestamp=IsDatetime(),
                 instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
-                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
                         content="""\
-For order-456, the policy is the same: refunds are allowed within 30 days of purchase.
+For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\
 
-Would you like to proceed with a refund for either of these orders?\
+Are you looking to initiate a refund for this order as well?\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=594, output_tokens=39, details={'text_prompt_tokens': 594}),
+                usage=RequestUsage(input_tokens=648, output_tokens=41, details={'text_prompt_tokens': 648}),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'service_tier': 'standard'},
-                provider_response_id='EyMHavzrPPmv4-EP18mgiQ4',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='Ry8HasaVD56Vg8UPi76BkQw',
                 finish_reason='stop',
-                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
-                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert asdict(google_result.usage) == snapshot(
         {
-            'input_tokens': 1062,
+            'input_tokens': 1165,
             'cache_write_tokens': 0,
             'cache_read_tokens': 0,
-            'output_tokens': 135,
+            'output_tokens': 142,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
-            'details': {'thoughts_tokens': 72, 'text_prompt_tokens': 1062},
+            'details': {'thoughts_tokens': 77, 'text_prompt_tokens': 1165},
             'requests': 2,
             'tool_calls': 1,
         }
     )
     assert google_result.output == snapshot("""\
-For order-456, the policy is the same: refunds are allowed within 30 days of purchase.
+For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\
 
-Would you like to proceed with a refund for either of these orders?\
+Are you looking to initiate a refund for this order as well?\
 """)
 
 

@@ -61,7 +61,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '612'
+      - '746'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -69,21 +69,23 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-90684550663c36e974352cdbf16a9cc1-080b245e4787fcf6-01
+      - 00-5f9d079063ac0dfea667ab5e0b084b08-dace36a1d92e5530-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
+      - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
+        type: text
       - caller:
           type: direct
-        id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+        id: toolu_0182L4vMNwQewrjJ5fgGrThD
         input:
           id: refunds
         name: load_capability
         type: tool_use
-      id: msg_015iAW2263bMYfnkagwBUviu
+      id: msg_01MXk52rtTmCTTLPPFdbjUAX
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -98,7 +100,7 @@ interactions:
         cache_read_input_tokens: 0
         inference_geo: not_available
         input_tokens: 805
-        output_tokens: 54
+        output_tokens: 81
         service_tier: standard
     status:
       code: 200
@@ -112,7 +114,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1533'
+      - '1667'
       content-type:
       - application/json
       host:
@@ -129,7 +131,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
+          type: text
+        - id: toolu_0182L4vMNwQewrjJ5fgGrThD
           input:
             id: refunds
           name: load_capability
@@ -140,11 +144,11 @@ interactions:
           - text: '{"capability_id":"refunds","instructions":"Use the refund policy tool before answering refund questions."}'
             type: text
           is_error: false
-          tool_use_id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+          tool_use_id: toolu_0182L4vMNwQewrjJ5fgGrThD
           type: tool_result
         role: user
       - content:
-        - id: auto_load_800f74f4
+        - id: auto_load_0388c743
           input:
             queries:
             - <auto-discovered>
@@ -156,7 +160,7 @@ interactions:
           - tool_name: lookup_refund_policy
             type: tool_reference
           is_error: false
-          tool_use_id: auto_load_800f74f4
+          tool_use_id: auto_load_0388c743
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -194,7 +198,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0d18716ebcbd8ef2f84b707131de0782-e63941201b12212b-01
+      - 00-1ffdfd6bdd3989a3e29dbd9e28c21dd4-d694a5ca7990a8b4-01
       transfer-encoding:
       - chunked
       vary:
@@ -203,12 +207,12 @@ interactions:
       content:
       - caller:
           type: direct
-        id: toolu_011NeN7FidU8X4ogpjHACy5f
+        id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
         input:
           order_id: order-123
         name: lookup_refund_policy
         type: tool_use
-      id: msg_01NUqL8hNa3kcvbi8K5EaUpV
+      id: msg_01SNgiqBC9aaLnH44ebdZxAz
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -222,7 +226,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 968
+        input_tokens: 994
         output_tokens: 60
         service_tier: standard
     status:
@@ -237,7 +241,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1903'
+      - '2037'
       content-type:
       - application/json
       host:
@@ -254,7 +258,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
+          type: text
+        - id: toolu_0182L4vMNwQewrjJ5fgGrThD
           input:
             id: refunds
           name: load_capability
@@ -265,11 +271,11 @@ interactions:
           - text: '{"capability_id":"refunds","instructions":"Use the refund policy tool before answering refund questions."}'
             type: text
           is_error: false
-          tool_use_id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+          tool_use_id: toolu_0182L4vMNwQewrjJ5fgGrThD
           type: tool_result
         role: user
       - content:
-        - id: auto_load_800f74f4
+        - id: auto_load_0388c743
           input:
             queries:
             - <auto-discovered>
@@ -281,11 +287,11 @@ interactions:
           - tool_name: lookup_refund_policy
             type: tool_reference
           is_error: false
-          tool_use_id: auto_load_800f74f4
+          tool_use_id: auto_load_0388c743
           type: tool_result
         role: user
       - content:
-        - id: toolu_011NeN7FidU8X4ogpjHACy5f
+        - id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
           input:
             order_id: order-123
           name: lookup_refund_policy
@@ -296,7 +302,7 @@ interactions:
           - text: 'order-123: refund allowed for 30 days'
             type: text
           is_error: false
-          tool_use_id: toolu_011NeN7FidU8X4ogpjHACy5f
+          tool_use_id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -326,7 +332,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '743'
+      - '841'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -334,19 +340,18 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-35755876100f7997a6133de4f64af389-f479600986824818-01
+      - 00-48886bc9b5643023f81ec394839c30c0-a7f9b377150ae2c8-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          Good news! According to the refund policy for order-123, refunds are allowed within 30 days of purchase. You should be eligible for a refund as long as it's within that timeframe.
-
-          Would you like me to help you process the refund for this order?
+      - text: "Good news! According to the refund policy for order-123, refunds are allowed for 30 days from the date of purchase.
+          \n\nTo proceed with your refund request, you should be eligible as long as the order is within the 30-day window.
+          Would you like me to help you initiate the refund process, or do you have any questions about the refund policy?"
         type: text
-      id: msg_01F9dNEudqwAnEm298QkPPmP
+      id: msg_01YLSpGBXyUcJEn14x4jJeMX
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -356,12 +361,12 @@ interactions:
       usage:
         cache_creation:
           ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 1046
+          ephemeral_5m_input_tokens: 1072
+        cache_creation_input_tokens: 1072
+        cache_read_input_tokens: 0
         inference_geo: not_available
         input_tokens: 6
-        output_tokens: 63
+        output_tokens: 86
         service_tier: standard
     status:
       code: 200
@@ -375,7 +380,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3132'
+      - '3345'
       content-type:
       - application/json
       host:
@@ -387,16 +392,17 @@ interactions:
         - text: Can I get a refund on order-123?
         role: user
       - parts:
+        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
         - functionCall:
             args:
               id: refunds
-            id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+            id: toolu_0182L4vMNwQewrjJ5fgGrThD
             name: load_capability
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+            id: toolu_0182L4vMNwQewrjJ5fgGrThD
             name: load_capability
             response:
               capability_id: refunds
@@ -407,13 +413,13 @@ interactions:
             args:
               queries:
               - <auto-discovered>
-            id: auto_load_800f74f4
+            id: auto_load_0388c743
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: auto_load_800f74f4
+            id: auto_load_0388c743
             name: search_tools
             response:
               discovered_tools:
@@ -424,22 +430,22 @@ interactions:
         - functionCall:
             args:
               order_id: order-123
-            id: toolu_011NeN7FidU8X4ogpjHACy5f
+            id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
             name: lookup_refund_policy
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: toolu_011NeN7FidU8X4ogpjHACy5f
+            id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
             name: lookup_refund_policy
             response:
               return_value: 'order-123: refund allowed for 30 days'
         role: user
       - parts:
-        - text: |-
-            Good news! According to the refund policy for order-123, refunds are allowed within 30 days of purchase. You should be eligible for a refund as long as it's within that timeframe.
-
-            Would you like me to help you process the refund for this order?
+        - text: "Good news! According to the refund policy for order-123, refunds are allowed for 30 days from the date of
+            purchase. \n\nTo proceed with your refund request, you should be eligible as long as the order is within the 30-day
+            window. Would you like me to help you initiate the refund process, or do you have any questions about the refund
+            policy?"
         role: model
       - parts:
         - text: And what about order-456?
@@ -490,11 +496,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1004'
+      - '1032'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3024
+      - gfet4t7; dur=1712
       transfer-encoding:
       - chunked
       vary:
@@ -508,24 +514,24 @@ interactions:
           - functionCall:
               args:
                 order_id: order-456
-              id: u8e6rdhu
+              id: 97jsdanw
               name: lookup_refund_policy
-            thoughtSignature: Er0CCroCAQw51sceTJW57SLT5bXMWelA8Tv9S/cZWbafHfLdSmxoyik36xSJDa3BGFCI4ihLeVN6c98p+y7PXNcUAcPnV+sXSjMeaLdvB7TrHp3HzwBA1spPTPMsRfzpboDHA4Iu2E0rZ+SkvaakB3z9LhvRb1qa4i7fdspclyMd1fdz9axwXNx5RsinUapRmn0Poq5uFY0wDRVFmbqSImKDIF1y90h1ZAcEbFHGcULOakQF4fqH8E4/N0i8MtIbhLsYiPuHK5a50TTfOEjRKoIX2y3mPG/oH4wCdg78UsKKQ/sT3JVq9YairqSeVeT7QPd1m333QaHseQJYIf63Y8p5W3VQhRhxhxsoGQOmK789ElGxAyb+iVWj8rRVYCPZzr39QLDKgQgmDBtFB5SJhxQPIqhV0q2brSywrgL85v0=
+            thoughtSignature: EtMCCtACAQw51sdIX8LSHeeGmbfTsOu23TmPb1vm7o1E9m6BS1ke7fG9AKr9UpJMYm6z23wx0R/4ftJw11zYZWwzoT1J/zEE3d2AQeGA3awITRYcq1i4gVWN1DR244ZtY5TVhSe9raGmBRrdd5Y+wPggl0oCRifWCF+Zd7/Bzgjc+uWsIGFRskRMiz2Lfnj5A3pxo4fYWYNEb0jYEJCDaI9fJeokgEowYY/xN7zcl+hGhzF7Q99uClsL/JHd0gougG5qriXuwDrDRECfNn9Kaqg9byqqRGaAhg6FxIgGyR7pVRMDlM3hwi0rt1tKKpQwG1mfGIRoscD4g30L6Xj8adVTaTY6VCRBV3kTroKOq1nzAPSJ93zPMdna2kPuiHep8aDvHoE/lDNSs8X47RXzw15zuj+aTl4/Cu1BzUXnSqUxOMYwM9zUEEDVaS4jJSdp7BSHVCEf
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: ECMHarjgJJGqjuMPk-m88Qo
+      responseId: RS8Hav7GDsPKqfkPgLLdiQw
       usageMetadata:
         candidatesTokenCount: 24
-        promptTokenCount: 468
+        promptTokenCount: 517
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 468
+          tokenCount: 517
         serviceTier: standard
-        thoughtsTokenCount: 72
-        totalTokenCount: 564
+        thoughtsTokenCount: 77
+        totalTokenCount: 618
     status:
       code: 200
       message: OK
@@ -538,7 +544,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3893'
+      - '4134'
       content-type:
       - application/json
       host:
@@ -550,16 +556,17 @@ interactions:
         - text: Can I get a refund on order-123?
         role: user
       - parts:
+        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
         - functionCall:
             args:
               id: refunds
-            id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+            id: toolu_0182L4vMNwQewrjJ5fgGrThD
             name: load_capability
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: toolu_011Bbm6MDRPmTz4hwLJo7J54
+            id: toolu_0182L4vMNwQewrjJ5fgGrThD
             name: load_capability
             response:
               capability_id: refunds
@@ -570,13 +577,13 @@ interactions:
             args:
               queries:
               - <auto-discovered>
-            id: auto_load_800f74f4
+            id: auto_load_0388c743
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: auto_load_800f74f4
+            id: auto_load_0388c743
             name: search_tools
             response:
               discovered_tools:
@@ -587,22 +594,22 @@ interactions:
         - functionCall:
             args:
               order_id: order-123
-            id: toolu_011NeN7FidU8X4ogpjHACy5f
+            id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
             name: lookup_refund_policy
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: toolu_011NeN7FidU8X4ogpjHACy5f
+            id: toolu_01GeFuxZ84ypvxwH3Aqn8XmM
             name: lookup_refund_policy
             response:
               return_value: 'order-123: refund allowed for 30 days'
         role: user
       - parts:
-        - text: |-
-            Good news! According to the refund policy for order-123, refunds are allowed within 30 days of purchase. You should be eligible for a refund as long as it's within that timeframe.
-
-            Would you like me to help you process the refund for this order?
+        - text: "Good news! According to the refund policy for order-123, refunds are allowed for 30 days from the date of
+            purchase. \n\nTo proceed with your refund request, you should be eligible as long as the order is within the 30-day
+            window. Would you like me to help you initiate the refund process, or do you have any questions about the refund
+            policy?"
         role: model
       - parts:
         - text: And what about order-456?
@@ -611,13 +618,13 @@ interactions:
         - functionCall:
             args:
               order_id: order-456
-            id: u8e6rdhu
+            id: 97jsdanw
             name: lookup_refund_policy
-          thoughtSignature: Er0CCroCAQw51sceTJW57SLT5bXMWelA8Tv9S_cZWbafHfLdSmxoyik36xSJDa3BGFCI4ihLeVN6c98p-y7PXNcUAcPnV-sXSjMeaLdvB7TrHp3HzwBA1spPTPMsRfzpboDHA4Iu2E0rZ-SkvaakB3z9LhvRb1qa4i7fdspclyMd1fdz9axwXNx5RsinUapRmn0Poq5uFY0wDRVFmbqSImKDIF1y90h1ZAcEbFHGcULOakQF4fqH8E4_N0i8MtIbhLsYiPuHK5a50TTfOEjRKoIX2y3mPG_oH4wCdg78UsKKQ_sT3JVq9YairqSeVeT7QPd1m333QaHseQJYIf63Y8p5W3VQhRhxhxsoGQOmK789ElGxAyb-iVWj8rRVYCPZzr39QLDKgQgmDBtFB5SJhxQPIqhV0q2brSywrgL85v0=
+          thoughtSignature: EtMCCtACAQw51sdIX8LSHeeGmbfTsOu23TmPb1vm7o1E9m6BS1ke7fG9AKr9UpJMYm6z23wx0R_4ftJw11zYZWwzoT1J_zEE3d2AQeGA3awITRYcq1i4gVWN1DR244ZtY5TVhSe9raGmBRrdd5Y-wPggl0oCRifWCF-Zd7_Bzgjc-uWsIGFRskRMiz2Lfnj5A3pxo4fYWYNEb0jYEJCDaI9fJeokgEowYY_xN7zcl-hGhzF7Q99uClsL_JHd0gougG5qriXuwDrDRECfNn9Kaqg9byqqRGaAhg6FxIgGyR7pVRMDlM3hwi0rt1tKKpQwG1mfGIRoscD4g30L6Xj8adVTaTY6VCRBV3kTroKOq1nzAPSJ93zPMdna2kPuiHep8aDvHoE_lDNSs8X47RXzw15zuj-aTl4_Cu1BzUXnSqUxOMYwM9zUEEDVaS4jJSdp7BSHVCEf
         role: model
       - parts:
         - functionResponse:
-            id: u8e6rdhu
+            id: 97jsdanw
             name: lookup_refund_policy
             response:
               return_value: 'order-456: refund allowed for 30 days'
@@ -668,11 +675,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '538'
+      - '536'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1150
+      - gfet4t7; dur=1294
       transfer-encoding:
       - chunked
       vary:
@@ -683,23 +690,21 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |-
-              For order-456, the policy is the same: refunds are allowed within 30 days of purchase.
-
-              Would you like to proceed with a refund for either of these orders?
+          - text: "For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\nAre you
+              looking to initiate a refund for this order as well?"
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: EyMHavzrPPmv4-EP18mgiQ4
+      responseId: Ry8HasaVD56Vg8UPi76BkQw
       usageMetadata:
-        candidatesTokenCount: 39
-        promptTokenCount: 594
+        candidatesTokenCount: 41
+        promptTokenCount: 648
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 594
+          tokenCount: 648
         serviceTier: standard
-        totalTokenCount: 633
+        totalTokenCount: 689
     status:
       code: 200
       message: OK
