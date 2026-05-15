@@ -756,16 +756,16 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/google-vertex:gemini-2.5-flash-image',
-                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash',
-                        'gateway/google-vertex:gemini-2.5-pro',
-                        'gateway/google-vertex:gemini-3-flash-preview',
-                        'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-2.5-flash-image',
+                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-cloud:gemini-2.5-flash-lite',
+                        'gateway/google-cloud:gemini-2.5-flash',
+                        'gateway/google-cloud:gemini-2.5-pro',
+                        'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -823,38 +823,38 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
                         'gateway/openai:o4-mini',
-                        'google-gla:gemini-2.0-flash-lite',
-                        'google-gla:gemini-2.0-flash',
-                        'google-gla:gemini-2.5-flash-image',
-                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-gla:gemini-2.5-flash-lite',
-                        'google-gla:gemini-2.5-flash-preview-09-2025',
-                        'google-gla:gemini-2.5-flash',
-                        'google-gla:gemini-2.5-pro',
-                        'google-gla:gemini-3-flash-preview',
-                        'google-gla:gemini-3-pro-image-preview',
-                        'google-gla:gemini-3-pro-preview',
-                        'google-gla:gemini-3.1-flash-image-preview',
-                        'google-gla:gemini-3.1-flash-lite-preview',
-                        'google-gla:gemini-3.1-pro-preview',
-                        'google-gla:gemini-flash-latest',
-                        'google-gla:gemini-flash-lite-latest',
-                        'google-vertex:gemini-2.0-flash-lite',
-                        'google-vertex:gemini-2.0-flash',
-                        'google-vertex:gemini-2.5-flash-image',
-                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash-lite',
-                        'google-vertex:gemini-2.5-flash-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash',
-                        'google-vertex:gemini-2.5-pro',
-                        'google-vertex:gemini-3-flash-preview',
-                        'google-vertex:gemini-3-pro-image-preview',
-                        'google-vertex:gemini-3-pro-preview',
-                        'google-vertex:gemini-3.1-flash-image-preview',
-                        'google-vertex:gemini-3.1-flash-lite-preview',
-                        'google-vertex:gemini-3.1-pro-preview',
-                        'google-vertex:gemini-flash-latest',
-                        'google-vertex:gemini-flash-lite-latest',
+                        'google-cloud:gemini-2.0-flash-lite',
+                        'google-cloud:gemini-2.0-flash',
+                        'google-cloud:gemini-2.5-flash-image',
+                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash-lite',
+                        'google-cloud:gemini-2.5-flash-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash',
+                        'google-cloud:gemini-2.5-pro',
+                        'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image-preview',
+                        'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image-preview',
+                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-pro-preview',
+                        'google-cloud:gemini-flash-latest',
+                        'google-cloud:gemini-flash-lite-latest',
+                        'google:gemini-2.0-flash-lite',
+                        'google:gemini-2.0-flash',
+                        'google:gemini-2.5-flash-image',
+                        'google:gemini-2.5-flash-lite-preview-09-2025',
+                        'google:gemini-2.5-flash-lite',
+                        'google:gemini-2.5-flash-preview-09-2025',
+                        'google:gemini-2.5-flash',
+                        'google:gemini-2.5-pro',
+                        'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image-preview',
+                        'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image-preview',
+                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-pro-preview',
+                        'google:gemini-flash-latest',
+                        'google:gemini-flash-lite-latest',
                         'grok:grok-2-image-1212',
                         'grok:grok-2-vision-1212',
                         'grok:grok-3-fast',
@@ -4631,6 +4631,10 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
+        from unittest.mock import patch
+
+        pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+        from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4648,7 +4652,11 @@ class TestWebSearchCapability:
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
-        result = agent.run_sync('search for something')
+        # `ddgs` calls Bing/DuckDuckGo via the Rust `primp` HTTP client, so VCR can't intercept it.
+        # Mock the result at the library boundary to keep the test hermetic.
+        fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
+        with patch.object(DDGS, 'text', return_value=fake_results):
+            result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
 
@@ -6607,7 +6615,7 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
 
 @pytest.mark.filterwarnings(
     'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
+)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
 def test_web_search_v2_deprecation_warning():
     """WebSearch() with duckduckgo installed warns about v2 default change."""
     pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')

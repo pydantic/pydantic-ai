@@ -53,7 +53,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -10866,6 +10866,38 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
             {'role': 'user', 'content': 'Hello'},
         ]
     )
+
+
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
+async def test_openai_responses_system_prompt_role(
+    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
+) -> None:
+    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    agent = Agent(model, system_prompt='some instructions')
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    expected_role = system_prompt_role or 'system'
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert kwargs['input'] == [
+        {'content': 'some instructions', 'role': expected_role},
+        {'content': 'hello', 'role': 'user'},
+    ]
 
 
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):

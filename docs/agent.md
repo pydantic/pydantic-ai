@@ -842,7 +842,7 @@ For example:
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google-gla:gemini-3-flash-preview')
+agent = Agent('google:gemini-3-flash-preview')
 
 try:
     result = agent.run_sync(
