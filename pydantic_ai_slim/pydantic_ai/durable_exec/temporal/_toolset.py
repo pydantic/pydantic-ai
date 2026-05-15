@@ -1,5 +1,3 @@
-# pyright: reportDeprecated=false
-# References deprecated `MCPServer*` / `FastMCPToolset` for backward-compat dispatch. Removed in v2.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -248,13 +246,13 @@ def temporalize_toolset(
             )
 
     try:
-        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 
         from ._fastmcp_toolset import TemporalFastMCPToolset
     except ImportError:
         pass
     else:
-        if isinstance(toolset, FastMCPToolset):
+        if isinstance(toolset, FastMCPToolset):  # pyright: ignore[reportDeprecated]
             return TemporalFastMCPToolset(
                 toolset,
                 activity_name_prefix=activity_name_prefix,

@@ -2063,6 +2063,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None
         if not self._initialized or self._instructions is None:
             return None
+        # Instructions are captured once during `__aenter__` and don't change across runs while
+        # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
         return messages.InstructionPart(content=self._instructions, dynamic=False)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
@@ -2290,7 +2292,12 @@ def _build_transport(
     """
     needs_explicit_http = headers is not None or http_client is not None or auth is not None or verify is not None
     is_url = isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
-    if not (needs_explicit_http and is_url):
+    if needs_explicit_http and not is_url:
+        raise ValueError(
+            '`headers`, `http_client`, `auth`, and `verify` only apply to HTTP transports built '
+            'from a URL string. Pass them on your transport / `fastmcp.Client` directly instead.'
+        )
+    if not needs_explicit_http:
         return client
     url = str(client)
     # FastMCP's HTTP transports accept `httpx_client_factory`; adapt `http_client` to that shape.
@@ -2358,12 +2365,18 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
 
 def _map_mcp_tool_results(
     parts: Sequence[mcp_types.ContentBlock],
-) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+) -> (
+    str
+    | messages.BinaryContent
+    | dict[str, Any]
+    | list[Any]
+    | list[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+):
     mapped = [_map_mcp_tool_result(part) for part in parts]
     return mapped[0] if len(mapped) == 1 else mapped
 
 
-def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent:
+def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
     if isinstance(part, mcp_types.TextContent):
         text = part.text
         if text.startswith(('[', '{')):
@@ -2565,7 +2578,12 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     for name, server in config.mcp_servers.items():
         toolset: MCPToolset[Any]
         if isinstance(server, MCPServerStdio):  # pyright: ignore[reportDeprecated]
-            transport = StdioTransport(command=server.command, args=list(server.args), env=server.env)
+            transport = StdioTransport(
+                command=server.command,
+                args=list(server.args),
+                env=server.env,
+                cwd=str(server.cwd) if server.cwd is not None else None,
+            )
             toolset = MCPToolset(transport, id=name)
         elif isinstance(server, _MCPServerHTTP):
             toolset = MCPToolset(server.url, id=name, headers=server.headers)

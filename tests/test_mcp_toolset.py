@@ -92,6 +92,15 @@ class TestMCPToolsetConstruction:
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
 
+    def test_http_kwargs_with_non_url_input_raises(self):
+        """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
+        target isn't an HTTP URL — otherwise the kwargs are silently dropped on stdio / Path /
+        in-process inputs."""
+        from fastmcp.server import FastMCP
+
+        with pytest.raises(ValueError, match='only apply to HTTP transports built from a URL'):
+            MCPToolset(FastMCP(name='in_process'), headers={'X-Key': 'foo'})
+
     def test_headers_and_http_client_conflict_raises(self):
         with pytest.raises(ValueError, match='mutually exclusive'):
             MCPToolset(
