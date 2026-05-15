@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.graph_builder.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
-from pydantic_graph.graph_builder.step import NodeStep
+from pydantic_graph.graph_builder import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.step import NodeStep
 
 from . import (
     _agent_graph,
@@ -35,7 +35,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     You generally obtain an `AgentRun` instance by calling `async with my_agent.iter(...) as agent_run:`.
 
     Once you have an instance, you can use it to iterate through the run's nodes as they execute. When an
-    [`End`][pydantic_graph.nodes.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
+    [`End`][pydantic_graph.basenode.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
     becomes available.
 
     Example:
@@ -139,7 +139,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def result(self) -> AgentRunResult[OutputDataT] | None:
         """The final result of the run if it has ended, otherwise `None`.
 
-        Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
+        Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
         if self._result_override is not None:
@@ -320,7 +320,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Manually drive the agent run by passing in the node you want to run next.
 
         This lets you inspect or mutate the node before continuing execution, or skip certain nodes
-        under dynamic conditions. The agent run should be stopped when you return an [`End`][pydantic_graph.nodes.End]
+        under dynamic conditions. The agent run should be stopped when you return an [`End`][pydantic_graph.basenode.End]
         node.
 
         Example:
@@ -382,7 +382,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             node: The node to run next in the graph.
 
         Returns:
-            The next node returned by the graph logic, or an [`End`][pydantic_graph.nodes.End] node if
+            The next node returned by the graph logic, or an [`End`][pydantic_graph.basenode.End] node if
             the run has completed.
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it

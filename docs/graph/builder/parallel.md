@@ -1,6 +1,6 @@
 # Parallel Execution
 
-The beta graph API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
+The graph builder API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
 
 ## Overview
 
@@ -159,7 +159,7 @@ This allows for progressive processing where downstream steps can start working 
 
 ### Using `add_mapping_edge()`
 
-The convenience method [`add_mapping_edge()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
+The convenience method [`add_mapping_edge()`][pydantic_graph.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
 
 ```python {title="mapping_convenience.py"}
 from dataclasses import dataclass
@@ -483,7 +483,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-The transform function receives a [`StepContext`][pydantic_graph.graph_builder.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
+The transform function receives a [`StepContext`][pydantic_graph.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
 
 - Converting data types between incompatible steps
 - Extracting specific fields from complex objects

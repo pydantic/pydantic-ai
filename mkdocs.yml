@@ -205,19 +205,17 @@ nav:
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
       - pydantic_graph:
+          - api/pydantic_graph/basenode.md
           - api/pydantic_graph/graph.md
-          - api/pydantic_graph/nodes.md
           - api/pydantic_graph/persistence.md
           - api/pydantic_graph/mermaid.md
           - api/pydantic_graph/exceptions.md
           - Graph Builder:
               - api/pydantic_graph/graph_builder.md
-              - api/pydantic_graph/graph_builder_graph.md
-              - api/pydantic_graph/graph_builder_graph_builder.md
-              - api/pydantic_graph/graph_builder_step.md
-              - api/pydantic_graph/graph_builder_join.md
-              - api/pydantic_graph/graph_builder_decision.md
-              - api/pydantic_graph/graph_builder_node.md
+              - api/pydantic_graph/step.md
+              - api/pydantic_graph/join.md
+              - api/pydantic_graph/decision.md
+              - api/pydantic_graph/node.md
       - fasta2a:
           - api/fasta2a.md
 

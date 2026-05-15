@@ -3,7 +3,7 @@
 import pytest
 
 from pydantic_graph.exceptions import GraphBuildingError
-from pydantic_graph.graph_builder.parent_forks import ParentForkFinder
+from pydantic_graph.parent_forks import ParentForkFinder
 
 from ..._inline_snapshot import snapshot
 

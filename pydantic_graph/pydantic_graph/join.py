@@ -16,7 +16,7 @@ from typing import Any, Generic, Literal, cast, overload
 from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.graph_builder.id_types import ForkID, ForkStack, JoinID
+from pydantic_graph.id_types import ForkID, ForkStack, JoinID
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -152,7 +152,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
     A join defines how to combine outputs from multiple parallel execution paths
-    using a [`ReducerFunction`][pydantic_graph.graph_builder.join.ReducerFunction]. It specifies which fork
+    using a [`ReducerFunction`][pydantic_graph.join.ReducerFunction]. It specifies which fork
     it joins (if any) and manages the initialization of reducers.
 
     Type Parameters:
@@ -211,7 +211,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
             inputs: The input data to bind to this step, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.graph_builder.step.StepNode] with this step and the bound inputs
+            A [`StepNode`][pydantic_graph.step.StepNode] with this step and the bound inputs
         """
         return JoinNode(self, inputs)
 
@@ -221,7 +221,7 @@ class JoinNode(BaseNode[StateT, DepsT, Any]):
     """A base node that represents a join item with bound inputs.
 
     JoinNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Join`][pydantic_graph.graph_builder.join.Join] with bound inputs in a BaseNode interface.
+    a [`Join`][pydantic_graph.join.Join] with bound inputs in a BaseNode interface.
     It is not meant to be run directly but rather used to indicate transitions
     to v2-style steps.
     """

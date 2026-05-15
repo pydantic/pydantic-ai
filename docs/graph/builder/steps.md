@@ -1,10 +1,10 @@
 # Steps
 
-Steps are the fundamental units of work in a graph. They're async functions that receive a [`StepContext`][pydantic_graph.graph_builder.step.StepContext] and return a value.
+Steps are the fundamental units of work in a graph. They're async functions that receive a [`StepContext`][pydantic_graph.step.StepContext] and return a value.
 
 ## Creating Steps
 
-Steps are created using the [`@g.step`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.step] decorator on the [`GraphBuilder`][pydantic_graph.graph_builder.graph_builder.GraphBuilder]:
+Steps are created using the [`@g.step`][pydantic_graph.graph_builder.GraphBuilder.step] decorator on the [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder]:
 
 ```python {title="basic_step.py"}
 from dataclasses import dataclass
@@ -41,7 +41,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Step Context
 
-Every step function receives a [`StepContext`][pydantic_graph.graph_builder.step.StepContext] as its first parameter. The context provides access to:
+Every step function receives a [`StepContext`][pydantic_graph.step.StepContext] as its first parameter. The context provides access to:
 
 - `ctx.state` - The mutable graph state (type: `StateT`)
 - `ctx.deps` - Injected dependencies (type: `DepsT`)
@@ -288,7 +288,7 @@ The computation is: `(10 + 5) * 2 - 3 = 27`
 
 ## Streaming Steps
 
-In addition to regular steps that return a single value, you can create streaming steps that yield multiple values over time using the [`@g.stream`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.stream] decorator:
+In addition to regular steps that return a single value, you can create streaming steps that yield multiple values over time using the [`@g.stream`][pydantic_graph.graph_builder.GraphBuilder.stream] decorator:
 
 ```python {title="streaming_step.py"}
 from dataclasses import dataclass
@@ -399,7 +399,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Type Safety
 
-The beta graph API provides strong type checking through generics. Type parameters on [`StepContext`][pydantic_graph.graph_builder.step.StepContext] ensure:
+The graph builder API provides strong type checking through generics. Type parameters on [`StepContext`][pydantic_graph.step.StepContext] ensure:
 
 - State access is properly typed
 - Dependencies are correctly typed

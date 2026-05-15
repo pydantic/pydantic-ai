@@ -1,12 +1,10 @@
-# Beta Graph API
+# Graph Builder API
 
-!!! warning "Beta API"
-    This is the new beta graph API. It provides enhanced capabilities for parallel execution, conditional branching, and complex workflows.
-The original graph API is still available (and compatible of interop with the new beta API) and is documented in the [main graph documentation](../../graph.md).
+The graph builder API provides a powerful builder pattern for constructing parallel execution graphs. The original [`BaseNode`][pydantic_graph.basenode.BaseNode]-based graph API is still available (and interoperable with the builder API) and is documented in the [main graph documentation](../../graph.md).
 
 ## Overview
 
-The beta graph API in `pydantic-graph` provides a powerful builder pattern for constructing parallel execution graphs with:
+The graph builder API in `pydantic-graph` provides:
 
 - **Step nodes** for executing async functions
 - **Decision nodes** for conditional branching
@@ -18,7 +16,7 @@ This API is designed for advanced workflows where you want declarative control o
 
 ## Installation
 
-The beta graph API is included with `pydantic-graph`:
+The graph builder API is included with `pydantic-graph`:
 
 ```bash
 pip install pydantic-graph
@@ -86,7 +84,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### GraphBuilder
 
-The [`GraphBuilder`][pydantic_graph.graph_builder.graph_builder.GraphBuilder] is the main entry point for constructing graphs. It's generic over:
+The [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] is the main entry point for constructing graphs. It's generic over:
 
 - `StateT` - The type of mutable state shared across all nodes
 - `DepsT` - The type of dependencies injected into nodes
@@ -95,7 +93,7 @@ The [`GraphBuilder`][pydantic_graph.graph_builder.graph_builder.GraphBuilder] is
 
 ### Steps
 
-Steps are async functions decorated with [`@g.step`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.step] that define the actual work to be done in each node. They receive a [`StepContext`][pydantic_graph.graph_builder.step.StepContext] with access to:
+Steps are async functions decorated with [`@g.step`][pydantic_graph.graph_builder.GraphBuilder.step] that define the actual work to be done in each node. They receive a [`StepContext`][pydantic_graph.step.StepContext] with access to:
 
 - `ctx.state` - The mutable graph state
 - `ctx.deps` - Injected dependencies
@@ -105,16 +103,16 @@ Steps are async functions decorated with [`@g.step`][pydantic_graph.graph_builde
 
 Edges define the connections between nodes. The builder provides multiple ways to create edges:
 
-- [`g.add()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.add] - Add one or more edge paths
-- [`g.add_edge()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.add_edge] - Add a simple edge between two nodes
-- [`g.edge_from()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.edge_from] - Start building a complex edge path
+- [`g.add()`][pydantic_graph.graph_builder.GraphBuilder.add] - Add one or more edge paths
+- [`g.add_edge()`][pydantic_graph.graph_builder.GraphBuilder.add_edge] - Add a simple edge between two nodes
+- [`g.edge_from()`][pydantic_graph.graph_builder.GraphBuilder.edge_from] - Start building a complex edge path
 
 ### Start and End Nodes
 
 Every graph has:
 
-- [`g.start_node`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.start_node] - The entry point receiving initial inputs
-- [`g.end_node`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.end_node] - The exit point producing final outputs
+- [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node] - The entry point receiving initial inputs
+- [`g.end_node`][pydantic_graph.graph_builder.GraphBuilder.end_node] - The exit point producing final outputs
 
 ## A More Complex Example
 
@@ -172,7 +170,7 @@ In this example:
 
 1. The start node receives a list of integers
 2. The `.map()` operation fans out each item to a separate parallel execution of the `square` step
-3. All results are collected back together using [`reduce_list_append`][pydantic_graph.graph_builder.join.reduce_list_append]
+3. All results are collected back together using [`reduce_list_append`][pydantic_graph.join.reduce_list_append]
 4. The joined results flow to the end node
 
 ## Next Steps
@@ -186,11 +184,11 @@ Explore the detailed documentation for each feature:
 
 ## Advanced Execution Control
 
-Beyond the basic [`graph.run()`][pydantic_graph.graph_builder.graph.Graph.run] method, the beta API provides fine-grained control over graph execution.
+Beyond the basic [`graph.run()`][pydantic_graph.graph_builder.Graph.run] method, the builder API provides fine-grained control over graph execution.
 
 ### Step-by-Step Execution
 
-Use [`graph.iter()`][pydantic_graph.graph_builder.graph.Graph.iter] to execute the graph one step at a time:
+Use [`graph.iter()`][pydantic_graph.graph_builder.Graph.iter] to execute the graph one step at a time:
 
 ```python {title="step_by_step.py"}
 from dataclasses import dataclass
@@ -244,7 +242,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-The [`GraphRun`][pydantic_graph.graph_builder.graph.GraphRun] object provides:
+The [`GraphRun`][pydantic_graph.graph_builder.GraphRun] object provides:
 
 - **Async iteration**: Iterate through execution events
 - **`next_task` property**: Inspect upcoming tasks
@@ -253,7 +251,7 @@ The [`GraphRun`][pydantic_graph.graph_builder.graph.GraphRun] object provides:
 
 ### Visualizing Graphs
 
-Generate Mermaid diagrams of your graph structure using [`graph.render()`][pydantic_graph.graph_builder.graph.Graph.render]:
+Generate Mermaid diagrams of your graph structure using [`graph.render()`][pydantic_graph.graph_builder.Graph.render]:
 
 ```python {title="visualize_graph.py"}
 from dataclasses import dataclass
@@ -306,7 +304,7 @@ The rendered diagram can be displayed in documentation, notebooks, or any tool t
 
 ## Comparison with Original API
 
-The original graph API (documented in the [main graph page](../../graph.md)) uses a class-based approach with [`BaseNode`][pydantic_graph.nodes.BaseNode] subclasses. The beta API uses a builder pattern with decorated functions, which provides:
+The original graph API (documented in the [main graph page](../../graph.md)) uses a class-based approach with [`BaseNode`][pydantic_graph.basenode.BaseNode] subclasses. The builder API uses a builder pattern with decorated functions, which provides:
 
 **Advantages:**
 - More concise syntax for simple workflows
@@ -323,6 +321,6 @@ Both APIs are fully supported and can even be integrated together when needed.
 ## Persistence and Resumability
 
 !!! info "No Native Persistence"
-    Unlike the [original Graph API](../../graph.md#state-persistence), the beta graph API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
+    Unlike the [original Graph API](../../graph.md#state-persistence), the graph builder API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
 
 For workflows that need to preserve progress across failures, restarts, or long-running operations, use one of the supported [durable execution](../../durable_execution/overview.md) solutions.

@@ -16,8 +16,8 @@ from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.exceptions import GraphBuildingError
-from pydantic_graph.graph_builder.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id
-from pydantic_graph.graph_builder.step import NodeStep, StepContext
+from pydantic_graph.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id
+from pydantic_graph.step import NodeStep, StepContext
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -26,7 +26,7 @@ InputT = TypeVar('InputT', infer_variance=True)
 T = TypeVar('T')
 
 if TYPE_CHECKING:
-    from pydantic_graph.graph_builder.node_types import AnyDestinationNode, DestinationNode, SourceNode
+    from pydantic_graph.node_types import AnyDestinationNode, DestinationNode, SourceNode
 
 
 class TransformFunction(Protocol[StateT, DepsT, InputT, OutputT]):

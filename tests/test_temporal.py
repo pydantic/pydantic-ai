@@ -67,7 +67,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.graph_builder.join import reduce_list_append
+from pydantic_graph.join import reduce_list_append
 
 from ._inline_snapshot import snapshot
 

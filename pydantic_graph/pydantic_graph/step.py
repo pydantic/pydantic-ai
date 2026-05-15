@@ -13,8 +13,8 @@ from typing import Any, Generic, Protocol, cast, get_origin, overload
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.graph_builder.id_types import NodeID
-from pydantic_graph.nodes import BaseNode, End, GraphRunContext
+from pydantic_graph.basenode import BaseNode, End, GraphRunContext
+from pydantic_graph.id_types import NodeID
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -160,7 +160,7 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
             inputs: The input data to bind to this step, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.graph_builder.step.StepNode] with this step and the bound inputs
+            A [`StepNode`][pydantic_graph.step.StepNode] with this step and the bound inputs
         """
         return StepNode(self, inputs)
 
@@ -170,7 +170,7 @@ class StepNode(BaseNode[StateT, DepsT, Any]):
     """A base node that represents a step with bound inputs.
 
     StepNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Step`][pydantic_graph.graph_builder.step.Step] with bound inputs in a BaseNode interface.
+    a [`Step`][pydantic_graph.step.Step] with bound inputs in a BaseNode interface.
     It is not meant to be run directly but rather used to indicate transitions
     to v2-style steps.
     """

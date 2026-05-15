@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .basenode.persistence import SnapshotStatus
+    from .persistence import SnapshotStatus
 
 
 class GraphSetupError(TypeError):

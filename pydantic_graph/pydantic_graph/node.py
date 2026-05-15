@@ -11,7 +11,7 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.graph_builder.id_types import ForkID, JoinID, NodeID
+from pydantic_graph.id_types import ForkID, JoinID, NodeID
 
 StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""

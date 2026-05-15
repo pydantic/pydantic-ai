@@ -14,7 +14,7 @@ The first matching branch is taken, similar to pattern matching or `if-elif-else
 
 ## Creating Decisions
 
-Use [`g.decision()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.decision] to create a decision node, then add branches with [`g.match()`][pydantic_graph.graph_builder.graph_builder.GraphBuilder.match]:
+Use [`g.decision()`][pydantic_graph.graph_builder.GraphBuilder.decision] to create a decision node, then add branches with [`g.match()`][pydantic_graph.graph_builder.GraphBuilder.match]:
 
 ```python {title="simple_decision.py"}
 from dataclasses import dataclass
@@ -116,7 +116,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### Matching Union Types
 
-For more complex type expressions like unions, you need to use [`TypeExpression`][pydantic_graph.graph_builder.util.TypeExpression] because Python's type system doesn't allow union types to be used directly as runtime values:
+For more complex type expressions like unions, you need to use [`TypeExpression`][pydantic_graph.util.TypeExpression] because Python's type system doesn't allow union types to be used directly as runtime values:
 
 ```python {title="union_type_matching.py"}
 from dataclasses import dataclass
@@ -165,7 +165,7 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
 !!! note
-    [`TypeExpression`][pydantic_graph.graph_builder.util.TypeExpression] is only necessary for complex type expressions like unions (`int | str`), `Literal`, and other type forms that aren't valid as runtime `type` objects. For simple types like `int`, `str`, or custom classes, you can pass them directly to `g.match()`.
+    [`TypeExpression`][pydantic_graph.util.TypeExpression] is only necessary for complex type expressions like unions (`int | str`), `Literal`, and other type forms that aren't valid as runtime `type` objects. For simple types like `int`, `str`, or custom classes, you can pass them directly to `g.match()`.
 
     The `TypeForm` class introduced in [PEP 747](https://peps.python.org/pep-0747/) should eventually eliminate the need for this workaround.
 
@@ -422,4 +422,4 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 - Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Understand [join nodes](joins.md) for aggregating parallel results
-- See the [API reference][pydantic_graph.graph_builder.decision] for complete decision documentation
+- See the [API reference][pydantic_graph.decision] for complete decision documentation

@@ -34,33 +34,33 @@ pip/uv-add pydantic-graph
 
 ### GraphRunContext
 
-[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to Pydantic AI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
+[`GraphRunContext`][pydantic_graph.basenode.GraphRunContext] — The context for the graph run, similar to Pydantic AI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
 
-`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.nodes.StateT].
+`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.basenode.StateT].
 
 ### End
 
-[`End`][pydantic_graph.nodes.End] — return value to indicate the graph run should end.
+[`End`][pydantic_graph.basenode.End] — return value to indicate the graph run should end.
 
-`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.nodes.RunEndT].
+`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.basenode.RunEndT].
 
 ### Nodes
 
-Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] define nodes for execution in the graph.
+Subclasses of [`BaseNode`][pydantic_graph.basenode.BaseNode] define nodes for execution in the graph.
 
 Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally consist of:
 
 - fields containing any parameters required/optional when calling the node
-- the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
-- return annotations of the [`run`][pydantic_graph.nodes.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
+- the business logic to execute the node, in the [`run`][pydantic_graph.basenode.BaseNode.run] method
+- return annotations of the [`run`][pydantic_graph.basenode.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
 
 Nodes are generic in:
 
-- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.nodes.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
-- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
-- **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
+- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.basenode.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
+- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.basenode.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
+- **graph return type** — this only applies if the node returns [`End`][pydantic_graph.basenode.End]. [`RunEndT`][pydantic_graph.basenode.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
-Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
+Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.basenode.End]:
 
 ```py {title="intermediate_node.py" noqa="F821" test="skip"}
 from dataclasses import dataclass
@@ -116,9 +116,9 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 `Graph` is generic in:
 
-- **state** the state type of the graph, [`StateT`][pydantic_graph.nodes.StateT]
-- **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
-- **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
+- **state** the state type of the graph, [`StateT`][pydantic_graph.basenode.StateT]
+- **deps** the deps type of the graph, [`DepsT`][pydantic_graph.basenode.DepsT]
+- **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.basenode.RunEndT]
 
 Here's an example of a simple graph:
 
@@ -127,7 +127,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 
 @dataclass
@@ -208,7 +209,8 @@ from dataclasses import dataclass
 
 from rich.prompt import Prompt
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 
 @dataclass
@@ -287,22 +289,22 @@ async def main():
 
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
-3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
+3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.basenode.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
 4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#example-human-in-the-loop) for how control flow can be managed when nodes require external input.
 5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass] with one field `amount`.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
 8. In the `Purchase` node, look up the price of the product if the user entered a valid product.
 9. If the user did enter a valid product, set the product in the state so we don't revisit `SelectProduct`.
-10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.nodes.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
+10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.basenode.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
 11. If the balance is insufficient, go to `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
 13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but it can affect how [diagrams](#mermaid-diagrams) are displayed.
 14. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
 15. Run the graph with the initial state. Since the graph can be run from any node, we must pass the start node — in this case, `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] that provides the final data and a history of the run.
-16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
-17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
-18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
+16. The return type of the node's [`run`][pydantic_graph.basenode.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
+17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.basenode.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
+18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.basenode.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -360,7 +362,8 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, EmailStr
 
 from pydantic_ai import Agent, ModelMessage, format_as_xml
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 
 @dataclass
@@ -479,7 +482,8 @@ Here's an example:
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from pydantic_graph import Graph, BaseNode, End, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 
 @dataclass
@@ -515,7 +519,7 @@ async def main():
 
 1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
 2. Here, we step through each node as it is executed.
-3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
+3. Once the graph returns an [`End`][pydantic_graph.basenode.End], the loop ends, and `run.result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
 
 ### Using `GraphRun.next(node)` manually
 
@@ -524,7 +528,8 @@ Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydan
 Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
 
 ```python {title="count_down_next.py" noqa="I001" requires="count_down.py"}
-from pydantic_graph import End, FullStatePersistence
+from pydantic_graph import End
+from pydantic_graph.persistence.in_mem import FullStatePersistence
 from count_down import CountDown, CountDownState, count_down_graph
 
 
@@ -633,8 +638,8 @@ async def run_node(run_id: str) -> bool:  # (3)!
 2. Call [`graph.initialize()`][pydantic_graph.graph.Graph.initialize] to set the initial graph state in the persistence object.
 3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph, except the ID of the run.
 4. Call [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] create a [`GraphRun`][pydantic_graph.graph.GraphRun] object that will run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
-5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.nodes.BaseNode] or an [`End`][pydantic_graph.nodes.End] object.
-6. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
+5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.basenode.BaseNode] or an [`End`][pydantic_graph.basenode.End] object.
+6. Check if the node is an [`End`][pydantic_graph.basenode.End] object, if it is, the graph run is complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -658,9 +663,9 @@ Instead of running the entire graph in a single process invocation, we run the g
     from pydantic_graph import (
         BaseNode,
         End,
-        Graph,
         GraphRunContext,
     )
+    from pydantic_graph.graph import Graph
     from pydantic_ai import Agent, format_as_xml
     from pydantic_ai import ModelMessage
     from pydantic_ai.capabilities import Instrumentation
@@ -806,7 +811,7 @@ For a complete example of this graph, see the [question graph example](examples/
 
 ## Dependency Injection
 
-As with Pydantic AI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
+As with Pydantic AI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.basenode.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.basenode.GraphRunContext.deps] field.
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
@@ -817,7 +822,9 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
+from pydantic_graph.persistence.in_mem import FullStatePersistence
 
 
 @dataclass
@@ -892,8 +899,8 @@ These diagrams can be generated with:
 
 Beyond the diagrams shown above, you can also customize mermaid diagrams with the following options:
 
-- [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
-- [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
+- [`Edge`][pydantic_graph.basenode.Edge] allows you to apply a label to an edge
+- [`BaseNode.docstring_notes`][pydantic_graph.basenode.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.basenode.BaseNode.get_note] allows you to add notes to nodes
 - The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
 
 Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-human-in-the-loop) example to:
@@ -906,7 +913,8 @@ Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-hum
 ```python {title="ai_q_and_a_graph_extra.py" test="skip" lint="skip" hl_lines="2 4 10-11 14 26 31"}
 from typing import Annotated
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
+from pydantic_graph import BaseNode, Edge, End, GraphRunContext
+from pydantic_graph.graph import Graph
 
 ask_agent = Agent('openai:gpt-5.2', output_type=str, capabilities=[Instrumentation()])
 

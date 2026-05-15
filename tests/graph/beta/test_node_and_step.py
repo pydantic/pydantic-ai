@@ -2,11 +2,11 @@
 
 from typing import Any
 
-from pydantic_graph.graph_builder.decision import Decision
-from pydantic_graph.graph_builder.id_types import NodeID
-from pydantic_graph.graph_builder.node import EndNode, StartNode
-from pydantic_graph.graph_builder.node_types import is_destination, is_source
-from pydantic_graph.graph_builder.step import Step, StepContext
+from pydantic_graph.decision import Decision
+from pydantic_graph.id_types import NodeID
+from pydantic_graph.node import EndNode, StartNode
+from pydantic_graph.node_types import is_destination, is_source
+from pydantic_graph.step import Step, StepContext
 
 
 def test_step_context_repr():

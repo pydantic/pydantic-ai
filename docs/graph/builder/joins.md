@@ -7,7 +7,7 @@ Join nodes synchronize and aggregate data from parallel execution paths. They us
 When you use [parallel execution](parallel.md) (broadcasting or mapping), you often need to collect and combine the results. Join nodes serve this purpose by:
 
 1. Waiting for all parallel tasks to complete
-2. Aggregating their outputs using a [`ReducerFunction`][pydantic_graph.graph_builder.join.ReducerFunction]
+2. Aggregating their outputs using a [`ReducerFunction`][pydantic_graph.join.ReducerFunction]
 3. Passing the aggregated result to the next node
 
 ## Creating Joins
@@ -61,7 +61,7 @@ Pydantic Graph provides several common reducer types out of the box:
 
 ### `reduce_list_append`
 
-[`reduce_list_append`][pydantic_graph.graph_builder.join.reduce_list_append] collects all inputs into a list:
+[`reduce_list_append`][pydantic_graph.join.reduce_list_append] collects all inputs into a list:
 
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
@@ -104,7 +104,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### `reduce_list_extend`
 
-[`reduce_list_extend`][pydantic_graph.graph_builder.join.reduce_list_extend] extends a list with an iterable of items:
+[`reduce_list_extend`][pydantic_graph.join.reduce_list_extend] extends a list with an iterable of items:
 
 ```python {title="list_extend_reducer.py"}
 from dataclasses import dataclass
@@ -148,7 +148,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### `reduce_dict_update`
 
-[`reduce_dict_update`][pydantic_graph.graph_builder.join.reduce_dict_update] merges dictionaries together:
+[`reduce_dict_update`][pydantic_graph.join.reduce_dict_update] merges dictionaries together:
 
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
@@ -192,7 +192,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### `reduce_null`
 
-[`reduce_null`][pydantic_graph.graph_builder.join.reduce_null] discards all inputs and returns `None`. Useful when you only care about side effects:
+[`reduce_null`][pydantic_graph.join.reduce_null] discards all inputs and returns `None`. Useful when you only care about side effects:
 
 ```python {title="null_reducer.py"}
 from dataclasses import dataclass
@@ -243,7 +243,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### `reduce_sum`
 
-[`reduce_sum`][pydantic_graph.graph_builder.join.reduce_sum] sums numeric values:
+[`reduce_sum`][pydantic_graph.join.reduce_sum] sums numeric values:
 
 ```python {title="sum_reducer.py"}
 from dataclasses import dataclass
@@ -286,7 +286,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### `ReduceFirstValue`
 
-[`ReduceFirstValue`][pydantic_graph.graph_builder.join.ReduceFirstValue] returns the first value it receives and cancels all other parallel tasks. This is useful for "race" scenarios where you want the first successful result:
+[`ReduceFirstValue`][pydantic_graph.join.ReduceFirstValue] returns the first value it receives and cancels all other parallel tasks. This is useful for "race" scenarios where you want the first successful result:
 
 ```python {title="first_value_reducer.py"}
 import asyncio
@@ -339,7 +339,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Custom Reducers
 
-Create custom reducers by defining a [`ReducerFunction`][pydantic_graph.graph_builder.join.ReducerFunction]:
+Create custom reducers by defining a [`ReducerFunction`][pydantic_graph.join.ReducerFunction]:
 
 ```python {title="custom_reducer.py"}
 
@@ -463,7 +463,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### Canceling Sibling Tasks
 
-Reducers with access to [`ReducerContext`][pydantic_graph.graph_builder.join.ReducerContext] can call [`ctx.cancel_sibling_tasks()`][pydantic_graph.graph_builder.join.ReducerContext.cancel_sibling_tasks] to cancel all other parallel tasks in the same fork. This is useful for early termination when you've found what you need:
+Reducers with access to [`ReducerContext`][pydantic_graph.join.ReducerContext] can call [`ctx.cancel_sibling_tasks()`][pydantic_graph.join.ReducerContext.cancel_sibling_tasks] to cancel all other parallel tasks in the same fork. This is useful for early termination when you've found what you need:
 
 ```python {title="cancel_siblings.py"}
 import asyncio
@@ -631,4 +631,4 @@ This ensures proper synchronization even with nested parallel operations.
 
 - Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Explore [conditional branching](decisions.md) with decision nodes
-- See the [API reference][pydantic_graph.graph_builder.join] for complete reducer documentation
+- See the [API reference][pydantic_graph.join] for complete reducer documentation
