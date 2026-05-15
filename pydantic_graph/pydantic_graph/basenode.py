@@ -1,16 +1,13 @@
 from __future__ import annotations as _annotations
 
-import copy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_origin, get_type_hints
+from typing import Any, ClassVar, Generic
 
-from typing_extensions import Never, Self, TypeVar
+from typing_extensions import Never, TypeVar
 
-from . import _utils, exceptions
-
-__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'NodeDef', 'DepsT', 'StateT', 'RunEndT'
+__all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'DepsT', 'StateT', 'RunEndT'
 
 
 StateT = TypeVar('StateT', default=None)
@@ -69,64 +66,6 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         """Get the ID of the node."""
         return cls.__name__
 
-    @classmethod
-    def get_note(cls) -> str | None:
-        """Get a note about the node to render on mermaid charts.
-
-        By default, this returns a note only if [`docstring_notes`][pydantic_graph.basenode.BaseNode.docstring_notes]
-        is `True`. You can override this method to customise the node notes.
-        """
-        if not cls.docstring_notes:
-            return None
-        docstring = cls.__doc__
-        # dataclasses get an automatic docstring which is just their signature, we don't want that
-        if docstring and is_dataclass(cls) and docstring.startswith(f'{cls.__name__}('):
-            docstring = None  # pragma: no cover
-        if docstring:  # pragma: no branch
-            # remove indentation from docstring
-            import inspect
-
-            docstring = inspect.cleandoc(docstring)
-        return docstring
-
-    @classmethod
-    def get_node_def(cls, local_ns: dict[str, Any] | None) -> NodeDef[StateT, DepsT, NodeRunEndT]:
-        """Get the node definition."""
-        type_hints = get_type_hints(cls.run, localns=local_ns, include_extras=True)
-        try:
-            return_hint = type_hints['return']
-        except KeyError as e:
-            raise exceptions.GraphSetupError(f'Node {cls} is missing a return type hint on its `run` method') from e
-
-        next_node_edges: dict[str, Edge] = {}
-        end_edge: Edge | None = None
-        returns_base_node: bool = False
-        for return_type in _utils.get_union_args(return_hint):
-            return_type, annotations = _utils.unpack_annotated(return_type)
-            edge = next((a for a in annotations if isinstance(a, Edge)), Edge(None))
-            return_type_origin = get_origin(return_type) or return_type
-            if return_type_origin is End:
-                end_edge = edge
-            elif return_type_origin is BaseNode:
-                returns_base_node = True
-            elif issubclass(return_type_origin, BaseNode):
-                next_node_edges[return_type.get_node_id()] = edge
-            else:
-                raise exceptions.GraphSetupError(f'Invalid return type: {return_type}')
-
-        return NodeDef(
-            node=cls,
-            node_id=cls.get_node_id(),
-            note=cls.get_note(),
-            next_node_edges=next_node_edges,
-            end_edge=end_edge,
-            returns_base_node=returns_base_node,
-        )
-
-    def deep_copy(self) -> Self:
-        """Returns a deep copy of the node."""
-        return copy.deepcopy(self)
-
 
 @dataclass
 class End(Generic[RunEndT]):
@@ -142,27 +81,3 @@ class Edge:
 
     label: str | None
     """Label for the edge."""
-
-
-@dataclass(kw_only=True)
-class NodeDef(Generic[StateT, DepsT, NodeRunEndT]):
-    """Definition of a node.
-
-    This is a primarily internal representation of a node; in general, it shouldn't be necessary to use it directly.
-
-    Used by [`Graph`][pydantic_graph.graph.Graph] to store information about a node, and when generating
-    mermaid graphs.
-    """
-
-    node: type[BaseNode[StateT, DepsT, NodeRunEndT]]
-    """The node definition itself."""
-    node_id: str
-    """ID of the node."""
-    note: str | None
-    """Note about the node to render on mermaid charts."""
-    next_node_edges: dict[str, Edge]
-    """IDs of the nodes that can be called next."""
-    end_edge: Edge | None
-    """If node definition returns an `End` this is an Edge, indicating the node can end the run."""
-    returns_base_node: bool
-    """The node definition returns a `BaseNode`, hence any node in the next can be called next."""
