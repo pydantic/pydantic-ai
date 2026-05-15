@@ -21,8 +21,7 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(uv run:*)",
-      "Bash(make:*)",
-      "Skill(pytest-vcr:*)"
+      "Bash(make:*)"
     ]
   }
 }

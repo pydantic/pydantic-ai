@@ -24,7 +24,6 @@ node_modules/
 !.agents/README.md
 !.agents/skills/
 .agents/skills/*
-!.agents/skills/pytest-vcr/
 !.agents/skills/address-feedback/
 !.agents/skills/pre-push-review/
 .claude/*
