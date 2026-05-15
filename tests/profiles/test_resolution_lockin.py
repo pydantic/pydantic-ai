@@ -20,7 +20,6 @@ dataclass→TypedDict migration (both representations normalize to the same dict
 
 from __future__ import annotations
 
-import dataclasses
 from textwrap import dedent
 from typing import Any
 
@@ -38,7 +37,6 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
@@ -152,40 +150,14 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
 
 
 def _normalize(profile: Any) -> dict[str, Any] | None:
-    """Reduce a `ModelProfile` (dataclass or TypedDict) to a dict of non-default fields.
+    """Reduce a `ModelProfile` `TypedDict` to a dict of non-default fields.
 
-    - Pre-migration: profile is a `@dataclass` instance; `asdict()` extracts every field.
-    - Post-migration: profile is a `TypedDict` (a dict); already in the right shape.
-
-    Either way, we strip values matching `_CANONICAL_DEFAULTS` so the snapshot focuses
-    on the deltas the provider/gateway actually contributes.
+    Strips keys whose value matches `_CANONICAL_DEFAULTS`, so each snapshot
+    shows only what the provider/gateway actually contributes.
     """
     if profile is None:
         return None
-    if dataclasses.is_dataclass(profile):
-        # Use a shallow extraction (not asdict, which recurses through dataclass-typed
-        # nested values — none expected here, but defensive).
-        raw = {f.name: getattr(profile, f.name) for f in dataclasses.fields(profile)}
-    else:
-        raw = dict(profile)
-    return {k: v for k, v in raw.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
-
-
-# Quiet pyright on the imported tool symbols — they're referenced by name in the
-# generated snapshots below.
-_TOOL_SYMBOLS_REFERENCED_IN_SNAPSHOTS = (
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    MemoryTool,
-    WebFetchTool,
-    WebSearchTool,
-    ToolSearchTool,
-    InlineDefsJsonSchemaTransformer,
-    OpenAIJsonSchemaTransformer,
-    GoogleJsonSchemaTransformer,
-)
+    return {k: v for k, v in profile.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
 
 
 # =============================================================================
@@ -1413,14 +1385,3 @@ def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
 
     assert HuggingFaceProvider.model_profile('unknown/some-model') is None
-
-
-# Ensure the imported symbols above are actually referenced — pyright won't flag them
-# as unused once snapshot generation inserts their names into the snapshot literals.
-def test_imported_tool_symbols_used_in_snapshots():
-    """Snapshots above reference these symbols by name; this test exists to keep the imports alive."""
-    assert all(s is not None for s in _TOOL_SYMBOLS_REFERENCED_IN_SNAPSHOTS)
-    # Also ensure `ModelProfile` and (when available) the OpenRouter Google transformer are imported.
-    assert ModelProfile is not None
-    if openrouter_google_imports():
-        assert _OpenRouterGoogleJsonSchemaTransformer is not None
