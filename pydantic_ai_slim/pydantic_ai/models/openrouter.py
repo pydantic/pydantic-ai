@@ -588,7 +588,7 @@ def _openrouter_settings_to_openai_settings(
 
 
 class OpenRouterModel(OpenAIChatModel):
-    """Extends OpenAIModel to capture extra metadata for Openrouter."""
+    """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
     def __init__(
         self,

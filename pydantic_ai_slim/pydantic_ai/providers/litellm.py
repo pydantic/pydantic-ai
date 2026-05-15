@@ -78,7 +78,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         if profile is None:
             profile = openai_model_profile(model_name)
 
-        # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
+        # As LiteLLMProvider is used with OpenAIChatModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 

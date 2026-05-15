@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, assert_never, deprecated
+from typing_extensions import Never, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -80,7 +80,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
@@ -175,10 +175,8 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 
 __all__ = (
     'DEPRECATED_OPENAI_MODELS',
-    'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
-    'OpenAIModelSettings',
     'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
@@ -535,11 +533,6 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
 
-@deprecated('Use `OpenAIChatModelSettings` instead.')
-class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
-    """Deprecated alias for `OpenAIChatModelSettings`."""
-
-
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
@@ -701,7 +694,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
-    @overload
     def __init__(
         self,
         model_name: OpenAIModelName,
@@ -714,40 +706,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
-        settings: ModelSettings | None = None,
-    ) -> None: ...
-
-    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
-    @overload
-    def __init__(
-        self,
-        model_name: OpenAIModelName,
-        *,
-        provider: OpenAIChatCompatibleProvider
-        | Literal[
-            'openai',
-            'openai-chat',
-            'gateway',
-        ]
-        | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec | None = None,
-        system_prompt_role: OpenAISystemPromptRole | None = None,
-        settings: ModelSettings | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: OpenAIModelName,
-        *,
-        provider: OpenAIChatCompatibleProvider
-        | Literal[
-            'openai',
-            'openai-chat',
-            'gateway',
-        ]
-        | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec | None = None,
-        system_prompt_role: OpenAISystemPromptRole | None = None,
         settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI model.
@@ -758,8 +716,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
-            system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
-                In the future, this may be inferred from the model name.
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
@@ -769,9 +725,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
-
-        if system_prompt_role is not None:
-            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -808,11 +761,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             new_tools = _profile.supported_native_tools - {WebSearchTool}
             _profile = replace(_profile, supported_native_tools=new_tools)
         return _profile
-
-    @property
-    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
-    def system_prompt_role(self) -> OpenAISystemPromptRole | None:
-        return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     def prepare_request(
         self,
@@ -1651,16 +1599,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             ]
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
-
-
-@deprecated(
-    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
-    "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
-    "require a feature that the Responses API doesn't support yet like audio."
-)
-@dataclass(init=False)
-class OpenAIModel(OpenAIChatModel):
-    """Deprecated alias for `OpenAIChatModel`."""
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
