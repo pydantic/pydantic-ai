@@ -879,6 +879,54 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_response = self._process_response(response)
         return model_response
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens using tiktoken.
+        
+        Follows the approach from the OpenAI cookbook:
+        https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken
+        """
+        import tiktoken
+        
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+        
+        try:
+            encoding = tiktoken.encoding_for_model(self._model_name)
+        except KeyError:
+            encoding = tiktoken.get_encoding('cl100k_base')
+        
+        tokens_per_message = 3  # per-message overhead
+        tokens_per_name = 1    # if "name" field is present
+        
+        num_tokens = 0
+        for message in openai_messages:
+            num_tokens += tokens_per_message
+            for key, value in message.items():
+                if isinstance(value, str):
+                    num_tokens += len(encoding.encode(value))
+                elif key == 'tool_calls' and isinstance(value, list):
+                    for tool_call in value:
+                        if isinstance(tool_call, dict) and 'function' in tool_call:
+                            func = tool_call['function']
+                            if isinstance(func, dict):
+                                for func_value in func.values():
+                                    if isinstance(func_value, str):
+                                        num_tokens += len(encoding.encode(func_value))
+                if key == 'name':
+                    num_tokens += tokens_per_name
+        
+        num_tokens += 3  # every reply is primed with assistant role
+        
+        return usage.RequestUsage(input_tokens=num_tokens)
+
     def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
