@@ -107,7 +107,7 @@ def _require_fastmcp() -> None:
 
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, _utils, exceptions, messages, models  # noqa: E402
+from . import _mcp, _mcp_util, _utils, exceptions, messages, models  # noqa: E402
 from .settings import ModelSettings  # noqa: E402
 
 __all__ = (
@@ -2121,6 +2121,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         """Call a tool on the server directly.
 
+        When the server attaches a top-level `_meta` payload to the result, or any content block
+        carries `annotations.audience == ['user']`, this returns a
+        [`ToolReturn`][pydantic_ai.messages.ToolReturn] so the metadata and user-only content are
+        available to the caller. Per-block `_meta` is preserved on the corresponding
+        [`TextContent`][pydantic_ai.messages.TextContent] /
+        [`BinaryContent`][pydantic_ai.messages.BinaryContent] via their `metadata` field.
+
         Args:
             name: The name of the tool to call.
             args: The arguments to pass to the tool.
@@ -2138,19 +2145,18 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     raise exceptions.ModelRetry(message=str(e)) from e
                 raise
 
-        # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
-        # structured content for backward compatibility).
-        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structured_content) and all(
-            isinstance(part, mcp_types.TextContent) for part in result.content
-        ):
-            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
-            # the raw value returned by the tool function.
-            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+        assistant_parts, user_parts = _mcp_util.partition_content(result.content)
+        return_value = _select_return_value(result, assistant_parts)
+        user_content = [_mcp_util.map_tool_result_user_content(part) for part in user_parts]
+        metadata = _mcp_util.clean_meta(result.meta)
 
-        return _map_mcp_tool_results(result.content)
+        if not metadata and not user_content:
+            return return_value
+        return messages.ToolReturn(
+            return_value=return_value,
+            content=user_content or None,
+            metadata=metadata,
+        )
 
     async def call_tool(
         self,
@@ -2238,9 +2244,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 raise MCPError.from_mcp_sdk(e) from e
 
         return (
-            _resource_content_to_pai(contents[0])
-            if len(contents) == 1
-            else [_resource_content_to_pai(c) for c in contents]
+            _read_resource_content(contents[0]) if len(contents) == 1 else [_read_resource_content(c) for c in contents]
         )
 
     def __repr__(self) -> str:
@@ -2363,56 +2367,51 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
     return handler
 
 
-def _map_mcp_tool_results(
-    parts: Sequence[mcp_types.ContentBlock],
-) -> (
-    str
-    | messages.BinaryContent
-    | dict[str, Any]
-    | list[Any]
-    | list[str | messages.BinaryContent | dict[str, Any] | list[Any]]
-):
-    mapped = [_map_mcp_tool_result(part) for part in parts]
+def _select_return_value(result: CallToolResult, assistant_parts: list[mcp_types.ContentBlock]) -> Any:
+    """Pick the assistant-visible return value for a `CallToolResult`.
+
+    Prefers `structured_content` when all assistant-visible parts are plain text (and thus
+    redundant with the structured payload, per the MCP backward-compat convention).
+    """
+    # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+    if (structured := result.structured_content) and all(
+        isinstance(part, mcp_types.TextContent) for part in assistant_parts
+    ):
+        # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
+        # the raw value returned by the tool function.
+        if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+            return structured['result']
+        return structured
+    return _map_mcp_tool_results(assistant_parts)
+
+
+def _map_mcp_tool_results(parts: Sequence[mcp_types.ContentBlock]) -> Any:
+    """Map a sequence of MCP content blocks, unwrapping single-item results to a scalar."""
+    mapped = [_mcp_util.map_tool_result_part(part) for part in parts]
+    if not mapped:
+        return None
     return mapped[0] if len(mapped) == 1 else mapped
 
 
-def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
-    if isinstance(part, mcp_types.TextContent):
-        text = part.text
-        if text.startswith(('[', '{')):
-            try:
-                return pydantic_core.from_json(text)
-            except ValueError:
-                pass
-        return text
-    elif isinstance(part, mcp_types.ImageContent):
-        return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
-    elif isinstance(part, mcp_types.AudioContent):
-        return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)  # pragma: no cover
-    elif isinstance(part, mcp_types.EmbeddedResource):
-        return _resource_content_to_pai(part.resource)
-    elif isinstance(part, mcp_types.ResourceLink):
-        # Reading the linked resource requires a session reference; fall back to returning the URI.
-        # For inline reading, callers can use `MCPToolset.read_resource(part.uri)` directly.
-        return str(part.uri)
-    else:
-        assert_never(part)
-
-
-def _resource_content_to_pai(
+def _read_resource_content(
     resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents,
 ) -> str | messages.BinaryContent:
+    """Map a single `read_resource` content item to a Pydantic AI value.
+
+    Used by [`MCPToolset.read_resource`][pydantic_ai.mcp.MCPToolset.read_resource]. Doesn't
+    propagate per-content `_meta` to keep the return type narrow (`str | BinaryContent`).
+    For tool-call results, see [`_mcp_util`][pydantic_ai._mcp_util] which preserves metadata.
+    """
     if isinstance(resource, mcp_types.TextResourceContents):
         return resource.text
-    elif isinstance(resource, mcp_types.BlobResourceContents):
+    if isinstance(resource, mcp_types.BlobResourceContents):
         return messages.BinaryContent.narrow_type(
             messages.BinaryContent(
                 data=base64.b64decode(resource.blob),
                 media_type=resource.mimeType or 'application/octet-stream',
             )
         )
-    else:
-        assert_never(resource)
+    assert_never(resource)
 
 
 def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:

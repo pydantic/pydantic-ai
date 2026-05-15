@@ -36,15 +36,20 @@ with try_import() as imports_successful:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.server import FastMCP
+    from fastmcp.tools.base import ToolResult
     from mcp import types as mcp_types
     from mcp.types import (
+        Annotations,
         BlobResourceContents,
         EmbeddedResource,
         ImageContent,
         ResourceLink,
+        TextContent,
+        TextResourceContents,
     )
     from pydantic import AnyUrl
 
+    from pydantic_ai import messages
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
@@ -275,7 +280,86 @@ async def fastmcp_server() -> FastMCP[None]:
     async def profile(name: str) -> str:
         return f'{{"name": "{name}"}}'
 
+    _register_metadata_audience_tools(server)
     return server
+
+
+def _register_metadata_audience_tools(server: FastMCP[None]) -> None:
+    """Register the `_meta` / `audience` fixture tools on the shared FastMCP server.
+
+    Kept separate from the main fixture body to keep `fastmcp_server` under the
+    cyclomatic-complexity threshold — the tool registrations are otherwise unrelated to the
+    server's core surface.
+    """
+
+    @server.tool()
+    async def text_with_meta() -> TextContent:
+        """A tool that returns a text part carrying a `_meta` payload."""
+        # `mcp.types.*` model fields accept the `_meta` alias only (not the canonical `meta` name).
+        return TextContent(type='text', text='hello', _meta={'source': 'cache', 'version': 1})
+
+    @server.tool()
+    async def image_with_meta() -> ImageContent:
+        """A tool that returns an image part carrying a `_meta` payload."""
+        encoded = base64.b64encode(b'fake_image_bytes').decode('utf-8')
+        return ImageContent(type='image', data=encoded, mimeType='image/png', _meta={'origin': 'test'})
+
+    @server.tool()
+    async def embedded_text_with_meta() -> EmbeddedResource:
+        """A tool that returns an embedded text resource with both outer and inner `_meta` payloads."""
+        return EmbeddedResource(
+            type='resource',
+            resource=TextResourceContents(
+                uri=AnyUrl('resource://doc.txt'),
+                text='document body',
+                _meta={'inner': True, 'shared': 'inner-wins'},
+            ),
+            _meta={'outer': True, 'shared': 'outer-loses'},
+        )
+
+    @server.tool()
+    async def resource_link_with_meta() -> ResourceLink:
+        """A tool that returns a resource link carrying a `_meta` payload."""
+        return ResourceLink(
+            type='resource_link',
+            uri=AnyUrl('resource://greeting.txt'),
+            name='greeting',
+            _meta={'cache_hit': True},
+        )
+
+    @server.tool()
+    async def audience_split() -> list[TextContent]:
+        """A tool that returns two text parts split by `audience` annotation."""
+        return [
+            TextContent(
+                type='text',
+                text='assistant-only',
+                annotations=Annotations(audience=['assistant']),
+            ),
+            TextContent(
+                type='text',
+                text='user-only',
+                annotations=Annotations(audience=['user']),
+            ),
+        ]
+
+    @server.tool()
+    async def top_level_meta() -> ToolResult:
+        """A tool whose result carries a top-level `_meta` payload."""
+        return ToolResult(
+            content=[TextContent(type='text', text='ok')],
+            structured_content={'count': 1},
+            meta={'mode': 'cached'},
+        )
+
+    @server.tool()
+    async def all_user_audience() -> TextContent:
+        """A tool whose only content part is `audience=['user']`."""
+        return TextContent(
+            type='text',
+            text='user-facing',
+            annotations=Annotations(audience=['user']),
+        )
 
 
 @pytest.fixture
@@ -545,7 +629,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('resource_link_tool', {}, run_context, tools['resource_link_tool'])
-        # `_map_mcp_tool_result` for ResourceLink returns the URI string.
+        # `map_tool_result_part` for ResourceLink returns the URI string.
         assert result == 'resource://greeting.txt'
 
     async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
@@ -574,33 +658,113 @@ class TestMCPToolsetIntegration:
                 await toolset.direct_call_tool('boom', {})
 
 
+class TestMCPMetadataAndAudience:
+    """Surfacing MCP `_meta` payloads and audience-filtered content through `MCPToolset`.
+
+    For tools whose result has no `_meta` and no user-only audience parts, `direct_call_tool`
+    returns the raw mapped value (str/dict/`BinaryContent`/…) — same as before. Once either
+    signal is present the result is wrapped in a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
+    so the metadata and user-only content are reachable.
+    """
+
+    async def test_per_part_text_meta_is_preserved(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('text_with_meta', {})
+        assert result == messages.TextContent(content='hello', metadata={'source': 'cache', 'version': 1})
+
+    async def test_per_part_binary_meta_is_preserved(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('image_with_meta', {})
+        assert isinstance(result, messages.BinaryImage)
+        assert result.media_type == 'image/png'
+        assert result.metadata == {'origin': 'test'}
+
+    async def test_embedded_resource_outer_and_inner_meta_merge(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('embedded_text_with_meta', {})
+        # Inner (resource-level) meta wins on shared keys, both are present.
+        assert result == messages.TextContent(
+            content='document body',
+            metadata={'outer': True, 'inner': True, 'shared': 'inner-wins'},
+        )
+
+    async def test_resource_link_meta_wraps_uri_in_text_content(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('resource_link_with_meta', {})
+        assert result == messages.TextContent(content='resource://greeting.txt', metadata={'cache_hit': True})
+
+    async def test_audience_partitions_into_user_content(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('audience_split', {})
+        assert isinstance(result, messages.ToolReturn)
+        # Assistant-visible part flows back as the return value.
+        assert result.return_value == 'assistant-only'
+        # User-only audience part flows back as user content (typed `UserContent` list).
+        assert result.content == ['user-only']
+        # No top-level `_meta`, only the FastMCP `wrap_result` marker (filtered out).
+        assert result.metadata is None
+
+    async def test_top_level_meta_wraps_in_tool_return(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('top_level_meta', {})
+        assert isinstance(result, messages.ToolReturn)
+        # Structured content takes precedence over text parts and is unwrapped from `result` if singular.
+        assert result.return_value == {'count': 1}
+        assert result.metadata == {'mode': 'cached'}
+        assert result.content is None
+
+    async def test_fastmcp_wrap_result_marker_filtered_from_meta(self, fastmcp_server: FastMCP[None]):
+        """FastMCP tags every result with `{'fastmcp': {'wrap_result': True}}` — that marker
+        is an SDK implementation detail and shouldn't surface as user-facing metadata."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            # `echo` has no `_meta` and no audience-filtered parts, so the raw scalar is returned.
+            result = await toolset.direct_call_tool('echo', {'message': 'hi'})
+        assert result == 'Echo: hi'
+
+    async def test_all_user_audience_returns_none_return_value(self, fastmcp_server: FastMCP[None]):
+        """When every part is `audience=['user']`, the assistant-visible return value is empty."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('all_user_audience', {})
+        assert isinstance(result, messages.ToolReturn)
+        assert result.return_value is None
+        assert result.content == ['user-facing']
+
+
 class TestToolResultMapping:
-    """Direct unit tests for `_map_mcp_tool_result` — easier than crafting a server response
+    """Direct unit tests for `map_tool_result_part` — easier than crafting a server response
     that bypasses FastMCP's `structured_content` shortcut."""
 
     def test_text_content_returns_str(self):
-        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai._mcp_util import map_tool_result_part
 
-        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='hello'))
+        out = map_tool_result_part(mcp_types.TextContent(type='text', text='hello'))
         assert out == 'hello'
 
     def test_text_content_with_json_object_is_parsed(self):
-        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai._mcp_util import map_tool_result_part
 
-        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{"a": 1}'))
+        out = map_tool_result_part(mcp_types.TextContent(type='text', text='{"a": 1}'))
         assert out == {'a': 1}
 
     def test_text_content_with_json_array_is_parsed(self):
-        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai._mcp_util import map_tool_result_part
 
-        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
+        out = map_tool_result_part(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
         assert out == [1, 2, 3]
 
     def test_text_content_with_invalid_json_falls_back_to_text(self):
-        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai._mcp_util import map_tool_result_part
 
         # Starts with `{` but isn't valid JSON.
-        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{not valid'))
+        out = map_tool_result_part(mcp_types.TextContent(type='text', text='{not valid'))
         assert out == '{not valid'
 
 

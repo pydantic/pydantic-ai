@@ -354,6 +354,24 @@ agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
 
+## Tool result metadata
+
+MCP tool results can carry [`_meta`](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result) payloads at the result level and on individual content blocks. [`MCPToolset`][pydantic_ai.mcp.MCPToolset] surfaces them programmatically without forwarding them to the LLM:
+
+- Top-level `result._meta` is exposed on [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn].
+- Per-block `_meta` is preserved on the corresponding [`TextContent.metadata`][pydantic_ai.messages.TextContent] or [`BinaryContent.metadata`][pydantic_ai.messages.BinaryContent]. For embedded text resources the outer block `_meta` is shallow-merged with the inner resource's `_meta` (inner wins on shared keys).
+
+When a result has no `_meta` and no audience-filtered content, [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] returns the raw mapped value (a `str`, a parsed JSON object, a [`BinaryContent`][pydantic_ai.messages.BinaryContent], etc.) — same shape as before. Once either signal is present the result is wrapped in a [`ToolReturn`][pydantic_ai.messages.ToolReturn] so the metadata is reachable.
+
+Distinct from [`BinaryContent.vendor_metadata`][pydantic_ai.messages.BinaryContent.vendor_metadata] which carries model-provider hints (e.g. OpenAI's image `detail`) sent to the API: `metadata` is application-only and never reaches the LLM.
+
+## Audience-filtered content
+
+MCP content blocks may carry an [`annotations.audience`](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result) list selecting `'user'`, `'assistant'`, or both. [`MCPToolset`][pydantic_ai.mcp.MCPToolset] honours this:
+
+- Parts whose audience includes `'assistant'` (or has no audience at all) become the [`ToolReturn.return_value`][pydantic_ai.messages.ToolReturn] visible to the model.
+- Parts whose audience is `'user'` only flow back as [`ToolReturn.content`][pydantic_ai.messages.ToolReturn] — a typed [`UserContent`][pydantic_ai.messages.UserContent] list sent as a separate `UserPromptPart`.
+
 ## Resources
 
 MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) - files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually, based on their needs. This means they will _not_ be exposed to the LLM automatically (unless a tool returns a `ResourceLink` or `EmbeddedResource`).
