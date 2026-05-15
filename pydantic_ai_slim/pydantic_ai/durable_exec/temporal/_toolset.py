@@ -219,16 +219,17 @@ def temporalize_toolset(
 
         from ._mcp_toolset import TemporalMCPToolset
     except ImportError:
-        return toolset
-    if isinstance(toolset, MCPToolset):
-        return TemporalMCPToolset(
-            toolset,
-            activity_name_prefix=activity_name_prefix,
-            activity_config=activity_config,
-            tool_activity_config=tool_activity_config,
-            deps_type=deps_type,
-            run_context_type=run_context_type,
-            agent=agent,
-        )
+        pass
+    else:
+        if isinstance(toolset, MCPToolset):
+            return TemporalMCPToolset(
+                toolset,
+                activity_name_prefix=activity_name_prefix,
+                activity_config=activity_config,
+                tool_activity_config=tool_activity_config,
+                deps_type=deps_type,
+                run_context_type=run_context_type,
+                agent=agent,
+            )
 
     return toolset

@@ -827,6 +827,66 @@ class TestLoadMCPToolsets:
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
         assert wrapped.client.transport.headers == {'X-Key': 'foo'}
 
+    async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
+        """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
+        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise."""
+        monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
+        config = {
+            'mcpServers': {
+                'alpha': {
+                    'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
+                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}', 'X-Extras': ['${MCP_TEST_TOKEN}']},
+                },
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config))
+            toolsets = load_mcp_toolsets(config_path)
+
+        wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
+        assert isinstance(wrapped, MCPToolset)
+        assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+        assert wrapped.client.transport.headers == {
+            'Authorization': 'Bearer secret-value',
+            'X-Extras': ['secret-value'],
+        }
+        assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
+
+    async def test_load_mcp_toolsets_undefined_env_var_raises(self):
+        """A `${VAR}` reference without a default and not set in the environment raises a clear `ValueError`."""
+        config = {'mcpServers': {'alpha': {'url': 'https://${MCP_TEST_UNDEFINED}/mcp'}}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config))
+            with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
+                load_mcp_toolsets(config_path)
+
+    async def test_load_mcp_toolsets_rejects_non_object_root(self):
+        """The config root must be a JSON object; a list / scalar at the root raises a descriptive error."""
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(['not an object']))
+            with pytest.raises(ValueError, match='Expected JSON object at root'):
+                load_mcp_toolsets(config_path)
+
+    async def test_load_mcp_toolsets_rejects_missing_mcp_servers_key(self):
+        """The config must have an `mcpServers` object."""
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps({'someOtherKey': {}}))
+            with pytest.raises(ValueError, match='Expected `mcpServers` object'):
+                load_mcp_toolsets(config_path)
+
+    async def test_load_mcp_toolsets_rejects_invalid_server_entry(self):
+        """A server entry missing both `command` and `url` raises a clear `ValueError`."""
+        config = {'mcpServers': {'alpha': {'something': 'else'}}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config))
+            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
+                load_mcp_toolsets(config_path)
+
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
     """Building an `MCPToolset` from a URL must not emit `FastMCPDeprecationWarning` for the

@@ -56,11 +56,12 @@ def prefectify_toolset(
 
         from ._mcp_toolset import PrefectMCPToolset
     except ImportError:
-        return toolset
-    if isinstance(toolset, MCPToolset):
-        return PrefectMCPToolset(
-            wrapped=toolset,
-            task_config=mcp_task_config,
-        )
+        pass
+    else:
+        if isinstance(toolset, MCPToolset):
+            return PrefectMCPToolset(
+                wrapped=toolset,
+                task_config=mcp_task_config,
+            )
 
     return toolset

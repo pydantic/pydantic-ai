@@ -112,13 +112,14 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
                 from ._mcp_toolset import DBOSMCPToolset
             except ImportError:
-                return toolset
-            if isinstance(toolset, MCPToolset):
-                return DBOSMCPToolset(
-                    wrapped=toolset,
-                    step_name_prefix=dbosagent_name,
-                    step_config=self._mcp_step_config,
-                )
+                pass
+            else:
+                if isinstance(toolset, MCPToolset):
+                    return DBOSMCPToolset(
+                        wrapped=toolset,
+                        step_name_prefix=dbosagent_name,
+                        step_config=self._mcp_step_config,
+                    )
             return toolset
 
         dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]

@@ -123,18 +123,19 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         try:
             from pydantic_ai.mcp import MCPToolset
         except ImportError:
-            return None
-        if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
-            serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-            activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
-            return await workflow.execute_activity(
-                activity=self.get_instructions_activity,
-                args=[
-                    GetToolsParams(serialized_run_context=serialized_run_context),
-                    ctx.deps,
-                ],
-                **activity_config,
-            )
+            pass
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+                activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
+                return await workflow.execute_activity(
+                    activity=self.get_instructions_activity,
+                    args=[
+                        GetToolsParams(serialized_run_context=serialized_run_context),
+                        ctx.deps,
+                    ],
+                    **activity_config,
+                )
         return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

@@ -114,9 +114,10 @@ class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
         try:
             from pydantic_ai.mcp import MCPToolset
         except ImportError:
-            return None
-        if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
-            return await self._dbos_wrapped_get_instructions_step(ctx)
+            pass
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                return await self._dbos_wrapped_get_instructions_step(ctx)
         return None
 
     async def call_tool(

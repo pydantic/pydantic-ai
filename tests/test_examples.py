@@ -347,6 +347,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    """Stand-in for `MCPToolset` used as a fixture in doc-example tests.
+
+    Doc examples rarely exercise every method; the unused bodies carry coverage-skip markers so
+    coverage reflects only paths actual examples reach.
+    """
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
@@ -355,16 +361,16 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     async def __aenter__(self) -> MockMCPServer:
-        return self
+        return self  # pragma: no cover
 
     async def __aexit__(self, *args: Any) -> None:
         pass
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-        return {}
+        return {}  # pragma: no cover
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
