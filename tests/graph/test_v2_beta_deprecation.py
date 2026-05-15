@@ -104,7 +104,17 @@ def test_beta_submodule_emits_deprecation(submodule: str) -> None:
     assert any(submodule in str(w.message) and 'graph_builder' in str(w.message) for w in dep_warnings)
 
     new_mod = importlib.import_module(f'pydantic_graph.graph_builder.{submodule}')
-    for name in getattr(new_mod, '__all__', ()):
+    # The shim does `from <new_mod> import *`, so every public attribute defined in `new_mod`
+    # should resolve to the same object via the deprecated path. (Iterate `dir(new_mod)` filtered
+    # to non-underscore names whose `__module__` matches the new module — those are the symbols
+    # the shim's wildcard import would pull in.)
+    forwarded = [
+        n
+        for n in dir(new_mod)
+        if not n.startswith('_') and getattr(getattr(new_mod, n), '__module__', None) == new_mod.__name__
+    ]
+    assert forwarded, f'{submodule!r} has no public symbols to forward'
+    for name in forwarded:
         assert getattr(beta_mod, name) is getattr(new_mod, name)
 
 

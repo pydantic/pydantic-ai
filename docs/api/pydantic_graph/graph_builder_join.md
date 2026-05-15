@@ -1,3 +1,3 @@
-# `pydantic_graph.beta.join`
+# `pydantic_graph.graph_builder.join`
 
-::: pydantic_graph.beta.join
+::: pydantic_graph.graph_builder.join

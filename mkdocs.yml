@@ -98,12 +98,12 @@ nav:
 
   - Pydantic Graph:
       - Overview: graph.md
-      - Beta API:
-          - Getting Started: graph/beta/index.md
-          - Steps: graph/beta/steps.md
-          - Joins & Reducers: graph/beta/joins.md
-          - Decisions: graph/beta/decisions.md
-          - Parallel Execution: graph/beta/parallel.md
+      - Graph Builder:
+          - Getting Started: graph/builder/index.md
+          - Steps: graph/builder/steps.md
+          - Joins & Reducers: graph/builder/joins.md
+          - Decisions: graph/builder/decisions.md
+          - Parallel Execution: graph/builder/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -210,14 +210,14 @@ nav:
           - api/pydantic_graph/persistence.md
           - api/pydantic_graph/mermaid.md
           - api/pydantic_graph/exceptions.md
-          - Beta API:
-              - api/pydantic_graph/beta.md
-              - api/pydantic_graph/beta_graph.md
-              - api/pydantic_graph/beta_graph_builder.md
-              - api/pydantic_graph/beta_step.md
-              - api/pydantic_graph/beta_join.md
-              - api/pydantic_graph/beta_decision.md
-              - api/pydantic_graph/beta_node.md
+          - Graph Builder:
+              - api/pydantic_graph/graph_builder.md
+              - api/pydantic_graph/graph_builder_graph.md
+              - api/pydantic_graph/graph_builder_graph_builder.md
+              - api/pydantic_graph/graph_builder_step.md
+              - api/pydantic_graph/graph_builder_join.md
+              - api/pydantic_graph/graph_builder_decision.md
+              - api/pydantic_graph/graph_builder_node.md
       - fasta2a:
           - api/fasta2a.md
 
