@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
 from ._deprecated_callable import deprecated_callable_property
@@ -509,11 +509,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    @deprecated('`StreamedRunResult.stream` is deprecated, use `stream_output` instead.')
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
-        async for output in self.stream_output(debounce_by=debounce_by):
-            yield output
-
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Stream the output as an async iterable.
 
@@ -566,13 +561,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
-    async def stream_structured(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg, last in self.stream_responses(debounce_by=debounce_by):
-            yield msg, last
 
     async def stream_responses(
         self, *, debounce_by: float | None = 0.1
@@ -682,12 +670,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.conversation_id
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
-    async def validate_structured_output(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> OutputDataT:
-        return await self.validate_response_output(message, allow_partial=allow_partial)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
