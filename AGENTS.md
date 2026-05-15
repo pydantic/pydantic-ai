@@ -99,6 +99,15 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+### Running checks efficiently
+
+`make typecheck` and `make test` run against the whole repo and take several minutes each; running them after every individual file edit turns a 10-minute refactor into a multi-hour session. Don't.
+
+- For mechanical/sweeping changes (import renames, symbol moves, deprecation shims, type-only refactors): finish the whole change first, then run `make typecheck` and `make test` once at the end. Editing 20 files and running checks once is the right shape, not editing 1 file and running checks 20 times.
+- For semantic/behavioral changes: iterate with scoped commands, not the Makefile targets. Use `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright <changed_path>` for type checking and `uv run pytest tests/path/test_foo.py::test_bar` (or a single test file) for tests. Save the full `make typecheck` / `make test` for one final pass before declaring the task done.
+- If you need to verify cross-file impact, escalate scope incrementally (e.g. `uv run pyright pydantic_ai_slim/pydantic_ai/models/`) rather than jumping straight to the whole repo.
+- After a failure, fix and re-run only the failing target; don't re-run the full suite to "confirm green" between fixes — that's what the final pass is for.
+
 # Coding Guidelines
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
