@@ -663,12 +663,11 @@ class Tool(Generic[ToolAgentDepsT]):
         return tool
 
     @property
-    def tool_def(self):
+    def tool_def(self) -> ToolDefinition:
         examples = self.examples
         if examples:
             examples = _process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
 
-    def tool_def(self) -> ToolDefinition:
         return ToolDefinition(
             name=self.name,
             description=self.description,

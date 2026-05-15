@@ -118,7 +118,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
 
-    return ModelProfile(
     anthropic_supports_fast_speed = model_name.startswith('claude-opus-4-6')
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based

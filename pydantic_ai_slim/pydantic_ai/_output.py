@@ -1450,7 +1450,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description = output.description
                 strict = output.strict
                 examples = output.examples
-                tool_output_max_retries = output.max_retries
                 tool_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]

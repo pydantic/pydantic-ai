@@ -10867,7 +10867,7 @@ async def test_anthropic_tool_definition_examples(allow_model_requests: None):
     mock_client = MockAnthropic.create_mock(completion_message([], BetaUsage(input_tokens=0, output_tokens=0)))
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
 
-    mapped = m._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+    mapped = m._map_tool_definition(tool_def, {})  # pyright: ignore[reportPrivateUsage]
     assert mapped.get('input_examples') == examples
 
 

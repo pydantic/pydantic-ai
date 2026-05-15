@@ -10,7 +10,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
@@ -75,7 +75,6 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             json_schema_transformer=AnthropicJsonSchemaTransformer,
             supports_tool_examples=supports_tool_examples,
         ).update(profile)
-        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
