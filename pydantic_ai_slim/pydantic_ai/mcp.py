@@ -99,7 +99,7 @@ def _require_fastmcp() -> None:
     if _fastmcp_import_error is not None:  # pragma: no cover
         raise ImportError(
             'Please install the `fastmcp` package to use `MCPToolset`. '
-            'Install the `fastmcp` optional group: `pip install "pydantic-ai-slim[fastmcp]"`'
+            'Install the `mcp` optional group: `pip install "pydantic-ai-slim[mcp]"`'
         ) from _fastmcp_import_error
 
 
