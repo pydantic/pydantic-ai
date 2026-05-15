@@ -415,7 +415,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Celsius',
-        defer_loading=False,
     ),
     ToolDefinition(
         name='temperature_fahrenheit',
@@ -426,7 +425,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Fahrenheit',
-        defer_loading=False,
     ),
     ToolDefinition(
         name='weather_conditions',
@@ -437,7 +435,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the current weather conditions',
-        defer_loading=False,
     ),
     ToolDefinition(
         name='current_time',
@@ -447,7 +444,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the current time',
-        defer_loading=False,
     ),
 ]
 """

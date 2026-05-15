@@ -1392,7 +1392,7 @@ async def test_deferred_loading_toolset_marks_specific_tools():
 
     tools = await searchable.get_tools(ctx)
     assert 'search_tools' in tools
-    assert tools['tool_a'].tool_def.defer_loading is False
+    assert not tools['tool_a'].tool_def.defer_loading
     assert tools['tool_b'].tool_def.defer_loading is True
 
 
@@ -2392,10 +2392,7 @@ Would you like me to help you process the refund for order-123?\
             ),
         ]
     )
-    # `result.usage` returns a deprecation-wrapper subclass of `RunUsage` until the
-    # `.usage()`-method form is removed; inline-snapshot can't reconstruct that subclass
-    # in create-mode (its `__init__` takes `(base, message)` not field kwargs). Snapshot
-    # the dict form — captures every RunUsage field including the provider-detail dict.
+
     assert asdict(anthropic_result.usage) == snapshot(
         {
             'input_tokens': 2825,
