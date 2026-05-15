@@ -687,30 +687,29 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     async with agent.run_stream('What is the capital of France?') as result:
         async for output in result.stream_text():
             output_text.append(output)
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[
-                            TextPart(
-                                content='The capital of France is Paris.',
-                                id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
-                                provider_name='openai',
-                            )
-                        ],
-                        usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
-                        model_name='gpt-4o-2024-08-06',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1/',
-                        provider_details={
-                            'finish_reason': 'completed',
-                            'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            provider_name='openai',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                    finish_reason='stop',
                 )
+            )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
 

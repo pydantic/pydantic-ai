@@ -1,17 +1,33 @@
 # Agent2Agent (A2A) Protocol
 
+!!! warning "Deprecated in 1.x, removed in 2.0"
+    `Agent.to_a2a()` and the `pydantic-ai-slim[a2a]` extra are deprecated and will be removed in 2.0. The `fasta2a` package is now maintained at [datalayer/fasta2a](https://github.com/datalayer/fasta2a) and ships a Pydantic AI bridge since [v0.6.1](https://github.com/datalayer/fasta2a/releases/tag/v0.6.1). Install it with the `pydantic-ai` extra and use `agent_to_a2a` directly:
+
+    ```bash
+    pip/uv-add 'fasta2a[pydantic-ai]>=0.6.1'
+    ```
+
+    ```python
+    from fasta2a.pydantic_ai import agent_to_a2a
+
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+    app = agent_to_a2a(agent)
+    ```
+
 The [Agent2Agent (A2A) Protocol](https://google.github.io/A2A/) is an open standard introduced by Google that enables
 communication and interoperability between AI agents, regardless of the framework or vendor they are built on.
 
-At Pydantic, we built the [FastA2A](#fasta2a) library to make it easier to implement the A2A protocol in Python.
+At Pydantic, we built the [FastA2A](#fasta2a) library to make it easier to implement the A2A protocol in Python. It is now maintained at [datalayer/fasta2a](https://github.com/datalayer/fasta2a) and ships a Pydantic AI bridge since [v0.6.1](https://github.com/datalayer/fasta2a/releases/tag/v0.6.1) — install it with the `pydantic-ai` extra and use `agent_to_a2a` to expose a Pydantic AI agent as an A2A server:
 
-We also built a convenience method that expose Pydantic AI agents as A2A servers - let's have a quick look at how to use it:
+```py {title="agent_to_a2a.py"}
+from fasta2a.pydantic_ai import agent_to_a2a
 
-```py {title="agent_to_a2a.py" hl_lines="4"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-app = agent.to_a2a()
+app = agent_to_a2a(agent)
 ```
 
 _You can run the example with `uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000`_
@@ -91,21 +107,25 @@ The only dependencies are:
 - [pydantic](https://pydantic.dev): to validate the request/response messages
 - [opentelemetry-api](https://opentelemetry-python.readthedocs.io/en/latest): to provide tracing capabilities
 
-You can install Pydantic AI with the `a2a` extra to include **FastA2A**:
+Install **FastA2A** with the Pydantic AI bridge included:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[a2a]'
+pip/uv-add 'fasta2a[pydantic-ai]>=0.6.1'
 ```
+
+The `pydantic-ai-slim[a2a]` extra still works for back-compat in 1.x but is deprecated and removed in 2.0.
 
 ### Pydantic AI Agent to A2A Server
 
-To expose a Pydantic AI agent as an A2A server, you can use the `to_a2a` method:
+To expose a Pydantic AI agent as an A2A server, use [`agent_to_a2a`][fasta2a.pydantic_ai.agent_to_a2a] from `fasta2a.pydantic_ai`:
 
 ```python {title="agent_to_a2a.py"}
+from fasta2a.pydantic_ai import agent_to_a2a
+
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-app = agent.to_a2a()
+app = agent_to_a2a(agent)
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server.
@@ -114,9 +134,9 @@ Since `app` is an ASGI application, it can be used with any ASGI server.
 uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 ```
 
-Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
+`agent_to_a2a` is a convenience function that accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
 
-When using `to_a2a()`, Pydantic AI automatically:
+When using `agent_to_a2a()`, Pydantic AI automatically:
 
 - Stores the complete conversation history (including tool calls and responses) in the context storage
 - Ensures that subsequent messages with the same `context_id` have access to the full conversation history

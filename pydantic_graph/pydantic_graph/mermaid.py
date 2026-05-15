@@ -11,7 +11,7 @@ import httpx
 from annotated_types import Ge, Le
 from typing_extensions import TypedDict, Unpack
 
-from .nodes import BaseNode
+from .basenode import BaseNode
 
 if TYPE_CHECKING:
     from .graph import Graph
@@ -276,7 +276,7 @@ NodeIdent: TypeAlias = 'type[BaseNode[Any, Any, Any]] | BaseNode[Any, Any, Any] 
 
 This can be:
 
-- A node instance (instance of a subclass of [`BaseNode`][pydantic_graph.nodes.BaseNode]).
-- A node class (subclass of [`BaseNode`][pydantic_graph.nodes.BaseNode]).
+- A node instance (instance of a subclass of [`BaseNode`][pydantic_graph.basenode.BaseNode]).
+- A node class (subclass of [`BaseNode`][pydantic_graph.basenode.BaseNode]).
 - A string representing the node ID.
 """

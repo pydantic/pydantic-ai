@@ -298,6 +298,7 @@ omit = [
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
+    "pydantic_ai_slim/pydantic_ai/_a2a.py",  # deprecated in 1.x, removed in v2; equivalent code now lives in `fasta2a.pydantic_ai` and is exercised through `tests/test_a2a.py` against that import. `tests/v2/test_a2a_deprecation.py` covers the deprecation warning path.
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
