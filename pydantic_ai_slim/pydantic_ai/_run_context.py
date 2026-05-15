@@ -134,6 +134,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> None:
         """Enqueue content to be injected into the conversation.
 
+        Safe to call from anywhere a `RunContext` is available — async tools,
+        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
+        capability hooks. The drain only iterates the queue between graph nodes
+        (in `before_model_request` and `after_node_run`), never concurrently
+        with the tool body, so `list.append` from a worker thread doesn't race
+        the drain.
+
         Args:
             *content: One or more items. Each is coerced:
                 a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)

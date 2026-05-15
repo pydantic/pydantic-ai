@@ -429,6 +429,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> None:
         """Enqueue content to be injected into the conversation.
 
+        Designed to be called from the same event loop driving `agent.iter()`. If
+        you're forwarding events from a different thread (e.g. a webhook handler
+        running on its own loop or thread), marshal the call back onto the agent's
+        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
+        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
+        atomic against concurrent appends from a different thread.
+
         Args:
             *content: One or more items. Each is coerced:
                 a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)

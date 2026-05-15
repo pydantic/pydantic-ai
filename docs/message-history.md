@@ -483,6 +483,14 @@ current queue for inspection.
       regardless of position, which invalidates prefix cache and loses positional
       intent. If you really need to inject system-style content mid-run, wrap it in
       a `ModelRequest` passthrough and be aware of the cross-provider behavior.
+    - `enqueue` is designed to be called from the same event loop that drives the
+      agent run. Inside the run that's automatic: async tools, sync tools (which
+      Pydantic AI auto-wraps in a thread executor), and capability hooks all
+      enqueue safely because the drain only iterates between graph nodes, never
+      concurrently with a tool body. If you're forwarding events from a *different*
+      thread or loop (e.g. a webhook handler), marshal the call onto the agent's
+      loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
+      drain isn't atomic against concurrent cross-thread appends.
 
 ## Processing Message History
 
