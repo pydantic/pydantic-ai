@@ -2123,12 +2123,13 @@ class ModelResponse:
       or return background/async responses (e.g. OpenAI background mode).
     """
 
-    continuation_delay: float | None = None
-    """Seconds the graph should wait before sending the next continuation request.
+    suspended_retry_delay: float | None = None
+    """Seconds the graph should wait before retrying a suspended response.
 
-    Set by providers that return suspended (in-progress) responses, e.g. OpenAI background mode.
-    The agent graph reads this value in `ContinueRequestNode` so that durable execution
-    frameworks can intercept the sleep.
+    This is only meaningful when `state == 'suspended'`. `None` means the graph should
+    retry immediately. Set by providers that return suspended (in-progress) responses,
+    e.g. OpenAI background mode. The agent graph reads this value in `ContinueRequestNode`
+    so that durable execution frameworks can intercept the sleep.
     """
 
     run_id: str | None = None
@@ -2143,9 +2144,6 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
-
-    state: ModelResponseState = 'complete'
-    """Lifecycle state of the response."""
 
     @property
     def text(self) -> str | None:

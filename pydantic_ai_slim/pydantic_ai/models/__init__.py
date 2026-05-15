@@ -1158,7 +1158,9 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
     state: ModelResponseState = field(default='complete', init=False)
-    continuation_delay: float | None = field(default=None, init=False)
+    """Lifecycle state of the response."""
+    suspended_retry_delay: float | None = field(default=None, init=False)
+    """Seconds the graph should wait before retrying a suspended response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -1320,7 +1322,7 @@ class StreamedResponse(ABC):
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
             state='interrupted' if self._cancelled else self.state,
-            continuation_delay=self.continuation_delay,
+            suspended_retry_delay=self.suspended_retry_delay,
             metadata=self.metadata,
         )
 

@@ -981,7 +981,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'provider_response_id': IsStr(),
                 'finish_reason': 'content_filter',
                 'state': 'complete',
-                'continuation_delay': None,
+                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,

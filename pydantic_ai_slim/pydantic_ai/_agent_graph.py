@@ -16,7 +16,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_instructions as _get_history_instructions
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -59,7 +59,7 @@ __all__ = (
     'ContinueRequestNode',
     'build_run_context',
     'capture_run_messages',
-    'set_continuation_sleep',
+    'set_agent_graph_sleep',
     'HistoryProcessor',
     'resolve_conversation_id',
 )
@@ -73,46 +73,46 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
 _MAX_CONTINUATIONS = 50
 """Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
 
-ContinuationSleepFunc = Callable[[float], Awaitable[None]]
-"""Type for async sleep functions used during continuation polling."""
+AgentGraphSleepFunc = Callable[[float], Awaitable[None]]
+"""Type for async sleep functions used by the agent graph."""
 
-_CONTINUATION_SLEEP: ContextVar[ContinuationSleepFunc | None] = ContextVar(
-    'pydantic_ai.continuation_sleep',
+_AGENT_GRAPH_SLEEP: ContextVar[AgentGraphSleepFunc | None] = ContextVar(
+    'pydantic_ai.agent_graph_sleep',
     default=None,
 )
 
 
 @contextmanager
-def set_continuation_sleep(sleep_func: ContinuationSleepFunc) -> Iterator[None]:
-    """Set a custom async sleep function for continuation polling delays.
+def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Iterator[None]:
+    """Set a custom async sleep function for agent graph delays.
 
-    By default, `ContinueRequestNode` uses `asyncio.sleep` when waiting between
-    continuation polls. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
-    should use this context manager to register their own durable sleep so that poll delays
-    survive workflow replays and don't waste activity time.
+    By default, the agent graph uses `asyncio.sleep` when it needs to wait during
+    a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
+    should use this context manager to register their own durable sleep so that
+    delays survive workflow replays and don't waste activity time.
 
     Example:
     ```python
-    from pydantic_ai._agent_graph import set_continuation_sleep
+    from pydantic_ai._agent_graph import set_agent_graph_sleep
 
 
     async def durable_sleep(seconds: float) -> None:
         ...
 
-    with set_continuation_sleep(durable_sleep):
+    with set_agent_graph_sleep(durable_sleep):
         ...
     ```
     """
-    token = _CONTINUATION_SLEEP.set(sleep_func)
+    token = _AGENT_GRAPH_SLEEP.set(sleep_func)
     try:
         yield
     finally:
-        _CONTINUATION_SLEEP.reset(token)
+        _AGENT_GRAPH_SLEEP.reset(token)
 
 
-async def _continuation_sleep(delay: float) -> None:
-    """Sleep using the registered continuation sleep function, or asyncio.sleep."""
-    sleep_func = _CONTINUATION_SLEEP.get()
+async def _agent_graph_sleep(delay: float) -> None:
+    """Sleep using the registered agent graph sleep function, or asyncio.sleep."""
+    sleep_func = _AGENT_GRAPH_SLEEP.get()
     if sleep_func is not None:
         await sleep_func(delay)
     else:
@@ -1464,10 +1464,10 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     to a new `ContinueRequestNode`; if complete, it transitions to `CallToolsNode`.
     This keeps each continuation visible as a discrete graph node transition.
 
-    Continuations are not real model requests — they are polling/retrieval operations.
+    Continuations are not treated as ordinary agent model requests.
     Hooks (wrap_model_request, before_model_request, after_model_request) are intentionally
     not run here because: the message history ends in a suspended ModelResponse (not a
-    ModelRequest), Anthropic requires the exact same history back, and OpenAI just calls
+    ModelRequest), Anthropic requires the exact same history back, and OpenAI calls
     a retrieve endpoint.
 
     Note: `agent.run_stream()` advances this node via `run()` (non-streaming), not `stream()`.
@@ -1492,15 +1492,13 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
         self._check_continuation_limit(ctx)
-        if delay := self.model_response.continuation_delay:
-            await _continuation_sleep(delay)
+        if delay := self.model_response.suspended_retry_delay:
+            await _agent_graph_sleep(delay)
 
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=None)
-        model_settings = ctx.deps.get_model_settings(build_run_context(ctx)) or ModelSettings()
+        run_context, model_settings, model_request_parameters = await self._prepare_continuation_request(ctx)
 
         try:
-            with set_current_run_context(build_run_context(ctx)):
+            with set_current_run_context(run_context):
                 new_response = await ctx.deps.model.request(
                     ctx.state.message_history, model_settings, model_request_parameters
                 )
@@ -1534,13 +1532,10 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.AgentStreamEvent]:
         self._check_continuation_limit(ctx)
-        if delay := self.model_response.continuation_delay:
-            await _continuation_sleep(delay)
+        if delay := self.model_response.suspended_retry_delay:
+            await _agent_graph_sleep(delay)
 
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=None)
-        run_context = build_run_context(ctx)
-        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
+        run_context, model_settings, model_request_parameters = await self._prepare_continuation_request(ctx)
 
         try:
             with set_current_run_context(run_context):
@@ -1561,6 +1556,23 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self._result = ContinueRequestNode(merged_response)
         else:
             self._result = CallToolsNode(merged_response)
+
+    @staticmethod
+    async def _prepare_continuation_request(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    ) -> tuple[RunContext[DepsT], ModelSettings, models.ModelRequestParameters]:
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+        run_context = build_run_context(ctx)
+        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
+
+        # Continuation requests reuse history ending in a suspended ModelResponse.
+        # Rehydrate instruction parts from the recorded ModelRequest.instructions
+        # instead of calling instruction providers again for the current run.
+        # Model.prepare_request may append prompted output instructions afterward.
+        instructions = _get_history_instructions(ctx.state.message_history)
+        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=instruction_parts)
+        return run_context, model_settings, model_request_parameters
 
     def _check_continuation_limit(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]

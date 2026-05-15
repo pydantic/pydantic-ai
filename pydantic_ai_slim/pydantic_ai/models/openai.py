@@ -98,6 +98,8 @@ from . import (
 )
 from ._tool_choice import resolve_tool_choice
 
+_DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL = 1.0
+
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
@@ -1904,7 +1906,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         result = self._process_response(response, settings, model_request_parameters)
         if result.state == 'suspended':
-            result = replace(result, continuation_delay=settings.get('openai_background_poll_interval', 1.0))
+            result = replace(
+                result,
+                suspended_retry_delay=settings.get(
+                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
+                ),
+            )
         return result
 
     @asynccontextmanager
@@ -1933,7 +1940,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model_request_parameters=model_request_parameters,
                     _model_response=self._process_response(response, settings, model_request_parameters),
                 )
-                sr.continuation_delay = settings.get('openai_background_poll_interval', 1.0)
+                sr.suspended_retry_delay = settings.get(
+                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
+                )
                 yield sr
                 return
             response = await self._responses_retrieve(
@@ -1955,7 +1964,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
             )
-            sr.continuation_delay = settings.get('openai_background_poll_interval', 1.0)
+            sr.suspended_retry_delay = settings.get(
+                'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
+            )
             yield sr
 
     def _process_response(  # noqa: C901
@@ -3406,7 +3417,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
-        self.continuation_delay = self._model_response.continuation_delay
+        self.suspended_retry_delay = self._model_response.suspended_retry_delay
         self.metadata = self._model_response.metadata
         for index, part in enumerate(self._model_response.parts):
             self._parts_manager.handle_part(vendor_part_id=index, part=part)
