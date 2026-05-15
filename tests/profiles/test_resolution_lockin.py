@@ -51,8 +51,23 @@ with try_import() as anthropic_imports:
 with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
+with try_import() as cohere_imports:
+    from pydantic_ai.providers.cohere import CohereProvider  # noqa: F401
+
+with try_import() as google_imports:
+    from pydantic_ai.providers.google import GoogleProvider  # noqa: F401
+
 with try_import() as groq_imports:
     from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as huggingface_imports:
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider  # noqa: F401
+
+with try_import() as mistral_imports:
+    from pydantic_ai.providers.mistral import MistralProvider  # noqa: F401
+
+with try_import() as xai_imports:
+    from pydantic_ai.providers.xai import XaiProvider  # noqa: F401
 
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -314,6 +329,7 @@ def test_openai_o3_mini():
     )
 
 
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_3_pro():
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -340,6 +356,7 @@ def test_google_gemini_3_pro():
     )
 
 
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_2_5_flash():
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -355,6 +372,7 @@ def test_google_gemini_2_5_flash():
     )
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_4():
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -364,6 +382,7 @@ def test_xai_grok_4():
     )
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_3_mini():
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -378,6 +397,7 @@ def test_xai_grok_3_mini():
     )
 
 
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -385,6 +405,7 @@ def test_mistral_mistral_large():
     assert _normalize(profile) == snapshot(None)
 
 
+@pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     from pydantic_ai.providers.cohere import CohereProvider
 
@@ -1364,6 +1385,7 @@ def test_nebius_moonshotai():
 # =============================================================================
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_bare_name_returns_none():
     """HF requires `provider/model` form; bare name → `None`."""
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -1371,6 +1393,7 @@ def test_huggingface_bare_name_returns_none():
     assert HuggingFaceProvider.model_profile('some-model') is None
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_meta_llama():
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
@@ -1378,6 +1401,7 @@ def test_huggingface_meta_llama():
     assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_deepseek():
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
@@ -1387,6 +1411,7 @@ def test_huggingface_deepseek():
     )
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_qwen():
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
@@ -1396,6 +1421,7 @@ def test_huggingface_qwen():
     )
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_moonshotai():
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
@@ -1403,6 +1429,7 @@ def test_huggingface_moonshotai():
     assert _normalize(profile) == snapshot({'ignore_streamed_leading_whitespace': True})
 
 
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
