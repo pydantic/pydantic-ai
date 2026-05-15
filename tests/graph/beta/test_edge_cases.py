@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append, reduce_null, reduce_sum
 from pydantic_graph.exceptions import GraphBuildingError
+from pydantic_graph.graph_builder.join import reduce_list_append, reduce_null, reduce_sum
 
 pytestmark = pytest.mark.anyio
 

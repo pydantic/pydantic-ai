@@ -1,11 +1,16 @@
-"""Tests for the `pydantic_graph.beta` -> top-level promotion.
+"""Tests for the deprecation of the `pydantic_graph.beta` namespace.
 
-Phase A: top-level imports work for the public symbols, and importing those
-symbols via `from pydantic_graph.beta import X` emits a deprecation warning.
+The builder-based graph API has been renamed out of `pydantic_graph.beta`. Its
+canonical home is now [`pydantic_graph.graph_builder`][pydantic_graph.graph_builder]
+(and the public symbols are also re-exported from `pydantic_graph`). Imports
+via `pydantic_graph.beta` still resolve, but each emits a
+[`PydanticGraphDeprecationWarning`][pydantic_graph.PydanticGraphDeprecationWarning].
 """
 
 from __future__ import annotations
 
+import importlib
+import sys
 import warnings
 
 import pytest
@@ -20,6 +25,7 @@ from pydantic_graph import (
     PydanticGraphDeprecationWarning,
     ReduceFirstValue,
     ReducerContext,
+    ReducerFunction,
     StartNode,
     Step,
     StepContext,
@@ -32,37 +38,48 @@ from pydantic_graph import (
     reduce_sum,
 )
 
+# Names that were importable as `from pydantic_graph.beta import X` in v1.
+_BETA_NAMES = [
+    'EndNode',
+    'Graph',
+    'GraphBuilder',
+    'StartNode',
+    'StepContext',
+    'StepNode',
+    'TypeExpression',
+]
 
-@pytest.mark.parametrize(
-    'name',
-    ['EndNode', 'GraphBuilder', 'StartNode', 'StepContext', 'StepNode', 'TypeExpression'],
-)
+# Submodules that were importable as `from pydantic_graph.beta.X import …` in v1.
+_BETA_SUBMODULES = [
+    'decision',
+    'graph',
+    'graph_builder',
+    'id_types',
+    'join',
+    'mermaid',
+    'node',
+    'node_types',
+    'parent_forks',
+    'paths',
+    'step',
+    'util',
+]
+
+
+@pytest.mark.parametrize('name', _BETA_NAMES)
 def test_beta_package_emits_deprecation(name: str) -> None:
-    """Importing public symbols from `pydantic_graph.beta` emits a deprecation warning."""
+    """`from pydantic_graph.beta import X` warns and forwards to `pydantic_graph.graph_builder`."""
+    import pydantic_graph.beta as beta
+    import pydantic_graph.graph_builder as gb
+
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        import pydantic_graph.beta as beta
+        forwarded = getattr(beta, name)
 
-        getattr(beta, name)
-
-    assert any(
-        issubclass(w.category, PydanticGraphDeprecationWarning)
-        and name in str(w.message)
-        and 'pydantic_graph' in str(w.message)
-        for w in caught
-    ), [str(w.message) for w in caught]
-
-
-def test_beta_graph_special_message() -> None:
-    """`pydantic_graph.beta.Graph` is special-cased: no top-level alias yet."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        import pydantic_graph.beta as beta
-
-        _ = beta.Graph
-
-    msg_strs = [str(w.message) for w in caught if issubclass(w.category, PydanticGraphDeprecationWarning)]
-    assert any('removed in v2' in m for m in msg_strs), msg_strs
+    dep_warnings = [w for w in caught if issubclass(w.category, PydanticGraphDeprecationWarning)]
+    assert dep_warnings, [str(w.message) for w in caught]
+    assert any(name in str(w.message) and 'graph_builder' in str(w.message) for w in dep_warnings)
+    assert forwarded is getattr(gb, name)
 
 
 def test_beta_unknown_attribute_raises() -> None:
@@ -72,22 +89,27 @@ def test_beta_unknown_attribute_raises() -> None:
         getattr(beta, 'NotARealName')
 
 
-def test_top_level_symbols_match_beta() -> None:
-    """Top-level public symbols are the same objects as their beta counterparts."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', PydanticGraphDeprecationWarning)
-        import pydantic_graph.beta as beta
+@pytest.mark.parametrize('submodule', _BETA_SUBMODULES)
+def test_beta_submodule_emits_deprecation(submodule: str) -> None:
+    """`import pydantic_graph.beta.<submodule>` warns and re-exports the new module's public names."""
+    full_name = f'pydantic_graph.beta.{submodule}'
+    sys.modules.pop(full_name, None)
 
-        assert GraphBuilder is beta.GraphBuilder
-        assert StepContext is beta.StepContext
-        assert StepNode is beta.StepNode
-        assert EndNode is beta.EndNode
-        assert StartNode is beta.StartNode
-        assert TypeExpression is beta.TypeExpression
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        beta_mod = importlib.import_module(full_name)
+
+    dep_warnings = [w for w in caught if issubclass(w.category, PydanticGraphDeprecationWarning)]
+    assert dep_warnings, [str(w.message) for w in caught]
+    assert any(submodule in str(w.message) and 'graph_builder' in str(w.message) for w in dep_warnings)
+
+    new_mod = importlib.import_module(f'pydantic_graph.graph_builder.{submodule}')
+    for name in getattr(new_mod, '__all__', ()):
+        assert getattr(beta_mod, name) is getattr(new_mod, name)
 
 
 def test_top_level_symbols_loadable() -> None:
-    """All re-exported names import from `pydantic_graph` without warnings."""
+    """All public builder-API names import from `pydantic_graph` without warnings."""
     assert GraphBuilder is not None
     assert StepContext is not None
     assert StepNode is not None
@@ -99,6 +121,7 @@ def test_top_level_symbols_loadable() -> None:
     assert Join is not None
     assert JoinNode is not None
     assert ReducerContext is not None
+    assert ReducerFunction is not None
     assert ReduceFirstValue is not None
     assert reduce_dict_update is not None
     assert reduce_list_append is not None
@@ -108,17 +131,13 @@ def test_top_level_symbols_loadable() -> None:
     assert TypeExpression is not None
 
 
-def test_beta_submodule_imports_do_not_warn() -> None:
-    """Direct submodule imports still work without a warning (Phase A scope).
+def test_top_level_builder_symbols_match_graph_builder() -> None:
+    """Top-level builder-API symbols are the same objects as their `graph_builder` counterparts."""
+    import pydantic_graph.graph_builder as gb
 
-    Phase A only fires the deprecation when going through the `pydantic_graph.beta`
-    package namespace; the v2-cut PR will move the modules and remove the namespace.
-    """
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        from pydantic_graph.beta.graph_builder import GraphBuilder as _GB
-
-        _ = _GB
-
-    dep_warnings = [w for w in caught if issubclass(w.category, PydanticGraphDeprecationWarning)]
-    assert dep_warnings == [], [str(w.message) for w in dep_warnings]
+    assert GraphBuilder is gb.GraphBuilder
+    assert StepContext is gb.StepContext
+    assert StepNode is gb.StepNode
+    assert EndNode is gb.EndNode
+    assert StartNode is gb.StartNode
+    assert TypeExpression is gb.TypeExpression

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph.graph_builder.join import reduce_list_append
 
 pytestmark = pytest.mark.anyio
 

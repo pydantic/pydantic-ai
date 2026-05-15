@@ -293,8 +293,7 @@ In addition to regular steps that return a single value, you can create streamin
 ```python {title="streaming_step.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass

@@ -17,8 +17,7 @@ Create a join using `GraphBuilder.join` with a reducer function and initial valu
 ```python {title="basic_join.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -67,8 +66,7 @@ Pydantic Graph provides several common reducer types out of the box:
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -111,8 +109,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="list_extend_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_extend
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_extend
 
 
 @dataclass
@@ -156,8 +153,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_dict_update
+from pydantic_graph import GraphBuilder, StepContext, reduce_dict_update
 
 
 @dataclass
@@ -201,8 +197,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="null_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_null
+from pydantic_graph import GraphBuilder, StepContext, reduce_null
 
 
 @dataclass
@@ -253,8 +248,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="sum_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_sum
+from pydantic_graph import GraphBuilder, StepContext, reduce_sum
 
 
 @dataclass
@@ -298,8 +292,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReduceFirstValue
+from pydantic_graph import GraphBuilder, ReduceFirstValue, StepContext
 
 
 @dataclass
@@ -393,8 +386,7 @@ Reducers can access and modify the graph state:
 ```python {title="stateful_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReducerContext
+from pydantic_graph import GraphBuilder, ReducerContext, StepContext
 
 
 @dataclass
@@ -477,8 +469,7 @@ Reducers with access to [`ReducerContext`][pydantic_graph.beta.join.ReducerConte
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReducerContext
+from pydantic_graph import GraphBuilder, ReducerContext, StepContext
 
 
 @dataclass
@@ -544,8 +535,7 @@ A graph can have multiple independent joins:
 ```python {title="multiple_joins.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass

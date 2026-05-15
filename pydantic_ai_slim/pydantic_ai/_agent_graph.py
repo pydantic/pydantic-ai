@@ -24,7 +24,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
-from pydantic_graph.beta.graph import Graph
+from pydantic_graph.graph_builder.graph import Graph
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage

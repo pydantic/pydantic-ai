@@ -123,8 +123,7 @@ Here's an example showcasing parallel execution with a map operation:
 ```python {title="parallel_processing.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass

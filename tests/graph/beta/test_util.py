@@ -1,6 +1,6 @@
-"""Tests for pydantic_graph.beta.util module."""
+"""Tests for pydantic_graph.graph_builder.util module."""
 
-from pydantic_graph.beta.util import (
+from pydantic_graph.graph_builder.util import (
     Some,
     TypeExpression,
     get_callable_name,

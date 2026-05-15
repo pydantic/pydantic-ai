@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.beta.join import (
+from pydantic_graph.graph_builder.join import (
     ReduceFirstValue,
     ReducerContext,
     reduce_dict_update,
@@ -301,7 +301,7 @@ async def test_reducer_with_deps_access():
 
 async def test_reduce_list_extend():
     """Test reduce_list_extend that extends a list with iterables"""
-    from pydantic_graph.beta.join import reduce_list_extend
+    from pydantic_graph.graph_builder.join import reduce_list_extend
 
     g = GraphBuilder(state_type=SimpleState, output_type=list[int])
 

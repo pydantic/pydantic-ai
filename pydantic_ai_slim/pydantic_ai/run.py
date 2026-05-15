@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
-from pydantic_graph.beta.step import NodeStep
+from pydantic_graph.graph_builder.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.graph_builder.step import NodeStep
 
 from . import (
     _agent_graph,
