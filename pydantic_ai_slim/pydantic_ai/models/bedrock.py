@@ -477,8 +477,9 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
-        if model_request_parameters.output_mode == 'native':
-            assert model_request_parameters.output_object is not None
+        if model_request_parameters.output_mode == 'native' and model_request_parameters.output_object is not None:
+            # Auto-promotion from `output_mode='auto' + thinking + output_tools` flips
+            # output_mode to 'native' without producing an output_object — leave those alone.
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )

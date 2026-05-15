@@ -167,14 +167,14 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(qwen_profile, BedrockModelProfile)
     assert qwen_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert qwen_profile.supports_json_schema_output is True
-    assert qwen_profile.supported_builtin_tools == frozenset()
+    assert qwen_profile.supported_native_tools == frozenset()
 
     google_profile = provider.model_profile('google.gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert isinstance(google_profile, BedrockModelProfile)
     assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert google_profile.supports_json_schema_output is True
-    assert google_profile.supported_builtin_tools == frozenset()
+    assert google_profile.supported_native_tools == frozenset()
 
     # gemma-3-4b-it is NOT in the structured output supported list
     google_profile = provider.model_profile('google.gemma-3-4b-it')
@@ -182,19 +182,19 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(google_profile, BedrockModelProfile)
     assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert google_profile.supports_json_schema_output is False
-    assert google_profile.supported_builtin_tools == frozenset()
+    assert google_profile.supported_native_tools == frozenset()
 
     minimax_profile = provider.model_profile('minimax.minimax-m2')
     assert isinstance(minimax_profile, BedrockModelProfile)
     assert minimax_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert minimax_profile.supports_json_schema_output is True
-    assert minimax_profile.supported_builtin_tools == frozenset()
+    assert minimax_profile.supported_native_tools == frozenset()
 
     nvidia_profile = provider.model_profile('nvidia.nemotron-nano-12b-v2')
     assert isinstance(nvidia_profile, BedrockModelProfile)
     assert nvidia_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert nvidia_profile.supports_json_schema_output is True
-    assert nvidia_profile.supported_builtin_tools == frozenset()
+    assert nvidia_profile.supported_native_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
