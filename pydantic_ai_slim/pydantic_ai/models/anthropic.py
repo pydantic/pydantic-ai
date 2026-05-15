@@ -481,7 +481,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncAnthropicClient:
@@ -572,11 +572,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        profile = AnthropicModelProfile.from_profile(self.profile)
+        profile = cast(AnthropicModelProfile, self.profile)
         merged = merge_model_settings(self.settings, model_settings) or {}
 
         if (
-            profile.anthropic_disallows_budget_thinking
+            profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))
             and anthropic_thinking.get('type') == 'enabled'
         ):
@@ -593,13 +593,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking_enabled = True
 
         if model_request_parameters.output_tools and thinking_enabled:
-            output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+            output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
             model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
             if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
-                suggested_output_type = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
+                suggested_output_type = (
+                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
+                )
                 raise UserError(
                     f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
@@ -615,7 +617,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if profile.anthropic_disallows_sampling_settings and prepared_settings:
+        if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
@@ -652,8 +654,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = AnthropicModelProfile.from_profile(self.profile)
-        if profile.anthropic_supports_adaptive_thinking:
+        profile = cast(AnthropicModelProfile, self.profile)
+        if profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
@@ -700,7 +702,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        anthropic_profile = cast(AnthropicModelProfile, self.profile)
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -804,7 +806,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
         """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
-        return anthropic_profile.anthropic_supports_fast_speed and not isinstance(
+        return anthropic_profile.get('anthropic_supports_fast_speed', False) and not isinstance(
             self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
         )
 
@@ -859,7 +861,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        anthropic_profile = cast(AnthropicModelProfile, self.profile)
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -976,13 +978,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, model_settings: AnthropicModelSettings
     ) -> AnthropicCodeExecutionToolVersion:
         version = model_settings.get('anthropic_code_execution_tool_version', 'auto')
-        profile = AnthropicModelProfile.from_profile(self.profile)
+        profile = cast(AnthropicModelProfile, self.profile)
         if version == 'auto':
-            return profile.anthropic_default_code_execution_tool_version
-        if version not in profile.anthropic_supported_code_execution_tool_versions:
+            return profile.get('anthropic_default_code_execution_tool_version', '20250825')
+        if version not in profile.get('anthropic_supported_code_execution_tool_versions', ('20250825',)):
             supported_versions = ', '.join(
                 f'{supported_version!r}'
-                for supported_version in profile.anthropic_supported_code_execution_tool_versions
+                for supported_version in profile.get('anthropic_supported_code_execution_tool_versions', ('20250825',))
             )
             raise UserError(
                 f'`anthropic_code_execution_tool_version={version!r}` is not supported by model '
@@ -1325,7 +1327,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            start_tag, end_tag = self.profile.thinking_tags
+                            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
                             assistant_content_params.append(
                                 BetaTextBlockParam(
                                     text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
@@ -1896,7 +1898,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
-        if f.strict and self.profile.supports_json_schema_output:
+        if f.strict and self.profile.get('supports_json_schema_output', False):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
@@ -1919,14 +1921,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = AnthropicModelProfile.from_profile(self.profile)
-        if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
+        profile = cast(AnthropicModelProfile, self.profile)
+        if (
+            effort is None
+            and profile.get('anthropic_supports_effort', False)
+            and isinstance(model_request_parameters.thinking, str)
+        ):
             effort_map: dict[ThinkingEffort, Literal['low', 'medium', 'high', 'xhigh', 'max']] = {
                 'minimal': 'low',
                 'low': 'low',
                 'medium': 'medium',
                 'high': 'high',
-                'xhigh': 'xhigh' if profile.anthropic_supports_xhigh_effort else 'max',
+                'xhigh': 'xhigh' if profile.get('anthropic_supports_xhigh_effort', False) else 'max',
             }
             effort = effort_map[model_request_parameters.thinking]
 
@@ -1949,8 +1955,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = AnthropicModelProfile.from_profile(self.profile)
-        if not profile.anthropic_supports_task_budgets:
+        profile = cast(AnthropicModelProfile, self.profile)
+        if not profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
                 'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'

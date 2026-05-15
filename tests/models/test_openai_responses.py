@@ -2,7 +2,6 @@ import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -53,7 +52,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -1952,7 +1952,9 @@ def test_model_profile_strict_not_supported():
     m = OpenAIResponsesModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+        profile=merge_profile(
+            openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
+        ),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -9632,7 +9634,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(api_key=openai_api_key),
-        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'), OpenAIModelProfile(openai_responses_requires_function_call_status_none=True)
+        ),
     )
     agent = Agent(model)
 
@@ -10868,38 +10872,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
     )
 
 
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
-async def test_openai_responses_system_prompt_role(
-    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
-) -> None:
-    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
-    c = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-    agent = Agent(model, system_prompt='some instructions')
-
-    result = await agent.run('hello')
-    assert result.output == 'world'
-
-    expected_role = system_prompt_role or 'system'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['input'] == [
-        {'content': 'some instructions', 'role': expected_role},
-        {'content': 'hello', 'role': 'user'},
-    ]
-
-
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, instructions='You are a helpful coding assistant.')
@@ -11967,10 +11939,10 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
-    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False
+    assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False

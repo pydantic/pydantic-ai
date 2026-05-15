@@ -323,7 +323,7 @@ class XaiModel(Model[AsyncClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> 'AsyncClient':
@@ -500,7 +500,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.thinking_tags
+            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
             return None
@@ -682,17 +682,17 @@ class XaiModel(Model[AsyncClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = cast(GrokModelProfile, self.profile)
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if profile.grok_supports_tool_choice_required else 'auto'
+            tool_choice = 'required' if profile.get('grok_supports_tool_choice_required', True) else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if profile.grok_supports_tool_choice_required:
+                if profile.get('grok_supports_tool_choice_required', True):
                     tool_choice = required_tool(next(iter(tool_names)))
                 else:
                     # Forcing not supported: filter so the model can only see the requested tool.
@@ -701,7 +701,7 @@ class XaiModel(Model[AsyncClient]):
                     tool_choice = 'auto'
             else:
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                if tool_choice_mode == 'required' and profile.grok_supports_tool_choice_required:
+                if tool_choice_mode == 'required' and profile.get('grok_supports_tool_choice_required', True):
                     tool_choice = 'required'
                 else:
                     tool_choice = 'auto'
@@ -748,7 +748,7 @@ class XaiModel(Model[AsyncClient]):
             tool_choice = None
 
         # Set response_format based on the output_mode
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = cast(GrokModelProfile, self.profile)
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -757,7 +757,7 @@ class XaiModel(Model[AsyncClient]):
         elif (
             model_request_parameters.output_mode == 'prompted'
             and not tools_param
-            and profile.supports_json_object_output
+            and profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = _map_json_object()
 
