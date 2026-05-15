@@ -433,13 +433,16 @@ seen_tool_names: list[list[str]] = []
 
 
 def support_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    seen_tool_names.append([tool.name for tool in info.function_tools])
+    # `defer_loading=True` is how the framework signals "deferred, not yet callable" to
+    # the model on the wire — filter the printed list and the visibility check on it.
+    visible_tools = [tool for tool in info.function_tools if not tool.defer_loading]
+    seen_tool_names.append([tool.name for tool in visible_tools])
     last_part = messages[-1].parts[-1]
 
     if isinstance(last_part, ToolReturnPart) and last_part.tool_name == 'lookup_refund_policy':
         return ModelResponse(parts=[TextPart(str(last_part.content))])
 
-    if any(tool.name == 'lookup_refund_policy' for tool in info.function_tools):
+    if any(tool.name == 'lookup_refund_policy' for tool in visible_tools):
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -479,18 +482,12 @@ result = agent.run_sync('Can I get a refund for order-123?')
 print(result.output)
 #> order-123 is eligible for a refund for 30 days after purchase.
 print(seen_tool_names)
-"""
-[
-    ['search_tools', 'load_capability'],
-    ['lookup_refund_policy'],
-    ['lookup_refund_policy'],
-]
-"""
+#> [['load_capability'], ['lookup_refund_policy'], ['lookup_refund_policy']]
 ```
 
 _(This example is complete, it can be run "as is")_
 
-The first tool list only includes `search_tools` and `load_capability`; `lookup_refund_policy` is hidden. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool is available.
+The first turn only sees `load_capability`; `lookup_refund_policy` is still in `info.function_tools` but stamped `defer_loading=True`, which providers honor as "not callable yet." After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible.
 
 ### Dynamic descriptions and load-time instructions
 

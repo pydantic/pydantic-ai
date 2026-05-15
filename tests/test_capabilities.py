@@ -1614,6 +1614,9 @@ Supported by:
                             ],
                             'title': 'Aspect Ratio',
                         },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
@@ -1641,6 +1644,7 @@ Supported by:
                             'title': 'Allowed Tools',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
@@ -1733,6 +1737,9 @@ Supported by:
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebFetch',
                     'type': 'object',
@@ -1762,6 +1769,9 @@ Supported by:
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
@@ -2421,7 +2431,9 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
         await agent.run('hi', message_history=message_history)
 
     assert str(exc_info.value) == snapshot(
-        "Message history contains loaded capability ids that are not available for this run: 'missing'."
+        "Message history contains loaded capability ids that are not available for this run: 'missing'. "
+        'For dynamic capabilities, ensure the factory is deterministic and the returned capability has a '
+        'stable, explicitly-set `id=` (the auto-generated default changes every run).'
     )
 
 
