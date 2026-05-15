@@ -11,11 +11,11 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-from ._mcp import TemporalMCPToolset
+from ._mcp import TemporalMCPToolsetBase
 from ._run_context import TemporalRunContext
 
 
-class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
+class TemporalMCPServer(TemporalMCPToolsetBase[AgentDepsT]):
     """A wrapper for MCPServer that integrates with Temporal, turning get_tools and call_tool into activities.
 
     Tool definitions are cached across activities to avoid redundant MCP server round-trips,

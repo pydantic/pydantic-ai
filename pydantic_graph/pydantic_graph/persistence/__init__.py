@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal
 import pydantic
 from typing_extensions import TypeVar
 
-from ..nodes import BaseNode, End
+from ..basenode import BaseNode, End
 from . import _utils
 
 if TYPE_CHECKING:

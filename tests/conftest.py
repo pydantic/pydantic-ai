@@ -836,13 +836,14 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+        from pydantic_ai.providers.google import GoogleCloudLocation
+        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
-    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
+    yield GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))
 
 
 @pytest.fixture()
@@ -941,7 +942,7 @@ def mock_snapshot_id(mocker: MockerFixture):
         i += 1
         return f'{node_id}:{i}'
 
-    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture

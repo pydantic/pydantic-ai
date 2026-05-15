@@ -46,11 +46,11 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
-from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -118,6 +118,8 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'PydanticAIDeprecationWarning',
+    'ToolsPrepareFunc',
 )
 
 
@@ -241,13 +243,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -271,13 +270,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -299,13 +295,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -348,12 +341,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
-            prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
-                This is useful if you want to customize the definition of multiple tools or you want to register
-                a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
-                This is useful if you want to customize the definition of multiple output tools or you want to register
-                a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
                 and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -373,7 +360,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
                 [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
                 and is attached to the agent run span when instrumentation is enabled.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
@@ -410,11 +396,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities.extend(legacy_history_processor_capabilities)
 
         capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-
-        if prepare_tools is not None:
-            capabilities.append(PrepareTools(prepare_tools))
-        if prepare_output_tools is not None:
-            capabilities.append(PrepareOutputTools(prepare_output_tools))
+        capabilities.extend(_utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
+        capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
+        # `event_stream_handler` is NOT auto-remapped to a `ProcessEventStream` capability: the
+        # legacy `_event_stream_handler` path in `abstract.py` invokes the handler directly after
+        # the capability chain runs, so remapping would call it twice. Forwarded into the instance
+        # attribute below so the legacy path keeps working in 1.x; warning steers users to
+        # `capabilities=[ProcessEventStream(...)]`, the only path in v2.
+        event_stream_handler = _utils.consume_deprecated_event_stream_handler(_deprecated_kwargs, 'Agent')
 
         _inject_auto_capabilities(capabilities)
 
@@ -557,13 +546,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -588,13 +574,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -618,13 +601,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -655,13 +635,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context: Pydantic validation context for tool arguments and outputs.
             output_retries: Max retries for output validation, overrides spec `output_retries` if provided.
             tools: Tools to register with the agent.
-            prepare_tools: Custom function to prepare tool definitions.
-            prepare_output_tools: Custom function to prepare output tool definitions.
             toolsets: Toolsets to register with the agent.
             defer_model_check: Defer model evaluation until first run.
             end_strategy: Strategy for tool calls alongside a final result, overrides spec `end_strategy` if provided.
             metadata: Metadata to store with each run, overrides spec `metadata` if provided.
-            event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
 
             max_concurrency: Limit on concurrent agent runs.
@@ -674,9 +651,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _deprecated_kwargs, 'Agent.from_spec'
         )
         extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
+        )
+        extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
+        # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
+        # already fired in the consume helper.
+        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
+            _deprecated_kwargs, 'Agent.from_spec'
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
@@ -734,18 +722,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=validation_context,
             output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
             tools=tools,
-            prepare_tools=prepare_tools,
-            prepare_output_tools=prepare_output_tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy if end_strategy is not None else validated_spec.end_strategy,
             metadata=metadata if metadata is not None else validated_spec.metadata,
-            event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
         agent._instrument = legacy_instrument
+        if legacy_event_stream_handler is not None:
+            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @overload
@@ -767,13 +754,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -799,13 +783,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -830,13 +811,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -856,9 +834,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _deprecated_kwargs, 'Agent.from_file'
         )
         extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
+        )
+        extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
+        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
+            _deprecated_kwargs, 'Agent.from_file'
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
         if extra_capabilities:
@@ -880,13 +867,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=validation_context,
             output_retries=output_retries,
             tools=tools,
-            prepare_tools=prepare_tools,
-            prepare_output_tools=prepare_output_tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy,
             metadata=metadata,
-            event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
@@ -894,6 +878,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
         if instrument is not None:
             agent._instrument = instrument
+        if legacy_event_stream_handler is not None:
+            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @staticmethod
