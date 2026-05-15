@@ -37,7 +37,7 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE, parse_discovered_tools  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
@@ -227,13 +227,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        # TODO: Discovered list should expose tools which are now loaded from the caps
-
-        # Can I move this out of here to somewhere else
-        # Was that what Douwe meant yesterday he was talking about something similar?
-        discovered = parse_discovered_tools(ctx.messages)
-        print('We have already discovered these tools: ', discovered)
-
+        discovered = ctx.discovered_tools
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Single entry per deferred tool, keyed by its real name. `with_native`

@@ -17,6 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._tool_search import parse_discovered_tools
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -197,6 +198,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     capabilities: dict[str, AbstractCapability[DepsT]]
     loaded_capability_ids: set[str]
+    discovered_tools: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -850,6 +852,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        discovered_tools = parse_discovered_tools(ctx.state.message_history)
+        ctx.deps.discovered_tools = discovered_tools
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
@@ -1415,6 +1419,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
+        discovered_tools=ctx.deps.discovered_tools,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

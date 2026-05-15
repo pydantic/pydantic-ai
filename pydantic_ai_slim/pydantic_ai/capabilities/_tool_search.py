@@ -8,13 +8,11 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import parse_discovered_tools
 from ..messages import (
     LoadCapabilityReturnPart,
     ModelRequest,
     ModelResponse,
     ToolSearchCallPart,
-    ToolSearchReturnContent,
     ToolSearchReturnPart,
 )
 from ..native_tools._tool_search import (
@@ -230,7 +228,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # earlier this turn — same input, same output. When ctx.loaded_tools moves to a
         # history-derived agent-graph pre-step, this duplicate goes away and both consumers
         # read from ctx.
-        discovered = parse_discovered_tools(request_context.messages)
+
+        discovered = ctx.discovered_tools
 
         for i, message in enumerate(request_context.messages[1:], start=1):
             if not isinstance(message, ModelRequest):
@@ -259,10 +258,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                 args={'queries': ['<auto-discovered>']},
                 tool_call_id=call_id,
             )
-            content: ToolSearchReturnContent = {
-                'discovered_tools': [{'name': n, 'description': None} for n in sorted(missing_here)],
-            }
-            new_return_part = ToolSearchReturnPart(content=content, tool_call_id=call_id)
+
+            new_return_part = ToolSearchReturnPart(
+                content={'discovered_tools': [{'name': n, 'description': None} for n in sorted(missing_here)]},
+                tool_call_id=call_id,
+            )
 
             request_context.messages[i - 1] = replace(load_call_msg, parts=[*load_call_msg.parts, new_call_part])
             request_context.messages[i] = replace(load_return_msg, parts=[*load_return_msg.parts, new_return_part])
