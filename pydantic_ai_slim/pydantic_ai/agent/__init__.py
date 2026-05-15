@@ -1454,7 +1454,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if unknown_loaded_capability_ids:
             unknown = ', '.join(repr(cap_id) for cap_id in sorted(unknown_loaded_capability_ids))
             raise exceptions.UserError(
-                f'Message history contains loaded capability ids that are not available for this run: {unknown}.'
+                f'Message history contains loaded capability ids that are not available for this run: {unknown}. '
+                'For dynamic capabilities, ensure the factory is deterministic and the returned capability has a '
+                'stable, explicitly-set `id=` (the auto-generated default changes every run).'
             )
         loaded_capability_ids.update(parsed_loaded_capability_ids)
 

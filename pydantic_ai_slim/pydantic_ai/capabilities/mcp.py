@@ -62,6 +62,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool | None = None,
     ) -> None:
         # In v2, MCP's `native` default flips from True to False. Warn whenever the user is
         # relying on the default — passing only `local=False` today gives native-only behavior,
@@ -90,6 +91,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.headers = headers
         self.allowed_tools = allowed_tools
         self.description = description
+        self.defer_loading = defer_loading
         self.__post_init__()
 
     @cached_property

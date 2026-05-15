@@ -5365,11 +5365,16 @@ class TestImageGenerationCapability:
         }
         builtin_fields.remove('model')
         builtin_fields.add('image_model')
+        # Subtract framework-inherited kw-only params from `AbstractCapability`
+        # (forwarded so `dataclasses.replace` round-trips through the custom `__init__`).
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
             'native',
             'local',
             'fallback_model',
+            'id',
+            'defer_loading',
+            'description',
         }
         assert init_params == builtin_fields
 
@@ -17267,6 +17272,20 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
     result = await agent.run('hi')
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions == 'Label is x.'
+
+
+def test_dynamic_capability_rejects_wrapper_fields() -> None:
+    """`defer_loading`/`description` on the wrapper are silently ignored — reject at construction."""
+    from pydantic_ai.capabilities import DynamicCapability
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return _RecordingCapability(label='x')
+
+    with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
+        DynamicCapability(capability_func=factory, defer_loading=True, description='x')
+
+    with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
+        DynamicCapability(capability_func=factory, description='x')
 
 
 # endregion

@@ -53,6 +53,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        id: str | None = None,
+        defer_loading: bool | None = None,
+        description: str | None = None,
     ) -> None:
         self.native = native
         self.local = local
@@ -61,6 +64,10 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         self.blocked_domains = blocked_domains
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
+        if id is not None:
+            self.id = id
+        self.defer_loading = defer_loading
+        self.description = description
         self.__post_init__()
 
     def _default_native(self) -> WebSearchTool:

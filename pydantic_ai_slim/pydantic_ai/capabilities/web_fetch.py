@@ -56,6 +56,9 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
+        id: str | None = None,
+        defer_loading: bool | None = None,
+        description: str | None = None,
     ) -> None:
         self.native = native
         self.local = local
@@ -64,6 +67,10 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.enable_citations = enable_citations
         self.max_content_tokens = max_content_tokens
+        if id is not None:
+            self.id = id
+        self.defer_loading = defer_loading
+        self.description = description
         self.__post_init__()
 
     def _default_native(self) -> WebFetchTool:

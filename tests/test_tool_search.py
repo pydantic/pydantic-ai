@@ -920,7 +920,17 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
     eager capabilities are pre-loaded by `Agent.run`, so `capability_search_tool`
     is hidden purely behind tool-level `defer_loading=True` and is unlocked by a
     `search_tools` call — no `load_capability` involved.
+
+    Forces the local-fallback path so the framework's `search_tools` function
+    tool reaches `info.function_tools` instead of being swap-dropped in favor
+    of the native `ToolSearchTool` builtin.
     """
+
+    class NoNativeToolSearchModel(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
@@ -971,47 +981,52 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
         gated_result = next(part.content for part in tool_returns if part.tool_name == 'capability_search_tool')
         return ModelResponse(parts=[TextPart(content=f'final: {gated_result}')])
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    agent = Agent(NoNativeToolSearchModel(model_fn), capabilities=[capability])
 
     result = await agent.run('find the gated tool')
 
     assert result.output == 'final: search-gated-result'
-    # Step 1: only the search facade is visible.
-    # Step 2: search has unlocked the gated tool; the facade is dropped because no
-    # deferred tools remain.
+    # Step 1: only the search facade is visible (gated tool hidden behind tool-search).
+    # Step 2: search has unlocked the gated tool; the facade stays for prompt-cache
+    # stability — see `test_tool_search_toolset_keeps_search_tool_after_all_discovered`.
     # Step 3: same toolset; model returns final text.
     assert seen_tool_names == snapshot(
         [
             ['search_tools'],
-            ['capability_search_tool'],
-            ['capability_search_tool'],
+            ['capability_search_tool', 'search_tools'],
+            ['capability_search_tool', 'search_tools'],
         ]
     )
 
 
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
-    """A deferred capability gates inherited tools; explicit `defer_loading` per tool still applies after loading.
+    """A deferred capability gates its tools as a unit: all hidden when unloaded, all
+    visible once loaded. Tool-level `defer_loading` inside a deferred cap is moot — the
+    cap's flag is the authority. Drives through `Agent` so message-history →
+    `loaded_capability_ids` translation happens via the real `Agent.run` setup; tools
+    the model sees at each step are captured from `AgentInfo.function_tools`.
 
-    Drives through `Agent` so message-history → `loaded_capability_ids` translation
-    happens via the real `Agent.run` setup. Tools the model sees at each step are
-    captured from `AgentInfo.function_tools`.
+    Forces the local-fallback path so the framework's `search_tools` function tool
+    reaches `info.function_tools` instead of being swap-dropped in favor of the
+    native `ToolSearchTool` builtin.
     """
+
+    class NoNativeToolSearchModel(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain
-    def inherited_tool() -> str:
-        """Inherited deferred tool."""
+    def inherited_tool() -> str:  # pragma: no cover
+        """Tool inheriting cap-level defer."""
         return 'inherited-result'
 
     @toolset.tool_plain(defer_loading=True)
-    def search_gated_tool() -> str:
-        """Special tool that still requires search after loading."""
-        return 'search-gated-result'
-
-    @toolset.tool_plain(defer_loading=False)
-    def eager_tool() -> str:  # pragma: no cover
-        """Explicit eager tool."""
-        return 'eager-result'
+    def also_deferred_tool() -> str:
+        """Tool with its own defer flag — shadowed by cap-level defer."""
+        return 'also-deferred-result'
 
     capability = Capability[None](
         id='example',
@@ -1043,50 +1058,36 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
                 ]
             )
 
-        if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
+        if not any(part.tool_name == 'also_deferred_tool' for part in tool_returns):
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name=_SEARCH_TOOLS_NAME,
-                        args={'queries': ['special']},
-                        tool_call_id='search-special',
-                    )
-                ]
-            )
-
-        if not any(part.tool_name == 'search_gated_tool' for part in tool_returns):
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='search_gated_tool',
+                        tool_name='also_deferred_tool',
                         args={},
-                        tool_call_id='call-gated',
+                        tool_call_id='call-deferred',
                     )
                 ]
             )
 
-        gated_result = next(part.content for part in tool_returns if part.tool_name == 'search_gated_tool')
+        gated_result = next(part.content for part in tool_returns if part.tool_name == 'also_deferred_tool')
         return ModelResponse(parts=[TextPart(content=f'final: {gated_result}')])
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    agent = Agent(NoNativeToolSearchModel(model_fn), capabilities=[capability])
 
     result = await agent.run('use the special tool')
 
-    assert result.output == 'final: search-gated-result'
-    # Step 1: capability deferred — only `eager_tool` (explicit defer_loading=False) is visible
-    # alongside the search facade and load_capability.
-    # Step 2: capability loaded — `inherited_tool` becomes visible; `search_gated_tool`
-    # stays hidden behind tool-level defer_loading; load_capability disappears (no
-    # remaining unloaded capabilities).
-    # Step 3: search has unlocked `search_gated_tool`; the search facade is dropped
-    # because no deferred tools remain.
-    # Step 4: same toolset; model returns final text.
+    assert result.output == 'final: also-deferred-result'
+    # Step 1: cap deferred → both tools hidden; only `load_capability` and the search
+    # facade reach the model.
+    # Step 2: cap loaded → both tools visible regardless of tool-level defer flag;
+    # `load_capability` disappears (no remaining unloaded caps); facade stays for
+    # prompt-cache stability.
+    # Step 3: same toolset; model returns final text.
     assert seen_tool_names == snapshot(
         [
-            ['search_tools', 'load_capability', 'eager_tool'],
-            ['search_tools', 'inherited_tool', 'eager_tool'],
-            ['inherited_tool', 'eager_tool', 'search_gated_tool'],
-            ['inherited_tool', 'eager_tool', 'search_gated_tool'],
+            ['load_capability', 'search_tools'],
+            ['inherited_tool', 'also_deferred_tool', 'search_tools'],
+            ['inherited_tool', 'also_deferred_tool', 'search_tools'],
         ]
     )
 

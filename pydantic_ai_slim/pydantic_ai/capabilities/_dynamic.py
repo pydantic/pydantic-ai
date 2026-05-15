@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.exceptions import UserError
 
 from .abstract import AbstractCapability
 
@@ -29,10 +30,21 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     Pass a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] directly
     to `Agent(capabilities=[...])` or `agent.run(capabilities=[...])` and it
     will be wrapped in a `DynamicCapability` automatically.
+
+    `id`, `defer_loading`, and `description` on the wrapper itself are ignored — `for_run`
+    replaces the wrapper with the factory's return value, so set those on the returned
+    capability instead. The `id` must be stable across runs to survive history replay.
     """
 
     capability_func: CapabilityFunc[AgentDepsT]
     """The function that takes the run context and returns a capability or `None`."""
+
+    def __post_init__(self) -> None:
+        if self.defer_loading is not None or self.description is not None:
+            raise UserError(
+                '`id`, `defer_loading`, and `description` are ignored on `DynamicCapability` — '
+                'set them on the capability the factory returns instead.'
+            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = self.capability_func(ctx)
