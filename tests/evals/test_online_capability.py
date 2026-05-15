@@ -552,11 +552,10 @@ async def test_span_reference_with_logfire(capfire: CaptureLogfire):
 @pytest.mark.anyio
 async def test_malformed_traceparent_yields_no_span_reference(monkeypatch: pytest.MonkeyPatch, traceparent: str):
     """Malformed traceparents do not produce span references."""
-
-    def fake_traceparent(self: Any, *, required: bool = True) -> str | None:
-        return traceparent
-
-    monkeypatch.setattr('pydantic_ai.run.AgentRunResult._traceparent', fake_traceparent)
+    monkeypatch.setattr(
+        'pydantic_evals.online_capability.logfire_api.get_context',
+        lambda: {'traceparent': traceparent},
+    )
 
     collector = SpanCollector()
     config = OnlineEvalConfig(default_sink=collector)

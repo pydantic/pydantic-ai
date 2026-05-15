@@ -576,6 +576,33 @@ async def test_evaluate_decorator_sync_run_on_errors_dispatches():
 
 
 @pytest.mark.anyio
+async def test_evaluate_decorator_sync_run_on_errors_no_event_loop():
+    """Sync `run_on_errors=True` without a running loop dispatches via background thread."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True))
+    def my_func(x: int) -> int:
+        raise RuntimeError(f'boom: {x}')
+
+    from anyio.to_thread import run_sync
+
+    def call_and_swallow() -> None:
+        try:
+            my_func(42)
+        except RuntimeError:
+            pass
+
+    await run_sync(call_and_swallow)
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert isinstance(ctx.output, RuntimeError)
+
+
+@pytest.mark.anyio
 async def test_evaluate_decorator_with_failure():
     """evaluate() decorator handles evaluator failures gracefully."""
     collector = Collector()
