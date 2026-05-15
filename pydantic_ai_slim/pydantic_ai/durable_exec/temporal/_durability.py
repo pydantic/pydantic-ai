@@ -22,7 +22,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec import StreamedActivityResult, disable_threads
+from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, infer_model
@@ -267,7 +267,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # --- Model request activities ---
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            from pydantic_ai.durable_exec import call_model
+            from pydantic_ai.durable_exec._utils import call_model
 
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -286,7 +286,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> StreamedActivityResult:
-            from pydantic_ai.durable_exec import open_model_stream, process_event_stream
+            from pydantic_ai.durable_exec._utils import open_model_stream, process_event_stream
 
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -472,11 +472,11 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             runtime_classes.add(type(cap))
 
         ctx.root_capability.apply(_collect)
-        # Capabilities that opt in via `safe_at_runtime = True` (e.g. `Instrumentation`,
+        # Capabilities that opt in via `_safe_at_runtime = True` (e.g. `Instrumentation`,
         # auto-injected per-run by `Agent.iter()` when `instrument=…` / `LogfirePlugin` is
         # used) don't introduce new toolsets, native tools, or model wrapping, so they
         # don't need activities registered with the worker upfront.
-        extra = {cls for cls in runtime_classes - self._bound_capability_classes if not cls.safe_at_runtime}
+        extra = {cls for cls in runtime_classes - self._bound_capability_classes if not cls._safe_at_runtime}
         if extra:
             names = ', '.join(sorted(c.__name__ for c in extra))
             raise UserError(

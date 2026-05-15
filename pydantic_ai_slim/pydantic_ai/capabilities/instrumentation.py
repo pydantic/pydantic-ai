@@ -61,10 +61,10 @@ class Instrumentation(AbstractCapability[Any]):
     (`logfire.current_span().set_attribute(key, value)`).
     """
 
-    safe_at_runtime: ClassVar[bool] = True
+    _safe_at_runtime: ClassVar[bool] = True
     """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
-    to attach per-run even when a durability capability is bound. See
-    [`AbstractCapability.safe_at_runtime`][pydantic_ai.capabilities.AbstractCapability.safe_at_runtime].
+    to attach per-run even when a durability capability is bound. Internal flag read by the
+    bundled durable-execution integrations.
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())

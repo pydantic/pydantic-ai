@@ -16,7 +16,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec import StreamedActivityResult
+from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
@@ -131,7 +131,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            from pydantic_ai.durable_exec import call_model
+            from pydantic_ai.durable_exec._utils import call_model
 
             request_context = ModelRequestContext(
                 model=model,
@@ -150,7 +150,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            from pydantic_ai.durable_exec import open_model_stream, process_event_stream
+            from pydantic_ai.durable_exec._utils import open_model_stream, process_event_stream
 
             request_context = ModelRequestContext(
                 model=model,

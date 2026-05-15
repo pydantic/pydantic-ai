@@ -155,20 +155,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    safe_at_runtime: ClassVar[bool] = False
+    _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Durability capabilities (e.g.
-    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability])
-    need to register activities/steps/tasks with their workflow runner at agent
-    construction time, so per-run capability additions are normally rejected to
-    prevent a leaf capability's toolsets or model wrapping from silently running
-    in non-deterministic workflow code.
+    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
+    integrations read it to allow `Instrumentation` to attach per-run despite the
+    blanket restriction on runtime capability additions.
 
-    Capabilities that don't introduce new toolsets, native tools, or model
-    wrapping — and instead only contribute workflow-side hooks (instrumentation
-    spans, event-stream processing, etc.) — can set this to `True` to opt out of
-    that restriction.
+    A first-class extension point that derives this from a capability's overridden
+    hooks (so third-party capabilities don't need to set a flag manually) is tracked
+    as a follow-up to this PR.
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
