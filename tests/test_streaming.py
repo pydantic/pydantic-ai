@@ -4637,7 +4637,7 @@ async def test_stream_response_state_incomplete_after_early_break():
     agent = Agent(TestModel(custom_output_text='hello world'))
 
     async with agent.iter('Hello') as run:
-        async for node in run:
+        async for node in run:  # pragma: no branch
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     async for _ in stream:  # pragma: no branch
