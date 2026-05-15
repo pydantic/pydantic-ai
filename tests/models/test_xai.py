@@ -72,7 +72,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.grok import GrokModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
@@ -1206,6 +1206,82 @@ async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provid
 
     result = await agent.run('What is 2+2?')
     assert '4' in result.output
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'expected_reasoning_effort'),
+    [
+        (False, 'none'),
+        (True, 'low'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_grok_43_unified_thinking_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == expected_reasoning_effort
+
+
+async def test_xai_grok_43_explicit_reasoning_effort_takes_precedence(allow_model_requests: None) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(thinking='high', xai_reasoning_effort='none'))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'none'
+
+
+async def test_xai_grok_3_mini_unified_medium_maps_to_high(allow_model_requests: None) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking='medium'))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'high'
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'profile'),
+    [
+        ('grok-3-mini', False, None),
+        ('grok-4.20', 'high', None),
+        ('grok-custom', 'high', GrokModelProfile(supports_thinking=True)),
+    ],
+)
+async def test_xai_unified_thinking_omits_reasoning_effort(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, profile: GrokModelProfile | None
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(
+        model_name,
+        provider=XaiProvider(xai_client=mock_client),
+        profile=profile,
+    )
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert 'reasoning_effort' not in get_mock_chat_create_kwargs(mock_client)[0]
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):

@@ -47,7 +47,7 @@ The unified `thinking` setting maps to each provider's native format:
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
+| xAI | `reasoning_effort='low'` on Grok 4.3 | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`; Grok 3 Mini only supports `'low'` and `'high'` |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 
@@ -168,7 +168,7 @@ xAI reasoning models (Grok) support native thinking. To preserve the thinking co
 from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
-model = XaiModel('grok-4-fast-reasoning')
+model = XaiModel('grok-4.3')
 settings = XaiModelSettings(xai_include_encrypted_content=True)
 agent = Agent(model, model_settings=settings)
 ...
