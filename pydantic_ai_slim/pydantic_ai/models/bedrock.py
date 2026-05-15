@@ -653,20 +653,22 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
-                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+            if thinking is False:
+                raise UserError('thinking=False is not supported for this Bedrock model.')
+            existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
-            if thinking is not False:
-                # Qwen only supports low/high; map others to closest
-                level_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                }
-                existing['reasoning_config'] = level_map[thinking]
+            if thinking is False:
+                raise UserError('thinking=False is not supported for this Bedrock model.')
+            # Qwen only supports low/high; map others to closest
+            level_map: dict[ThinkingLevel, str] = {
+                True: 'high',
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'high',
+                'high': 'high',
+                'xhigh': 'high',
+            }
+            existing['reasoning_config'] = level_map[thinking]
 
         return existing or None
 

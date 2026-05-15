@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UserError
 from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
@@ -596,7 +596,7 @@ class TestBedrockThinkingTranslation:
         assert result == {'thinking': {'type': 'disabled'}}
 
     def test_openai_variant_thinking_false(self):
-        """thinking=False on OpenAI Bedrock variant is a no-op (Bedrock rejects 'none')."""
+        """thinking=False on OpenAI Bedrock variant raises UserError."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._profile = BedrockModelProfile(
             bedrock_thinking_variant='openai',
@@ -605,9 +605,8 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
-        # thinking=False: no reasoning_effort set, returns None
-        assert result is None
+        with pytest.raises(UserError, match='thinking=False is not supported for this Bedrock model'):
+            model._translate_thinking(settings, params)
 
     def test_openai_variant_thinking_high(self):
         model = BedrockConverseModel.__new__(BedrockConverseModel)
@@ -634,7 +633,7 @@ class TestBedrockThinkingTranslation:
         assert result == {'reasoning_config': 'high'}
 
     def test_qwen_variant_thinking_false(self):
-        """thinking=False on Qwen variant is a no-op (Qwen has no disable mechanism)."""
+        """thinking=False on Qwen variant raises UserError."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._profile = BedrockModelProfile(
             bedrock_thinking_variant='qwen',
@@ -643,9 +642,8 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
-        # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
-        assert result is None
+        with pytest.raises(UserError, match='thinking=False is not supported for this Bedrock model'):
+            model._translate_thinking(settings, params)
 
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
@@ -686,12 +684,11 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'high'}
 
-    def test_thinking_false_no_reasoning(self):
+    def test_thinking_false_raises(self):
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = _openrouter_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert 'reasoning' not in extra_body
+        with pytest.raises(UserError, match='thinking=False is not supported for OpenRouter'):
+            _openrouter_settings_to_openai_settings(settings, params)
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""

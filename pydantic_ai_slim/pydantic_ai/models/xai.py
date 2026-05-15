@@ -771,8 +771,9 @@ class XaiModel(Model[AsyncClient]):
         # Fall back to unified thinking when xai_reasoning_effort is not set
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
             thinking = model_request_parameters.thinking
-            if thinking is not False:
-                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+            if thinking is False:
+                raise UserError('thinking=False is not supported for xAI.')
+            xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
