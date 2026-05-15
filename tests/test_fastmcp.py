@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `FastMCPToolset` to maintain coverage until v2-cut.
 """Tests for the FastMCP Toolset implementation."""
 
 from __future__ import annotations
@@ -51,6 +53,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
     pytest.mark.anyio,
+    # Entire file exercises the deprecated `FastMCPToolset` for v2 coverage.
+    pytest.mark.filterwarnings('ignore:`FastMCPToolset` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -579,7 +583,7 @@ class TestFastMCPToolsetToolCalling:
         ) -> ToolResult:
             nonlocal called
             called = True
-            return await call_tool(name, tool_args, None)
+            return await call_tool(name, tool_args, metadata=None)
 
         toolset = FastMCPToolset(fastmcp_client, process_tool_call=process_tool_call)
         async with toolset:
