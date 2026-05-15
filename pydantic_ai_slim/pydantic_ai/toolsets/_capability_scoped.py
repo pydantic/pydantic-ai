@@ -33,13 +33,10 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
                     capability_id=tool.tool_def.capability_id
                     if tool.tool_def.capability_id is not None
                     else self.capability_id,
-                    defer_loading=tool.tool_def.defer_loading
-                    or (
-                        ctx.capabilities.get(self.capability_id) is not None
-                        and ctx.capabilities.get(self.capability_id).defer_loading is True
-                        # It doesn't matter if the capability is loaded or not because we don't want that to change anything on the tool_def anyway
-                        # So it should stay deferred based on this so that it remains stable for the cache
-                    ),
+                    defer_loading=ctx.capabilities.get(self.capability_id) is not None
+                    and ctx.capabilities.get(self.capability_id).defer_loading is True,
+                    # It doesn't matter if the capability is loaded or not because we don't want that to change anything on the tool_def anyway
+                    # So it should stay deferred based on this so that it remains stable for the cache
                 ),
             )
             for name, tool in tools.items()
