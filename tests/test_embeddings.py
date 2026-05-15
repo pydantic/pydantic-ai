@@ -1469,22 +1469,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
-    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
-    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     google_names = [f'google:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
     google_cloud_names = [f'google-cloud:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
     generated_names = sorted(
-        openai_names
-        + cohere_names
-        + google_gla_names
-        + google_vertex_names
-        + google_names
-        + google_cloud_names
-        + voyageai_names
-        + bedrock_names
+        openai_names + cohere_names + google_names + google_cloud_names + voyageai_names + bedrock_names
     )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
