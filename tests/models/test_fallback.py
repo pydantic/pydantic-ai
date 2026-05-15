@@ -281,6 +281,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -545,6 +546,7 @@ async def test_first_success_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -585,6 +587,7 @@ async def test_first_failed_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )

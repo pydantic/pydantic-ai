@@ -475,6 +475,7 @@ async def test_streamed_text_stream():
                     provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -605,6 +606,7 @@ def test_streamed_text_stream_sync():
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                state='complete',
             ),
         ]
     )
