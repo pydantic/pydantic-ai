@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_ai._deferred import tools_for_loaded_capabilities
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_search import parse_discovered_tools
@@ -852,19 +853,33 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
-        ctx.deps.discovered_tools.update(parse_discovered_tools(ctx.state.message_history))
+        # `discovered_tools` is the single source of truth for "which deferred tools
+        # are callable this turn." Two contributors, unioned up-front so the
+        # downstream toolset resolution (`for_run_step` below) and
+        # `ToolSearchToolset` filter see the full set:
+        # - `parse_discovered_tools(history)` — tools the model surfaced via tool
+        #   search (typed `ToolSearchReturnPart`s, plus the legacy metadata sideband).
+        # - `tools_for_loaded_capabilities(ctx, toolset)` — tools whose owning
+        #   deferred capability was loaded via `load_capability`. Pulled from the cap
+        #   registry rather than from `LoadCapabilityReturnPart.discovered_tools`, so
+        #   the load-cap part stays a "this cap was loaded" signal and tool-search
+        #   history remains the authoritative discovery record.
+        ctx.deps.discovered_tools = parse_discovered_tools(ctx.state.message_history)
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
+        # In-place `.update` so `run_context.discovered_tools` (same set object) sees
+        # the cap-loaded names without needing a rebuild.
+        ctx.deps.discovered_tools.update(
+            await tools_for_loaded_capabilities(run_context, ctx.deps.tool_manager.toolset)
+        )
 
         # This will raise errors for any tool name conflicts.
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
-
-        # Added discovery before this so that get_tools can use it and behaviour remains consistent with existing ToolSearch
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.

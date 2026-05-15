@@ -117,7 +117,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The capabilities that are available for the current run."""
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
-    """The capabilities that have been loaded so far."""
+    """IDs of every capability that is currently loaded.
+
+    Contains both always-loaded capabilities (`defer_loading=False`) and any
+    deferred capabilities the model has loaded via `load_capability`. Seeded by
+    `Agent.for_run` from the cap registry and message history; the
+    `load_capability` tool body adds to it when the model loads a deferred cap
+    in-step.
+    """
 
     capability_loaded: bool | None = None
     """Whether the capability whose hook is currently running is loaded.
@@ -126,7 +133,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     discovered_tools: set[str] = field(default_factory=set[str])
-    """The tools that have been for this capability."""
+    """Deferred tools that are callable on the current turn.
+
+    Union of two sources, computed at the start of each request step:
+    - Tools previously surfaced via tool search (parsed from `ToolSearchReturnPart`s
+      in message history).
+    - Tools whose owning deferred capability is currently loaded (derived from
+      `capabilities` and `loaded_capability_ids`).
+
+    `ToolSearchToolset` reads this to decide which deferred tools to flip visible
+    on the wire on the local fallback path.
+    """
 
     @property
     def last_attempt(self) -> bool:

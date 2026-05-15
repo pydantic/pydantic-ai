@@ -42,7 +42,6 @@ from .messages import (
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
-    LoadCapabilityReturnPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     ToolCallPart,
@@ -609,7 +608,6 @@ def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
                 if isinstance(part, NativeToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
 
-    # These discovered tools should now maybe live in ctx?
     return discovered
 
 

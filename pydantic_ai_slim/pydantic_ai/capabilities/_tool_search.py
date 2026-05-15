@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .._deferred import tools_for_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
+from .._tool_search import parse_discovered_tools
 from ..messages import (
-    LoadCapabilityReturnPart,
     ModelRequest,
     ModelResponse,
     ToolSearchCallPart,
@@ -208,65 +209,55 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Splice synthetic tool-search parts into history for any newly-loaded deferred capability.
+        """Append a synthetic tool-search exchange for tools unlocked by a capability load.
 
-        After the model calls `load_capability(id)`, the tools that capability exposes
-        are not yet recorded in history as "discovered" — `parse_discovered_tools`
-        (on the local fallback path) and provider server-side state (on native paths)
-        both key off `ToolSearch{Call,Return}Part`s in the message history. We forge
-        that exchange here so the tools become callable on this turn: a
-        `ToolSearchCallPart` appended to each load-capability `ModelResponse` and a
-        matching `ToolSearchReturnPart` appended to the load-capability `ModelRequest`.
+        `load_capability` and tool search are separate signals: a `LoadCapabilityReturnPart`
+        means "this capability is loaded," and a `ToolSearchReturnPart` means "these names
+        are in the discovered corpus." Native providers (Anthropic) emit `tool_reference`
+        blocks from `ToolSearchReturnPart` on the wire so the server-side tool-search
+        machinery unlocks the tools — without one, cap-loaded tools never reach the model
+        on the native path.
 
-        Walks each load-capability pair in history order and synthesizes locally for
-        the still-missing tools at that pair. Updates `discovered` as it goes so a
-        same-turn multi-load scenario synthesizes once per pair without redundancy.
-        Idempotent across turns: once a pair has been synthesized, its tools are in
-        the `discovered` set on subsequent runs and the diff is empty.
+        We diff `tools_for_loaded_capabilities` (the source of truth for what every
+        loaded deferred cap exposes) against `parse_discovered_tools` (what tool-search
+        history already records). Anything in the former and not the latter gets a
+        framework-synthesized `ToolSearchCallPart` + `ToolSearchReturnPart` appended to
+        the message list — append-only so the cached prefix stays intact, idempotent
+        because the next turn's `parse_discovered_tools` picks the synthesized part up
+        and the diff collapses to empty.
         """
-        # TODO: parse_discovered_tools is also called from ToolSearchToolset.get_tools
-        # earlier this turn — same input, same output. When ctx.loaded_tools moves to a
-        # history-derived agent-graph pre-step, this duplicate goes away and both consumers
-        # read from ctx.
+        # `ctx.tool_manager` is guaranteed populated in model-request hooks (see
+        # `RunContext.tool_manager` docstring), so walking its toolset here is safe.
 
-        discovered = ctx.discovered_tools
+        if ctx.tool_manager is None:
+            # This cannot happen because it is guranteed to be populated in model-request hooks
+            return request_context
 
-        for i, message in enumerate(request_context.messages[1:], start=1):
-            if not isinstance(message, ModelRequest):
-                continue
-            prev_message = request_context.messages[i - 1]
-            if not isinstance(prev_message, ModelResponse):
-                continue
+        should_be = await tools_for_loaded_capabilities(ctx, ctx.tool_manager.toolset)
+        in_history = parse_discovered_tools(request_context.messages)
+        newly_loaded = should_be - in_history
+        if not newly_loaded:
+            return request_context
 
-            load_call_msg = prev_message
-            load_return_msg = message
-
-            load_returns = [p for p in message.parts if isinstance(p, LoadCapabilityReturnPart)]
-            if not load_returns:
-                continue
-
-            expected_here: set[str] = set()
-            for part in load_returns:
-                expected_here.update(part.discovered_tools)
-
-            missing_here = expected_here - discovered
-            if not missing_here:
-                continue
-
-            call_id = f'auto_load_{uuid.uuid4().hex[:8]}'
-            new_call_part = ToolSearchCallPart(
-                args={'queries': ['<auto-discovered>']},
-                tool_call_id=call_id,
+        call_id = f'auto_load_{uuid.uuid4().hex[:8]}'
+        request_context.messages.append(
+            ModelResponse(
+                parts=[
+                    ToolSearchCallPart(
+                        args={'queries': ['<auto-discovered>']},
+                        tool_call_id=call_id,
+                    ),
+                ]
             )
-
-            new_return_part = ToolSearchReturnPart(
-                content={'discovered_tools': [{'name': n, 'description': None} for n in sorted(missing_here)]},
-                tool_call_id=call_id,
+        )
+        request_context.messages.append(
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': n, 'description': None} for n in sorted(newly_loaded)]},
+                        tool_call_id=call_id,
+                    ),
+                ]
             )
-
-            request_context.messages[i - 1] = replace(load_call_msg, parts=[*load_call_msg.parts, new_call_part])
-            request_context.messages[i] = replace(load_return_msg, parts=[*load_return_msg.parts, new_return_part])
-            # Reflect this synthesis in `discovered` so the next iteration's diff is correct.
-            discovered |= missing_here
-
+        )
         return request_context

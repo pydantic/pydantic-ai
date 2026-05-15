@@ -501,7 +501,15 @@ def _build_run_context(
     messages: list[ModelMessage] | None = None,
     capabilities: dict[str, AbstractCapability[T]] | None = None,
 ) -> RunContext[T]:
-    """Build a ``RunContext`` for unit tests using ``TestModel``."""
+    """Build a ``RunContext`` for unit tests using ``TestModel``.
+
+    Mirrors what `_agent_graph._prepare_request` does in production: derives
+    `discovered_tools` from message history via `parse_discovered_tools`, so unit
+    tests that exercise consumers of `ctx.discovered_tools` (e.g.
+    `ToolSearchToolset.get_tools`) see the same set the agent loop would build.
+    The capability-load side of the union (`tools_for_loaded_capabilities`) is
+    not added here — tests that need that path build the ctx explicitly.
+    """
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -510,6 +518,7 @@ def _build_run_context(
         messages=messages or [],
         run_step=run_step,
         capabilities=capabilities or {},
+        discovered_tools=parse_discovered_tools(messages or []),
     )
 
 
