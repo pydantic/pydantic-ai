@@ -4978,9 +4978,6 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
 
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
         from pydantic_ai.messages import BinaryImage, FilePart
@@ -5064,9 +5061,6 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
 
@@ -5144,9 +5138,6 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -5229,9 +5220,6 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')

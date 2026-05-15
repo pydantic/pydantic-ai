@@ -19,7 +19,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ProcessEventStream
+from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ProcessEventStream, ProcessHistory
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -250,3 +250,34 @@ async def test_from_file_event_stream_handler_kwarg_emits_warning_and_stores_han
         agent: Agent[Any, Any] = Agent.from_file(spec_file, event_stream_handler=handler)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
 
     assert agent.event_stream_handler is handler  # pyright: ignore[reportUnknownMemberType]
+
+
+async def test_from_spec_prepare_tools_kwarg_routes_through_extra_capabilities():
+    """`Agent.from_spec(prepare_tools=...)` warns and the legacy kwarg remaps into the
+    `extra_capabilities` -> `all_capabilities` path that constructs the agent."""
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs  # pragma: no cover
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(prepare_tools=\.\.\.\)` is deprecated'):
+        agent: Agent[Any, Any] = Agent.from_spec({'model': 'test'}, prepare_tools=prep)  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
+
+    # The deprecated kwarg gets remapped to a `PrepareTools` capability on the constructed agent.
+    assert any(isinstance(cap, PrepareTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType,reportUnknownVariableType]
+
+
+async def test_from_file_history_processors_kwarg_routes_through_extra_capabilities(tmp_path: Any):
+    """`Agent.from_file(history_processors=...)` warns and the legacy kwarg remaps into the
+    `extra_capabilities` -> `merged_capabilities` path forwarded to `from_spec`."""
+
+    def processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages  # pragma: no cover
+
+    spec_file = tmp_path / 'agent.json'
+    spec_file.write_text('{"model": "test"}')
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(history_processors='):
+        agent: Agent[Any, Any] = Agent.from_file(spec_file, history_processors=[processor])  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
+
+    process_history_caps = [cap for cap in agent._root_capability.capabilities if isinstance(cap, ProcessHistory)]  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType,reportUnknownVariableType]
+    assert process_history_caps, 'from_file(history_processors=) should remap into a ProcessHistory capability'

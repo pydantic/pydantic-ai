@@ -4,7 +4,6 @@ import base64
 import hashlib
 import mimetypes
 import os
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -26,7 +25,6 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -2172,16 +2170,6 @@ class ModelResponse:
             if call_part.tool_call_id in returns_by_id
         ]
 
-    @property
-    def builtin_tool_calls(self) -> list[tuple[NativeToolCallPart, NativeToolReturnPart]]:
-        """Deprecated: use [`native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls] instead."""
-        warnings.warn(
-            '`ModelResponse.builtin_tool_calls` is deprecated, use `ModelResponse.native_tool_calls` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.native_tool_calls
-
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
         return self.cost()
@@ -2897,21 +2885,3 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
-
-
-_RENAMED_PART_CLASSES: dict[str, str] = {
-    'BuiltinToolCallPart': 'NativeToolCallPart',
-    'BuiltinToolReturnPart': 'NativeToolReturnPart',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_PART_CLASSES:
-        new_name = _RENAMED_PART_CLASSES[name]
-        warnings.warn(
-            f'`pydantic_ai.messages.{name}` is deprecated, use `pydantic_ai.messages.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
