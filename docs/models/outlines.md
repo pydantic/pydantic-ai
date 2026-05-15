@@ -1,5 +1,10 @@
 # Outlines
 
+!!! warning "Deprecated"
+    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] is deprecated and will be removed in Pydantic AI v2.
+
+    If you would like to keep using Outlines with Pydantic AI, please file an issue at <https://github.com/dottxt-ai/outlines/issues>.
+
 ## Install
 
 As Outlines is a library allowing you to run models from various different providers, it does not include the necessary dependencies for any provider by default. As a result, to use the [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel], you must install `pydantic-ai-slim` with an optional group composed of outlines, a dash, and the name of the specific model provider you would use through Outlines. For instance:

@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
@@ -58,7 +59,7 @@ TEST_CASES = [
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
         'gateway/gemini:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-vertex',
+        'google-cloud',
         'google',
         GoogleModel,
         id='gateway/gemini:gemini-1.5-flash',
@@ -121,7 +122,7 @@ TEST_CASES = [
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'google-gla:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-gla',
+        'google',
         'google',
         GoogleModel,
     ),
@@ -129,7 +130,7 @@ TEST_CASES = [
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-gla',
+        'google',
         'google',
         GoogleModel,
     ),
@@ -240,6 +241,7 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)
@@ -257,7 +259,7 @@ def test_infer_model_with_provider():
     from pydantic_ai.providers import openai
 
     provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
-    m = infer_model('openai:gpt-5', lambda x: provider_class)
+    m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
     assert m._provider is provider_class  # type: ignore
@@ -278,7 +280,7 @@ def test_infer_str_unknown():
         pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
         pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
         pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google-gla', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gemini-1.5-flash', ('google', 'gemini-1.5-flash'), id='legacy-gemini'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
@@ -335,6 +337,9 @@ def test_infer_model_profile(model_id: str, is_default: bool):
             id='google-shorthand',
         ),
     ],
+)
+@pytest.mark.filterwarnings(
+    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""
