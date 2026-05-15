@@ -1461,14 +1461,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls() -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with ToolManager.parallel_execution_mode('sequential'):
-            yield
-
-    @staticmethod
-    @contextmanager
     def using_thread_executor(executor: Executor) -> Iterator[None]:
         """Use a custom executor for running sync functions in threads during the context.
 

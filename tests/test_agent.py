@@ -7539,26 +7539,6 @@ def test_deprecated_kwargs_validation_agent_init():
         Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
 
 
-def test_deprecated_kwargs_still_work():
-    """Test that valid deprecated kwargs still work with warnings."""
-    import warnings
-
-    try:
-        from pydantic_ai.mcp import MCPServerStdio
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-
-            Agent(  # pyright: ignore[reportDeprecated]
-                'test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])]
-            )
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert '`mcp_servers` is deprecated' in str(w[0].message)
-    except ImportError:
-        pass
-
-
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 

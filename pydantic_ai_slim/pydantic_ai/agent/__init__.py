@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar, deprecated
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -98,7 +98,6 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..mcp import MCPServer
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -252,33 +251,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    @overload
-    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        output_type: OutputSpec[OutputDataT] = str,
-        instructions: AgentInstructions[AgentDepsT] = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
-        name: str | None = None,
-        description: TemplateStr[AgentDepsT] | str | None = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
-        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        mcp_servers: Sequence[MCPServer] = (),
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        tool_timeout: float | None = None,
-        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-    ) -> None: ...
-
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -414,12 +386,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
-
-        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
-            if toolsets is not None:  # pragma: no cover
-                raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
-            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
-            toolsets = mcp_servers
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -2705,29 +2671,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             html_source=html_source,
         )
-
-    @asynccontextmanager
-    @deprecated(
-        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
-    )
-    async def run_mcp_servers(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> AsyncIterator[None]:
-        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
-
-        Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
-        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
-
-        Returns: a context manager to start and shutdown the servers.
-        """
-        try:
-            self.set_mcp_sampling_model(model)
-        except exceptions.UserError:
-            if model is not None:
-                raise
-
-        async with self:
-            yield
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
