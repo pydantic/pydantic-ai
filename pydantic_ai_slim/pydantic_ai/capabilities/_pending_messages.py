@@ -36,21 +36,29 @@ def _flatten_drained(
     drained: list[PendingMessage],
     *,
     fallback_run_id: str | None,
+    fallback_conversation_id: str | None,
 ) -> list[ModelRequest]:
     """Flatten drained pending messages into a list of `ModelRequest`s.
 
     Adjacent parts-style payloads merge into one synthesized request (matching what
     the model sees on the wire); each passthrough `ModelRequest` payload becomes its
-    own message. Synthesized requests are stamped with `now_utc()` / `fallback_run_id`;
-    passthrough requests keep producer-supplied values, only filling in `timestamp` /
-    `run_id` when unset.
+    own message. Synthesized requests are stamped with `now_utc()` / `fallback_run_id` /
+    `fallback_conversation_id`; passthrough requests keep producer-supplied values, only
+    filling in `timestamp` / `run_id` / `conversation_id` when unset.
     """
     requests: list[ModelRequest] = []
     pending_parts: list[ModelRequestPart] = []
 
     def flush_parts() -> None:
         if pending_parts:
-            requests.append(ModelRequest(parts=pending_parts.copy(), timestamp=now_utc(), run_id=fallback_run_id))
+            requests.append(
+                ModelRequest(
+                    parts=pending_parts.copy(),
+                    timestamp=now_utc(),
+                    run_id=fallback_run_id,
+                    conversation_id=fallback_conversation_id,
+                )
+            )
             pending_parts.clear()
 
     for msg in drained:
@@ -61,6 +69,8 @@ def _flatten_drained(
                 request.timestamp = now_utc()
             if request.run_id is None:
                 request.run_id = fallback_run_id
+            if request.conversation_id is None:
+                request.conversation_id = fallback_conversation_id
             requests.append(request)
         else:
             pending_parts.extend(msg.payload)
@@ -115,7 +125,9 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         # (the current node's request). The agent graph fixes up `messages[-1]`
         # before calling the model, but relying on that is fragile — another
         # capability could append after us.
-        for request in _flatten_drained(drained, fallback_run_id=ctx.run_id):
+        for request in _flatten_drained(
+            drained, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
+        ):
             request_context.messages.append(request)
             ctx.messages.append(request)
         return request_context
@@ -153,7 +165,11 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not leftover_asap and not when_idle:
             return result
 
-        requests = _flatten_drained([*leftover_asap, *when_idle], fallback_run_id=ctx.run_id)
+        requests = _flatten_drained(
+            [*leftover_asap, *when_idle],
+            fallback_run_id=ctx.run_id,
+            fallback_conversation_id=ctx.conversation_id,
+        )
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
         # will re-stamp it during the graph lifecycle. `_flatten_drained` already
         # stamped it, which is harmless (the lifecycle stamp overwrites).
