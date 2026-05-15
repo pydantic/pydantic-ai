@@ -1,5 +1,3 @@
-# pyright: reportDeprecated=false
-# References deprecated `MCPServer*` / `FastMCPToolset` for backward-compat dispatch. Removed in v2.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
@@ -134,13 +132,13 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
             # Replace FastMCPToolset with DBOSFastMCPToolset
             try:
-                from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+                from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 
                 from ._fastmcp_toolset import DBOSFastMCPToolset
             except ImportError:
                 pass
             else:
-                if isinstance(toolset, FastMCPToolset):
+                if isinstance(toolset, FastMCPToolset):  # pyright: ignore[reportDeprecated]
                     return DBOSFastMCPToolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,

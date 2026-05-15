@@ -65,10 +65,12 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 
 
-# `fastmcp` is an optional dependency: it's required for `MCPToolset` (the recommended path) but
-# the legacy `MCPServer*` classes only need the bare `mcp` package. Defer the import error so
-# users can still import `pydantic_ai.mcp.MCPServer*` with just `[mcp]` installed; only when they
-# try to construct an `MCPToolset` (or call a helper that needs fastmcp) do we raise.
+# `fastmcp` is optional at runtime: the `[mcp]` extra pulls `fastmcp-slim[client]` so `MCPToolset`
+# works out of the box, but the legacy `MCPServer*` classes only need the bare `mcp` SDK. Defer the
+# import error so users with a hand-installed `mcp` (no fastmcp) can still import the legacy classes
+# from `pydantic_ai.mcp`; only when they try to construct an `MCPToolset` (or call a helper that
+# needs fastmcp) do we raise. The `[fastmcp]` extra is deprecated; it's a v1-only alias for pulling
+# the full `fastmcp` package, and will be removed in v2 — `[mcp]` will be the only MCP extra.
 _fastmcp_import_error: ImportError | None
 try:
     from fastmcp.client import Client as FastMCPClient
@@ -95,11 +97,12 @@ else:
 
 
 def _require_fastmcp() -> None:
-    """Raise [`ImportError`][ImportError] if `fastmcp` isn't installed."""
+    """Raise [`ImportError`][ImportError] if the fastmcp client isn't installed."""
     if _fastmcp_import_error is not None:  # pragma: no cover
         raise ImportError(
-            'Please install the `fastmcp` package to use `MCPToolset`. '
-            'Install the `mcp` optional group: `pip install "pydantic-ai-slim[mcp]"`'
+            'Please install the fastmcp client to use `MCPToolset` — '
+            '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
+            'or install the full `fastmcp` package directly.'
         ) from _fastmcp_import_error
 
 
@@ -1059,8 +1062,9 @@ class MCPServer(AbstractToolset[Any], ABC):
 
 @deprecated(
     '`MCPServerStdio` is deprecated and will be removed in v2. '
-    "Use `MCPToolset('path/to/script.py')` for Python scripts, `MCPToolset('script.js')` for "
-    "Node scripts, or `MCPToolset(StdioTransport(command='...', args=[...]))` for arbitrary commands."
+    "Use `MCPToolset('path/to/script.py')` for Python scripts, `MCPToolset('script.js')` for Node "
+    "scripts, or `MCPToolset(fastmcp.client.transports.StdioTransport(command='...', args=[...]))` "
+    'for arbitrary commands.'
 )
 class MCPServerStdio(MCPServer):
     """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
@@ -1615,6 +1619,10 @@ metadata.
 """
 
 
+# String forward-reference: the union references names that are only resolvable at runtime when
+# fastmcp is installed, and `TypeAlias = ...` is evaluated eagerly at module-import time regardless
+# of `from __future__ import annotations`. Stringifying the RHS lets `pydantic_ai.mcp` keep loading
+# (so the legacy `MCPServer*` classes stay importable on bare-`mcp`-SDK installs without fastmcp).
 MCPToolsetClient: TypeAlias = 'FastMCPClient[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | str'
 """Anything `MCPToolset` accepts as its `client` argument — a pre-built `fastmcp.Client`, a FastMCP
 `ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, or a
@@ -1680,12 +1688,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """The underlying FastMCP `Client`. Always normalized to a `fastmcp.Client` regardless of how
     the toolset was constructed."""
 
-    tool_error_behavior: Literal['model_retry', 'error']
+    tool_error_behavior: Literal['retry', 'error']
     """How to handle tool errors raised by the server.
 
-    `'model_retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model
-    can self-correct; `'error'` propagates the underlying [`fastmcp.exceptions.ToolError`][fastmcp.exceptions.ToolError]
-    to the caller.
+    `'retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can
+    self-correct; `'error'` propagates the underlying `fastmcp.exceptions.ToolError` to the caller.
     """
 
     max_retries: int | None
@@ -1772,7 +1779,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Pydantic AI-layer config
         id: str | None = None,
         max_retries: int | None = None,
-        tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
+        tool_error_behavior: Literal['retry', 'error'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -1806,7 +1813,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 within a workflow.
             max_retries: Maximum number of times a tool call may be retried after a `ModelRetry`.
                 `None` inherits the agent's retry count at runtime.
-            tool_error_behavior: `'model_retry'` (default) raises
+            tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
                 self-correct; `'error'` propagates the underlying exception.
             process_tool_call: Hook to wrap tool calls. See
@@ -1853,8 +1860,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 would otherwise build a default Client (sampling, elicitation, headers, etc.), or
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
                 `http_client` are both passed.
-            ImportError: If the `fastmcp` package isn't installed. Install the `fastmcp` extra:
-                `pip install "pydantic-ai-slim[fastmcp]"`.
+            ImportError: If the fastmcp client isn't installed. Install the `mcp` extra (which pulls
+                `fastmcp-slim[client]`): `pip install "pydantic-ai-slim[mcp]"`.
         """
         _require_fastmcp()
         if isinstance(client, FastMCPClient):
@@ -1913,7 +1920,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if resolved_sampling_handler is None and sampling_model is not None:
                 resolved_sampling_handler = _build_sampling_handler(sampling_model)
 
-            wrapped_message_handler = _CacheInvalidatingMessageHandler(self, message_handler)
+            wrapped_message_handler = _build_message_handler(self, message_handler)
 
             self.client = FastMCPClient[Any](
                 transport=transport,
@@ -2118,14 +2125,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             metadata: Optional request-level `_meta` payload sent alongside the call.
 
         Raises:
-            ModelRetry: If the tool errors and `tool_error_behavior='model_retry'` (the default).
+            ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
         """
         async with self:
             try:
                 result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
-                if self.tool_error_behavior == 'model_retry':
+                if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
                 raise
 
@@ -2247,24 +2254,22 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return hash((self._id, id(self.client)))
 
 
-class _CacheInvalidatingMessageHandler:
-    """Internal message handler that invalidates `MCPToolset` caches on `list_changed` notifications.
+def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:
+    """Wrap a user message handler so we invalidate `MCPToolset` caches on `list_changed` notifications.
 
-    Forwards every message to the user-supplied handler (if any) after running our own logic.
+    The toolset's own cache invalidation runs first, then the user-supplied handler (if any).
     """
 
-    def __init__(self, toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> None:
-        self._toolset = toolset
-        self._user_handler = user_handler
-
-    async def __call__(self, message: Any) -> None:
+    async def handler(message: Any) -> None:
         if isinstance(message, mcp_types.ServerNotification):
             if isinstance(message.root, mcp_types.ToolListChangedNotification):
-                self._toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
+                toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
             elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
-                self._toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
-        if self._user_handler is not None:
-            await self._user_handler(message)
+                toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+        if user_handler is not None:
+            await user_handler(message)
+
+    return handler
 
 
 def _build_transport(
@@ -2405,8 +2410,11 @@ def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
     return 'stdio'
 
 
-class MCPServerConfig(BaseModel):
-    """Configuration for MCP servers."""
+class _MCPServerConfig(BaseModel):
+    """Internal config model for `load_mcp_servers` / `load_mcp_toolsets`.
+
+    Exposed as the deprecated `pydantic_ai.mcp.MCPServerConfig` via this module's `__getattr__`.
+    """
 
     mcp_servers: Annotated[
         dict[
@@ -2498,7 +2506,7 @@ def load_mcp_servers(
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
     expanded_config_data = _expand_env_vars(config_data)
-    config = MCPServerConfig.model_validate(expanded_config_data)
+    config = _MCPServerConfig.model_validate(expanded_config_data)
 
     servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []  # pyright: ignore[reportDeprecated]
     for name, server in config.mcp_servers.items():
@@ -2533,8 +2541,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         ValidationError: If the configuration file does not match the schema.
         ValueError: If an environment variable referenced in the configuration is not defined and
             no default is provided.
-        ImportError: If the `fastmcp` package isn't installed. Install the `fastmcp` extra:
-            `pip install "pydantic-ai-slim[fastmcp]"`.
+        ImportError: If the fastmcp client isn't installed. Install the `mcp` extra (which pulls
+            `fastmcp-slim[client]`): `pip install "pydantic-ai-slim[mcp]"`.
     """
     _require_fastmcp()
     config_path = Path(config_path)
@@ -2543,7 +2551,7 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
     expanded_config_data = _expand_env_vars(config_data)
-    config = MCPServerConfig.model_validate(expanded_config_data)
+    config = _MCPServerConfig.model_validate(expanded_config_data)
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in config.mcp_servers.items():
@@ -2558,3 +2566,28 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         toolsets.append(toolset.prefixed(name))
 
     return toolsets
+
+
+# Module-level deprecation shim for names removed in v2. Internal code references the renamed
+# private symbols (e.g. `_MCPServerConfig`) so it doesn't trigger its own deprecation warning.
+_DEPRECATED_NAMES: dict[str, tuple[str, Any]] = {
+    'MCPServerConfig': (
+        'Pass the JSON config to `load_mcp_toolsets(...)` directly, or build `MCPToolset`s '
+        'inline from `fastmcp.client.transports.StdioTransport` / URLs.',
+        _MCPServerConfig,
+    ),
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED_NAMES:
+        from ._warnings import PydanticAIDeprecationWarning
+
+        message, target = _DEPRECATED_NAMES[name]
+        warnings.warn(
+            f'`pydantic_ai.mcp.{name}` is deprecated and will be removed in v2. {message}',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return target
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

@@ -1,5 +1,3 @@
-# pyright: reportDeprecated=false
-# Wraps the deprecated `MCPServer*` and `FastMCPToolset` for durable execution. Removed in v2.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -130,9 +128,9 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         except ImportError:
             pass
         try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+            from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 
-            _mcp_types += (FastMCPToolset,)
+            _mcp_types += (FastMCPToolset,)  # pyright: ignore[reportDeprecated]
         except ImportError:
             pass
         if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]

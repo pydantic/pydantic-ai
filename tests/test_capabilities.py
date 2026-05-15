@@ -6875,15 +6875,23 @@ def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
         WebFetch(local=True)
 
 
-def test_mcp_local_string_not_a_url_raises():
-    """MCP(url=..., local=<arbitrary string>) → fastmcp ValueError when the string isn't a valid transport spec.
-
-    MCP doesn't have named local strategies (unlike WebSearch); strings are interpreted as
-    fastmcp connect specs (URL/path), and fastmcp's transport inference raises on garbage input.
-    """
+def test_mcp_local_string_must_be_url_raises_user_error():
+    """`MCP(url=..., local='not-a-url')` raises a `UserError` directing the user to `local=MCPToolset(...)`."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.raises(ValueError, match='Could not infer a valid transport'):
+    with pytest.raises(UserError, match=r"MCP\(local='not_a_real_strategy'\) must be an `http\(s\)://` URL"):
         MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)
+
+
+def test_mcp_local_url_string_override_uses_provided_url():
+    """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    from pydantic_ai.mcp import MCPToolset
+
+    cap = MCP(
+        url='http://primary.example.com/mcp',
+        local='https://override.example.com/mcp',
+        native=True,
+    )
+    assert isinstance(cap.local, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():

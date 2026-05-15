@@ -446,10 +446,10 @@ class TestMCPToolsetIntegration:
             assert await toolset.list_resource_templates() == []
 
     async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
-        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=None)
+        handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         # An unrelated notification shouldn't touch the caches.
         await handler(
@@ -460,10 +460,10 @@ class TestMCPToolsetIntegration:
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
-        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=None)
+        handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         # Exception messages are passed through but shouldn't crash or invalidate caches.
         await handler(RuntimeError('transport error'))
@@ -472,10 +472,10 @@ class TestMCPToolsetIntegration:
     async def test_message_handler_invalidates_caches(
         self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
     ):
-        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
-        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=None)
+        handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         toolset._cached_resources = []  # pyright: ignore[reportPrivateUsage]
 
@@ -495,7 +495,7 @@ class TestMCPToolsetIntegration:
         assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_forwards_to_user_handler(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         seen: list[Any] = []
 
@@ -503,7 +503,7 @@ class TestMCPToolsetIntegration:
             seen.append(message)
 
         toolset = MCPToolset(fastmcp_server)
-        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=user_handler)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
         notification = mcp_types.ServerNotification(
             root=mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )
