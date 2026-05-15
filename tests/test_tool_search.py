@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -25,6 +25,7 @@ import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
+from pydantic_ai._load_capability import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     parse_discovered_tools,
@@ -75,7 +76,7 @@ from pydantic_ai.toolsets._tool_search import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import try_import
+from .conftest import IsDatetime, try_import
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
@@ -2206,6 +2207,314 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     # list so the OpenAI request carries `get_weather` as a regular function tool.
     tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
     assert 'get_weather' in tool_names
+
+
+@pytest.mark.vcr
+@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+async def test_anthropic_to_google_deferred_capability_history_replay(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    gemini_api_key: str,
+) -> None:
+    """End-to-end: a deferred capability is loaded on Anthropic (with automatic prompt
+    caching enabled), then the resulting history is replayed on Google. Google has no
+    native tool-search, so it depends entirely on the local-shape `ToolSearchReturnPart`
+    that `ToolSearch.before_model_request` synthesizes when `load_capability` fires —
+    that synthetic return is what makes `lookup_refund_policy` visible on Google's
+    first turn without a fresh `load_capability` call.
+
+    Snapshots capture the full trace (both providers' messages, usage including
+    `cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic side,
+    and Google's final output) so the cross-provider semantics are visible at a glance.
+    """
+    pytest.importorskip('anthropic')
+    pytest.importorskip('google.genai')
+
+    refunds_toolset = FunctionToolset[None]()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    def make_refunds_cap() -> Capability[None]:
+        return Capability[None](
+            id='refunds',
+            description='Refund policy tools.',
+            instructions='Use the refund policy tool before answering refund questions.',
+            toolset=refunds_toolset,
+            defer_loading=True,
+        )
+
+    anthropic_agent: Agent[None, str] = Agent(
+        model='anthropic:claude-sonnet-4-5',
+        capabilities=[make_refunds_cap()],
+        model_settings=AnthropicModelSettings(anthropic_cache=True),
+    )
+    anthropic_result = await anthropic_agent.run('Can I get a refund on order-123?')
+
+    assert anthropic_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Can I get a refund on order-123?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='toolu_01XffFMgRc3QBnP51xXRUHXV')],
+                usage=RequestUsage(
+                    input_tokens=805,
+                    output_tokens=54,
+                    details={
+                        'input_tokens': 805,
+                        'output_tokens': 54,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01WZYNRf9MHtqfYEVA59jq78',
+                finish_reason='tool_call',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={
+                            'capability_id': 'refunds',
+                            'instructions': 'Use the refund policy tool before answering refund questions.',
+                        },
+                        tool_call_id='toolu_01XffFMgRc3QBnP51xXRUHXV',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelResponse(
+                parts=[ToolSearchCallPart(args={'queries': ['<auto-discovered>']}, tool_call_id='auto_load_bb3453ff')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
+                        tool_call_id='auto_load_bb3453ff',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='toolu_01PFExXNks14qm5JWeHwai7C',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=968,
+                    output_tokens=60,
+                    details={
+                        'input_tokens': 968,
+                        'output_tokens': 60,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01Mk2WpNug99Z1t3LhpWnMXC',
+                finish_reason='tool_call',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_refund_policy',
+                        content='order-123: refund allowed for 30 days',
+                        tool_call_id='toolu_01PFExXNks14qm5JWeHwai7C',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+Based on the refund policy for order-123, you are eligible for a refund within 30 days of your purchase. If you're still within that timeframe, you should be able to get a refund. \n\
+
+Would you like me to help you process the refund for order-123?\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=1052,
+                    cache_write_tokens=1046,
+                    output_tokens=67,
+                    details={
+                        'input_tokens': 6,
+                        'output_tokens': 67,
+                        'cache_creation_input_tokens': 1046,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01LasPMKio1giX7gvYabwfpb',
+                finish_reason='stop',
+                run_id='019e2bd9-32f4-72de-a7af-dde738bad11a',
+                conversation_id='019e2bd9-32f4-72de-a7af-dde62a851d02',
+            ),
+        ]
+    )
+    # `result.usage` returns a deprecation-wrapper subclass of `RunUsage` until the
+    # `.usage()`-method form is removed; inline-snapshot can't reconstruct that subclass
+    # in create-mode (its `__init__` takes `(base, message)` not field kwargs). Snapshot
+    # the dict form — captures every RunUsage field including the provider-detail dict.
+    assert asdict(anthropic_result.usage) == snapshot(
+        {
+            'input_tokens': 2825,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 1046,
+            'output_tokens': 205,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {
+                'input_tokens': 1779,
+                'output_tokens': 205,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 1046,
+            },
+            'requests': 3,
+            'tool_calls': 2,
+        }
+    )
+
+    google_agent: Agent[None, str] = Agent(
+        model='google-gla:gemini-3-flash-preview',
+        capabilities=[make_refunds_cap()],
+    )
+    google_result = await google_agent.run(
+        'And what about order-456?',
+        message_history=anthropic_result.all_messages(),
+    )
+
+    assert google_result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='And what about order-456?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
+                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-456'},
+                        tool_call_id='u8e6rdhu',
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'Er0CCroCAQw51sceTJW57SLT5bXMWelA8Tv9S/cZWbafHfLdSmxoyik36xSJDa3BGFCI4ihLeVN6c98p+y7PXNcUAcPnV+sXSjMeaLdvB7TrHp3HzwBA1spPTPMsRfzpboDHA4Iu2E0rZ+SkvaakB3z9LhvRb1qa4i7fdspclyMd1fdz9axwXNx5RsinUapRmn0Poq5uFY0wDRVFmbqSImKDIF1y90h1ZAcEbFHGcULOakQF4fqH8E4/N0i8MtIbhLsYiPuHK5a50TTfOEjRKoIX2y3mPG/oH4wCdg78UsKKQ/sT3JVq9YairqSeVeT7QPd1m333QaHseQJYIf63Y8p5W3VQhRhxhxsoGQOmK789ElGxAyb+iVWj8rRVYCPZzr39QLDKgQgmDBtFB5SJhxQPIqhV0q2brSywrgL85v0='
+                        },
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=468, output_tokens=96, details={'thoughts_tokens': 72, 'text_prompt_tokens': 468}
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'service_tier': 'standard'},
+                provider_response_id='ECMHarjgJJGqjuMPk-m88Qo',
+                finish_reason='stop',
+                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
+                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_refund_policy',
+                        content='order-456: refund allowed for 30 days',
+                        tool_call_id='u8e6rdhu',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
+                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+For order-456, the policy is the same: refunds are allowed within 30 days of purchase.
+
+Would you like to proceed with a refund for either of these orders?\
+"""
+                    )
+                ],
+                usage=RequestUsage(input_tokens=594, output_tokens=39, details={'text_prompt_tokens': 594}),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'service_tier': 'standard'},
+                provider_response_id='EyMHavzrPPmv4-EP18mgiQ4',
+                finish_reason='stop',
+                run_id='019e2be0-f540-7424-8296-81cf67fcf6c8',
+                conversation_id='019e2be0-c490-77a2-a89a-cd2fe13721a9',
+            ),
+        ]
+    )
+    assert asdict(google_result.usage) == snapshot(
+        {
+            'input_tokens': 1062,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 135,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'thoughts_tokens': 72, 'text_prompt_tokens': 1062},
+            'requests': 2,
+            'tool_calls': 1,
+        }
+    )
+    assert google_result.output == snapshot("""\
+For order-456, the policy is the same: refunds are allowed within 30 days of purchase.
+
+Would you like to proceed with a refund for either of these orders?\
+""")
 
 
 def test_anthropic_tool_search_result_error_block_mapping():
