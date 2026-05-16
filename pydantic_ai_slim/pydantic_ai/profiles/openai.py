@@ -357,7 +357,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             else:
                 self.is_strict_compatible = False
 
-        if schema_type == 'object':
+        has_composition = 'oneOf' in schema or 'anyOf' in schema or 'allOf' in schema
+
+        if schema_type == 'object' and not has_composition:
             # Always ensure 'properties' key exists - OpenAI drops objects without it
             if 'properties' not in schema:
                 schema['properties'] = dict[str, Any]()
