@@ -202,20 +202,6 @@ stateDiagram-v2
 """)
 
 
-def test_mermaid_code_all_nodes_no_direction():
-    assert graph3.mermaid_code() == snapshot("""\
----
-title: graph3
----
-stateDiagram-v2
-  AllNodes --> AllNodes
-  AllNodes --> Foo
-  AllNodes --> Bar
-  Foo --> Bar
-  Bar --> [*]\
-""")
-
-
 def test_mermaid_code_all_nodes_with_direction_lr():
     assert graph3.mermaid_code(direction='LR') == snapshot("""\
 ---

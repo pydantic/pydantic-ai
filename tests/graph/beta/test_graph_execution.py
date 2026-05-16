@@ -176,17 +176,6 @@ async def test_reduce_first_value_task_cancellation():
     assert len(state.log) < 5
 
 
-async def test_empty_map_handling():
-    """Test handling of mapping an empty iterable.
-
-    Note: Empty maps with joins can be tricky and may need the downstream_join_id hint.
-    This test documents expected behavior.
-    """
-    # Skipping this test as empty maps need special handling with downstream_join_id
-    # The actual line coverage is achieved through other tests
-    pass
-
-
 async def test_complex_fork_stack_with_multiple_levels():
     """Test complex scenarios with multiple fork levels"""
     g = GraphBuilder(state_type=ExecutionState, output_type=list[int])

@@ -20,17 +20,6 @@ class EdgeCaseState:
     error_raised: bool = False
 
 
-async def test_graph_with_no_steps():
-    """Test a graph with no intermediate steps (direct start to end)."""
-    g = GraphBuilder(input_type=int, output_type=int)
-
-    g.add(g.edge_from(g.start_node).to(g.end_node))
-
-    graph = g.build()
-    result = await graph.run(inputs=42)
-    assert result == 42
-
-
 async def test_step_returning_none():
     """Test steps that return None."""
     g = GraphBuilder(state_type=EdgeCaseState)

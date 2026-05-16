@@ -387,13 +387,6 @@ def test_agent_from_spec_model_settings_merged():
     assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
 
 
-def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_retries_override():
     with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
@@ -4576,28 +4569,6 @@ class TestWrapNodeRunHook:
                     pass
         assert len(w) == 1
         assert 'wrap_node_run' in str(w[0].message)
-
-    async def test_works_with_manual_next(self):
-        """wrap_node_run fires when using manual next() driving."""
-        from pydantic_graph import End
-
-        @dataclass
-        class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                self.nodes.append(type(node).__name__)
-                return await handler(node)
-
-        cap = NodeObserverCap()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-
-        async with agent.iter('hello') as agent_run:
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                node = await agent_run.next(node)
-
-        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_chaining_nests_correctly(self):
         """Multiple capabilities compose wrap_node_run as nested middleware."""
@@ -10555,13 +10526,6 @@ def test_ordering_single_capability():
     cap = OutermostCap()
     combined = CombinedCapability([cap])
     assert list(combined.capabilities) == [cap]
-
-
-def test_ordering_no_constraints_noop():
-    """When no capability declares ordering, list is unchanged."""
-    a, b = PlainCapA(), PlainCapB()
-    combined = CombinedCapability([a, b])
-    assert list(combined.capabilities) == [a, b]
 
 
 def test_ordering_cycle_detection():

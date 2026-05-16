@@ -144,7 +144,3 @@ class TestGetXaiCassetteRequestBodies:
         assert bodies == snapshot(
             ['{"model": "grok"}', '{"text": "hi"}', '{"model": "grok-stream"}', '{"chunk": "data"}']
         )
-        assert '{"model": "grok"}' in bodies[0]
-        assert '{"text": "hi"}' in bodies[1]
-        assert '{"model": "grok-stream"}' in bodies[2]
-        assert '{"chunk": "data"}' in bodies[3]

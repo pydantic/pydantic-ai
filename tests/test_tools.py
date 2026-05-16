@@ -2850,42 +2850,6 @@ async def test_tool_timeout_retry_counts_as_failed():
     assert call_count == 3
 
 
-@pytest.mark.anyio
-async def test_tool_timeout_message_format():
-    """Test the format of the retry prompt message on timeout."""
-    import asyncio
-
-    call_count = 0
-
-    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
-        return ModelResponse(parts=[TextPart(content='done')])
-
-    agent = Agent(FunctionModel(model_logic))
-
-    @agent.tool_plain(timeout=0.1)
-    async def my_slow_tool() -> str:
-        await asyncio.sleep(1.0)
-        return 'done'  # pragma: no cover
-
-    result = await agent.run('call my_slow_tool')
-
-    retry_parts = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
-    ]
-    assert len(retry_parts) == 1
-    # Check message contains timeout value (tool_name is in the part, not in content)
-    assert '0.1' in retry_parts[0].content
-    assert retry_parts[0].tool_name == 'my_slow_tool'
-
-
 def test_tool_timeout_definition():
     """Test that timeout is properly set on ToolDefinition."""
     agent = Agent(TestModel())

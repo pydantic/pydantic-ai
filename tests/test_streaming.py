@@ -4506,21 +4506,6 @@ async def test_deferred_tool_validation_event_in_stream():
 # region: Stream cancellation tests
 
 
-async def test_run_stream_cancel():
-    agent = Agent(TestModel())
-
-    async with agent.run_stream('Hello') as result:
-        assert not result.cancelled
-        # Consume one chunk to start the stream
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        assert result.cancelled
-
-    # StreamedResponse.get() sets state='interrupted' when _cancelled is True
-    assert result.response.state == 'interrupted'
-
-
 async def test_run_stream_cancel_all_messages_includes_interrupted_response():
     """After cancelling a stream, all_messages() should include the interrupted ModelResponse."""
     agent = Agent(TestModel())

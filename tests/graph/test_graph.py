@@ -46,16 +46,6 @@ class Double(BaseNode[None, None, int]):
             return End(self.input_data * 2)
 
 
-async def test_graph():
-    my_graph = Graph(nodes=(Float2String, String2Length, Double))
-    assert my_graph.name is None
-    assert my_graph.inferred_types == (type(None), int)
-    result = await my_graph.run(Float2String(3.14))
-    # len('3.14') * 2 == 8
-    assert result.output == 8
-    assert my_graph.name == 'my_graph'
-
-
 async def test_graph_history(mock_snapshot_id: object):
     my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None

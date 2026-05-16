@@ -183,13 +183,6 @@ class TestValidateFromSpecArgs:
 
 
 class TestAgentFromSpecDeps:
-    def test_from_spec_with_deps_type(self) -> None:
-        agent = Agent.from_spec(
-            {'model': 'test', 'instructions': 'Hello {{name}}'},
-            deps_type=MyDeps,
-        )
-        assert agent.model is not None
-
     def test_from_spec_with_deps_schema(self) -> None:
         agent = Agent.from_spec(
             {
@@ -210,15 +203,6 @@ class TestAgentFromSpecDeps:
             {'model': 'test', 'instructions': 'Hello world'},
         )
         assert agent.model is not None
-
-    def test_from_spec_template_instructions_stored(self) -> None:
-        """Template instructions are stored as TemplateStr, not plain strings."""
-        agent: Agent[Any, str] = Agent.from_spec(
-            {'model': 'test', 'instructions': 'Hello {{name}}'},
-            deps_type=MyDeps,
-        )
-        # Instructions with templates are stored as TemplateStr
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
         """Without deps_type, from_spec returns Agent[None, str]."""

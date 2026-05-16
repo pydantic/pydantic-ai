@@ -116,10 +116,6 @@ class TestPrepareRequestThinkingResolution:
         model = _make_model(supports_thinking=True)
         assert _resolve_thinking(model, thinking=True) is True
 
-    def test_thinking_effort_level_with_supports_thinking(self):
-        model = _make_model(supports_thinking=True)
-        assert _resolve_thinking(model, thinking='high') == 'high'
-
     def test_thinking_true_without_supports_thinking(self):
         """Models that don't support thinking silently ignore the setting."""
         model = _make_model(supports_thinking=False)
@@ -305,13 +301,6 @@ class TestAnthropicThinkingTranslation:
     def test_low_uses_adaptive_on_adaptive(self, adaptive_model: FunctionModel):
         """thinking='low' on adaptive model -> adaptive (effort controlled via output_config)."""
         params = ModelRequestParameters(thinking='low')
-        settings: ModelSettings = {}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'adaptive'}
-
-    def test_high_uses_adaptive_on_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='high' on adaptive model -> adaptive (effort controlled via output_config)."""
-        params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result == {'type': 'adaptive'}

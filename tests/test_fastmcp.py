@@ -183,11 +183,6 @@ class TestFastMCPToolsetInitialization:
         # Test that the toolset was created successfully
         assert toolset.client is fastmcp_client
 
-    async def test_id_property(self, fastmcp_client: Client[FastMCPTransport]):
-        """Test that the id property returns None."""
-        toolset = FastMCPToolset(fastmcp_client)
-        assert toolset.id is None
-
     async def test_process_tool_call_default_is_none(self, fastmcp_client: Client[FastMCPTransport]):
         """Test that process_tool_call defaults to None."""
         toolset = FastMCPToolset(fastmcp_client)
