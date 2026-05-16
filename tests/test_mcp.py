@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 from __future__ import annotations
@@ -5,11 +7,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -25,7 +30,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
     ModelRetry,
     UnexpectedModelBehavior,
@@ -77,10 +82,19 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as logfire_imports_successful:
+    import logfire
+    from logfire.testing import TestExporter
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
+    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -125,8 +139,166 @@ async def test_reentrant_context_manager():
             pass
 
 
+async def test_cross_task_mcp_server():
+    """Test that multiple asyncio tasks can share one MCPServer without cancel scope errors.
+
+    Previously, this would raise:
+        RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def task_a():
+        async with server:
+            entered.set()
+            await release.wait()
+
+    async def task_b():
+        await entered.wait()
+        async with server:
+            result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+            assert result == 32.0
+        release.set()
+
+    await asyncio.gather(task_a(), task_b())
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs():
+    """Test that multiple parallel agent.run() calls sharing one MCPServer work."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    async def run_agent(celsius: int) -> AgentRunResult[str]:
+        return await agent.run(f'Convert {celsius}C to F')
+
+    r0, r100, r50 = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
+
+    for r in (r0, r100, r50):
+        tool_calls = [
+            m
+            for m in r.all_messages()
+            if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        ]
+        assert len(tool_calls) >= 1, f'Expected at least one tool call, got: {r.all_messages()}'
+
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs_share_one_connection():
+    """Parallel `agent.run()` calls on one MCPServer must reuse a single underlying connection.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514. Sharing a
+    server instance across concurrent tasks is the whole point of holding a server object;
+    if each sibling task opened its own subprocess we'd silently multiply resource usage.
+    Asserts that 5 concurrent runs open the stdio transport exactly once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        await asyncio.gather(*[agent.run(f'Convert {c}C to F') for c in range(5)])
+
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+async def test_server_shared_across_sibling_tasks():
+    """An MCPServer opened in one task must be shared with sibling tasks spawned later.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
+    fasta2a / FastAPI lifespan pattern: a lifespan task opens `async with server:` and
+    yields, then request-handler tasks — spawned as *siblings* (not descendants) of the
+    lifespan task — enter the same server object. They must share the lifespan's
+    connection; opening a fresh subprocess per request would defeat the lifespan pattern.
+    Asserts the server opens exactly once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    ready = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def lifespan_holder() -> None:
+        async with server:
+            ready.set()
+            await stop.wait()
+
+    async def handler() -> ToolResult:
+        async with server:
+            return await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        lifespan_task = asyncio.create_task(lifespan_holder())
+        await ready.wait()
+        results = await asyncio.gather(*[handler() for _ in range(5)])
+        stop.set()
+        await lifespan_task
+
+    assert results == [32.0] * 5
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_parallel_agent_runs_produce_independent_span_trees():
+    """Each parallel `agent.run()` sharing one MCPServer produces its own independent trace.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: each agent
+    run's tool calls must remain children of that run's `agent run` span and not leak
+    across sibling runs' traces.
+    """
+    exporter = TestExporter()
+    logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
+    Agent.instrument_all(True)
+    try:
+        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+        agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+        async with server:
+            await asyncio.gather(*[agent.run(str(c)) for c in range(3)])
+
+        spans = [s for s in exporter.exported_spans if s.context is not None]
+        trace_ids = {s.context.trace_id for s in spans if s.context is not None}
+        assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
+
+        for trace_id in trace_ids:
+            trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
+            names = [s.name for s in trace_spans]
+            assert names.count('agent run') >= 1
+            assert 'running tool' in names
+            # Every span in this trace must actually belong to it — no cross-trace parenting
+            span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
+            for s in trace_spans:
+                if s.parent is not None:
+                    assert s.parent.span_id in span_ids, (
+                        f'span {s.name!r} in trace {trace_id:x} has a parent outside its own trace'
+                    )
+    finally:
+        Agent.instrument_all(False)
+
+
 async def test_context_manager_initialization_error() -> None:
-    """Test if streams are closed if client fails to initialize."""
+    """Test that a failed initialization cleans up and allows re-entry."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
@@ -135,8 +307,12 @@ async def test_context_manager_initialization_error() -> None:
             async with server:
                 pass
 
-    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
-    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert not server.is_running
+
+    # Verify re-entry works after a failed initialization
+    async with server:
+        assert server.is_running
+    assert not server.is_running
 
 
 async def test_aexit_called_more_times_than_aenter():
@@ -152,35 +328,106 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
-async def test_aexit_concurrent_does_not_corrupt_running_count():
-    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
-
-    Injects a yield point before real lock acquisition so both tasks pass the
-    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
-
-    Old code (guard outside lock):
-      Task A reads _running_count == 1, passes guard, yields.
-      Task B reads _running_count == 1, passes guard, yields.
-      Task A acquires lock, decrements to 0.
-      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
-
-    New code (guard inside lock):
-      Task A acquires lock, reads 1, decrements to 0, releases.
-      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+async def test_aenter_cancelled_during_startup():
+    """Cancelling `__aenter__` while it waits for the session to become ready must tear down
+    the background session task cleanly and leave the server re-entrant.
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    # One active entry — the race only matters when both tasks see count > 0.
-    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+    async def hanging_runner() -> None:
+        await asyncio.Event().wait()
 
-    # Replace the real lock with one that yields before acquiring,
-    # opening the interleaving window the old code left unprotected.
-    class InterleavingLock(asyncio.Lock):
-        async def acquire(self) -> Literal[True]:
-            await asyncio.sleep(0)  # yield — lets the other task reach the same point
-            return await super().acquire()
+    with patch.object(server, '_session_runner', hanging_runner):
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(server.__aenter__(), timeout=0.1)
 
-    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+    assert not server.is_running
+
+    # Re-entry must work after a cancelled startup
+    async with server:
+        assert server.is_running
+    assert not server.is_running
+
+
+async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatch):
+    """`__aexit__` must be bounded if the transport's own `__aexit__` deadlocks.
+
+    Otherwise a misbehaving server (e.g. subprocess that ignores SIGTERM, HTTP/SSE
+    connection where the server never closes its side) can deadlock the agent's
+    own shutdown — `await session_task_to_await` parks forever inside `__aexit__`.
+
+    Patches `_session_runner` instead of `client_streams` (same pattern as
+    `test_aenter_cancelled_during_startup`) — testing the lifecycle invariant, not
+    the MCP protocol; avoids leaking a real subprocess into later tests.
+    """
+    import time
+
+    import pydantic_ai.mcp as _mcp_module
+
+    grace = 0.2
+    monkeypatch.setattr(_mcp_module, '_SHUTDOWN_GRACE_SECONDS', grace)
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    teardown_reached = anyio.Event()
+
+    async def fake_runner_with_hung_teardown() -> None:
+        state = server._session_state  # pyright: ignore[reportPrivateUsage]
+        ready_event = state.ready_event
+        stop_event = state.stop_event
+        assert ready_event is not None and stop_event is not None
+        try:
+            ready_event.set()
+            await stop_event.wait()
+        finally:
+            teardown_reached.set()
+            await asyncio.Event().wait()
+
+    async def enter_then_exit() -> None:
+        async with server:
+            pass
+
+    # Outer `wait_for` is a safety net so a regression doesn't hang the suite —
+    # the real assertion is on elapsed time below. `wait_for` itself can't detect
+    # the regression because `__aexit__` swallows the cancellation it sends.
+    safety_net = 5.0
+    start = time.monotonic()
+    with patch.object(server, '_session_runner', fake_runner_with_hung_teardown):
+        await asyncio.wait_for(enter_then_exit(), timeout=safety_net)
+    elapsed = time.monotonic() - start
+
+    assert teardown_reached.is_set(), 'transport teardown was never reached'
+    assert not server.is_running
+    # With the fix: bounded by ~grace. Without: `__aexit__` awaits the hung task
+    # until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
+    # between the two regimes, with headroom for CI jitter.
+    assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
+
+
+async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
+    """Regression test: concurrent __aexit__ calls must not corrupt the nesting counter.
+
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # One active entry — the race only matters when both tasks see counter > 0.
+    server._session_state.nesting_counter = 1  # pyright: ignore[reportPrivateUsage]
+
+    class InterleavingLock:
+        def __init__(self) -> None:
+            self._inner = anyio.Lock()
+
+        async def __aenter__(self) -> None:
+            await anyio.sleep(0)  # yield - lets the other task reach the same point
+            await self._inner.__aenter__()
+
+        async def __aexit__(self, *args: Any) -> None:
+            await self._inner.__aexit__(*args)
+
+    # `_enter_lock` is a `cached_property`; seeding the instance dict primes the cache.
+    vars(server)['_enter_lock'] = InterleavingLock()
 
     results = await asyncio.gather(
         server.__aexit__(None, None, None),
@@ -189,10 +436,93 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
     )
 
     # Exactly one exit must succeed and one must raise ValueError (not silently
-    # corrupt the count). With the old code both would succeed and count == -1.
+    # corrupt the counter). With a guard outside the lock both would succeed and counter == -1.
     errors = [r for r in results if isinstance(r, ValueError)]
     assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
-    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
+    assert server._session_state.nesting_counter == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_recycled_session_state_does_not_corrupt_new_session():
+    """Regression test: an old `_session_runner`'s `finally` must not corrupt a recycled session.
+
+    Race: the last `__aexit__` releases the lock and then awaits the old session task
+    *outside* the lock. A concurrent `__aenter__` grabs the lock and reassigns
+    `state.ready_event` / `state.stop_event` for a fresh session. If the old runner's
+    `finally` writes to `state.*` directly, it can prematurely set the *new* session's
+    `ready_event`, causing the new `__aenter__` to return with `state.client is None`.
+
+    The fix captures local references in `_session_runner` so its `finally` only
+    signals events it owns. This test exercises `_session_runner` directly with
+    controlled timing to verify that contract.
+
+    Reported by Devin in https://github.com/pydantic/pydantic-ai/pull/4514#discussion_r3173639823
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    streams_entered = anyio.Event()
+    streams_can_exit = anyio.Event()
+
+    @asynccontextmanager
+    async def gated_streams() -> AsyncIterator[Any]:
+        # Yield streams that fail ClientSession initialization quickly, so the runner
+        # exits its try block and reaches finally — but block teardown until released.
+        send_a, recv_a = anyio.create_memory_object_stream[Any](0)
+        send_b, recv_b = anyio.create_memory_object_stream[Any](0)
+        try:
+            streams_entered.set()
+            yield (recv_a, send_b)
+        finally:
+            await streams_can_exit.wait()
+            await send_a.aclose()
+            await recv_a.aclose()
+            await send_b.aclose()
+            await recv_b.aclose()
+
+    state = server._session_state  # pyright: ignore[reportPrivateUsage]
+    state.ready_event = anyio.Event()
+    state.stop_event = anyio.Event()
+    state.session_task = asyncio.current_task()  # pretend this task is the active session
+
+    # Capture references to verify which event the runner's `finally` signals.
+    original_ready_event = state.ready_event
+    original_stop_event = state.stop_event
+
+    with patch.object(server, 'client_streams', gated_streams):
+        # Start the runner — it will hang inside ClientSession.initialize() because
+        # gated_streams sends nothing. We'll force it to teardown via task cancellation.
+        runner_task = asyncio.create_task(server._session_runner())  # pyright: ignore[reportPrivateUsage]
+        await streams_entered.wait()
+
+        # Cancel to force the runner into its except/finally path.
+        runner_task.cancel()
+        await asyncio.sleep(0)  # let the cancel propagate into the runner
+
+        # Simulate the recycled-session race: replace state events as if a new
+        # __aenter__ had begun while the old runner is mid-teardown.
+        new_ready_event = anyio.Event()
+        new_stop_event = anyio.Event()
+        state.ready_event = new_ready_event
+        state.stop_event = new_stop_event
+        state.connect_error = None
+
+        # Allow the runner's `client_streams.__aexit__` (and thus its finally) to run.
+        streams_can_exit.set()
+        try:
+            await runner_task
+        except BaseException:
+            pass
+
+        # The runner's `finally` must signal the event it captured at entry — NOT the
+        # event that was swapped in afterwards.
+        assert original_ready_event.is_set(), 'Old runner did not set its own ready_event'
+        assert not new_ready_event.is_set(), 'Old runner corrupted the new session by setting the recycled ready_event'
+        # And it must not have set state.connect_error on the new session — current_task
+        # is still this test, not the runner, so the guarded write should skip it.
+        assert state.connect_error is None
+        # The original stop_event was never used by the test, so it should remain unset.
+        assert not new_stop_event.is_set()
+        # State referenced by the test (acting as fake session_task) is left untouched.
+        _ = original_stop_event
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
@@ -227,7 +557,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(name, tool_args, {'deps': ctx.deps})
+        return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
@@ -347,6 +677,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -377,6 +708,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -389,6 +721,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
@@ -413,6 +746,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -526,6 +860,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -556,6 +891,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -568,6 +904,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -596,6 +933,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -616,6 +954,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -646,6 +985,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -658,6 +998,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -682,6 +1023,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -702,6 +1044,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -732,6 +1075,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -744,6 +1088,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -768,6 +1113,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -790,6 +1136,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -820,6 +1167,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -832,6 +1180,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -860,6 +1209,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -884,6 +1234,7 @@ async def test_tool_returning_image_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -914,6 +1265,7 @@ async def test_tool_returning_image_resource_link(
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -926,6 +1278,7 @@ async def test_tool_returning_image_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -954,6 +1307,7 @@ async def test_tool_returning_image_resource_link(
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -972,6 +1326,7 @@ async def test_tool_returning_audio_resource(
                     parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
@@ -980,12 +1335,13 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -998,6 +1354,7 @@ async def test_tool_returning_audio_resource(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
@@ -1009,12 +1366,13 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1038,6 +1396,7 @@ async def test_tool_returning_audio_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1045,7 +1404,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
-                            provider_name='google-gla',
+                            provider_name='google',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -1054,12 +1413,13 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1072,6 +1432,7 @@ async def test_tool_returning_audio_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
@@ -1083,12 +1444,13 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1111,6 +1473,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1141,6 +1504,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_response_id='chatcmpl-CpxEaVAApbQvDQSTnqrFd0mxu7Cs3',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1153,6 +1517,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1181,6 +1546,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_response_id='chatcmpl-CpxEdNdePHwVHTJLjmaHWzNUfpoNo',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1201,6 +1567,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
@@ -1225,6 +1592,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1237,6 +1605,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -1261,6 +1630,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1281,6 +1651,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1309,6 +1680,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1321,6 +1693,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -1345,6 +1718,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1367,6 +1741,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1397,6 +1772,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1409,6 +1785,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1439,6 +1816,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1451,6 +1829,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1479,6 +1858,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1499,6 +1879,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
@@ -1523,6 +1904,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1535,6 +1917,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
@@ -1559,6 +1942,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1581,6 +1965,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1611,6 +1996,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1628,6 +2014,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1656,6 +2043,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1708,7 +2096,7 @@ async def test_mcp_server_raises_mcp_error(
 
     async with agent:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1925,7 +2313,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1947,7 +2335,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(return_value=empty_result),
         ):
@@ -1963,7 +2351,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resources',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1985,7 +2373,7 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resource_templates',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -2620,7 +3008,7 @@ async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._session_state.client,  # pyright: ignore[reportPrivateUsage]
             'list_prompts',
             new=AsyncMock(side_effect=mcp_error),
         ):

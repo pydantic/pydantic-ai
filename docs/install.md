@@ -51,11 +51,13 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs [Cohere Model](models/cohere.md) dependency `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs [Bedrock Model](models/bedrock.md) dependency `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
-* `outlines-transformers` - installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-llamacpp` - installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-mlxlm` - installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-sglang` - installs [Outlines Model](models/outlines.md) dependency `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-vllm-offline` - installs [Outlines Model](models/outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
+* `sentence-transformers` - installs [Sentence Transformers Embedding Model](embeddings.md#sentence-transformers-local) dependency `sentence-transformers` [PyPI ↗](https://pypi.org/project/sentence-transformers){:target="_blank"}
+* `voyageai` - installs [VoyageAI Embedding Model](embeddings.md#voyageai) dependency `voyageai` [PyPI ↗](https://pypi.org/project/voyageai){:target="_blank"}
+* `outlines-transformers` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-llamacpp` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-mlxlm` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-sglang` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependency `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-vllm-offline` - (deprecated, will be removed in v2) installs [Outlines Model](models/outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
 * `duckduckgo` - installs [DuckDuckGo Search Tool](common-tools.md#duckduckgo-search-tool) dependency `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs [Tavily Search Tool](common-tools.md#tavily-search-tool) dependency `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 * `exa` - installs [Exa Search Tool](common-tools.md#exa-search-tool) dependency `exa-py` [PyPI ↗](https://pypi.org/project/exa-py){:target="_blank"}
@@ -63,7 +65,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `mcp` [PyPI ↗](https://pypi.org/project/mcp){:target="_blank"}
 * `fastmcp` - installs [FastMCP](mcp/fastmcp-client.md) dependency `fastmcp` [PyPI ↗](https://pypi.org/project/fastmcp){:target="_blank"}
-* `a2a` - installs [A2A](a2a.md) dependency `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
+* `a2a` - (deprecated, will be removed in v2) installs [A2A](a2a.md) dependency `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}. Prefer installing `fasta2a[pydantic-ai]>=0.6.1` directly and using `from fasta2a.pydantic_ai import agent_to_a2a`.
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}

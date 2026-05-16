@@ -265,6 +265,7 @@ Here's an example that makes all tools strict if the model is an OpenAI model:
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.models.test import TestModel
 
 
@@ -277,7 +278,7 @@ async def turn_on_strict_if_openai(
 
 
 test_model = TestModel()
-agent = Agent(test_model, prepare_tools=turn_on_strict_if_openai)
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
 
 
 @agent.tool_plain
@@ -302,6 +303,7 @@ Here's another example that conditionally filters out the tools by name if the d
 ```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
 
 
 def launch_potato(target: str) -> str:
@@ -319,7 +321,7 @@ async def filter_out_tools_by_name(
 agent = Agent(
     'test',
     tools=[Tool(launch_potato)],
-    prepare_tools=filter_out_tools_by_name,
+    capabilities=[PrepareTools(filter_out_tools_by_name)],
     deps_type=bool,
 )
 
@@ -340,6 +342,130 @@ You can use `prepare_tools` to:
 
 If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
 
+## Tool Choice {#tool-choice}
+
+The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
+
+Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
+
+### Options
+
+| Value | Description |
+|-------|-------------|
+| `'auto'` (default) | Model decides whether to use tools. All tools available. |
+| `'none'` | Disable function tools. Model can respond with text or use output tools. |
+| `'required'` | Force the model to use a function tool. Excludes output tools, so set dynamically via a [capability](#dynamic-tool-choice-via-capabilities) or use [direct model requests](direct.md); raises an error when set statically in `agent.run()`. |
+| `['tool_a', ...]` | Restrict to specific tools by name. Excludes output tools — same dynamic/direct requirement as `'required'`. |
+| [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
+
+### Example
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ToolOrOutput
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'Sunny in {city}'
+
+
+@agent.tool_plain
+def get_time(city: str) -> str:
+    return f'12:00 in {city}'
+
+
+# Pass tool_choice via model_settings
+result = agent.run_sync('Hello', model_settings={'tool_choice': 'none'})
+
+# Use ToolOrOutput to restrict to specific function tools while allowing output
+result = agent.run_sync(
+    'Hello', model_settings={'tool_choice': ToolOrOutput(function_tools=['get_weather'])}
+)
+```
+
+### Dynamic tool choice via capabilities {#dynamic-tool-choice-via-capabilities}
+
+`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.Agent.run], the agent's own `model_settings`, or the underlying model's defaults).
+
+To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
+
+```python {title="force_first_call.py"}
+from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+
+class RequireFirstCall(AbstractCapability[None]):
+    """Force `tool_name` to be called successfully before anything else."""
+
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[None]) -> ModelSettings:
+            called = any(
+                isinstance(part, ToolReturnPart) and part.tool_name == self.tool_name
+                for message in ctx.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            if called:
+                return ModelSettings()
+            return ModelSettings(tool_choice=[self.tool_name])
+
+        return settings
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[RequireFirstCall('get_weather')])
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'Sunny in {city}'
+```
+
+Because capability-supplied settings are resolved per step, the callable's returned `tool_choice` is trusted to change across steps and is not rejected by the baseline validator. For a single model request without an agent loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request] instead.
+
+### Provider Support
+
+All providers support `'auto'` and `'none'`. Key differences for other options:
+
+| Provider | `'required'` | Specific tools | Notes |
+|----------|:------------:|:--------------:|-------|
+| OpenAI | ✓ | ✓ | Full support |
+| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Google | ✓ | ✓ | |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
+| Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
+| Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
+| xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+
+### Prompt caching implications {#tool-choice-caching}
+
+Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
+
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
+- **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
+
+The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
+
+| Provider | Cache-breaking case |
+|----------|---------------------|
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools |
+| Groq / HuggingFace | `tool_choice` is a list of multiple tools |
+| Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
+| xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Responses | Never — `allowed_tools` handles all cases natively |
+| Google | Never — `allowed_function_names` handles all cases natively |
+
+If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
+
 ## Tool Execution and Retries {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
@@ -358,7 +484,9 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 
-Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
+Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(tool_retries=N)`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
+
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(tool_retries=...)` as their default when no per-toolset value is set.
 
 ### Tool Timeout
 
@@ -472,22 +600,38 @@ async def lifespan(app):
 #### Output Tool Calls
 
 When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
-The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+The `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+For more information on how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
 ## Tool Search
 
-Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them.
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
-This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections. Tool search is implemented on the Pydantic AI side and works with any model. Native provider support is planned in [#4167](https://github.com/pydantic/pydantic-ai/issues/4167).
+Reach for it when:
 
-For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
+* the agent exposes ~10+ tools or more than ~10k tokens of tool definitions
+* tools cover distinct domains (e.g. multiple MCP servers) and only a subset is relevant per request
+* the toolset is growing and you want headroom
+
+Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
+
+To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+
+Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
+
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility.
+* **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
+* **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
+
+Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
+
+For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 
 @agent.tool_plain(defer_loading=True)
@@ -506,8 +650,63 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
 mcp = MCPServerHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
 ```
+
+### Configuring `ToolSearch`
+
+Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability to control the strategy or provide a custom search function:
+
+```python {title="tool_search_custom.py"}
+from collections.abc import Sequence
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.tools import ToolDefinition
+
+
+def fuzzy_search(
+    ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+) -> list[str]:
+    """Match tools whose name or description contains any query word."""
+    needles = [n for q in queries for n in q.lower().split()]
+    return [
+        t.name
+        for t in tools
+        if any(n in t.name.lower() or n in (t.description or '').lower() for n in needles)
+    ]
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
+
+
+@agent.tool_plain(defer_loading=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
+Available strategy values:
+
+| `strategy` | Algorithm | Behavior |
+|---|---|---|
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
+| `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
+| `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
+| Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
+
+The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm and the current provider — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
+
+To force the local `keywords` algorithm on a provider that natively supports tool search, override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools] to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
+
+!!! note "Cross-provider history replay"
+    A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
+
+    * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
+    * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.

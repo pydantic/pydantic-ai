@@ -34,7 +34,7 @@ jobs:
     outputs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
       pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
-      pr_head_ref: ${{ steps.pr-info.outputs.pr_head_ref }}
+      pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -43,7 +43,7 @@ jobs:
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
           echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
-          echo "pr_head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+          echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,12 +61,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
           cache-suffix: claude-code
@@ -78,7 +78,7 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
 
-      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
+      - uses: anthropics/claude-code-action@f4fb5c6cdccc1ee7af63692f5d08d56efaa64cc8 # v1.0.121
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |
@@ -99,10 +99,10 @@ jobs:
       actions: read
     steps:
       - name: Checkout fork repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
-          ref: ${{ needs.get-pr-info.outputs.pr_head_ref }}
+          ref: ${{ needs.get-pr-info.outputs.pr_head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -120,7 +120,7 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
 
-      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
+      - uses: anthropics/claude-code-action@f4fb5c6cdccc1ee7af63692f5d08d56efaa64cc8 # v1.0.121
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |

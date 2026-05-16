@@ -44,7 +44,7 @@ with try_import() as imports_successful:
     import yaml
     from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
-    from xai_sdk.proto import chat_pb2
+    from xai_sdk.proto import chat_pb2, collections_pb2
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +72,30 @@ class StreamInteraction:
     chunks_json: list[dict[str, Any]] | None = None
 
 
+CollectionsMethod = Literal['create', 'upload_document', 'delete']
+CollectionsResponseProtoType = Literal['CollectionMetadata', 'DocumentMetadata', '']
+
+
+@dataclass
+class CollectionsMethodInteraction:
+    """A single `client.collections.<method>(...)` call.
+
+    Captures the returned proto so replay can reconstruct an equivalent object offline.
+    `response_raw` is `b''` for `delete` (the SDK method returns None).
+    `request_json` holds the method kwargs (with `bytes` values stripped) for debuggability;
+    it parallels the `request_json` field on `SampleInteraction`/`StreamInteraction` so generic
+    cassette iteration can reach it uniformly.
+    """
+
+    method: CollectionsMethod
+    response_proto_type: CollectionsResponseProtoType
+    response_raw: bytes
+    request_json: dict[str, Any] | None = None
+    response_json: dict[str, Any] | None = None
+
+
 # Union type for interactions (used for type hints in the ordered list)
-Interaction = SampleInteraction | StreamInteraction
+Interaction = SampleInteraction | StreamInteraction | CollectionsMethodInteraction
 
 
 class XaiAsyncClientLike(Protocol):
@@ -87,6 +109,9 @@ class XaiAsyncClientLike(Protocol):
 
     @property
     def files(self) -> Any: ...
+
+    @property
+    def collections(self) -> Any: ...
 
 
 ProtoCassetteRecordMode = Literal['none', 'once', 'new_episodes', 'rewrite', 'all']
@@ -184,6 +209,17 @@ class XaiProtoCassette:
                         chunks_json=resp.get('chunks_json'),
                     )
                 )
+            elif 'collections_method' in item:
+                block = item['collections_method']
+                interactions.append(
+                    CollectionsMethodInteraction(
+                        method=block['method'],
+                        response_proto_type=block.get('response_proto_type', ''),
+                        response_raw=block.get('response_raw', b''),
+                        request_json=block.get('request_json'),
+                        response_json=block.get('response_json'),
+                    )
+                )
         return cls(interactions=interactions)
 
     def dump(self, path: Path) -> None:
@@ -230,6 +266,18 @@ class XaiProtoCassette:
                         'response_stream': resp,
                     }
                 )
+
+            elif isinstance(interaction, CollectionsMethodInteraction):
+                block: dict[str, Any] = {
+                    'method': interaction.method,
+                    'response_proto_type': interaction.response_proto_type,
+                }
+                if interaction.request_json:
+                    block['request_json'] = interaction.request_json
+                if interaction.response_json:
+                    block['response_json'] = interaction.response_json
+                block['response_raw'] = interaction.response_raw
+                interactions_data.append({'collections_method': block})
 
         data: dict[str, Any] = {
             'version': self.version,
@@ -319,7 +367,14 @@ class XaiProtoCassetteClient:
                 '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
             )
         interaction = self.cassette.interactions[self.interaction_idx]
-        return 'sample' if isinstance(interaction, SampleInteraction) else 'stream'
+        if isinstance(interaction, SampleInteraction):
+            return 'sample'
+        if isinstance(interaction, StreamInteraction):
+            return 'stream'
+        raise RuntimeError(
+            f'Cassette out of order at interaction {self.interaction_idx}: expected chat.sample()/stream(), '
+            f'got {type(interaction).__name__}. Re-record the cassette.'
+        )
 
     @property
     def chat(self) -> Any:
@@ -330,6 +385,10 @@ class XaiProtoCassetteClient:
     def files(self) -> Any:
         return type('Files', (), {'upload': self._files_upload})
 
+    @property
+    def collections(self) -> Any:
+        return _CassetteCollectionsStub(self)
+
     def _chat_create(self, *_args: Any, **_kwargs: Any) -> _CassetteChatInstance:
         expected_type = self.peek_interaction_type()
         return _CassetteChatInstance(self, expected_type)
@@ -339,6 +398,47 @@ class XaiProtoCassetteClient:
         # Keeping similar shape to the real SDK return value.
         file_id = f'file-{abs(hash((len(data), filename))) % 1_000_000:06d}'
         return type('UploadedFile', (), {'id': file_id})()
+
+
+@dataclass
+class _CassetteCollectionsStub:
+    """Replay-only stub for `client.collections.*` async methods.
+
+    Each method consumes the next `CollectionsMethodInteraction` from the cassette and
+    reconstructs the proto return value. Kwargs from the test body are ignored.
+    """
+
+    _client: XaiProtoCassetteClient
+
+    def _consume(self, expected_method: CollectionsMethod) -> CollectionsMethodInteraction:
+        if self._client.interaction_idx >= len(self._client.cassette.interactions):
+            raise IndexError(
+                f'Cassette exhausted at interaction {self._client.interaction_idx}.\n'
+                'Re-record this cassette with:\n'
+                '  XAI_API_KEY=... uv run pytest --record-mode=rewrite <test> -v'
+            )
+        interaction = self._client.cassette.interactions[self._client.interaction_idx]
+        if not isinstance(interaction, CollectionsMethodInteraction) or interaction.method != expected_method:
+            raise RuntimeError(
+                f'Cassette out of order at interaction {self._client.interaction_idx}: '
+                f'expected collections.{expected_method}(), got {type(interaction).__name__}'
+                + (f' (method={interaction.method})' if isinstance(interaction, CollectionsMethodInteraction) else '')
+                + '. Re-record the cassette.'
+            )
+        self._client.interaction_idx += 1
+        return interaction
+
+    async def create(self, *_args: Any, **_kwargs: Any) -> collections_pb2.CollectionMetadata:
+        interaction = self._consume('create')
+        return collections_pb2.CollectionMetadata.FromString(interaction.response_raw)
+
+    async def upload_document(self, *_args: Any, **_kwargs: Any) -> collections_pb2.DocumentMetadata:
+        interaction = self._consume('upload_document')
+        return collections_pb2.DocumentMetadata.FromString(interaction.response_raw)
+
+    async def delete(self, *_args: Any, **_kwargs: Any) -> None:
+        self._consume('delete')
+        return None
 
 
 @dataclass
@@ -374,6 +474,13 @@ class XaiProtoCassetteHybridClient:
     @property
     def files(self) -> Any:
         return type('Files', (), {'upload': self._inner.files.upload})
+
+    @property
+    def collections(self) -> Any:
+        raise NotImplementedError(
+            'hybrid mode not supported for collections.* — '
+            'use --record-mode=rewrite or new_episodes on a fresh cassette'
+        )
 
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
         inner_chat = self._inner.chat.create(*args, **kwargs)
@@ -496,6 +603,14 @@ class XaiProtoRecorder:
     def files(self) -> Any:
         return type('Files', (), {'upload': self._inner.files.upload})
 
+    @property
+    def collections(self) -> Any:
+        return _RecorderCollectionsStub(
+            inner_collections=self._inner.collections,
+            cassette=self.cassette,
+            include_debug_json=self.include_debug_json,
+        )
+
     def dump(self, path: Path) -> None:
         self.cassette.dump(path)
 
@@ -564,6 +679,92 @@ class XaiProtoRecorder:
                 return _aiter()
 
         return _RecorderChatInstance()
+
+
+@dataclass
+class _RecorderCollectionsStub:
+    """Record-mode stub for `client.collections.*` async methods.
+
+    Delegates to the real inner client's `collections` and captures the final proto return value.
+    `upload_document` is multi-step inside the SDK (stream upload + add + poll) but this
+    intentionally records only the settled `DocumentMetadata` so replay returns it instantly.
+    """
+
+    inner_collections: Any
+    cassette: XaiProtoCassette
+    include_debug_json: bool = False
+
+    async def create(self, *args: Any, **kwargs: Any) -> collections_pb2.CollectionMetadata:
+        response = await self.inner_collections.create(*args, **kwargs)
+        self._append('create', 'CollectionMetadata', args, kwargs, response)
+        return response
+
+    async def upload_document(self, *args: Any, **kwargs: Any) -> collections_pb2.DocumentMetadata:
+        response = await self.inner_collections.upload_document(*args, **kwargs)
+        self._append('upload_document', 'DocumentMetadata', args, kwargs, response)
+        return response
+
+    async def delete(self, *args: Any, **kwargs: Any) -> None:
+        await self.inner_collections.delete(*args, **kwargs)
+        self.cassette.interactions.append(
+            CollectionsMethodInteraction(
+                method='delete',
+                response_proto_type='',
+                response_raw=b'',
+                request_json=_sanitize_kwargs(args, kwargs),
+                response_json=None,
+            )
+        )
+        return None
+
+    def _append(
+        self,
+        method: CollectionsMethod,
+        proto_type: CollectionsResponseProtoType,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        response: Any,
+    ) -> None:
+        response_json: dict[str, Any] | None = None
+        if self.include_debug_json:
+            response_json = MessageToDict(response, preserving_proto_field_name=True)
+        self.cassette.interactions.append(
+            CollectionsMethodInteraction(
+                method=method,
+                response_proto_type=proto_type,
+                response_raw=response.SerializeToString(),
+                request_json=_sanitize_kwargs(args, kwargs),
+                response_json=response_json,
+            )
+        )
+
+
+def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-friendly snapshot of method args for cassette debuggability.
+
+    Strips binary payloads (`bytes`) and replaces non-serializable values with their repr so
+    large proto/config objects still show up in a readable form.
+    """
+    sanitized: dict[str, Any] = {}
+    if args:
+        sanitized['_args'] = [repr(a) for a in args]
+    for key, value in kwargs.items():
+        sanitized[key] = _sanitize_value(value)
+    return sanitized
+
+
+def _sanitize_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return f'<bytes len={len(value)}>'
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        items: list[Any] = list(cast(list[Any], value))
+        return [_sanitize_value(v) for v in items]
+    if isinstance(value, dict):
+        raw: dict[Any, Any] = cast(dict[Any, Any], value)
+        return {str(k): _sanitize_value(v) for k, v in raw.items()}
+    return repr(value)
 
 
 @dataclass

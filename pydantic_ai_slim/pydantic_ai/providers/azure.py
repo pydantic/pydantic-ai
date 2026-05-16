@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from typing import overload
+from urllib.parse import urlparse
 
 import httpx
 from openai import AsyncOpenAI
@@ -106,7 +107,11 @@ class AzureProvider(Provider[AsyncOpenAI]):
             azure_endpoint: The Azure endpoint to use for authentication, if not provided, the `AZURE_OPENAI_ENDPOINT`
                 environment variable will be used if available.
             api_version: The API version to use for authentication, if not provided, the `OPENAI_API_VERSION`
-                environment variable will be used if available.
+                environment variable will be used if available. Not required (and not sent) when
+                `azure_endpoint` targets the [Azure OpenAI v1 GA API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
+                (i.e. a path ending in `/v1`, such as `https://<resource>.openai.azure.com/openai/v1/`)
+                or an Azure AI Foundry serverless model endpoint (`*.models.ai.azure.com`), both of
+                which reject the `api-version` query parameter.
             api_key: The API key to use for authentication, if not provided, the `AZURE_OPENAI_API_KEY` environment variable
                 will be used if available.
             openai_client: An existing
@@ -132,22 +137,64 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
 
-            if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
-                raise UserError(
-                    'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
-                )
-
             if http_client is None:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-            self._client = AsyncAzureOpenAI(
-                azure_endpoint=azure_endpoint,
-                api_key=api_key,
-                api_version=api_version,
-                http_client=http_client,
-            )
-            self._base_url = str(self._client.base_url)
+
+            # The Azure OpenAI v1 GA API and Azure AI Foundry serverless model
+            # endpoints expose an OpenAI-compatible `/v1` API that rejects the
+            # `api-version` query parameter that `AsyncAzureOpenAI` always
+            # injects, so we use a plain `AsyncOpenAI` client instead.
+            if (v1_base_url := _openai_compatible_v1_base_url(azure_endpoint)) is not None:
+                if api_version is not None:
+                    raise UserError(
+                        '`api_version` must not be set when `azure_endpoint` targets the Azure OpenAI '
+                        'v1 API or an Azure AI Foundry serverless model endpoint, which do not accept it.'
+                    )
+                self._client = AsyncOpenAI(
+                    base_url=v1_base_url,
+                    api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
+                    http_client=http_client,
+                )
+                self._base_url = str(self._client.base_url)
+            else:
+                if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
+                    raise UserError(
+                        'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
+                    )
+
+                self._client = AsyncAzureOpenAI(
+                    azure_endpoint=azure_endpoint,
+                    api_key=api_key,
+                    api_version=api_version,
+                    http_client=http_client,
+                )
+                self._base_url = str(self._client.base_url)
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+def _openai_compatible_v1_base_url(endpoint: str) -> str | None:
+    """Return the `/v1` base URL for Azure endpoints that expose the OpenAI-compatible API, or `None`.
+
+    These endpoints reject the `api-version` query parameter that
+    `AsyncAzureOpenAI` always injects, so callers need a plain `AsyncOpenAI`
+    client instead. Matches:
+
+    - Any endpoint whose path ends with `/v1` — explicit opt-in to the
+      [Azure OpenAI v1 GA API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle),
+      e.g. `https://<resource>.openai.azure.com/openai/v1/` or
+      `https://<resource>.services.ai.azure.com/openai/v1/`.
+    - Any `*.models.ai.azure.com` host — Azure AI Foundry serverless
+      model-per-endpoint deployments, which always serve an OpenAI-compatible
+      `/v1` API at the root.
+    """
+    stripped = endpoint.rstrip('/')
+    if stripped.endswith('/v1'):
+        return stripped
+    host = urlparse(stripped).hostname or ''
+    if host.endswith('.models.ai.azure.com'):
+        return f'{stripped}/v1'
+    return None

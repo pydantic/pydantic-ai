@@ -71,13 +71,14 @@ logfire = ["logfire[httpx]>=4.16.0"]
 openai = ["openai>=2.29.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.66.0"]
-anthropic = ["anthropic>=0.80.0"]
+google = ["google-genai>=1.70.0"]
+anthropic = ["anthropic>=0.97.0"]
 xai = ["xai-sdk>=1.5.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]
-mistral = ["mistralai>=2.0.0"]
-bedrock = ["boto3>=1.42.14"]
+# `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
+mistral = ["mistralai>=2.0.0,!=2.4.6"]
+bedrock = ["boto3>=1.42.63"]
 huggingface = ["huggingface-hub>=1.3.4,<2.0.0"]
 sentence-transformers = ["sentence-transformers>=5.2.0; python_version < '3.14'"]
 # 3.14 pin removable once voyageai 0.3.8 drops: https://pypi.org/project/voyageai/#history
@@ -109,16 +110,20 @@ cli = [
     "pyperclip>=1.9.0",
     "pyyaml>=6.0.2",
 ]
-# MCP
-mcp = ["mcp>=1.25.0,<2.0"]
-# FastMCP
-fastmcp = ["fastmcp>=2.14.0"]
+# MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
+# Uvicorn server stack). Sufficient for `MCPToolset` and the deprecated `MCPServer*` hierarchy;
+# pulls the `mcp` SDK transitively.
+mcp = ["fastmcp-slim[client]>=3.3.0"]
+# FastMCP — full server-side stack. Pull this in when you need `FastMCP(...)` to serve an
+# in-process or HTTP MCP server. The `fastmcp` extra will be dropped in v2 — install `fastmcp`
+# directly instead.
+fastmcp = ["fastmcp>=3.3.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
 ui = ["starlette>=0.45.3"]
 # A2A
-a2a = ["fasta2a>=0.4.1"]
+a2a = ["fasta2a>=0.6.1"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.45.3"]
 # Web
