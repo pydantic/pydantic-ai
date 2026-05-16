@@ -4990,6 +4990,56 @@ class TestXSearchCapability:
         assert len(retry_parts) == 1
         assert retry_parts[0].tool_name == 'x_search'
 
+    def test_x_search_tool_builtin_tool_kwarg_deprecated(self):
+        """`x_search_tool(builtin_tool=...)` warns and forwards to `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', builtin_tool=XSearchTool())  # type: ignore[call-arg]
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_native_tool_wins_over_builtin_tool(self):
+        """`x_search_tool(native_tool=..., builtin_tool=...)` keeps the explicit `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        explicit = XSearchTool(allowed_x_handles=['preferred'])
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=explicit, builtin_tool=XSearchTool())  # type: ignore[call-arg]
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_unknown_kwarg_raises(self):
+        """`x_search_tool(unknown=...)` raises TypeError naming the offending kwarg."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r'unexpected keyword arguments: `bogus`'):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool(), bogus=1)  # type: ignore[call-arg]
+
+    def test_x_search_tool_missing_native_tool_raises(self):
+        """`x_search_tool()` without `native_tool=` raises TypeError."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r"missing required argument: 'native_tool'"):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning')
+
+    def test_xsearch_subagent_tool_builtin_tool_attr_deprecated(self):
+        """Reading `XSearchSubagentTool.builtin_tool` warns and returns `.native_tool`."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        native = XSearchTool()
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=native)
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=r'`XSearchSubagentTool\.builtin_tool` is deprecated'
+        ):
+            assert subagent.builtin_tool is native  # type: ignore[attr-defined]
+
+    def test_xsearch_subagent_tool_unknown_attr_raises(self):
+        """Unknown attribute access on `XSearchSubagentTool` raises AttributeError as usual."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
+        with pytest.raises(AttributeError, match='no_such_field'):
+            subagent.no_such_field  # type: ignore[attr-defined]
+
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
