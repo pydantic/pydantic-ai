@@ -339,7 +339,8 @@
         "label": "Getting Started",
         "items": [
           "examples/pydantic-model",
-          "examples/weather-agent"
+          "examples/weather-agent",
+          "examples/emem-geospatial-agent"
         ]
       },
       {
