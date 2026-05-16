@@ -388,3 +388,118 @@ def test_custom_provider_instance_method_model_profile():
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, ModelProfile)
+
+
+def _hoist_model():
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.profiles import ModelProfile
+
+    return TestModel(profile=ModelProfile())
+
+
+def _inline_model():
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.profiles import ModelProfile
+
+    return TestModel(profile=ModelProfile(supports_inline_system_prompts=True))
+
+
+def test_prepare_messages_wraps_non_leading_system_prompts():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+
+    assert isinstance(result[2], ModelRequest)
+    first_part = result[2].parts[0]
+    assert isinstance(first_part, UserPromptPart)
+    assert first_part.content == '<system>Be terse.</system>'
+    assert isinstance(result[2].parts[1], UserPromptPart)
+    assert result[2].parts[1].content == 'ok?'
+
+
+def test_prepare_messages_keeps_leading_system_prompts():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+
+    assert isinstance(result[0].parts[0], SystemPromptPart)
+    assert result[0].parts[0].content == 'You are helpful.'
+
+
+def test_prepare_messages_no_op_for_inline_providers():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+    ]
+    result = _inline_model().prepare_messages(msgs)
+
+    assert isinstance(result[2].parts[0], SystemPromptPart)
+    assert result[2].parts[0].content == 'Be terse.'
+
+
+def test_prepare_messages_handles_multiple_non_leading_system_prompts():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='A'), SystemPromptPart(content='B'), UserPromptPart(content='c')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+
+    parts = result[2].parts
+    assert isinstance(parts[0], UserPromptPart) and parts[0].content == '<system>A</system>'
+    assert isinstance(parts[1], UserPromptPart) and parts[1].content == '<system>B</system>'
+    assert isinstance(parts[2], UserPromptPart) and parts[2].content == 'c'
+
+
+def test_prepare_messages_no_wrap_when_no_non_leading_system_prompt():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[UserPromptPart(content='follow up')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+
+    assert isinstance(result[0].parts[0], SystemPromptPart)
+    assert len(result[2].parts) == 1
+    assert isinstance(result[2].parts[0], UserPromptPart)
+    assert result[2].parts[0].content == 'follow up'
+
+
+def test_prepare_messages_no_wrap_when_no_model_response():
+    from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
+
+    msgs: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='hi'), UserPromptPart(content='hello')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+    assert isinstance(result[0].parts[0], SystemPromptPart)
+    assert result[0].parts[0].content == 'hi'
+
+
+def test_prepare_messages_first_request_is_leading_even_after_orphan_response():
+    from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+
+    msgs = [
+        ModelResponse(parts=[TextPart(content='earlier reply')]),
+        ModelRequest(parts=[SystemPromptPart(content='Server prompt'), UserPromptPart(content='Follow up')]),
+    ]
+    result = _hoist_model().prepare_messages(msgs)
+
+    assert isinstance(result[1].parts[0], SystemPromptPart)
+    assert result[1].parts[0].content == 'Server prompt'

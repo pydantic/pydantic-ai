@@ -5593,6 +5593,33 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
 
 
+async def test_google_non_leading_system_prompt_wraps_as_user_message(google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')],
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')],
+        ),
+    ]
+    prepared = m.prepare_messages(messages)
+    system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    contents_any = cast(list[Any], contents)
+    wrapped_texts = [
+        part['text']
+        for msg in contents_any
+        if msg['role'] == 'user'
+        for part in msg['parts']
+        if '<system>' in part.get('text', '')
+    ]
+    assert wrapped_texts == ['<system>Now be terse.</system>']
+
+
 async def test_google_stream_safety_filter(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
