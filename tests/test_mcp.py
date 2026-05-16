@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 from __future__ import annotations
@@ -84,6 +86,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
+    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -546,7 +552,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(name, tool_args, {'deps': ctx.deps})
+        return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:

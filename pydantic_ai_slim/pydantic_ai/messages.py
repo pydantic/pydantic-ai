@@ -126,7 +126,7 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
 - `'complete'`: the response has been fully received from the model.
 - `'incomplete'`: the response is still being streamed and may receive more parts.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
-  [`StreamedRunResult.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses]
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
 - `'interrupted'`: streaming was explicitly stopped via
   [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
