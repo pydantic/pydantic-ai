@@ -12,11 +12,18 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
 try:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic import (
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
@@ -24,7 +31,9 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
+AsyncAnthropicClient: TypeAlias = (
+    AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
+)
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
@@ -44,6 +53,14 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        # When the underlying client is `AsyncAnthropicBedrock`/`AsyncAnthropicBedrockMantle`, the model
+        # name carries a Bedrock `anthropic.` provider segment (and, on the legacy InvokeModel API, a
+        # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
+        # `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Strip it so `anthropic_model_profile`'s
+        # `claude-...` prefix checks match; the full model name still goes on the wire via `AnthropicModel._model_name`.
+        bedrock_provider, base_model_name = split_bedrock_model_id(model_name)
+        if bedrock_provider == 'anthropic':
+            model_name = base_model_name
         profile = anthropic_model_profile(model_name)
         return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
@@ -71,7 +88,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             base_url: The base URL to use for the Anthropic API.
             anthropic_client: An existing Anthropic client to use. Accepts
                 [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python),
-                [`AsyncAnthropicBedrock`](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock),
+                [`AsyncAnthropicBedrock`](https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy),
+                [`AsyncAnthropicBedrockMantle`](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock),
                 [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), or
                 [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
                 If provided, the `api_key` and `http_client` arguments will be ignored.

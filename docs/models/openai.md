@@ -131,6 +131,12 @@ agent = Agent('openai-responses:gpt-5.2')
 ...
 ```
 
+!!! note "v2 default change"
+    In Pydantic AI v2, the bare `'openai:'` prefix will resolve to `OpenAIResponsesModel` instead of `OpenAIChatModel`. Before v2, `pydantic-ai` emits a `PydanticAIDeprecationWarning` whenever bare `'openai:'` is used; pick an explicit prefix to silence the warning and pin behavior:
+
+    - `'openai-chat:gpt-5.2'` keeps the Chat Completions routing.
+    - `'openai-responses:gpt-5.2'` opts in to the Responses API today (and matches the upcoming v2 default).
+
 Or initialise the model directly with just the model name:
 
 ```python
@@ -144,9 +150,9 @@ agent = Agent(model)
 
 You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
 
-### Built-in tools
+### Native tools
 
-The Responses API has built-in tools that you can use instead of building your own:
+The Responses API has native tools that you can use instead of building your own:
 
 - [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
@@ -154,9 +160,9 @@ The Responses API has built-in tools that you can use instead of building your o
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
-Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
+Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_native_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this native tool.
 
 ```python {title="computer_use_tool.py" test="skip"}
 from openai.types.responses import ComputerToolParam
@@ -165,7 +171,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model_settings = OpenAIResponsesModelSettings(
-    openai_builtin_tools=[
+    openai_native_tools=[
         ComputerToolParam(
             type='computer_use',
         )
