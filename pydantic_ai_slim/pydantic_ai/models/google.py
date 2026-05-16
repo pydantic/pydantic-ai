@@ -485,6 +485,12 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})  # pragma: no cover
 
     @property
+    def _include_function_call_ids(self) -> bool:
+        # Vertex/Google Cloud v1 rejects `id` on functionCall/functionResponse; v1beta1 supports it.
+        api_client = self.client._api_client  # pyright: ignore[reportPrivateUsage]
+        return not (api_client.vertexai and api_client._http_options.api_version == 'v1')  # pyright: ignore[reportPrivateUsage]
+
+    @property
     def _resolved_profile(self) -> GoogleModelProfile:
         return GoogleModelProfile.from_profile(self.profile)
 
@@ -1009,6 +1015,7 @@ class GoogleModel(Model[Client]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         supports_tool_combination = self._resolved_profile.google_supports_tool_combination
+        include_function_call_ids = self._include_function_call_ids
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1022,18 +1029,21 @@ class GoogleModel(Model[Client]):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.extend(await self._map_tool_return(part))
+                        message_parts.extend(
+                            await self._map_tool_return(part, include_function_call_ids=include_function_call_ids)
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
                         else:
                             message_parts.append(
                                 {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
+                                    'function_response': _function_response_dict(
+                                        name=part.tool_name,
+                                        response={'error': part.model_response()},
+                                        tool_call_id=part.tool_call_id,
+                                        include_id=include_function_call_ids,
+                                    )
                                 }
                             )
                     else:
@@ -1063,7 +1073,10 @@ class GoogleModel(Model[Client]):
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(
-                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
+                    m,
+                    self._matching_provider_names,
+                    supports_tool_combination=supports_tool_combination,
+                    include_function_call_ids=include_function_call_ids,
                 )
                 if maybe_content:
                     contents.append(maybe_content)
@@ -1082,7 +1095,7 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+    async def _map_tool_return(self, part: ToolReturnPart, *, include_function_call_ids: bool) -> list[PartDict]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
         For Gemini 3+ models with supported MIME types, files are sent inside
@@ -1110,11 +1123,12 @@ class GoogleModel(Model[Client]):
         if fallback_refs:
             response = {'output': [response, *fallback_refs]}
 
-        function_response_dict: FunctionResponseDict = {
-            'name': part.tool_name,
-            'response': response,
-            'id': part.tool_call_id,
-        }
+        function_response_dict = _function_response_dict(
+            name=part.tool_name,
+            response=response,
+            tool_call_id=part.tool_call_id,
+            include_id=include_function_call_ids,
+        )
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
@@ -1542,7 +1556,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
+    m: ModelResponse,
+    accepted_provider_names: frozenset[str],
+    *,
+    supports_tool_combination: bool = False,
+    include_function_call_ids: bool = True,
 ) -> ContentDict | None:
     # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
     # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
@@ -1563,7 +1581,12 @@ def _content_model_response(
 
         part: PartDict | None
         if isinstance(item, ToolCallPart):
-            part = _function_call_part_dict(item, item_signature, needs_signature=needs_function_call_signature)
+            part = _function_call_part_dict(
+                item,
+                item_signature,
+                needs_signature=needs_function_call_signature,
+                include_id=include_function_call_ids,
+            )
             needs_function_call_signature = False
         elif isinstance(item, TextPart):
             part = _attach_signature({'text': item.content}, item_signature)
@@ -1624,9 +1647,15 @@ def _attach_signature(part: PartDict, signature: bytes | None) -> PartDict:
     return part
 
 
-def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, needs_signature: bool) -> PartDict:
+def _function_call_part_dict(
+    item: ToolCallPart, signature: bytes | None, *, needs_signature: bool, include_id: bool
+) -> PartDict:
+    function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict())
+    if include_id:
+        function_call['id'] = item.tool_call_id
+
     part: PartDict = {
-        'function_call': FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id),
+        'function_call': function_call,
     }
     part = _attach_signature(part, signature)
     if signature is None and needs_signature:
@@ -1635,6 +1664,15 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
         # the documented dummy `skip_thought_signature_validator` works for both Gemini API and Google Cloud.
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
+
+
+def _function_response_dict(
+    *, name: str, response: dict[str, Any], tool_call_id: str, include_id: bool
+) -> FunctionResponseDict:
+    function_response = FunctionResponseDict(name=name, response=response)
+    if include_id:
+        function_response['id'] = tool_call_id
+    return function_response
 
 
 def _native_tool_call_part_dict(
