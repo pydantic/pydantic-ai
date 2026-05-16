@@ -517,6 +517,29 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+def test_google_tool_config_override_takes_precedence():
+    """google_tool_config in model settings overrides the tool_config computed from tool_choice."""
+    from google.genai.types import FunctionCallingConfigDict, FunctionCallingConfigMode, ToolConfigDict
+
+    mock_client = MagicMock()
+    provider = GoogleProvider(client=mock_client)
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    params = ModelRequestParameters(
+        function_tools=[make_tool('my_tool')],
+        allow_text_output=True,
+    )
+    validated_config = ToolConfigDict(
+        function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.VALIDATED)
+    )
+
+    tools, tool_config, _ = m._get_tool_config(params, {'google_tool_config': validated_config})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config['function_calling_config']['mode'].name == 'VALIDATED'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
+    assert tools is not None
+
+
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
 async def test_xai_fallback_single_tool_without_required_support(allow_model_requests: None):
     """Single tool with unsupported required falls back to auto and filters tool_defs to preserve user intent."""
