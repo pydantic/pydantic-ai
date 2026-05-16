@@ -1750,10 +1750,7 @@ Supported by:
                 'spec_params_XSearch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}],
-                            'title': 'Builtin',
-                        },
+                        'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
