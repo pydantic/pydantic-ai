@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -73,14 +74,16 @@ class GroqProvider(Provider[AsyncGroq]):
             'openai/': openai_model_profile,
         }
 
+        profile: ModelProfile | None = None
         for prefix, profile_func in prefix_to_profile.items():
             model_name = model_name.lower()
             if model_name.startswith(prefix):
                 if prefix.endswith('/'):
                     model_name = model_name[len(prefix) :]
-                return profile_func(model_name)
+                profile = profile_func(model_name)
+                break
 
-        return None
+        return replace(profile or ModelProfile(), supports_inline_system_prompts=True)
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...
