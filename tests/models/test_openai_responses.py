@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -62,7 +63,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import APIStatusError, AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -116,6 +117,44 @@ async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['Asyn
             yield async_client, conversation.id
         finally:
             await async_client.conversations.delete(conversation.id)
+
+
+class SequentialMockOpenAIResponses(MockOpenAIResponses):
+    async def responses_create(self, *_args: Any, stream: bool = False, **kwargs: Any) -> Any:
+        assert not stream
+        self.response_kwargs.append(kwargs)
+        assert isinstance(self.response, list)
+        response = self.response[self.index]
+        self.index += 1
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _openai_api_status_error(code: str, status_code: int = 400) -> Any:
+    body = {'error': {'code': code, 'message': 'bad request', 'type': 'invalid_request_error'}}
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request('POST', 'https://api.openai.com/v1/responses'),
+        json=body,
+    )
+    return APIStatusError(f'Error code: {status_code}', response=response, body=body)
+
+
+def _signed_reasoning_history() -> list[ModelRequest | ModelResponse]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='What is 2+2?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='I need to add two and two.', id='rs_123', signature='encrypted_sig', provider_name='openai'
+                ),
+                TextPart(content='4', id='msg_123', provider_name='openai'),
+            ],
+            model_name='gpt-5',
+            provider_name='openai',
+        ),
+    ]
 
 
 def test_openai_responses_model(env: TestEnv):
@@ -3882,6 +3921,114 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
             },
         ]
     )
+
+
+async def test_openai_responses_invalid_encrypted_content_retries_without_reasoning_ids(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='retry worked', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    mock_client = SequentialMockOpenAIResponses.create_mock([_openai_api_status_error('invalid_encrypted_content'), c])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('Try again?', message_history=_signed_reasoning_history())
+
+    assert result.output == 'retry worked'
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert len(response_kwargs) == 2
+    first_input = cast(list[dict[str, Any]], response_kwargs[0]['input'])
+    second_input = cast(list[dict[str, Any]], response_kwargs[1]['input'])
+    first_reasoning_items = [item for item in first_input if item.get('type') == 'reasoning']
+    assert first_reasoning_items == snapshot(
+        [
+            {
+                'id': 'rs_123',
+                'summary': [{'text': 'I need to add two and two.', 'type': 'summary_text'}],
+                'encrypted_content': 'encrypted_sig',
+                'type': 'reasoning',
+            }
+        ]
+    )
+    assert not any('encrypted_content' in item for item in second_input)
+    assert not any(item.get('type') == 'reasoning' and item.get('id') == 'rs_123' for item in second_input)
+
+
+@pytest.mark.parametrize(
+    ('code', 'status_code'),
+    [
+        ('other_error', 400),
+        ('invalid_encrypted_content', 500),
+    ],
+)
+async def test_openai_responses_non_matching_error_does_not_retry(
+    allow_model_requests: None, code: str, status_code: int
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='should not run', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    mock_client = SequentialMockOpenAIResponses.create_mock([_openai_api_status_error(code, status_code), c])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('Try again?', message_history=_signed_reasoning_history())
+
+    assert len(get_mock_responses_kwargs(mock_client)) == 1
+
+
+async def test_openai_responses_invalid_encrypted_content_does_not_retry_when_reasoning_ids_disabled(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='should not run', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    mock_client = SequentialMockOpenAIResponses.create_mock([_openai_api_status_error('invalid_encrypted_content'), c])
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=False),
+    )
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('Try again?', message_history=_signed_reasoning_history())
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert len(response_kwargs) == 1
+    first_input = cast(list[dict[str, Any]], response_kwargs[0]['input'])
+    assert not any('encrypted_content' in item for item in first_input)
 
 
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
