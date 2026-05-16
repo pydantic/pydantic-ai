@@ -99,6 +99,16 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+!!! warning "Batch full Makefile runs"
+
+    `make typecheck` and `make test` each take several minutes to complete. Running them after every file edit can stretch a 10-minute refactor into a multi-hour session.
+
+    - **During iteration**, use scoped, fast commands instead:
+        - `uv run pyright <path>` — typecheck a single file or directory
+        - `uv run pytest <path::test_name>` or `uv run pytest -k <pattern>` — run a specific test or a subset
+    - **After completing a logical set of changes**, run `make typecheck` and `make test` once to verify everything passes end-to-end.
+    - **Before submitting a PR**, always run the full `make typecheck` and `make test` to ensure nothing is broken.
+
 # Coding Guidelines
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
