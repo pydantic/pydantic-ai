@@ -5,23 +5,24 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.builtin_tools import XSearchTool
+from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.native_tools import XSearchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.x_search import XSearchFallbackModel
 
 
 @dataclass(init=False)
-class XSearch(BuiltinOrLocalTool[AgentDepsT]):
+class XSearch(NativeOrLocalTool[AgentDepsT]):
     """X (Twitter) search capability.
 
-    On xAI models, uses the native builtin X search directly with no extra configuration.
+    On xAI models, uses the native X search directly with no extra configuration.
 
     On non-xAI models, you must explicitly set `fallback_model` to an xAI model
     (e.g. `'xai:grok-4-1-fast-non-reasoning'`) to enable a subagent-based fallback.
@@ -34,7 +35,7 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
 
     Required for non-xAI models; leave as `None` (the default) when running on an xAI
     model. Must be a model that supports X search via the
-    [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] builtin (i.e. an xAI model),
+    [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] native tool (i.e. an xAI model),
     for example `'xai:grok-4-1-fast-non-reasoning'`.
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
@@ -42,10 +43,10 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
     """
 
     allowed_x_handles: list[str] | None
-    """If provided, only posts from these X handles will be included (max 10). Requires builtin support."""
+    """If provided, only posts from these X handles will be included (max 10). Requires native support."""
 
     excluded_x_handles: list[str] | None
-    """If provided, posts from these X handles will be excluded (max 10). Requires builtin support."""
+    """If provided, posts from these X handles will be excluded (max 10). Requires native support."""
 
     from_date: datetime | None
     """If provided, only posts created on or after this datetime will be included."""
@@ -61,13 +62,13 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
 
     include_output: bool | None
     """Include raw X search results in the response as
-    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Defaults to `False`.
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Defaults to `False`.
     """
 
     def __init__(
         self,
         *,
-        builtin: XSearchTool
+        native: XSearchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
@@ -89,7 +90,7 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
                 'XSearch: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.fallback_model = fallback_model
         self.allowed_x_handles = allowed_x_handles
@@ -120,10 +121,10 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['include_output'] = self.include_output
         return kwargs
 
-    def _default_builtin(self) -> XSearchTool:
+    def _default_native(self) -> XSearchTool:
         return XSearchTool(**self._xsearch_kwargs())
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return XSearchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
@@ -131,12 +132,23 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
             return None
         from pydantic_ai.common_tools.x_search import x_search_tool
 
-        return x_search_tool(model=self.fallback_model, builtin_tool=self._resolved_builtin())
+        return x_search_tool(model=self.fallback_model, native_tool=self._resolved_native())
 
-    def _resolved_builtin(self) -> XSearchTool:
+    def _requires_native(self) -> bool:
+        # Handle constraints can only be enforced by the native XSearchTool.
+        # When a `fallback_model` is set, the subagent runs the native tool too,
+        # so the local fallback can satisfy the constraints — don't require native.
+        if self.fallback_model is not None:
+            return False
+        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
+
+    def _resolved_native(self) -> XSearchTool:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
-        base = self.builtin if isinstance(self.builtin, XSearchTool) else XSearchTool()
+        base = self.native if isinstance(self.native, XSearchTool) else XSearchTool()
         overrides = self._xsearch_kwargs()
         if not overrides:
             return base
         return replace(base, **overrides)
+
+
+install_deprecated_kwarg_alias(XSearch, old='builtin', new='native')
