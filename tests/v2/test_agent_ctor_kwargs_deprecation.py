@@ -106,3 +106,17 @@ async def test_from_file_history_processors_kwarg_routes_through_extra_capabilit
 
     process_history_caps = [cap for cap in agent._root_capability.capabilities if isinstance(cap, ProcessHistory)]  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType,reportUnknownVariableType]
     assert process_history_caps, 'from_file(history_processors=) should remap into a ProcessHistory capability'
+
+
+async def test_from_spec_prepare_output_tools_kwarg_routes_through_extra_capabilities():
+    """`Agent.from_spec(prepare_output_tools=...)` warns and the legacy kwarg flows through the
+    `extra_capabilities` -> `all_capabilities.extend(...)` branch onto the constructed agent."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(prepare_output_tools='):
+        agent: Agent[Any, Any] = Agent.from_spec(  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
+            {'model': 'test'}, output_type=ToolOutput(str), prepare_output_tools=_noop_prep
+        )
+
+    prep_caps = [cap for cap in agent._root_capability.capabilities if isinstance(cap, PrepareOutputTools)]  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType,reportUnknownVariableType]
+    assert prep_caps, 'from_spec(prepare_output_tools=) should remap into a PrepareOutputTools capability'
+    result = await agent.run('hello')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert result.output  # pyright: ignore[reportUnknownMemberType]
