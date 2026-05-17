@@ -108,8 +108,6 @@ fastmcp = ["fastmcp>=3.3.0"]
 evals = ["pydantic-evals=={{ version }}"]
 # UI
 ui = ["starlette>=0.45.3"]
-# A2A
-a2a = ["fasta2a>=0.6.1"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.45.3"]
 # Web

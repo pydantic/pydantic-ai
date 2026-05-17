@@ -58,12 +58,8 @@ from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from fasta2a.applications import FastA2A
-    from fasta2a.broker import Broker
-    from fasta2a.schema import AgentProvider, Skill
-    from fasta2a.storage import Storage
     from starlette.middleware import Middleware
-    from starlette.routing import BaseRoute, Route
+    from starlette.routing import BaseRoute
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.agent.spec import AgentSpec
@@ -1676,74 +1672,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 on_shutdown=on_shutdown,
                 lifespan=lifespan,
             )
-
-    @deprecated(
-        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
-        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — '
-        "install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) "
-        'and use `from fasta2a.pydantic_ai import agent_to_a2a` directly.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def to_a2a(
-        self,
-        *,
-        storage: Storage | None = None,
-        broker: Broker | None = None,
-        # Agent card
-        name: str | None = None,
-        url: str = 'http://localhost:8000',
-        version: str = '1.0.0',
-        description: str | None = None,
-        provider: AgentProvider | None = None,
-        skills: list[Skill] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[Route] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] | None = None,
-    ) -> FastA2A:
-        """Convert the agent to a FastA2A application.
-
-        Deprecated in 1.x and removed in 2.0; use
-        [`agent_to_a2a`][fasta2a.pydantic_ai.agent_to_a2a] from
-        [`fasta2a`](https://github.com/datalayer/fasta2a) (v0.6.1+) instead:
-
-        ```python {test="skip" lint="skip"}
-        from fasta2a.pydantic_ai import agent_to_a2a
-
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-5.2')
-        app = agent_to_a2a(agent)
-        ```
-
-        The `app` is an ASGI application that can be used with any ASGI server.
-
-        To run the application, you can use the following command:
-
-        ```bash
-        uvicorn app:app --host 0.0.0.0 --port 8000
-        ```
-        """
-        from .._a2a import agent_to_a2a
-
-        return agent_to_a2a(
-            self,
-            storage=storage,
-            broker=broker,
-            name=name,
-            url=url,
-            version=version,
-            description=description,
-            provider=provider,
-            skills=skills,
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            lifespan=lifespan,
-        )
 
     async def to_cli(
         self: Self,
