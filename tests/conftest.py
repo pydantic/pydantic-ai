@@ -920,7 +920,7 @@ def mock_snapshot_id(mocker: MockerFixture):
         i += 1
         return f'{node_id}:{i}'
 
-    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture
