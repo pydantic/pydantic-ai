@@ -72,21 +72,6 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
-## Expose Agents as HTTP Servers (A2A)
-
-Use `fasta2a.pydantic_ai.agent_to_a2a` when the agent should be exposed as an ASGI app that speaks the A2A protocol. Install with `pip install 'fasta2a[pydantic-ai]>=0.6.1'`.
-
-```python
-from fasta2a.pydantic_ai import agent_to_a2a
-
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.2')
-app = agent_to_a2a(agent)
-```
-
-`Agent.to_a2a()` still works in 1.x but emits a deprecation warning and is removed in 2.0.
-
 ## Use Durable Execution
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
