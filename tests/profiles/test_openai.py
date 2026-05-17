@@ -14,6 +14,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 
 pytestmark = [
@@ -89,3 +90,11 @@ class TestEncryptedReasoningContent:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
             assert profile.openai_supports_encrypted_reasoning_content is False
+
+
+def test_send_back_thinking_parts_field_requires_thinking_field():
+    with pytest.raises(
+        UserError,
+        match='If `openai_chat_send_back_thinking_parts` is "field", `openai_chat_thinking_field` must be set to a non-None value.',
+    ):
+        OpenAIModelProfile(openai_chat_send_back_thinking_parts='field')
