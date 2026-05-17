@@ -102,6 +102,41 @@ class _StubBedrockClient:
         raise self._error
 
 
+class _RecordingBedrockClient:
+    """Minimal Bedrock client that records kwargs and returns a fixed response."""
+
+    def __init__(self) -> None:
+        self.count_tokens_calls: list[dict[str, Any]] = []
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+    def count_tokens(self, **kwargs: Any) -> dict[str, Any]:
+        self.count_tokens_calls.append(kwargs)
+        return {'inputTokens': 42}
+
+
+class _RecordingBedrockProvider(Provider[Any]):
+    """Provider implementation backed by a recording client."""
+
+    def __init__(self, client: _RecordingBedrockClient):
+        self._client = client
+
+    @property
+    def name(self) -> str:
+        return 'bedrock-stub'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://bedrock.stub'
+
+    @property
+    def client(self) -> _RecordingBedrockClient:
+        return self._client
+
+    @staticmethod
+    def model_profile(model_name: str):
+        return DEFAULT_PROFILE
+
+
 class _StubBedrockProvider(Provider[Any]):
     """Provider implementation backed by the stub client."""
 
@@ -275,6 +310,24 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+async def test_bedrock_count_tokens_passes_additional_model_request_fields():
+    """count_tokens must forward bedrock_additional_model_requests_fields to the API."""
+    client = _RecordingBedrockClient()
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=_RecordingBedrockProvider(client),
+    )
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
+    }
+    params = ModelRequestParameters()
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens == 42
+    assert len(client.count_tokens_calls) == 1
+    call = client.count_tokens_calls[0]
+    assert call.get('additionalModelRequestFields') == {'anthropic_beta': ['context-1m-2025-08-07']}
 
 
 def _bedrock_arn(resource: str) -> str:

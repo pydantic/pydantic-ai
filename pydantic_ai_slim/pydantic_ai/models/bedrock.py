@@ -524,6 +524,8 @@ class BedrockConverseModel(Model[BaseClient]):
                 },
             },
         }
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
         with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
