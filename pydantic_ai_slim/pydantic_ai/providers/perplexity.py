@@ -24,11 +24,11 @@ except ImportError as _import_error:  # pragma: no cover
 class PerplexityProvider(Provider[AsyncOpenAI]):
     """Provider for the Perplexity API.
 
-    Perplexity exposes an OpenAI-compatible chat completions endpoint at
-    `https://api.perplexity.ai/v1/chat/completions`, which is what
-    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] talks to when paired with this provider.
+    Perplexity accepts OpenAI-compatible chat completions requests at
+    `https://api.perplexity.ai/chat/completions`, which is what
+    [`PerplexityModel`][pydantic_ai.models.perplexity.PerplexityModel] talks to when paired with this provider.
     Web search runs natively inside Perplexity's chat models, so
-    [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] is supported without any extra wiring.
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is supported without any extra wiring.
     """
 
     @property
@@ -47,9 +47,9 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = perplexity_model_profile(model_name)
 
-        # PerplexityProvider is always paired with OpenAIChatModel, so we apply the OpenAI JSON schema
-        # transformer (mirrors `DeepSeekProvider`). `openai_chat_supports_web_search=True` lets users enable
-        # the cross-provider `WebSearchTool` builtin against Perplexity's natively-grounded chat models.
+        # PerplexityProvider is paired with PerplexityModel, so we apply the OpenAI JSON schema transformer
+        # (mirrors `DeepSeekProvider`). `openai_chat_supports_web_search=True` lets users enable
+        # the cross-provider `WebSearchTool` against Perplexity's natively-grounded chat models.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_supports_web_search=True,
@@ -83,7 +83,9 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
                 must not be set.
             http_client: An existing `httpx.AsyncClient` to use for HTTP requests.
         """
-        api_key = api_key or os.getenv('PERPLEXITY_API_KEY') or os.getenv('PPLX_API_KEY')
+        api_key = (
+            api_key or os.getenv('PERPLEXITY_API_KEY') or os.getenv('PPLX_API_KEY')
+        )
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `PERPLEXITY_API_KEY` environment variable or pass it via `PerplexityProvider(api_key=...)`'
@@ -93,12 +95,16 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client
+            )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client
+            )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

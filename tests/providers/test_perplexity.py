@@ -1,20 +1,33 @@
 from __future__ import annotations as _annotations
 
+import os
 import re
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from pydantic_ai import WebSearchTool
+from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.usage import RequestUsage
 
-from ..conftest import TestEnv, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsStr, TestEnv, try_import
+from ..models.mock_openai import (
+    MockOpenAI,
+    completion_message,
+    get_mock_chat_completion_kwargs,
+)
 
 with try_import() as imports_successful:
     import openai
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models import infer_model
+    from pydantic_ai.models.perplexity import PerplexityModel
     from pydantic_ai.providers.perplexity import PerplexityProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -62,15 +75,104 @@ def test_perplexity_pass_openai_client() -> None:
 
 def test_perplexity_model_profile_enables_web_search() -> None:
     provider = PerplexityProvider(api_key='api-key')
-    model = OpenAIChatModel('sonar-pro', provider=provider)
+    model = PerplexityModel('sonar-pro', provider=provider)
     profile = OpenAIModelProfile.from_profile(model.profile)
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert profile.openai_chat_supports_web_search is True
-    assert WebSearchTool in model.profile.supported_builtin_tools
+    assert WebSearchTool in model.profile.supported_native_tools
 
 
 def test_perplexity_reasoning_model_profile() -> None:
     provider = PerplexityProvider(api_key='api-key')
-    model = OpenAIChatModel('sonar-reasoning-pro', provider=provider)
+    model = PerplexityModel('sonar-reasoning-pro', provider=provider)
     assert model.profile.supports_thinking is True
     assert model.profile.ignore_streamed_leading_whitespace is True
+
+
+def test_infer_perplexity_model(env: TestEnv) -> None:
+    env.set('PERPLEXITY_API_KEY', 'api-key')
+    model = infer_model('perplexity:sonar-pro')
+    assert isinstance(model, PerplexityModel)
+    assert model.model_name == 'sonar-pro'
+
+
+@pytest.mark.anyio
+async def test_perplexity_web_search_tool_omits_web_search_options(
+    allow_model_requests: None,
+) -> None:
+    c = completion_message(ChatCompletionMessage(content='Perplexity searches natively.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(openai_client=mock_client))
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('Search for Pydantic AI.')
+
+    assert result.output == 'Perplexity searches natively.'
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'web_search_options' not in request_kwargs
+
+
+@pytest.mark.anyio
+@pytest.mark.vcr
+async def test_perplexity_agent_run(allow_model_requests: None, env: TestEnv) -> None:
+    env.set(
+        'PERPLEXITY_API_KEY',
+        os.getenv('PERPLEXITY_API_KEY', os.getenv('PPLX_API_KEY', 'mock-api-key')),
+    )
+    agent = Agent('perplexity:sonar-pro', capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('What is Pydantic AI? Answer in one sentence.')
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework from the Pydantic team for building production-grade applications with generative AI.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is Pydantic AI? Answer in one sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework from the Pydantic team for building production-grade applications with generative AI.'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=21,
+                    details={'citation_tokens': 125, 'num_search_queries': 1},
+                ),
+                model_name='sonar-pro',
+                timestamp=IsDatetime(),
+                provider_name='perplexity',
+                provider_url='https://api.perplexity.ai',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'citations': ['https://ai.pydantic.dev/'],
+                    'search_results': [
+                        {
+                            'title': 'Pydantic AI',
+                            'url': 'https://ai.pydantic.dev/',
+                            'date': '2026-05-01',
+                            'last_updated': '2026-05-01',
+                            'snippet': 'Pydantic AI is a Python agent framework designed to make it less painful to build production-grade applications with generative AI.',
+                            'source': 'web',
+                        }
+                    ],
+                    'timestamp': datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='pplx-5250-test',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

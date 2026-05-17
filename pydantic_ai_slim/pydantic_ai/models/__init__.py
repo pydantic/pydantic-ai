@@ -1038,6 +1038,10 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'perplexity':
+        from .perplexity import PerplexityModel
+
+        return PerplexityModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
