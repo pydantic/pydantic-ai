@@ -4454,8 +4454,7 @@ class TestPrepareOutputToolsHook:
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            tool_retries=4,
-            output_retries=4,
+            retries={'tools': 4, 'output': 4},
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
@@ -8948,7 +8947,7 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
@@ -9276,7 +9275,9 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
@@ -9476,7 +9477,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9803,7 +9804,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9879,7 +9880,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9953,7 +9954,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10027,7 +10028,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:

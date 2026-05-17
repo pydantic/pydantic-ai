@@ -632,7 +632,7 @@ class NeverOutputType(TypedDict):
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    tool_retries=3,
+    retries={'tools': 3},
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
@@ -1085,7 +1085,7 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The agent-level `output_retries` can also be overridden per run via `agent.run(output_retries=...)` and friends.
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The agent-level `output_retries` can also be overridden per run via `agent.run(retries={'output': ...})` and friends.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
 
 ### How output retries are enforced

@@ -17,11 +17,11 @@ from collections.abc import (
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar, deprecated
+from typing_extensions import Self, TypedDict, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
@@ -101,6 +101,51 @@ Instructions = AgentInstructions
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
 """Type alias for agent model settings — a static `ModelSettings` dict, or a callable receiving `RunContext` that returns one dynamically per request."""
+
+
+class AgentRetries(TypedDict, total=False):
+    """Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+    Pass to `Agent(retries=...)`, `agent.run(retries=...)`, etc., as a dict to set
+    different budgets per category. Equivalent to passing an `int`, which sets all
+    categories to the same value.
+
+    Keys:
+        tools: Default number of retries for tool calls before raising an error.
+        output: Maximum number of retries for output validation. On the text path
+            this is a global per-run budget; on the tool path it is the default
+            per-tool `max_retries` for each output tool, overridable via
+            [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
+    """
+
+    tools: int
+    output: int
+
+
+def normalize_agent_retries(
+    retries: int | AgentRetries | None,
+    *,
+    int_means: Literal['both', 'output'] = 'both',
+) -> tuple[int | None, int | None]:
+    """Split an `int | AgentRetries | None` into `(tool_retries, output_retries)`.
+
+    `int_means='both'` (default, used at agent construction) applies an `int` shorthand to both
+    categories. `int_means='output'` (used at run/override time, where tool retries cannot be
+    overridden) treats an `int` as the output budget only and leaves tools `None`.
+
+    Keys not present in the dict are returned as `None` so callers can layer their own defaults.
+    """
+    if retries is None:
+        return None, None
+    if isinstance(retries, int):
+        if int_means == 'output':
+            return None, retries
+        return retries, retries
+    # TypedDict at runtime is just a dict; unknown keys would silently no-op without this check.
+    extra = set(retries.keys()) - {'tools', 'output'}
+    if extra:
+        raise exceptions.UserError(f'Unknown `AgentRetries` keys: {sorted(extra)}. Valid keys are: "tools", "output".')
+    return retries.get('tools'), retries.get('output')
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -241,7 +286,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -265,7 +310,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -288,7 +333,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -330,7 +375,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -344,6 +392,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.run')
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.run', current_retries=retries)
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -364,7 +413,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
-            output_retries=output_retries,
+            retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
             spec=spec,
@@ -432,7 +481,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -456,7 +505,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -479,7 +528,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -520,7 +569,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -536,6 +588,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'agent.run_sync', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -555,7 +610,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
-                output_retries=output_retries,
+                retries=retries,
                 infer_name=False,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
@@ -580,7 +635,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -604,7 +659,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -628,7 +683,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -677,7 +732,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -695,6 +753,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'agent.run_stream', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -718,7 +779,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
-            output_retries=output_retries,
+            retries=retries,
             infer_name=False,
             toolsets=toolsets,
             capabilities=capabilities,
@@ -880,7 +941,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -903,7 +964,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -925,7 +986,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -976,7 +1037,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -994,6 +1058,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'agent.run_stream_sync', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -1012,7 +1079,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
-                output_retries=output_retries,
+                retries=retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
@@ -1040,7 +1107,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1063,7 +1130,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1085,7 +1152,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1144,7 +1211,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1160,6 +1230,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'agent.run_stream_events', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
@@ -1182,7 +1255,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
-                output_retries=output_retries,
+                retries=retries,
                 toolsets=toolsets,
                 capabilities=capabilities,
                 spec=spec,
@@ -1204,7 +1277,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -1234,7 +1307,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     usage_limits=usage_limits,
                     usage=usage,
                     metadata=metadata,
-                    output_retries=output_retries,
+                    retries=retries,
                     infer_name=False,
                     toolsets=toolsets,
                     event_stream_handler=event_stream_handler,
@@ -1280,7 +1353,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1303,7 +1376,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1327,7 +1400,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1413,7 +1486,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1439,7 +1515,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        output_retries: int | _utils.Unset = _utils.UNSET,
+        retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent configuration.
@@ -1457,8 +1533,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
-            output_retries: The output-retry budget to use instead of the agent-level `output_retries`. When set,
-                any per-run `output_retries` argument is ignored.
+            retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
+                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
+                cannot be overridden via `override()`.
             spec: Optional agent spec providing defaults for override.
         """
         raise NotImplementedError

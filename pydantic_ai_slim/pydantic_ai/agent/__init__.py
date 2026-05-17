@@ -86,9 +86,11 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
+    normalize_agent_retries,
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -105,6 +107,7 @@ __all__ = (
     'AbstractAgent',
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentRun',
     'AgentRunResult',
     'NativeToolFunc',
@@ -238,10 +241,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
@@ -265,10 +266,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
@@ -290,10 +289,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
@@ -327,18 +324,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can be a static `ModelSettings` dict or a callable that takes a
                 [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
                 Callables are called before each model request, allowing dynamic per-step settings.
-            retries: Deprecated alias for `tool_retries`. In 1.x this also still cascades to `output_retries`
-                (when `output_retries` is unset) for backward compatibility, with a `DeprecationWarning`.
-                In v2 it will be removed and the cascade will go away — pass `output_retries` explicitly
-                if you depend on the cascade. For model request retries, see the
-                [HTTP Request Retries](../retries.md) documentation.
-            tool_retries: The default number of retries to allow for tool calls before raising an error. Defaults to 1.
+            retries: Per-category retry budgets for tools and output validation. Pass an `int` to set the same
+                budget for both, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to set them
+                individually (e.g. `retries={'tools': 3, 'output': 1}`). Defaults to 1 for both.
+                On the text path, `output` is a global budget shared across all output-validation retries
+                in a run; on the tool path it is the default per-tool `max_retries` for each output tool,
+                overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
+                The `output` budget can be overridden per run via `agent.run(retries=...)` (and friends).
+                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
-            output_retries: Maximum number of retries for output validation. Defaults to 1.
-                On the text path this is a global budget shared across all output-validation retries
-                in a run; on the tool path this is the default per-tool `max_retries` for each output
-                tool, overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
-                Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
@@ -422,6 +416,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
             toolsets = mcp_servers
 
+        # Deprecated `tool_retries=` / `output_retries=` kwargs are accepted via `**_deprecated_kwargs`
+        # and folded into the new `retries: int | AgentRetries` knob. Each emits a warning so users
+        # migrate, but they still work in 1.x. `retries` itself remains a first-class kwarg.
+        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', None)
+        legacy_output_retries = _deprecated_kwargs.pop('output_retries', None)
+        if legacy_tool_retries is not None:
+            warnings.warn(
+                '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both) instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+        if legacy_output_retries is not None:
+            warnings.warn(
+                '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both) instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
@@ -434,34 +448,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        # `retries` is deprecated in 1.x and removed in v2. Until then it still cascades to
-        # `_max_output_retries` as a fallback (when `output_retries` isn't explicitly set) so
-        # existing callers keep their original behavior; we only warn so users can migrate.
-        # TODO(v2): drop `retries` entirely; default both `_max_tool_retries` and
-        # `_max_output_retries` to a constant 1 — no cascade.
-        if retries is not None:
-            if tool_retries is not None and output_retries is None:
-                # Combination case: `tool_retries=` already sets the tool budget, so `retries=`
-                # only ends up controlling the output budget via the legacy cascade. Call that out
-                # explicitly — passing `output_retries=` directly is the migration path.
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. You also passed `tool_retries=`, '
-                    'so `retries=` is now only setting `output_retries` via the legacy 1.x cascade — '
-                    'pass `output_retries=` explicitly instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. Use `tool_retries` instead. '
-                    'Note: in v2, `retries` will no longer also set `output_retries` as a fallback — '
-                    'pass `output_retries` explicitly if you rely on the cascade.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        effective_retries = retries if retries is not None else 1
-        self._max_tool_retries = tool_retries if tool_retries is not None else effective_retries
-        self._max_output_retries = output_retries if output_retries is not None else effective_retries
+        retries_tools, retries_output = normalize_agent_retries(retries)
+        # Explicit kwargs win over `retries` (matches the legacy precedence where
+        # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
+        if legacy_tool_retries is not None:
+            retries_tools = legacy_tool_retries
+        if legacy_output_retries is not None:
+            retries_output = legacy_output_retries
+        self._max_tool_retries = retries_tools if retries_tools is not None else 1
+        self._max_output_retries = retries_output if retries_output is not None else 1
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -542,9 +537,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -570,9 +564,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -597,9 +590,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -631,9 +623,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The agent name, overrides spec `name` if provided.
             description: The agent description, overrides spec `description` if provided.
             model_settings: Model request settings.
-            retries: Default retries for tool calls and output validation, overrides spec `retries` if provided.
+            retries: Retry budgets for tools and output validation. Pass an `int` to set the same budget
+                for both, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to set them individually.
+                Overrides spec `tool_retries` / `output_retries` if provided.
             validation_context: Pydantic validation context for tool arguments and outputs.
-            output_retries: Max retries for output validation, overrides spec `output_retries` if provided.
             tools: Tools to register with the agent.
             toolsets: Toolsets to register with the agent.
             defer_model_check: Defer model evaluation until first run.
@@ -664,6 +657,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # already fired in the consume helper.
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_spec'
+        )
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'Agent.from_spec', current_retries=retries
         )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -715,12 +711,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 cast(ModelSettings, validated_spec.model_settings) if validated_spec.model_settings else None,
                 model_settings,
             ),
-            retries=retries
-            if retries is not None
-            else (validated_spec.retries if 'retries' in validated_spec.model_fields_set else None),
-            tool_retries=validated_spec.tool_retries,
+            retries=_merge_retries_with_spec(retries, validated_spec),
             validation_context=validation_context,
-            output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
             tools=tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
@@ -750,9 +742,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -779,9 +770,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -807,9 +797,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
@@ -846,6 +835,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_file'
         )
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'Agent.from_file', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
         if extra_capabilities:
@@ -865,7 +857,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             retries=retries,
             validation_context=validation_context,
-            output_retries=output_retries,
             tools=tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
@@ -981,7 +972,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1004,7 +995,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1027,7 +1018,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1114,7 +1105,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1127,14 +1121,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.iter', current_retries=retries)
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
+        # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
+        retries_tools_override, retries_output_override = normalize_agent_retries(retries, int_means='output')
+        if retries_tools_override is not None:
+            raise exceptions.UserError(
+                'Per-run `retries` cannot set tool retries: tool retries can only be configured at agent '
+                "construction time. Use `retries={'output': ...}` (or `retries=<int>` to override the output "
+                'budget) here, and `Agent(retries=...)` for tool retries.'
+            )
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
-        effective_output_retries = output_retries
+        effective_output_retries = retries_output_override
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
@@ -1707,7 +1712,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        output_retries: int | _utils.Unset = _utils.UNSET,
+        retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
@@ -1730,15 +1735,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
-            output_retries: The output-retry budget to use instead of the agent-level `output_retries`. When set,
-                any per-run `output_retries` argument is ignored.
+            retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
+                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
+                cannot be overridden via `override()`.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
         native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        # Deprecated `output_retries=` is still accepted on `override()`. Translate it into the new
+        # `retries` value, with the explicit `retries=` kwarg winning if both are passed.
+        legacy_override_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
+        if _utils.is_set(legacy_override_output_retries):
+            warnings.warn(
+                '`agent.override(output_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `agent.override(retries={'output': ...})` (or `retries=<int>` to override the output "
+                'budget) instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=3,
+            )
+            if not _utils.is_set(retries):
+                retries = {'output': legacy_override_output_retries}
         _utils.validate_empty_kwargs(_deprecated_kwargs)
+
+        # Tool retries cannot be overridden via `override()`. An int means "override output only".
+        override_output_retries: int | _utils.Unset
+        if _utils.is_set(retries):
+            tools_part, output_part = normalize_agent_retries(retries, int_means='output')
+            if tools_part is not None:
+                raise exceptions.UserError(
+                    '`agent.override(retries=...)` cannot set tool retries: tool retries can only be '
+                    "configured at agent construction time. Use `retries={'output': ...}` (or "
+                    '`retries=<int>` to override the output budget) here.'
+                )
+            override_output_retries = output_part if output_part is not None else _utils.UNSET
+        else:
+            override_output_retries = _utils.UNSET
 
         resolved = self._resolve_spec(spec)
 
@@ -1754,8 +1788,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_settings = resolved.model_settings
             if not _utils.is_set(metadata) and resolved.metadata is not None:
                 metadata = resolved.metadata
-            if not _utils.is_set(output_retries) and resolved.output_retries is not None:
-                output_retries = resolved.output_retries
+            if not _utils.is_set(override_output_retries) and resolved.output_retries is not None:
+                override_output_retries = resolved.output_retries
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -1803,8 +1837,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        if _utils.is_set(output_retries):
-            output_retries_token = self._override_output_retries.set(_utils.Some(output_retries))
+        if _utils.is_set(override_output_retries):
+            output_retries_token = self._override_output_retries.set(_utils.Some(override_output_retries))
         else:
             output_retries_token = None
 
@@ -2768,6 +2802,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+
+def _merge_retries_with_spec(
+    explicit: int | AgentRetries | None,
+    spec: AgentSpec,
+) -> int | AgentRetries | None:
+    """Merge an explicit `retries=` value with the retry fields on an `AgentSpec`.
+
+    Explicit kwarg keys win over spec keys. The spec contributes `tool_retries`,
+    `output_retries`, and the legacy cascade-style `retries` field. Accessing the legacy
+    `spec.retries` triggers a `DeprecationWarning` from Pydantic when the field was
+    explicitly set, which is the documented migration signal.
+    """
+    explicit_tools, explicit_output = normalize_agent_retries(explicit)
+    spec_legacy_retries: int | None = spec.retries if 'retries' in spec.model_fields_set else None
+    tools = explicit_tools if explicit_tools is not None else (spec.tool_retries or spec_legacy_retries)
+    output = explicit_output if explicit_output is not None else (spec.output_retries or spec_legacy_retries)
+    if tools is None and output is None:
+        return None
+    merged: AgentRetries = {}
+    if tools is not None:
+        merged['tools'] = tools
+    if output is not None:
+        merged['output'] = output
+    return merged
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
