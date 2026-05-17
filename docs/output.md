@@ -35,7 +35,7 @@ Structured output is also useful when an agent's final answer contains operation
 
 For example:
 
-```python {title="completion_receipt.py" line_length="90"}
+```python {title="completion_receipt.py" line_length="90" test="skip"}
 from typing import Literal
 
 from pydantic import BaseModel, Field
