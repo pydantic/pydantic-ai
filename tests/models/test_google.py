@@ -9,6 +9,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
@@ -145,6 +146,13 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
 def test_google_client_property_delegates_to_provider(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.client is google_provider.client
+
+
+def test_google_cloud_provider_accepts_prebuilt_client():
+    """`GoogleCloudProvider(client=...)` short-circuits construction and stores the supplied client."""
+    mock_client = MagicMock()
+    provider = GoogleCloudProvider(client=mock_client)
+    assert provider.client is mock_client
 
 
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):

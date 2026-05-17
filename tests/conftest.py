@@ -56,7 +56,6 @@ __all__ = (
     'IsInstance',
     'IsList',
     'TestEnv',
-    'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
@@ -275,26 +274,6 @@ def anyio_backend():
 def allow_model_requests():
     with pydantic_ai.models.override_allow_model_requests(True):
         yield
-
-
-@pytest.fixture
-async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
-    client: httpx.AsyncClient | None = None
-
-    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
-        nonlocal client
-        assert client is None, 'client_with_handler can only be called once'
-        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
-        return client
-
-    try:
-        yield create_client
-    finally:
-        if client:  # pragma: no branch
-            await client.aclose()
-
-
-ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]
 
 
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
