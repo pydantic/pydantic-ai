@@ -149,6 +149,11 @@ async def test_direct_call_tool_filters_user_only_audience_annotations() -> None
                     text='visible to both',
                     annotations=mcp_types.Annotations(audience=['assistant', 'user']),
                 ),
+                mcp_types.TextContent(
+                    type='text',
+                    text='visible when audience unset',
+                    annotations=mcp_types.Annotations(),
+                ),
                 mcp_types.TextContent(type='text', text='visible when unannotated'),
             ],
             isError=False,
@@ -165,6 +170,7 @@ async def test_direct_call_tool_filters_user_only_audience_annotations() -> None
         [
             'visible to assistant only',
             'visible to both',
+            'visible when audience unset',
             'visible when unannotated',
         ]
     )
