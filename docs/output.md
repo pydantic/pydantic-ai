@@ -29,6 +29,65 @@ print(result.usage)
 
 _(This example is complete, it can be run "as is")_
 
+## Receipts for final-state claims {#completion-receipts}
+
+Structured output is also useful when an agent's final answer contains operational claims that need to be reviewed, such as "tests passed", "files were changed", or "ready to publish". A typed receipt can separate each claim from its evidence and make human approval boundaries explicit.
+
+For example:
+
+```python {title="completion_receipt.py" line_length="90"}
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class ReceiptClaim(BaseModel):
+    claim: str
+    support_status: Literal['supported', 'unverified', 'unsupported']
+    evidence: list[str] = Field(default_factory=list)
+    required_fix: str | None = None
+
+
+class TaskReceipt(BaseModel):
+    verification_status: Literal[
+        'completed', 'missing_evidence', 'needs_human_review'
+    ]
+    summary: str
+    claims: list[ReceiptClaim]
+    next_owner: str
+    human_decision_required: bool
+
+
+agent = Agent(
+    'openai:gpt-5-mini',
+    output_type=TaskReceipt,
+    instructions=(
+        'Return a concise task receipt. Do not mark a claim as supported unless '
+        'the evidence directly supports it. If a claim needs approval before '
+        'merge, deploy, publish, or settings changes, set human_decision_required.'
+    ),
+)
+
+result = agent.run_sync(
+    """
+    Final answer:
+    I updated README.md and all tests passed. The branch is ready to merge.
+
+    Available evidence:
+    - git diff -- README.md showed documentation-only changes.
+    - No test command output was captured.
+    - No reviewer or maintainer approval was captured.
+    """
+)
+
+print(result.output.verification_status)
+print(result.output.claims)
+```
+
+A receipt is not a substitute for tests, traces, review, or required approvals. It is a structured final-state summary that helps humans and downstream systems see which claims are supported, which are not, and who owns the next decision.
+
 ## Structured output data {#structured-output}
 
 The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types (including `TypedDict`s and [`StructuredDict`s](#structured-dict)), dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. You can also pass a list of multiple choices.
