@@ -1,6 +1,9 @@
 from __future__ import annotations as _annotations
 
+import builtins
+import importlib
 import re
+import sys
 
 import httpx
 import pytest
@@ -56,3 +59,28 @@ def test_mistral_provider_with_base_url() -> None:
         mistral_client=Mistral(api_key='test-api-key', server_url='https://custom.mistral.com/v1'),
     )
     assert provider.base_url == 'https://custom.mistral.com/v1'
+
+
+def test_mistral_provider_preserves_sdk_import_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import = builtins.__import__
+
+    def import_with_broken_mistral_client(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name == 'mistralai.client' and 'Mistral' in fromlist:
+            raise ImportError("cannot import name 'Mistral' from 'mistralai.client'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    with monkeypatch.context() as m:
+        m.setattr(builtins, '__import__', import_with_broken_mistral_client)
+        sys.modules.pop('pydantic_ai.providers.mistral', None)
+
+        with pytest.raises(ImportError, match="cannot import name 'Mistral'"):
+            importlib.import_module('pydantic_ai.providers.mistral')
+
+    sys.modules.pop('pydantic_ai.providers.mistral', None)
+    importlib.import_module('pydantic_ai.providers.mistral')

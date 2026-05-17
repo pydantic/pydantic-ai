@@ -1,6 +1,9 @@
 from __future__ import annotations as _annotations
 
+import builtins
+import importlib
 import json
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -136,6 +139,31 @@ class MockMistralAI:
                 response = cast(MistralChatCompletionResponse, self.completions)
         self.index += 1
         return response
+
+
+def test_mistral_model_preserves_sdk_import_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import = builtins.__import__
+
+    def import_with_broken_mistral_types(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name == 'mistralai.client.types' and 'UNSET' in fromlist:
+            raise ImportError("cannot import name 'UNSET' from 'mistralai.client.types'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    with monkeypatch.context() as m:
+        m.setattr(builtins, '__import__', import_with_broken_mistral_types)
+        sys.modules.pop('pydantic_ai.models.mistral', None)
+
+        with pytest.raises(ImportError, match="cannot import name 'UNSET'"):
+            importlib.import_module('pydantic_ai.models.mistral')
+
+    sys.modules.pop('pydantic_ai.models.mistral', None)
+    importlib.import_module('pydantic_ai.models.mistral')
 
 
 def completion_message(
