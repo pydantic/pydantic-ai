@@ -88,8 +88,11 @@ try:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
-    from fastmcp.server import FastMCP
-    from mcp.server.fastmcp import FastMCP as FastMCP1Server
+
+    # `fastmcp.server` / `mcp.server.fastmcp` are server-only entry points and aren't shipped by
+    # `fastmcp-slim[client]`. They only appear in the (stringified) `MCPToolsetClient` TypeAlias and
+    # in TYPE_CHECKING-only annotations, so we don't import them at runtime — doing so would make
+    # `pydantic_ai.mcp` unusable on the client-only install path.
 except ImportError as _err:  # pragma: no cover
     _fastmcp_import_error = _err
 else:
