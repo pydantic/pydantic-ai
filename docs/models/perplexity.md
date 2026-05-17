@@ -2,7 +2,7 @@
 
 [Perplexity](https://docs.perplexity.ai/) exposes an OpenAI-compatible chat completions endpoint backed by models that ground their answers in live web search.
 
-Pydantic AI talks to Perplexity through [`PerplexityProvider`][pydantic_ai.providers.perplexity.PerplexityProvider] paired with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+Pydantic AI talks to Perplexity through [`PerplexityProvider`][pydantic_ai.providers.perplexity.PerplexityProvider] paired with [`PerplexityModel`][pydantic_ai.models.perplexity.PerplexityModel].
 
 ## Install
 
@@ -30,10 +30,10 @@ Or initialise the provider directly to pass in an explicit API key or a custom H
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.perplexity import PerplexityModel
 from pydantic_ai.providers.perplexity import PerplexityProvider
 
-model = OpenAIChatModel(
+model = PerplexityModel(
     'sonar-pro',
     provider=PerplexityProvider(api_key='your-perplexity-api-key'),
 )
@@ -44,12 +44,14 @@ Pick a model name from the [Perplexity model directory](https://docs.perplexity.
 
 ## Web Search
 
-Perplexity's chat models perform web search natively on every request — there's no opt-in flag to send. Pydantic AI exposes this through the standard [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] so the same agent code works whether the underlying provider is Perplexity, OpenAI, Anthropic, or any other supported web-search provider:
+Perplexity's chat models perform web search natively on every request — there's no opt-in flag to send. Pydantic AI exposes this through the standard [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] so the same agent code works whether the underlying provider is Perplexity, OpenAI, Anthropic, or any other supported web-search provider:
 
 ```python {test="skip"}
-from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import WebSearchTool
 
-agent = Agent('perplexity:sonar-pro', builtin_tools=[WebSearchTool()])
+agent = Agent('perplexity:sonar-pro', capabilities=[NativeTool(WebSearchTool())])
 result = agent.run_sync("Summarise this week's biggest AI announcements.")
 print(result.output)
 ```
