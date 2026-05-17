@@ -154,7 +154,11 @@ async def test_direct_call_tool_filters_user_only_audience_annotations() -> None
             isError=False,
         )
 
-        with patch.object(server._get_client(), 'send_request', AsyncMock(return_value=fake_result)):
+        with patch.object(
+            server._get_client(),  # pyright: ignore[reportPrivateUsage]
+            'send_request',
+            AsyncMock(return_value=fake_result),
+        ):
             result = await server.direct_call_tool('ignored_tool_name', {})
 
     assert result == snapshot(

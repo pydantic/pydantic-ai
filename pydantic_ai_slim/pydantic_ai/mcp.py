@@ -708,8 +708,10 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structuredContent) and visible_parts and not any(
-            not isinstance(part, mcp_types.TextContent) for part in visible_parts
+        if (
+            (structured := result.structuredContent)
+            and visible_parts
+            and not any(not isinstance(part, mcp_types.TextContent) for part in visible_parts)
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -2145,8 +2147,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
         visible_parts = [part for part in result.content if _is_visible_to_assistant(part)]
 
-        if (structured := result.structured_content) and visible_parts and all(
-            isinstance(part, mcp_types.TextContent) for part in visible_parts
+        if (
+            (structured := result.structured_content)
+            and visible_parts
+            and all(isinstance(part, mcp_types.TextContent) for part in visible_parts)
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
             # the raw value returned by the tool function.
