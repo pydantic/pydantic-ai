@@ -142,6 +142,60 @@ def test_build_run_input_allows_regenerate_without_message_id():
     assert run_input.message_id is None
 
 
+def test_build_run_input_accepts_dynamic_tool_provider_fields():
+    states = (
+        'input-streaming',
+        'input-available',
+        'output-available',
+        'output-error',
+        'approval-requested',
+        'approval-responded',
+        'output-denied',
+    )
+    parts: list[dict[str, Any]] = []
+    for state in states:
+        part: dict[str, Any] = {
+            'type': 'dynamic-tool',
+            'toolName': 'dynamic_search',
+            'toolCallId': f'call_{state.replace("-", "_")}',
+            'state': state,
+            'input': {'query': 'pydantic'},
+            'title': 'Dynamic search',
+            'providerExecuted': True,
+        }
+        if state == 'output-available':
+            part['output'] = {'result': 'ok'}
+        elif state == 'output-error':
+            part['errorText'] = 'tool failed'
+        elif state == 'approval-requested':
+            part['approval'] = {'id': 'approval_requested'}
+        elif state == 'approval-responded':
+            part['approval'] = {'id': 'approval_responded', 'approved': True}
+        parts.append(part)
+
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': parts,
+            }
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, SubmitMessage)
+    dynamic_parts = run_input.messages[0].parts
+    assert len(dynamic_parts) == 7
+    dumped_parts = [part.model_dump(by_alias=True) for part in dynamic_parts]
+    assert {part['state'] for part in dumped_parts} == set(states)
+    assert all(part['providerExecuted'] is True for part in dumped_parts)
+    assert all(part['title'] == 'Dynamic search' for part in dumped_parts)
+
+
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))

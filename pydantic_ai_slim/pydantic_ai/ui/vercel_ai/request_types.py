@@ -246,6 +246,8 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     tool_call_id: str
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -258,6 +260,8 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     tool_call_id: str
     state: Literal['input-available'] = 'input-available'
     input: Any
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -271,6 +275,8 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     state: Literal['output-available'] = 'output-available'
     input: Any
     output: Any
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
@@ -285,6 +291,8 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     state: Literal['output-error'] = 'output-error'
     input: Any
     error_text: str
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -297,6 +305,8 @@ class DynamicToolApprovalRequestedPart(BaseUIPart):
     tool_call_id: str
     state: Literal['approval-requested'] = 'approval-requested'
     input: Any
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -309,6 +319,8 @@ class DynamicToolApprovalRespondedPart(BaseUIPart):
     tool_call_id: str
     state: Literal['approval-responded'] = 'approval-responded'
     input: Any
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -321,6 +333,8 @@ class DynamicToolOutputDeniedPart(BaseUIPart):
     tool_call_id: str
     state: Literal['output-denied'] = 'output-denied'
     input: Any
+    title: str | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
