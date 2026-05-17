@@ -625,6 +625,74 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+async def test_stream_text_no_created_timestamp(allow_model_requests: None):
+    stream = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
+    for item in stream:
+        item.created = None  # type: ignore
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='hello world.')],
+                usage=RequestUsage(input_tokens=6, output_tokens=3),
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'timestamp': IsNow(tz=timezone.utc),
+                    'finish_reason': 'stop',
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        )
+        assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
+
+
+async def test_stream_text_uses_created_timestamp_from_later_chunk(allow_model_requests: None):
+    stream = [
+        text_chunk('hello '),
+        text_chunk('world'),
+        text_chunk('.', finish_reason='stop'),
+    ]
+    stream[0].created = None  # type: ignore
+    stream[1].created = 1704153600  # 2024-01-02
+    stream[2].created = 1704240000  # 2024-01-03
+
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world.']
+        )
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.provider_details == snapshot(
+            {
+                'timestamp': datetime(2024, 1, 3, 0, 0, tzinfo=timezone.utc),
+                'finish_reason': 'stop',
+            }
+        )
+
+
 def struc_chunk(
     tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
 ) -> chat.ChatCompletionChunk:
