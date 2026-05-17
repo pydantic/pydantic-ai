@@ -127,6 +127,45 @@ async def test_stdio_server(run_context: RunContext[int]):
         assert result == snapshot(32.0)
 
 
+async def test_direct_call_tool_filters_user_only_audience_annotations() -> None:
+    from mcp import types as mcp_types
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        fake_result = mcp_types.CallToolResult(
+            content=[
+                mcp_types.TextContent(
+                    type='text',
+                    text='visible to user only',
+                    annotations=mcp_types.Annotations(audience=['user']),
+                ),
+                mcp_types.TextContent(
+                    type='text',
+                    text='visible to assistant only',
+                    annotations=mcp_types.Annotations(audience=['assistant']),
+                ),
+                mcp_types.TextContent(
+                    type='text',
+                    text='visible to both',
+                    annotations=mcp_types.Annotations(audience=['assistant', 'user']),
+                ),
+                mcp_types.TextContent(type='text', text='visible when unannotated'),
+            ],
+            isError=False,
+        )
+
+        with patch.object(server._get_client(), 'send_request', AsyncMock(return_value=fake_result)):
+            result = await server.direct_call_tool('ignored_tool_name', {})
+
+    assert result == snapshot(
+        [
+            'visible to assistant only',
+            'visible to both',
+            'visible when unannotated',
+        ]
+    )
+
+
 async def test_reentrant_context_manager():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:

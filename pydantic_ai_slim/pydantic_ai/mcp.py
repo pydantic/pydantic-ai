@@ -696,18 +696,20 @@ class MCPServer(AbstractToolset[Any], ABC):
             except mcp_exceptions.McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
+        visible_parts = [part for part in result.content if _is_visible_to_assistant(part)]
+
         if result.isError:
             message: str | None = None
-            if result.content:  # pragma: no branch
-                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+            if visible_parts:  # pragma: no branch
+                text_parts = [part.text for part in visible_parts if isinstance(part, mcp_types.TextContent)]
                 message = '\n'.join(text_parts)
 
             raise exceptions.ModelRetry(message or 'MCP tool call failed')
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structuredContent) and not any(
-            not isinstance(part, mcp_types.TextContent) for part in result.content
+        if (structured := result.structuredContent) and visible_parts and not any(
+            not isinstance(part, mcp_types.TextContent) for part in visible_parts
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -715,7 +717,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 return structured['result']
             return structured
 
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        mapped = [await self._map_tool_result_part(part) for part in visible_parts]
         return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
@@ -2141,8 +2143,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structured_content) and all(
-            isinstance(part, mcp_types.TextContent) for part in result.content
+        visible_parts = [part for part in result.content if _is_visible_to_assistant(part)]
+
+        if (structured := result.structured_content) and visible_parts and all(
+            isinstance(part, mcp_types.TextContent) for part in visible_parts
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
             # the raw value returned by the tool function.
@@ -2150,7 +2154,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 return structured['result']
             return structured
 
-        return _map_mcp_tool_results(result.content)
+        return _map_mcp_tool_results(visible_parts)
 
     async def call_tool(
         self,
@@ -2374,6 +2378,18 @@ def _map_mcp_tool_results(
 ):
     mapped = [_map_mcp_tool_result(part) for part in parts]
     return mapped[0] if len(mapped) == 1 else mapped
+
+
+def _is_visible_to_assistant(part: mcp_types.ContentBlock) -> bool:
+    annotations = getattr(part, 'annotations', None)
+    if annotations is None:
+        return True
+
+    audience = getattr(annotations, 'audience', None)
+    if audience is None:
+        return True
+
+    return 'assistant' in audience
 
 
 def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
