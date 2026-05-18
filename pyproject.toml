@@ -115,7 +115,6 @@ dev = [
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
-    "pydantic-ai[a2a]",
     "black>=24.10.0",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",

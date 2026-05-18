@@ -5033,7 +5033,6 @@ docs = [
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocs-redirects" },
     { name = "mkdocstrings-python" },
-    { name = "pydantic-ai" },
     { name = "pydantic-docs" },
 ]
 docs-upload = [
@@ -5091,7 +5090,6 @@ docs = [
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.0" },
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
     { name = "mkdocstrings-python", specifier = ">=2.0.0" },
-    { name = "pydantic-ai", extras = ["a2a"], editable = "." },
     { name = "pydantic-docs", git = "https://github.com/pydantic/pydantic-docs" },
 ]
 docs-upload = [
