@@ -86,7 +86,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # `AbstractCapability.__new__` seeds `id` with a UUID for subclasses that don't
         # call `super().__init__()`. Overwrite it here so that an unset `id` keeps the
         # URL-derived semantic in `_resolved_id` (empty string is falsy).
-        self.id = id if id is not None else ''
+        self.id = id if id is not None else self.id
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
