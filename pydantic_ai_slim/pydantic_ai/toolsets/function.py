@@ -270,7 +270,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 raise UserError(
                     f'`FunctionToolset.tool()` requires a function whose first parameter is annotated with `RunContext`. '
                     f'For tools that do not need run context, use `FunctionToolset.tool_plain()` instead. '
-                    f'Got: {func_.__qualname__}'
+                    f'Got: {func_.__qualname__!r}'
                 )
             self.add_function(
                 func=func_,
