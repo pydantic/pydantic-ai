@@ -4759,7 +4759,7 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_local_string_strategy(self, allow_model_requests: None):
+    def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
@@ -5426,10 +5426,10 @@ class TestMCPCapability:
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
         assert isinstance(toolset, FilteredToolset)
 
-    def test_mcp_url_required(self):
-        """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
-            MCP()  # type: ignore[call-arg]
+    def test_mcp_no_url_no_local_raises(self):
+        """MCP() with neither `url=` nor `local=` raises — no way to construct a usable capability."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            MCP()
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
         """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
@@ -6551,7 +6551,7 @@ def test_web_search_with_constraints():
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_unknown_strategy_with_extras_missing(monkeypatch: pytest.MonkeyPatch):
+def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
     """WebSearch(local='duckduckgo') raises with install hint when [duckduckgo] extra is missing."""
     import builtins
 
@@ -6567,7 +6567,7 @@ def test_web_search_unknown_strategy_with_extras_missing(monkeypatch: pytest.Mon
         WebSearch(local='duckduckgo')
 
 
-def test_web_fetch_unknown_strategy_with_extras_missing(monkeypatch: pytest.MonkeyPatch):
+def test_web_fetch_local_true_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
     """WebFetch(local=True) raises with install hint when [web-fetch] extra is missing."""
     import builtins
 
@@ -6662,6 +6662,61 @@ def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: 
     monkeypatch.setattr(builtins, '__import__', mock_import)
     with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
         MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
+def test_mcp_native_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., native=True)` (default `local`) now raises when `[mcp]` is missing.
+
+    Previously `_default_local` swallowed `ImportError` and returned None, so
+    `MCP(url=..., native=True)` would silently work as native-only. Locking in the new
+    construction-time error so users get a clear migration to `native=True, local=False`.
+    """
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', native=True)
+
+
+def test_mcp_without_url_with_local_toolset():
+    """`MCP(local=MCPToolset(...))` constructs without `url=` — the primary path for non-URL clients."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    from pydantic_ai.mcp import MCPToolset
+
+    toolset = MCPToolset('http://example.com/mcp', include_instructions=True)
+    cap = MCP(local=toolset)
+    assert cap.url is None
+    assert cap.local is toolset
+    assert cap.get_native_tools() == []
+
+
+def test_mcp_without_url_with_native_true_raises():
+    """`MCP(native=True)` without `url=` raises — native MCP requires a URL to give the model."""
+    with pytest.raises(UserError, match=r'requires `url=`'):
+        MCP(native=True, local=False)
+
+
+def test_mcp_without_url_local_true_raises():
+    """`MCP(local=True)` without `url=` raises — no URL to derive the local transport from."""
+    with pytest.raises(UserError, match=r'requires `url=`'):
+        MCP(local=True)
+
+
+def test_native_or_local_constraint_check_precedes_no_local_check():
+    """`WebSearch(native=False, allowed_domains=...)` raises the constraint error, not the no-local error.
+
+    Regression test for validation-order bug — the constraint case is unfixable by adding `local=`,
+    so it must fire before the `requires an explicit local tool` check.
+    """
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, allowed_domains=['example.com'])
 
 
 def test_web_search_local_string_strategy_silent():

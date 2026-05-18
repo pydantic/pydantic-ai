@@ -31,14 +31,21 @@ else:
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
-    Runs the MCP server locally — keeps credentials, hooks, and tracing under
-    your control. Pass `native=True` to also advertise the model provider's native MCP
-    support (with local as a fallback for unsupported models), or `native=True, local=False`
-    for strict native-only.
+    The primary entry point for using MCP servers with Pydantic AI. Runs the MCP server
+    locally — keeps credentials, hooks, and tracing under your control — and accepts any
+    [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input (URL, `fastmcp.Client`, transport,
+    in-process `FastMCP` server, script path, etc.) directly via `local=`.
+
+    Pass `url=` for HTTP-based servers; the same URL can also be advertised to providers
+    that support native MCP via `native=True`. For non-URL local clients, omit `url=` and
+    pass the client/toolset as `local=`. Pass `native=True, local=False` for strict
+    native-only (no local at all — works without the `mcp` extra).
     """
 
-    url: str
-    """The URL of the MCP server."""
+    url: str | None
+    """The URL of the MCP server.
+
+    Required when using native MCP. Optional when using a local-only client via `local=`."""
 
     id: str | None
     """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
@@ -57,7 +64,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def __init__(
         self,
-        url: str,
+        url: str | None = None,
         *,
         native: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
@@ -75,6 +82,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         description: str | None = None,
     ) -> None:
+        # Native MCP requires a URL to give the model. Local-only use without a URL is fine —
+        # the user is expected to supply a concrete `local=` (toolset, client, callable, …).
+        if url is None and native is not False:
+            raise UserError(
+                'MCP() requires `url=` when `native` is enabled — native MCP needs a URL to '
+                'give the model. For local-only use without a URL, pass `local=` (e.g. an '
+                '`MCPToolset`, `fastmcp.Client`, transport, in-process `FastMCP` server, or '
+                'script path) and leave `native` at its default of `False`.'
+            )
+
         self.url = url
         self.native = native
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
@@ -102,6 +119,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     def _resolved_id(self) -> str:
         if self.id:
             return self.id
+        # `_resolved_id` is only read through native paths, which require a URL (enforced in `__init__`).
+        assert self.url is not None
         # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
         parsed = urlparse(self.url)
         path = parsed.path.rstrip('/')
@@ -110,6 +129,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return f'{host}-{slug}' if slug else host or self.url
 
     def _default_native(self) -> MCPServerTool:
+        # `native is True` requires `url is not None` (enforced in `__init__`).
+        assert self.url is not None
         return MCPServerTool(
             id=self._resolved_id,
             url=self.url,
@@ -123,6 +144,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        if self.url is None:
+            # No URL → no way to derive a default local; the user must have passed `local=` directly.
+            return None
         return self._build_local(self.url)
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
@@ -134,6 +158,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         if isinstance(name, str):
             _require_url(name)
             return self._build_local(name)
+        if self.url is None:
+            raise UserError(
+                'MCP(local=True) requires `url=` to derive the local transport from. '
+                "Pass `url='https://…'`, or pass a concrete local client/toolset as `local=`."
+            )
         return self._build_local(self.url)
 
     def _build_local(self, url: str) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
@@ -149,11 +178,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return MCPToolset(url, headers=local_headers or None, include_instructions=True)
         except ImportError as e:
             raise UserError(
-                'MCP runs the server locally by default, but the MCP extra is not installed.\n\n'
-                'Either install the MCP extra:\n'
-                '    pip install "pydantic-ai-slim[mcp]"\n'
-                "or use only the model's native MCP support (no local needed):\n"
-                "    MCP(url='…', native=True, local=False)"
+                'Please install the `mcp` package to run MCP servers locally, you can use the '
+                '`mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`. '
+                'For native-only MCP (no local — no extra needed), pass '
+                "`MCP(url='…', native=True, local=False)`."
             ) from e
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -179,9 +207,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         """Construct an `MCP` capability from spec-serializable args.
 
         Restricts the runtime-wide `local=` union to the JSON/YAML-serializable subset
-        (`str | bool | None`) so `AgentSpec` schema generation works. Non-serializable runtime
-        values like `fastmcp.Client`, `ClientTransport`, or pre-built `MCPToolset` instances can
-        still be passed to `MCP(...)` directly — they just can't roundtrip through a spec file.
+        (`str | bool | None`) so `AgentSpec` schema generation works, and requires `url=` (which
+        is optional at runtime when `local=` is a concrete non-URL client). Non-serializable
+        runtime values like `fastmcp.Client`, `ClientTransport`, or pre-built `MCPToolset`
+        instances can still be passed to `MCP(...)` directly — they just can't roundtrip through
+        a spec file.
         """
         return cls(
             url,

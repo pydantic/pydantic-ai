@@ -21,7 +21,13 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
 
     Uses the model's native web search and raises `UserError` on models that
     don't support it natively. Pass `local='duckduckgo'` (or `local=True`) to opt into a
-    local fallback, or any callable / Tool / AbstractToolset.
+    local DuckDuckGo fallback — requires the `duckduckgo` optional group:
+
+    ```bash
+    pip install "pydantic-ai-slim[duckduckgo]"
+    ```
+
+    `local=` also accepts any callable, `Tool`, or `AbstractToolset` for a custom fallback.
     """
 
     search_context_size: Literal['low', 'medium', 'high'] | None

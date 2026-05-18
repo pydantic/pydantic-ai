@@ -91,16 +91,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
 
+        # Catch contradictory config: native disabled but constraint fields require it.
+        # Checked first because adding `local=` can't fix it — the user needs to either drop
+        # the constraint or re-enable native.
+        if self.native is False and self._requires_native():
+            raise UserError(f'{type(self).__name__}: constraint fields require the native tool, but native=False')
+
         # Disallow `native=False` without an explicit local — would produce a silent no-op capability.
         if self.native is False and self.local is None:  # pyright: ignore[reportUnknownMemberType]
             raise UserError(
                 f'{type(self).__name__}(native=False) requires an explicit local tool — '
-                'pass `local=...` (e.g. a strategy string, `True`, a callable, or a Tool/AbstractToolset).'
+                'pass `local=...` (e.g. a strategy string, `True`, a callable, or a `Tool`/`AbstractToolset`).'
             )
-
-        # Catch contradictory config: native disabled but constraint fields require it
-        if self.native is False and self._requires_native():
-            raise UserError(f'{type(self).__name__}: constraint fields require the native tool, but native=False')
 
     # --- Subclass hooks (not abstract — direct use is supported) ---
 
