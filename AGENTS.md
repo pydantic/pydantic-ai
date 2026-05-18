@@ -103,10 +103,18 @@ The project uses:
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
 
+For non-trivial `pydantic-ai-slim` feature work that touches public APIs, providers, capabilities, toolsets, output/tools, message history, streaming, UI adapters, or durable execution, load the `pydantic-ai-feature-work` skill before planning or editing.
+
 Additionally, always read the directory-specific instructions when working in those directories:
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
-- [pydantic_ai_slim/pydantic_ai/builtin_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/builtin_tools/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md](pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/models/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md](pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/providers/AGENTS.md](pydantic_ai_slim/pydantic_ai/providers/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md](pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/ui/AGENTS.md](pydantic_ai_slim/pydantic_ai/ui/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)
