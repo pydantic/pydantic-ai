@@ -9,7 +9,7 @@ from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -788,7 +788,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockGroq.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body={'error': 'test error'},
         )
     )
@@ -805,7 +805,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockGroq.create_mock(
         APIConnectionError(
             message='Connection to https://api.groq.com timed out',
-            request=httpx.Request('POST', 'https://api.groq.com/v1/chat/completions'),
+            request=httpx2.Request('POST', 'https://api.groq.com/v1/chat/completions'),  # pyright: ignore[reportArgumentType]
         )
     )
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))

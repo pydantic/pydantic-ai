@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-import httpx
+import httpx2
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
@@ -80,7 +80,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Initialize SambaNova provider.
 
@@ -88,7 +88,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
             api_key: SambaNova API key. If not provided, reads from SAMBANOVA_API_KEY env var.
             base_url: Custom API base URL. Defaults to https://api.sambanova.ai/v1
             openai_client: Optional pre-configured OpenAI client
-            http_client: Optional custom httpx.AsyncClient for making HTTP requests
+            http_client: Optional custom httpx2.AsyncClient for making HTTP requests
 
         Raises:
             UserError: If API key is not provided and SAMBANOVA_API_KEY env var is not set
@@ -112,7 +112,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

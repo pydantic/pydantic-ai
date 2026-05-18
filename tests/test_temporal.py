@@ -168,7 +168,7 @@ http_client = create_async_http_client()
 
 
 @pytest.fixture(autouse=True, scope='module')
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+async def close_cached_httpx2_client(anyio_backend: str) -> AsyncIterator[None]:
     try:
         yield
     finally:

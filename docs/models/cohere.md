@@ -59,7 +59,7 @@ agent = Agent(model)
 You can also customize the `CohereProvider` with a custom `http_client`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel

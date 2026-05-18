@@ -1,6 +1,6 @@
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -55,7 +55,7 @@ def test_ovhcloud_pass_openai_client() -> None:
 
 
 def test_ovhcloud_pass_http_client():
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = OVHcloudProvider(api_key='your-api-key', http_client=http_client)
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'your-api-key'

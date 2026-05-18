@@ -708,7 +708,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         container = self._get_container(messages, model_settings)
 
         with _map_api_errors(self.model_name):
-            return await self.client.beta.messages.create(
+            return await self.client.beta.messages.create(  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -724,7 +724,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),  # pyright: ignore[reportArgumentType]
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
@@ -877,7 +877,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 cache_control=auto_cache_control or OMIT,
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
                 context_management=context_management or OMIT,
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),  # pyright: ignore[reportArgumentType]
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),

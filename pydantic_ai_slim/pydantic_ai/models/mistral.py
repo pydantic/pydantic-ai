@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 import pydantic_core
-from httpx import Timeout
+from httpx2 import Timeout
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils

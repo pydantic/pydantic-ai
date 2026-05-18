@@ -12,7 +12,7 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx2
 
 from ._utils import run_in_executor
 from .models import create_async_http_client
@@ -315,7 +315,7 @@ async def safe_download(
     headers: dict[str, str] | None = None,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Download content from a URL with SSRF protection.
 
     This function:
@@ -342,12 +342,12 @@ async def safe_download(
                 Checked on every hop including redirects.
 
     Returns:
-        The httpx.Response object.
+        The httpx2.Response object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx2.HTTPStatusError: If the response has an error status code.
     """
     current_url = url
     redirects_followed = 0

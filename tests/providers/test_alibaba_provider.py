@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -81,7 +81,7 @@ def test_alibaba_provider_with_openai_client():
 
 
 def test_alibaba_provider_with_http_client():
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = AlibabaProvider(api_key='foo', http_client=http_client)
     assert provider.client.api_key == 'foo'
     # The line `self._client = AsyncOpenAI(..., http_client=http_client)` is executed,

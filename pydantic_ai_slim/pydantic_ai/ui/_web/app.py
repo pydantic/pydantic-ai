@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
 
-import httpx
+import httpx2
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -68,7 +68,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         if cache_file.exists():
             return cache_file.read_bytes()
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get(DEFAULT_HTML_URL)
             response.raise_for_status()
             content = response.content
@@ -92,7 +92,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         if cache_file.exists():
             return cache_file.read_bytes()
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get(html_source)
             response.raise_for_status()
             content = response.content

@@ -4,7 +4,7 @@ from typing import Any, Literal
 from unittest.mock import patch
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, UserError
@@ -62,7 +62,7 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 
 
 async def test_init_with_http_client():
-    async with httpx.AsyncClient() as http_client:
+    async with httpx2.AsyncClient() as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore
 

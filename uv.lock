@@ -2910,6 +2910,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpcore2"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ee/6b/34f4556f28172ec5c6eab5ed5439b0032b22c0afa7122bbdb5d3b0c6124e/httpcore2-2.1.0.tar.gz", hash = "sha256:403afd97f6edfb674b54d84afb9b19821244d0d6f7647c73e701bf2e2565923c", size = 63459, upload-time = "2026-05-15T14:46:49.865Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/1a/3a0f26cd69cf74a1302b4008966bf46846e82cb350cb043170d54937c586/httpcore2-2.1.0-py3-none-any.whl", hash = "sha256:aef74c286ded52b289f8d0f35a1648b6f59117ca1401e4e2066fd911b885fcd9", size = 79248, upload-time = "2026-05-15T14:46:46.046Z" },
+]
+
+[[package]]
 name = "httptools"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2986,6 +2999,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
+]
+
+[[package]]
+name = "httpx2"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore2" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/75/44/1e912aa5011ee06864956ee42f2e202db31c084e852fcced258635b886c7/httpx2-2.1.0.tar.gz", hash = "sha256:1a637dc97545141d96d8b0eeb14b3919ca6ecb663b507255408eee324b86ddeb", size = 80400, upload-time = "2026-05-15T14:46:50.929Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/1f/d21a62913deed35120d7d1ed23373d2e41989288d34cccfdeff01fdc9733/httpx2-2.1.0-py3-none-any.whl", hash = "sha256:99afca5111a8ab6439b4271ddab9300de5a960febf4e6e5d4966abfda58eaa36", size = 74063, upload-time = "2026-05-15T14:46:48.032Z" },
 ]
 
 [[package]]
@@ -6884,7 +6912,7 @@ dependencies = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "genai-prices" },
     { name = "griffelib" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
@@ -7007,7 +7035,7 @@ voyageai = [
     { name = "voyageai", marker = "python_full_version < '3.14' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 web = [
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -7037,8 +7065,8 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27.0" },
+    { name = "httpx2", specifier = ">=2.0" },
+    { name = "httpx2", marker = "extra == 'web'", specifier = ">=2.0" },
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
@@ -7265,7 +7293,7 @@ pycountry = [
 name = "pydantic-graph"
 source = { editable = "pydantic_graph" }
 dependencies = [
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "typing-inspection" },
@@ -7273,7 +7301,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx2", specifier = ">=2.0" },
     { name = "logfire-api", specifier = ">=3.14.1" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "typing-inspection", specifier = ">=0.4.0" },

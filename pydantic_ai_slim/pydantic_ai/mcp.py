@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, overload
 
 import anyio
-import httpx
+import httpx2
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
@@ -1253,7 +1253,7 @@ class _MCPServerHTTP(MCPServer):
     headers: dict[str, Any] | None
     """Optional HTTP headers to be sent with each request to the endpoint.
 
-    These headers will be passed directly to the underlying `httpx.AsyncClient`.
+    These headers will be passed directly to the underlying `httpx2.AsyncClient`.
     Useful for authentication, custom headers, or other HTTP-specific configurations.
 
     !!! note
@@ -1262,8 +1262,8 @@ class _MCPServerHTTP(MCPServer):
         See [`MCPServerHTTP.http_client`][pydantic_ai.mcp.MCPServerHTTP.http_client] for more information.
     """
 
-    http_client: httpx.AsyncClient | None
-    """An `httpx.AsyncClient` to use with the endpoint.
+    http_client: httpx2.AsyncClient | None
+    """An `httpx2.AsyncClient` to use with the endpoint.
 
     This client may be configured to use customized connection parameters like self-signed certificates.
 
@@ -1273,11 +1273,11 @@ class _MCPServerHTTP(MCPServer):
         If you want to use both, you can pass the headers to the `http_client` instead.
 
         ```python {py="3.10" test="skip"}
-        import httpx
+        import httpx2
 
         from pydantic_ai.mcp import MCPServerSSE
 
-        http_client = httpx.AsyncClient(headers={'Authorization': 'Bearer ...'})
+        http_client = httpx2.AsyncClient(headers={'Authorization': 'Bearer ...'})
         server = MCPServerSSE('http://localhost:3001/sse', http_client=http_client)
         ```
     """
@@ -1302,7 +1302,7 @@ class _MCPServerHTTP(MCPServer):
         url: str,
         *,
         headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
         id: str | None = None,
         tool_prefix: str | None = None,
         log_level: mcp_types.LoggingLevel | None = None,
@@ -1326,7 +1326,7 @@ class _MCPServerHTTP(MCPServer):
         Args:
             url: The URL of the endpoint on the MCP server.
             headers: Optional HTTP headers to be sent with each request to the endpoint.
-            http_client: An `httpx.AsyncClient` to use with the endpoint.
+            http_client: An `httpx2.AsyncClient` to use with the endpoint.
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             tool_prefix: A prefix to add to all tools that are registered with the server.
             log_level: The log level to set when connecting to the server, if any.
@@ -1453,9 +1453,9 @@ class MCPServerSSE(_MCPServerHTTP):
 
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
+                timeout: httpx2.Timeout | None = None,
+                auth: httpx2.Auth | None = None,
+            ) -> httpx2.AsyncClient:
                 assert self.http_client is not None
                 return self.http_client
 
@@ -1463,7 +1463,7 @@ class MCPServerSSE(_MCPServerHTTP):
                 url=self.url,
                 timeout=self.timeout,
                 sse_read_timeout=self.read_timeout,
-                httpx_client_factory=httpx_client_factory,
+                httpx_client_factory=httpx_client_factory,  # pyright: ignore[reportArgumentType]
             ) as (read_stream, write_stream, *_):
                 yield read_stream, write_stream
         else:
@@ -1560,10 +1560,10 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
         aexit_stack = AsyncExitStack()
         http_client = self.http_client or await aexit_stack.enter_async_context(
-            httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
+            httpx2.AsyncClient(timeout=httpx2.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
         )
         read_stream, write_stream, *_ = await aexit_stack.enter_async_context(
-            streamable_http_client(self.url, http_client=http_client)
+            streamable_http_client(self.url, http_client=http_client)  # pyright: ignore[reportArgumentType]
         )
         try:
             yield read_stream, write_stream
@@ -1799,10 +1799,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
-        auth: httpx.Auth | Literal['oauth'] | str | None = None,
+        auth: httpx2.Auth | Literal['oauth'] | str | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
         headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ):
         """Build a new `MCPToolset`.
 
@@ -1846,12 +1846,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             read_timeout: Maximum time in seconds to wait for new messages on the long-lived
                 connection. Defaults to 5 minutes.
             roots: Filesystem roots advertised to the server.
-            auth: HTTP authentication for HTTP transports — an `httpx.Auth`, the literal string
+            auth: HTTP authentication for HTTP transports — an `httpx2.Auth`, the literal string
                 `'oauth'` to enable FastMCP's OAuth flow, or a bearer-token string.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
             headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
-            http_client: A pre-configured `httpx.AsyncClient` to use for HTTP transports — useful
+            http_client: A pre-configured `httpx2.AsyncClient` to use for HTTP transports — useful
                 for self-signed certificates or custom connection pooling. Mutually exclusive with
                 `headers`.
 
@@ -2278,8 +2278,8 @@ def _build_transport(
     client: MCPToolsetClient,
     *,
     headers: dict[str, str] | None,
-    http_client: httpx.AsyncClient | None,
-    auth: httpx.Auth | Literal['oauth'] | str | None,
+    http_client: httpx2.AsyncClient | None,
+    auth: httpx2.Auth | Literal['oauth'] | str | None,
     verify: ssl.SSLContext | bool | str | None,
     read_timeout: float | None,
 ) -> MCPToolsetClient:
@@ -2301,38 +2301,38 @@ def _build_transport(
         return client
     url = str(client)
     # FastMCP's HTTP transports accept `httpx_client_factory`; adapt `http_client` to that shape.
-    factory = _make_httpx_client_factory(http_client) if http_client is not None else None
+    factory = _make_httpx2_client_factory(http_client) if http_client is not None else None
     if infer_transport_type_from_url(url) == 'sse':
         return SSETransport(
             url=url,
             headers=headers,
-            auth=auth,
+            auth=auth,  # pyright: ignore[reportArgumentType]
             verify=verify,
             # SSE keeps its own read timeout for the long-lived event stream.
             sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
-            httpx_client_factory=factory,
+            httpx_client_factory=factory,  # pyright: ignore[reportArgumentType]
         )
     # `sse_read_timeout` is deprecated on StreamableHttpTransport; the read timeout for the
     # long-lived session is configured via the FastMCP `Client(timeout=...)` instead.
     return StreamableHttpTransport(
         url=url,
         headers=headers,
-        auth=auth,
+        auth=auth,  # pyright: ignore[reportArgumentType]
         verify=verify,
-        httpx_client_factory=factory,
+        httpx_client_factory=factory,  # pyright: ignore[reportArgumentType]
     )
 
 
-def _make_httpx_client_factory(
-    http_client: httpx.AsyncClient,
-) -> Callable[..., httpx.AsyncClient]:
-    """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
+def _make_httpx2_client_factory(
+    http_client: httpx2.AsyncClient,
+) -> Callable[..., httpx2.AsyncClient]:
+    """Return an `httpx2_client_factory` that always returns the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
-    ) -> httpx.AsyncClient:
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+    ) -> httpx2.AsyncClient:
         return http_client
 
     return factory

@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from functools import partial
 from typing import Any, Literal, get_args
 
-import httpx
+import httpx2
 import pytest
 from typing_extensions import TypedDict
 
@@ -249,7 +249,7 @@ class HerokuModel(TypedDict):
 
 
 def get_heroku_model_names():
-    response = httpx.get('https://us.inference.heroku.com/available-models')
+    response = httpx2.get('https://us.inference.heroku.com/available-models')
 
     if response.status_code != 200:
         pytest.skip(f'Heroku AI returned status code {response.status_code}')  # pragma: lax no cover
@@ -273,7 +273,7 @@ class CerebrasModel(TypedDict):
 def get_cerebras_model_names():  # pragma: lax no cover
     api_key = os.getenv('CEREBRAS_API_KEY', 'testing')
 
-    response = httpx.get(
+    response = httpx2.get(
         'https://api.cerebras.ai/v1/models',
         headers={'Authorization': f'Bearer {api_key}', 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
     )

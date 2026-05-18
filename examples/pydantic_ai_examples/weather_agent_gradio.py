@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import ToolCallPart, ToolReturnPart

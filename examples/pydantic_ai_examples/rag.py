@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import asyncpg
-import httpx
+import httpx2
 import logfire
 import pydantic_core
 from anyio import create_task_group
@@ -112,7 +112,7 @@ DOCS_JSON = (
 
 async def build_search_db():
     """Build the search database."""
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
     sections = sections_ta.validate_json(response.content)

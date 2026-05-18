@@ -1,6 +1,6 @@
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -50,7 +50,7 @@ def test_ollama_provider_need_base_url(env: TestEnv) -> None:
 
 
 def test_ollama_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = OllamaProvider(http_client=http_client, base_url='http://localhost:11434/v1/')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

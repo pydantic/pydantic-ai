@@ -11,7 +11,7 @@ from datetime import date, timezone
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, Timeout
+from httpx2 import AsyncClient as HttpxAsyncClient, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -2426,7 +2426,7 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
     result = await agent.run('Hello!', model_settings={'timeout': 10})
     assert result.output == snapshot('Hello there! How can I help you today?\n')
 
-    with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
+    with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx2.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
 
 
@@ -3782,7 +3782,7 @@ async def test_google_vertexai_image_generation(
     assert result.output == snapshot(IsInstance(BinaryImage))
 
 
-async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
+async def test_google_httpx2_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
     # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
     agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of France?')
@@ -5654,7 +5654,7 @@ def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvid
     """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
 
     The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
-    explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
+    explicitly pass timeout=None to httpx2, overriding any timeout configured on the httpx2
     client. This would cause requests to hang indefinitely.
 
     See https://github.com/pydantic/pydantic-ai/issues/4031

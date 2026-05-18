@@ -425,12 +425,12 @@ All HTTP-based MCP client classes
 ([`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] and
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) expose an `http_client`
 parameter that lets you pass your own pre-configured
-[`httpx.AsyncClient`](https://www.python-httpx.org/async/).
+[`httpx2.AsyncClient`](https://httpx2.pydantic.dev/async/).
 
 ```python {title="mcp_custom_tls_client.py"}
 import ssl
 
-import httpx
+import httpx2
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
@@ -441,9 +441,9 @@ ssl_ctx = ssl.create_default_context(cafile='/etc/ssl/private/my_company_ca.pem'
 # OPTIONAL: if the server requires **mutual TLS** load your client certificate
 ssl_ctx.load_cert_chain(certfile='/etc/ssl/certs/client.crt', keyfile='/etc/ssl/private/client.key',)
 
-http_client = httpx.AsyncClient(
+http_client = httpx2.AsyncClient(
     verify=ssl_ctx,
-    timeout=httpx.Timeout(10.0),
+    timeout=httpx2.Timeout(10.0),
 )
 
 server = MCPServerSSE(
@@ -459,7 +459,7 @@ async def main():
 ```
 
 1. When you supply `http_client`, Pydantic AI reuses this client for every
-   request. Anything supported by **httpx** (`verify`, `cert`, custom
+   request. Anything supported by **httpx2** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
 ## Client Identification

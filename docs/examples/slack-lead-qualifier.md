@@ -226,7 +226,7 @@ The first thing we do is define the Modal app, by specifying the base image to u
 
 #### Set up Logfire
 
-Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX.
+Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX2.
 
 We cannot do this at the top level of the file, as the requested packages (like `logfire`) will only be available within functions running on Modal (like the ones we'll define next). This file, `modal.py`, runs on your local machine and only has access to the `modal` package.
 

@@ -76,7 +76,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'pydantic_core',
             'logfire',
             'rich',
-            'httpx',
+            'httpx2',
             'anyio',
             'sniffio',
             'httpcore',

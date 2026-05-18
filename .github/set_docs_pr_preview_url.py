@@ -1,7 +1,7 @@
 import os
 import re
 
-import httpx
+import httpx2
 
 DEPLOY_OUTPUT = os.environ['DEPLOY_OUTPUT']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
@@ -32,7 +32,7 @@ if not PULL_REQUEST_NUMBER:
     exit(1)
 
 comments_url = f'https://api.github.com/repos/{REPOSITORY}/issues/{PULL_REQUEST_NUMBER}/comments'
-r = httpx.get(comments_url, headers=gh_headers)
+r = httpx2.get(comments_url, headers=gh_headers)
 print(f'{r.request.method} {r.request.url} {r.status_code}', flush=True)
 if r.status_code != 200:
     print(f'Failed to get comments, status {r.status_code}, response:\n{r.text}', flush=True)
@@ -63,10 +63,10 @@ comment_data = {'body': body}
 
 if comment_update_url:
     print('Updating existing comment...', flush=True)
-    r = httpx.patch(comment_update_url, headers=gh_headers, json=comment_data)
+    r = httpx2.patch(comment_update_url, headers=gh_headers, json=comment_data)
 else:
     print('Creating new comment...', flush=True)
-    r = httpx.post(comments_url, headers=gh_headers, json=comment_data)
+    r = httpx2.post(comments_url, headers=gh_headers, json=comment_data)
 
 print(f'{r.request.method} {r.request.url} {r.status_code}', flush=True)
 r.raise_for_status()

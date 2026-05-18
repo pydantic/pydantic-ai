@@ -8,7 +8,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
-import httpx
+import httpx2
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
@@ -32,7 +32,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncOpenAI]: ...
 
 
@@ -44,7 +44,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncGroq]: ...
 
 
@@ -56,7 +56,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncAnthropicClient]: ...
 
 
@@ -79,7 +79,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[GoogleClient]: ...
 
 
@@ -124,8 +124,8 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
-    http_client: httpx.AsyncClient | None = None,
+    # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX2 client.
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
 
@@ -156,7 +156,7 @@ def gateway_provider(
 
     base_url = _merge_url_path(base_url, route)
 
-    # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
+    # Bedrock uses the AWS SDK (botocore) rather than httpx2, so skip http_client creation.
     if upstream_provider in ('bedrock', 'converse'):
         from .bedrock import BedrockProvider
 
@@ -170,7 +170,7 @@ def gateway_provider(
     http_client = http_client or create_async_http_client()
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
-    def _http_client_factory() -> httpx.AsyncClient:
+    def _http_client_factory() -> httpx2.AsyncClient:
         client = create_async_http_client()
         client.event_hooks = {'request': [_request_hook(api_key)]}
         return client
@@ -196,7 +196,7 @@ def gateway_provider(
 
         return _with_http_client(
             AnthropicProvider(
-                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
+                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)  # pyright: ignore[reportArgumentType]
             )
         )
     elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
@@ -207,13 +207,13 @@ def gateway_provider(
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
-def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Request]]:
+def _request_hook(api_key: str) -> Callable[[httpx2.Request], Awaitable[httpx2.Request]]:
     """Request hook for the gateway provider.
 
     It adds the `"traceparent"` and `"Authorization"` headers to the request.
     """
 
-    async def _hook(request: httpx.Request) -> httpx.Request:
+    async def _hook(request: httpx2.Request) -> httpx2.Request:
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}

@@ -334,9 +334,9 @@ class APIValidator(Evaluator):
     api_url: str
 
     async def evaluate(self, ctx: EvaluatorContext) -> bool:
-        import httpx
+        import httpx2
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(
                 self.api_url,
                 json={'output': ctx.output},
@@ -595,10 +595,10 @@ class APIResponseValid(Evaluator):
     api_key: str
 
     async def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | float]:
-        import httpx
+        import httpx2
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.post(
                     self.api_endpoint,
                     headers={'Authorization': f'Bearer {self.api_key}'},

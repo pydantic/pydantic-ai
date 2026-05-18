@@ -2,7 +2,7 @@
 
 This module provides HTTP transport wrappers and wait strategies that integrate with
 the tenacity library to add retry capabilities to HTTP requests. The transports can be
-used with HTTP clients that support custom transports (such as httpx), while the wait
+used with HTTP clients that support custom transports (such as httpx2), while the wait
 strategies can be used with any tenacity retry decorator.
 
 The module includes:
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from types import TracebackType
 
-from httpx import (
+from httpx2 import (
     AsyncBaseTransport,
     AsyncHTTPTransport,
     BaseTransport,
@@ -136,7 +136,7 @@ class TenacityTransport(BaseTransport):
 
     Example:
         ```python
-        from httpx import Client, HTTPStatusError, HTTPTransport
+        from httpx2 import Client, HTTPStatusError, HTTPTransport
         from tenacity import retry_if_exception_type, stop_after_attempt
 
         from pydantic_ai.retries import RetryConfig, TenacityTransport, wait_retry_after
@@ -183,7 +183,7 @@ class TenacityTransport(BaseTransport):
         def handle_request(req: Request) -> Response:
             response = self.wrapped.handle_request(req)
 
-            # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+            # this is normally set by httpx2 _after_ calling this function, but we want the request in the validator:
             response.request = req
 
             if self.validate_response:
@@ -234,7 +234,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
 
     Example:
         ```python
-        from httpx import AsyncClient, HTTPStatusError
+        from httpx2 import AsyncClient, HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -280,7 +280,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         async def handle_async_request(req: Request) -> Response:
             response = await self.wrapped.handle_async_request(req)
 
-            # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+            # this is normally set by httpx2 _after_ calling this function, but we want the request in the validator:
             response.request = req
 
             if self.validate_response:
@@ -333,7 +333,7 @@ def wait_retry_after(
 
     Example:
         ```python
-        from httpx import AsyncClient, HTTPStatusError
+        from httpx2 import AsyncClient, HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after

@@ -4,7 +4,7 @@
 
 import re
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -45,7 +45,7 @@ def test_grok_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_grok_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = GrokProvider(http_client=http_client, api_key='api-key')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

@@ -11,7 +11,7 @@ from datetime import timezone
 from enum import IntEnum
 from typing import Annotated, Literal, TypeAlias
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, Field
 
@@ -73,7 +73,7 @@ pytestmark = [
 
 async def test_model_simple(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    assert isinstance(m.client, httpx.AsyncClient)
+    assert isinstance(m.client, httpx2.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
@@ -492,7 +492,7 @@ async def test_json_def_date(allow_model_requests: None):
 
 
 @dataclass
-class AsyncByteStreamList(httpx.AsyncByteStream):
+class AsyncByteStreamList(httpx2.AsyncByteStream):
     data: list[bytes]
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
@@ -500,8 +500,8 @@ class AsyncByteStreamList(httpx.AsyncByteStream):
             yield chunk
 
 
-ResOrList: TypeAlias = '_GeminiResponse | httpx.AsyncByteStream | Sequence[_GeminiResponse | httpx.AsyncByteStream]'
-GetGeminiClient: TypeAlias = 'Callable[[ResOrList], httpx.AsyncClient]'
+ResOrList: TypeAlias = '_GeminiResponse | httpx2.AsyncByteStream | Sequence[_GeminiResponse | httpx2.AsyncByteStream]'
+GetGeminiClient: TypeAlias = 'Callable[[ResOrList], httpx2.AsyncClient]'
 
 
 @pytest.fixture
@@ -510,10 +510,10 @@ async def get_gemini_client(
 ) -> GetGeminiClient:
     env.set('GEMINI_API_KEY', 'via-env-var')
 
-    def create_client(response_or_list: ResOrList) -> httpx.AsyncClient:
+    def create_client(response_or_list: ResOrList) -> httpx2.AsyncClient:
         index = 0
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             nonlocal index
 
             ua = request.headers.get('User-Agent')
@@ -525,14 +525,14 @@ async def get_gemini_client(
             else:
                 response = response_or_list
 
-            if isinstance(response, httpx.AsyncByteStream):
+            if isinstance(response, httpx2.AsyncByteStream):
                 content: bytes | None = None
-                stream: httpx.AsyncByteStream | None = response
+                stream: httpx2.AsyncByteStream | None = response
             else:
                 content = _gemini_response_ta.dump_json(response, by_alias=True)
                 stream = None
 
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 content=content,
                 stream=stream,
@@ -797,8 +797,8 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
     env.set('GEMINI_API_KEY', 'via-env-var')
 
-    def handler(_: httpx.Request):
-        return httpx.Response(401, content='invalid request')
+    def handler(_: httpx2.Request):
+        return httpx2.Response(401, content='invalid request')
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
@@ -1108,7 +1108,7 @@ async def test_empty_text_ignored():
 
 
 async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         generation_config = json.loads(request.content)['generationConfig']
         assert generation_config == {
             'max_output_tokens': 1,
@@ -1117,7 +1117,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'presence_penalty': 0.3,
             'frequency_penalty': 0.4,
         }
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=_gemini_response_ta.dump_json(
                 gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
@@ -1157,14 +1157,14 @@ async def test_safety_settings_unsafe(
 ) -> None:
     try:
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             safety_settings = json.loads(request.content)['safetySettings']
             assert safety_settings == [
                 {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
                 {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
             ]
 
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 content=_gemini_response_ta.dump_json(
                     gemini_no_content_response(
@@ -1199,14 +1199,14 @@ async def test_safety_settings_unsafe(
 async def test_safety_settings_safe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         safety_settings = json.loads(request.content)['safetySettings']
         assert safety_settings == [
             {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
             {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
         ]
 
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=_gemini_response_ta.dump_json(
                 gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),

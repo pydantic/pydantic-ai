@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -1880,7 +1880,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body={'error': 'test error'},
         )
     )
@@ -1895,7 +1895,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),  # pyright: ignore[reportArgumentType]
         )
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -1910,7 +1910,7 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),  # pyright: ignore[reportArgumentType]
         )
     )
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -2056,7 +2056,7 @@ async def test_openai_store_true(allow_model_requests: None):
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
-    # Since we use VCR, creating tests with an `httpx.Transport` is not possible.
+    # Since we use VCR, creating tests with an `httpx2.Transport` is not possible.
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_user='user_id'))
     await agent.run('hello')
@@ -4636,7 +4636,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body=body,
         )
     )
@@ -4696,7 +4696,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
@@ -4743,7 +4743,7 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
@@ -4761,7 +4761,7 @@ def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body='Raw string body',
         )
     )
@@ -4779,7 +4779,7 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
             body={'something_else': 'foo'},  # No 'error' key
         )
     )

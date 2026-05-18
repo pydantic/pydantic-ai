@@ -324,7 +324,7 @@ class GroqModel(Model[AsyncGroq]):
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
         with _map_api_errors(self.model_name):
-            return await self.client.chat.completions.create(
+            return await self.client.chat.completions.create(  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,
@@ -337,7 +337,7 @@ class GroqModel(Model[AsyncGroq]):
                 max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=model_settings.get('timeout', NOT_GIVEN),  # pyright: ignore[reportArgumentType]
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 reasoning_format=self._translate_thinking(model_settings, model_request_parameters),

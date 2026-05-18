@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -32,11 +32,11 @@ def test_cohere_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_cohere_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = CohereProvider(http_client=http_client, api_key='api-key')
-    # The AsyncClientV2 wraps our httpx client in an AsyncHttpClient
-    # So we just check that the httpx_client is an instance of AsyncHttpClient
-    assert isinstance(provider.client._client_wrapper.httpx_client, AsyncHttpClient)  # type: ignore[reportPrivateUsage]
+    # The AsyncClientV2 wraps our httpx2 client in an AsyncHttpClient
+    # So we just check that the httpx2_client is an instance of AsyncHttpClient
+    assert isinstance(provider.client._client_wrapper.httpx2_client, AsyncHttpClient)  # type: ignore[reportPrivateUsage]
 
 
 def test_cohere_provider_pass_cohere_client() -> None:

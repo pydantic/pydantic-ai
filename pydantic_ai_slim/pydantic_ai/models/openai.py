@@ -964,7 +964,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-                return await self.client.chat.completions.create(
+                return await self.client.chat.completions.create(  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
                     model=self.model_name,
                     messages=openai_messages,
                     parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
@@ -974,7 +974,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                     stop=model_settings.get('stop_sequences', OMIT),
                     max_completion_tokens=model_settings.get('max_tokens', OMIT),
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),  # pyright: ignore[reportArgumentType]
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
@@ -2203,7 +2203,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 extra_headers.setdefault('User-Agent', get_user_agent())
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-                return await self.client.responses.create(
+                return await self.client.responses.create(  # pyright: ignore[reportCallIssue, reportUnknownVariableType]
                     input=openai_messages,
                     model=self.model_name,
                     instructions=instructions,
@@ -2215,7 +2215,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
                     truncation=model_settings.get('openai_truncation', OMIT),
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),  # pyright: ignore[reportArgumentType]
                     service_tier=_resolve_openai_service_tier(model_settings),
                     previous_response_id=previous_response_id or OMIT,
                     conversation=conversation_id or OMIT,

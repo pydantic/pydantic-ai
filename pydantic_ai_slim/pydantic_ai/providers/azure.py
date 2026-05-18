@@ -4,7 +4,7 @@ import os
 from typing import overload
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
@@ -89,7 +89,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         api_key: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -99,7 +99,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         api_version: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Create a new Azure provider.
 
@@ -117,7 +117,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncAzureOpenAI`](https://github.com/openai/openai-python#microsoft-azure-openai)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert azure_endpoint is None, 'Cannot provide both `openai_client` and `azure_endpoint`'
@@ -155,7 +155,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 self._client = AsyncOpenAI(
                     base_url=v1_base_url,
                     api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
             else:
@@ -168,12 +168,12 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     azure_endpoint=azure_endpoint,
                     api_key=api_key,
                     api_version=api_version,
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

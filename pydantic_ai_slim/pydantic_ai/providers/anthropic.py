@@ -5,7 +5,7 @@ import warnings
 from dataclasses import dataclass
 from typing import TypeAlias, overload
 
-import httpx
+import httpx2
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -69,7 +69,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx2.AsyncClient | None = None
     ) -> None: ...
 
     def __init__(
@@ -78,7 +78,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         api_key: str | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicClient | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Create a new Anthropic provider.
 
@@ -93,7 +93,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), or
                 [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
                 If provided, the `api_key` and `http_client` arguments will be ignored.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
         if anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
@@ -107,15 +107,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                     ' to use the Anthropic provider.'
                 )
             if http_client is not None:
-                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)  # pyright: ignore[reportArgumentType]
             else:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)  # pyright: ignore[reportArgumentType]
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
 
 @dataclass(init=False)

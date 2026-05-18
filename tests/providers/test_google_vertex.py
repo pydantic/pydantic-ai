@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -32,15 +32,15 @@ pytestmark = [
 
 @pytest.fixture()
 def http_client():
-    async def handler(request: httpx.Request):
+    async def handler(request: httpx2.Request):
         if (
             request.url.path
             == '/v1/projects/my-project-id/locations/us-central1/publishers/google/models/gemini-1.0-pro:generateContent'
         ):
-            return httpx.Response(200, json={'content': 'success'})
+            return httpx2.Response(200, json={'content': 'success'})
         raise NotImplementedError(f'Unexpected request: {request.url!r}')  # pragma: no cover
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler=handler))
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler=handler))
 
 
 def test_google_vertex_provider(allow_model_requests: None) -> None:
@@ -49,7 +49,7 @@ def test_google_vertex_provider(allow_model_requests: None) -> None:
     assert provider.base_url == snapshot(
         'https://us-central1-aiplatform.googleapis.com/v1/projects/None/locations/us-central1/publishers/google/models/'
     )
-    assert isinstance(provider.client, httpx.AsyncClient)
+    assert isinstance(provider.client, httpx2.AsyncClient)
 
 
 @dataclass
@@ -60,7 +60,7 @@ class NoOpCredentials:
 
 
 @patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=(NoOpCredentials(), 'my-project-id'))
-async def test_google_vertex_provider_auth(allow_model_requests: None, http_client: httpx.AsyncClient):
+async def test_google_vertex_provider_auth(allow_model_requests: None, http_client: httpx2.AsyncClient):
     provider = GoogleVertexProvider(http_client=http_client)
     await provider.client.post('/gemini-1.0-pro:generateContent')
     assert provider.region == 'us-central1'

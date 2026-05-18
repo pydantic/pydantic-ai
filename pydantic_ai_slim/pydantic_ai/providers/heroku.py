@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
+import httpx2
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
@@ -48,7 +48,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx2.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -59,7 +59,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
@@ -77,12 +77,12 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             base_url = base_url.rstrip('/') + '/v1'
 
             if http_client is not None:
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)  # pyright: ignore[reportArgumentType]
             else:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)  # pyright: ignore[reportArgumentType]
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

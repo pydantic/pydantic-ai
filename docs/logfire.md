@@ -88,7 +88,7 @@ Which will display in Logfire thus:
 ![Logfire Simple Agent Run](img/logfire-simple-agent.png)
 
 The [Logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use Logfire,
-including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
+including how to instrument other libraries like [HTTPX2](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx2/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
 
@@ -109,7 +109,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
 (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX2 instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx2/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX2](https://httpx2.pydantic.dev/) library internally:
 
 
 ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
@@ -129,7 +129,7 @@ print(result.output)
 
 1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
 
-![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+![Logfire with HTTPX2 instrumentation](img/logfire-with-httpx.png)
 
 ## Using OpenTelemetry
 

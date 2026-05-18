@@ -3,7 +3,7 @@ import uuid
 from datetime import timezone
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
@@ -71,9 +71,9 @@ async def test_a2a_pydantic_model_output():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -141,9 +141,9 @@ async def test_a2a_runtime_error_without_lifespan():
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent_to_a2a(agent)
 
-    transport = httpx.ASGITransport(app)
-    async with httpx.AsyncClient(transport=transport) as http_client:
-        a2a_client = A2AClient(http_client=http_client)
+    transport = httpx2.ASGITransport(app)
+    async with httpx2.AsyncClient(transport=transport) as http_client:
+        a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
         message = Message(
             role='user',
@@ -161,9 +161,9 @@ async def test_a2a_simple():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -244,9 +244,9 @@ async def test_a2a_file_message_with_file():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -341,9 +341,9 @@ async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             base64_image = base64.b64encode(image_content.data).decode('utf-8')
             message = Message(
@@ -433,9 +433,9 @@ async def test_a2a_file_message_with_data():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -508,9 +508,9 @@ async def test_a2a_error_handling():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -558,9 +558,9 @@ async def test_a2a_multiple_tasks_same_context():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             # First message - should create a new context
             message1 = Message(
@@ -684,9 +684,9 @@ async def test_a2a_thinking_response():
     app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -757,9 +757,9 @@ async def test_a2a_multiple_messages():
     app = agent_to_a2a(agent, storage=storage)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',
@@ -891,9 +891,9 @@ async def test_a2a_multiple_send_task_messages():
     app = agent_to_a2a(agent, storage=storage)
 
     async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            a2a_client = A2AClient(http_client=http_client)
+        transport = httpx2.ASGITransport(app)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)  # pyright: ignore[reportArgumentType]
 
             message = Message(
                 role='user',

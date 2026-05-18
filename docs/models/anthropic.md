@@ -65,10 +65,10 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `AnthropicProvider` with a custom `httpx.AsyncClient`:
+You can customize the `AnthropicProvider` with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
