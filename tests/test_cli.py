@@ -589,7 +589,7 @@ def test_run_web_command_generic_agent_no_model(mocker: MockerFixture, capfd: Ca
     mock_uvicorn_run.assert_called_once()
     # Verify default model was passed
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs['models'] == ['openai-responses:gpt-5']
+    assert call_kwargs['models'] == ['openai:gpt-5']
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
