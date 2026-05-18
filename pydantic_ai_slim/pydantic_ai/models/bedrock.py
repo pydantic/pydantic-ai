@@ -63,6 +63,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -960,7 +961,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:

@@ -15,6 +15,7 @@ __all__ = [
     'ModelProfileSpec',
     'DEFAULT_PROFILE',
     'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
+    'DEFAULT_THINKING_TAGS',
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     'merge_profile',
@@ -31,6 +32,9 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
     """
 )
 """Default instructions template for prompted structured output. The `{schema}` placeholder is replaced with the JSON schema for the output."""
+
+DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
+"""Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -94,7 +98,7 @@ class ModelProfile(TypedDict, total=False):
     """
 
     thinking_tags: tuple[str, str]
-    """The tags used to indicate thinking parts in the model's output. Default: `('<think>', '</think>')`."""
+    """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
@@ -121,7 +125,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'json_schema_transformer': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
-    'thinking_tags': ('<think>', '</think>'),
+    'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
 }

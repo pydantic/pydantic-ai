@@ -8,9 +8,11 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 ### v2.0.0 (unreleased)
 
-#### `ModelProfile` is now a `TypedDict`
+#### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
-`ModelProfile` and all its subclasses (`OpenAIModelProfile`, `AnthropicModelProfile`, `GoogleModelProfile`, `BedrockModelProfile`, etc.) are now `TypedDict(total=False)` instead of `@dataclass`. This unifies the mental model with [`ModelSettings`][pydantic_ai.settings.ModelSettings] (also a `TypedDict`) and enables direct dict-spread for cross-class merging.
+See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
+
+[`ModelProfile`][pydantic_ai.profiles.ModelProfile] and all its subclasses ([`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], [`AnthropicModelProfile`][pydantic_ai.profiles.anthropic.AnthropicModelProfile], [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile], `BedrockModelProfile`, etc.) are now `TypedDict(total=False)` instead of `@dataclass`. This unifies the mental model with [`ModelSettings`][pydantic_ai.settings.ModelSettings] (also a `TypedDict`) and enables direct dict-spread for cross-class merging.
 
 `ModelProfile.update()` and `ModelProfile.from_profile()` are removed; use the module-level [`merge_profile`][pydantic_ai.profiles.merge_profile] (later argument wins per key).
 
@@ -19,7 +21,7 @@ Migration recipes:
 | v1 (dataclass) | v2 (TypedDict) |
 |---|---|
 | `OpenAIModelProfile(field=value)` | Same syntax; returns a partial `dict` instead of a fully-defaulted instance. |
-| `profile.field` (attribute read) | `profile.get('field', <default>)` |
+| `profile.field` (attribute read) | `profile.get('field', <default>)` — non-trivial defaults are exported from [`pydantic_ai.profiles`][pydantic_ai.profiles] (e.g. [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS], [`DEFAULT_PROMPTED_OUTPUT_TEMPLATE`][pydantic_ai.profiles.DEFAULT_PROMPTED_OUTPUT_TEMPLATE]); the fully-merged base is [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE]. |
 | `profile.field = value` (attribute write) | `profile['field'] = value` |
 | `dataclasses.replace(profile, field=value)` | `{**profile, 'field': value}` or `merge_profile(profile, ModelProfile(field=value))` |
 | `profile.update(other)` | `merge_profile(profile, other)` |

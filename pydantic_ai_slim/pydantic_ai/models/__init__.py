@@ -1014,7 +1014,7 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         # Step 1+2: provider default merged with base default
         provider_profile: ModelProfile = {}
-        if (provider := getattr(self, '_provider', None)) is not None:
+        if (provider := self.provider) is not None:
             provider_profile = provider.model_profile(self.model_name) or {}
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 

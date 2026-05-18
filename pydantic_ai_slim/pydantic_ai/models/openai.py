@@ -80,7 +80,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
@@ -1050,7 +1050,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
                 for part in split_content_into_text_and_thinking(
-                    choice.message.content, self.profile.get('thinking_tags', ('<think>', '</think>'))
+                    choice.message.content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                 )
             )
         if choice.message.tool_calls is not None:
@@ -1331,10 +1331,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
-                    start_tag, end_tag = self._model.profile.get('thinking_tags', ('<think>', '</think>'))
+                    start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                     self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'tags':
-                start_tag, end_tag = self._model.profile.get('thinking_tags', ('<think>', '</think>'))
+                start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
                 field = profile.get('openai_chat_thinking_field', None)
@@ -2869,7 +2869,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', ('<think>', '</think>'))
+                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             openai_messages.append(
                                 responses.EasyInputMessageParam(
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
@@ -3162,7 +3162,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
-                thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
                 if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):

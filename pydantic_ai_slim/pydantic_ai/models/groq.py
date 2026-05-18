@@ -45,7 +45,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -363,7 +363,7 @@ class GroqModel(Model[AsyncGroq]):
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
             items.extend(
                 split_content_into_text_and_thinking(
-                    choice.message.content, self.profile.get('thinking_tags', ('<think>', '</think>'))
+                    choice.message.content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                 )
             )
         if choice.message.tool_calls is not None:
@@ -478,7 +478,7 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
@@ -681,7 +681,7 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=content,
-                            thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                             ignore_leading_whitespace=self._model_profile.get(
                                 'ignore_streamed_leading_whitespace', False
                             ),
@@ -715,7 +715,7 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='tool_use_failed',
                             content=failed_generation,
-                            thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                             ignore_leading_whitespace=self._model_profile.get(
                                 'ignore_streamed_leading_whitespace', False
                             ),

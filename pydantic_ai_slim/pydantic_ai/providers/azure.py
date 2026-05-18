@@ -61,26 +61,23 @@ class AzureProvider(Provider[AsyncOpenAI]):
             'grok': grok_model_profile,
         }
 
+        base: ModelProfile | None = None
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
                 if prefix.endswith('-'):
                     model_name = model_name[len(prefix) :]
-
-                profile = profile_func(model_name)
-
                 # Three-layer merge: see OpenRouter for the rationale.
-                return merge_profile(
+                base = merge_profile(
                     OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
-                    profile,
-                    OpenAIModelProfile(openai_chat_supports_document_input=False),
+                    profile_func(model_name),
                 )
+                break
+        if base is None:
+            # OpenAI models are unprefixed.
+            base = openai_model_profile(model_name)
 
-        # OpenAI models are unprefixed.
-        # Azure Chat Completions API doesn't support document input — gateway override wins on top of upstream.
-        return merge_profile(
-            openai_model_profile(model_name),
-            OpenAIModelProfile(openai_chat_supports_document_input=False),
-        )
+        # Azure Chat Completions API doesn't support document input.
+        return merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

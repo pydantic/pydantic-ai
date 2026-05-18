@@ -62,7 +62,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -1327,7 +1327,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             assistant_content_params.append(
                                 BetaTextBlockParam(
                                     text='\n'.join([start_tag, response_part.content, end_tag]), type='text'

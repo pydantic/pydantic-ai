@@ -52,7 +52,7 @@ from ..models import (
     download_item,
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
-from ..profiles import ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -500,7 +500,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
+            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
             return None

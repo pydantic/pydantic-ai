@@ -39,7 +39,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -286,9 +286,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         if content:
             items.extend(
-                split_content_into_text_and_thinking(
-                    content, self.profile.get('thinking_tags', ('<think>', '</think>'))
-                )
+                split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
             )
         if tool_calls is not None:
             for c in tool_calls:
@@ -396,7 +394,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
@@ -569,7 +567,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
-                        thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                        thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                         ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
                     ):
                         yield event
