@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -17,13 +17,15 @@ class Capability(AbstractCapability[AgentDepsT]):
     [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
     """
 
-    instructions: AgentInstructions[AgentDepsT] | None = field(default=None, kw_only=True)
+    _: KW_ONLY
+
+    instructions: AgentInstructions[AgentDepsT] | None = None
     """Instructions to include in the system prompt."""
 
-    toolset: AgentToolset[AgentDepsT] | None = field(default=None, kw_only=True)
+    toolset: AgentToolset[AgentDepsT] | None = None
     """Toolset to register with the agent."""
 
-    description: str | None = field(default=None, kw_only=True)
+    description: str | None = None
     """Human-readable description, surfaced in the `load_capability` catalog when `defer_loading=True`."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

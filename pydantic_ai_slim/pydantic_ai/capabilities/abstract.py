@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from uuid import uuid4
 
@@ -157,14 +157,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    id: str = field(default_factory=lambda: str(uuid4()), kw_only=True)
+    _: KW_ONLY
+
+    id: str = field(default_factory=lambda: str(uuid4()))
     """Identifier used to reference this capability within a run.
 
     Required when `defer_loading=True` so the model can reference the capability
     by id when calling `load_capability`.
     """
 
-    defer_loading: bool | None = field(default=None, kw_only=True)
+    defer_loading: bool | None = None
     """If True, the capability's contributions (instructions, tools, settings) are hidden
     from the model until it explicitly loads them via `load_capability(id)`.
 
