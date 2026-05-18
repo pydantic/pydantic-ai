@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from types import ModuleType
 from unittest.mock import patch
 
 import pytest
@@ -22,7 +23,7 @@ with try_import() as imports_successful:
     # The test simulates a slim install (no `fastmcp.server`) but still needs the
     # rest of fastmcp.client.* and the bare `mcp` SDK available to exercise the
     # actual import path; skip if the dev env doesn't have any fastmcp at all.
-    import fastmcp.client  # noqa: F401
+    from fastmcp.client import Client as _ProbeFastMCPClient  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 pytestmark = pytest.mark.skipif(
@@ -45,7 +46,7 @@ def test_mcptoolset_importable_and_constructible_without_fastmcp_server():
     `MCPToolset(...)` call raised the documented `pip install ...` message.
     """
     # Drop any cached pydantic_ai.mcp so the next import re-runs the try/except.
-    saved_modules: dict[str, object] = {}
+    saved_modules: dict[str, ModuleType] = {}
     for name in list(sys.modules):
         if name == 'pydantic_ai.mcp' or name.startswith('pydantic_ai.mcp.'):
             saved_modules[name] = sys.modules.pop(name)
