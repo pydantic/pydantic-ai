@@ -4,7 +4,7 @@ Pydantic AI supports integration with various third-party tool libraries, allowi
 
 ## MCP Tools {#mcp-tools}
 
-See the [MCP Client](./mcp/overview.md) documentation for how to use MCP servers with Pydantic AI as [toolsets](toolsets.md).
+See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI as [toolsets](toolsets.md).
 
 ## LangChain Tools {#langchain-tools}
 
@@ -104,6 +104,6 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
 - [Toolsets](toolsets.md) - Managing collections of tools
-- [MCP Client](mcp/overview.md) - Using MCP servers with Pydantic AI
+- [MCP Client](mcp/client.md) - Using MCP servers with Pydantic AI
 - [LangChain Toolsets](toolsets.md#langchain-tools) - Using LangChain toolsets
 - [ACI.dev Toolsets](toolsets.md#aci-tools) - Using ACI.dev toolsets

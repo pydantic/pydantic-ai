@@ -59,7 +59,7 @@ Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.
 * Wraps [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync] as Prefect flows.
 * Wraps [model requests](../models/overview.md) as Prefect tasks.
 * Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
-* Wraps [MCP communication](../mcp/overview.md) as Prefect tasks.
+* Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
 Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events)
 

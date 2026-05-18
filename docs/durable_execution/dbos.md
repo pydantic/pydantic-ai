@@ -48,7 +48,7 @@ See the [DBOS documentation](https://docs.dbos.dev/architecture) for more inform
 Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get durable execution. `DBOSAgent` automatically:,
 
 * Wraps `Agent.run` and `Agent.run_sync` as DBOS workflows.
-* Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/overview.md) as DBOS steps.
+* Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) as DBOS steps.
 
 Custom tool functions and event stream handlers are **not automatically wrapped** by DBOS.
 If they involve non-deterministic behavior or perform I/O, you should explicitly decorate them with `@DBOS.step`.

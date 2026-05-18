@@ -252,7 +252,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> None: ...
 
     @overload
-    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
+    @deprecated('Configure deprecated kwargs via `capabilities=[...]` instead.')
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -269,13 +269,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        mcp_servers: Sequence[AbstractToolset[AgentDepsT]] = (),
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        # Deprecated kwargs that still flow through `**_deprecated_kwargs` and get remapped to
+        # equivalent capabilities (see `_utils.consume_deprecated_*`) before the impl runs.
+        # Typed as loose `Callable[..., Any]` since the consumer helpers handle the actual
+        # signature variations.
+        event_stream_handler: Callable[..., Any] | None = None,
+        history_processors: Sequence[Any] = (),
+        prepare_tools: Callable[..., Any] | None = None,
+        prepare_output_tools: Callable[..., Any] | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
     ) -> None: ...
 
     def __init__(
@@ -413,12 +422,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
-
-        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
-            if toolsets is not None:  # pragma: no cover
-                raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
-            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
-            toolsets = mcp_servers
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 

@@ -111,6 +111,7 @@
         "label": "Overview",
         "slug": "mcp/overview"
       },
+      "mcp/client",
       "mcp/server"
     ]
   },
