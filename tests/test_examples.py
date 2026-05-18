@@ -132,6 +132,9 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated',
     'ignore:`BuiltinToolResultEvent` is deprecated',
+    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
+    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
+    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(

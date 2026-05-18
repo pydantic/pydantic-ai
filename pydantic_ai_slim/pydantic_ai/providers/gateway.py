@@ -4,11 +4,13 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -71,7 +73,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini', 'google-vertex'],
+    upstream_provider: Literal['gemini', 'google-cloud', 'google-vertex'],
     /,
     *,
     route: str | None = None,
@@ -97,7 +99,7 @@ ModelProvider = Literal[
     'groq',
     'anthropic',
     'bedrock',
-    'google-vertex',
+    'google-cloud',
 ]
 
 
@@ -197,12 +199,10 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google-vertex', 'gemini'):
-        from .google import GoogleProvider
+    elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
+        from .google_cloud import GoogleCloudProvider
 
-        return _with_http_client(
-            GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
-        )
+        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
@@ -246,11 +246,21 @@ def normalize_gateway_provider(provider: str) -> str:
     """
     provider = provider.removeprefix('gateway/')
 
+    if provider == 'google-vertex':
+        warnings.warn(
+            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+
     if provider in ('openai-chat', 'chat'):
         return 'openai-chat'
     elif provider in ('openai', 'openai-responses', 'responses'):
         return 'openai-responses'
-    elif provider in ('gemini', 'google-vertex'):
+    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
+        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
+        # When the Gateway team renames their side, flip this to `google-cloud`.
         return 'google-vertex'
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'

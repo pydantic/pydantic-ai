@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -92,7 +92,7 @@ def vcr_config():
         ('openai-chat', OpenAIProvider, 'openai-chat'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
         ('groq', GroqProvider, 'groq'),
-        ('google-vertex', GoogleProvider, 'google-vertex'),
+        ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
     ],
@@ -138,8 +138,8 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_gateway_provider_with_google_vertex(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('google-vertex', api_key=gateway_api_key, base_url='http://localhost:8787')
+async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
