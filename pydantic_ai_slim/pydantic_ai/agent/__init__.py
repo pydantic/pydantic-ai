@@ -2615,6 +2615,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 await self._exit_stack.aclose()
                 self._exit_stack = None
 
+    def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
+        """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
+
+        If no sampling model is provided, the agent's model will be used.
+        """
+        try:
+            sampling_model = models.infer_model(model) if model else self._get_model(None)
+        except exceptions.UserError as e:
+            raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
+
+        from ..mcp import MCPToolset
+
+        def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(toolset, MCPToolset):
+                toolset.set_sampling_model(sampling_model)
+
+        self._get_toolset().apply(_set_sampling_model)
+
     def to_web(
         self,
         *,

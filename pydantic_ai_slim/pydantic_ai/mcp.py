@@ -751,6 +751,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Whether the toolset is currently entered (the FastMCP session is open)."""
         return self._running_count > 0
 
+    def set_sampling_model(self, model: models.Model) -> None:
+        """Set the [`sampling_model`][pydantic_ai.mcp.MCPToolset.sampling_model] on an already-constructed toolset.
+
+        Swaps both the public attribute and the underlying FastMCP client's sampling callback.
+        Takes effect on the next session opened by the client; calls already in flight on an
+        existing session continue using the previously configured handler.
+        """
+        self.sampling_model = model
+        self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
+
     @property
     def _initialized(self) -> bool:
         return self._server_info is not None

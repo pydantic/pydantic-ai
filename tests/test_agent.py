@@ -7955,6 +7955,50 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
     assert seen_max_retries == [2]
 
 
+def test_set_mcp_sampling_model():
+    try:
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    test_model = TestModel()
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport, sampling_model=test_model)
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent(None, toolsets=[toolset])
+
+    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+        agent.set_mcp_sampling_model()
+    assert server1.sampling_model is None
+    assert server2.sampling_model is test_model
+
+    def _callback(toolset: MCPToolset) -> Any:
+        # Probe fastmcp's private session-kwargs to confirm the client's sampling callback was
+        # rewired alongside the public `sampling_model` attribute.
+        return toolset.client._session_kwargs.get('sampling_callback')  # pyright: ignore[reportPrivateUsage]
+
+    agent.model = test_model
+    agent.set_mcp_sampling_model()
+    assert server1.sampling_model is test_model
+    assert server2.sampling_model is test_model
+    assert _callback(server1) is not None
+    assert _callback(server2) is not None
+
+    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
+    with agent.override(model=function_model):
+        agent.set_mcp_sampling_model()
+        assert server1.sampling_model is function_model
+        assert server2.sampling_model is function_model
+
+    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
+    agent.set_mcp_sampling_model(function_model2)
+    assert server1.sampling_model is function_model2
+    assert server2.sampling_model is function_model2
+
+
 async def test_explicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
