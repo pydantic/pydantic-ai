@@ -503,3 +503,11 @@ def test_prepare_messages_first_request_is_leading_even_after_orphan_response():
 
     assert isinstance(result[1].parts[0], SystemPromptPart)
     assert result[1].parts[0].content == 'Server prompt'
+
+
+def test_prepare_messages_no_model_request_returns_input():
+    from pydantic_ai.messages import ModelMessage
+
+    msgs: list[ModelMessage] = []
+    result = _hoist_model().prepare_messages(msgs)
+    assert result == []
