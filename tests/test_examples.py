@@ -359,16 +359,16 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     async def __aenter__(self) -> MockMCPServer:
-        return self  # pragma: no cover
+        return self
 
     async def __aexit__(self, *args: Any) -> None:
         pass
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-        return {}  # pragma: no cover
+        return {}
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
