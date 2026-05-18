@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.graph import EndMarker, GraphTask, GraphTaskRequest
-from pydantic_graph.beta.id_types import NodeID
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.graph_builder import EndMarker, GraphTask, GraphTaskRequest
+from pydantic_graph.id_types import NodeID
+from pydantic_graph.join import reduce_list_append
 
 pytestmark = pytest.mark.anyio
 

@@ -40,6 +40,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
@@ -48,10 +49,10 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputMode, StructuredOutputMode
-from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
@@ -181,16 +182,16 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash-image',
-        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-flash-preview',
-        'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-        'gateway/google-vertex:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-2.5-flash-image',
+        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-cloud:gemini-2.5-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash',
+        'gateway/google-cloud:gemini-2.5-pro',
+        'gateway/google-cloud:gemini-3-flash-preview',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+        'gateway/google-cloud:gemini-3.1-pro-preview',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -248,38 +249,38 @@ KnownModelName = TypeAliasType(
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
         'gateway/openai:o4-mini',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-flash-preview',
-        'google-gla:gemini-3-pro-image-preview',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3.1-flash-image-preview',
-        'google-gla:gemini-3.1-flash-lite-preview',
-        'google-gla:gemini-3.1-pro-preview',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-flash-preview',
-        'google-vertex:gemini-3-pro-image-preview',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3.1-flash-image-preview',
-        'google-vertex:gemini-3.1-flash-lite-preview',
-        'google-vertex:gemini-3.1-pro-preview',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-cloud:gemini-2.0-flash-lite',
+        'google-cloud:gemini-2.0-flash',
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'google-cloud:gemini-2.5-flash-lite',
+        'google-cloud:gemini-2.5-flash-preview-09-2025',
+        'google-cloud:gemini-2.5-flash',
+        'google-cloud:gemini-2.5-pro',
+        'google-cloud:gemini-3-flash-preview',
+        'google-cloud:gemini-3-pro-image-preview',
+        'google-cloud:gemini-3-pro-preview',
+        'google-cloud:gemini-3.1-flash-image-preview',
+        'google-cloud:gemini-3.1-flash-lite-preview',
+        'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-flash-latest',
+        'google-cloud:gemini-flash-lite-latest',
+        'google:gemini-2.0-flash-lite',
+        'google:gemini-2.0-flash',
+        'google:gemini-2.5-flash-image',
+        'google:gemini-2.5-flash-lite-preview-09-2025',
+        'google:gemini-2.5-flash-lite',
+        'google:gemini-2.5-flash-preview-09-2025',
+        'google:gemini-2.5-flash',
+        'google:gemini-2.5-pro',
+        'google:gemini-3-flash-preview',
+        'google:gemini-3-pro-image-preview',
+        'google:gemini-3-pro-preview',
+        'google:gemini-3.1-flash-image-preview',
+        'google:gemini-3.1-flash-lite-preview',
+        'google:gemini-3.1-pro-preview',
+        'google:gemini-flash-latest',
+        'google:gemini-flash-lite-latest',
         'xai:grok-3',
         'xai:grok-3-fast',
         'xai:grok-3-fast-latest',
@@ -655,7 +656,7 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
-        return self._provider
+        return getattr(self, '_provider', None)
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
@@ -737,7 +738,7 @@ class Model(ABC, Generic[InterfaceClient]):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
-        if transformer := self.profile.json_schema_transformer:
+        if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
@@ -772,8 +773,10 @@ class Model(ABC, Generic[InterfaceClient]):
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
-                if not (thinking_value is False and self.profile.thinking_always_enabled):
+            supports_thinking = self.profile.get('supports_thinking', False)
+            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+            if supports_thinking or thinking_always_enabled:
+                if not (thinking_value is False and thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
@@ -785,7 +788,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
+        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -798,9 +801,15 @@ class Model(ABC, Generic[InterfaceClient]):
         # Set default prompted output template
         if (
             params.output_mode == 'prompted'
-            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+            or (
+                params.output_mode == 'native'
+                and self.profile.get('native_output_requires_schema_in_instructions', False)
+            )
         ) and params.prompted_output_template is None:
-            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+            params = replace(
+                params,
+                prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
+            )
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -810,11 +819,11 @@ class Model(ABC, Generic[InterfaceClient]):
             params = replace(params, instruction_parts=InstructionPart.sorted(parts))
 
         # Check if output mode is supported
-        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+        if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
             raise UserError('Native structured output is not supported by this model.')
-        if params.output_mode == 'tool' and not self.profile.supports_tools:
+        if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
-        if params.allow_image_output and not self.profile.supports_image_output:
+        if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
         # Check native tools and handle fallback swap
@@ -837,7 +846,7 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        if ToolSearchTool not in self.profile.supported_native_tools:
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
             from .._tool_search import synthesize_local_tool_search_messages
 
             return synthesize_local_tool_search_messages(messages)
@@ -870,7 +879,7 @@ class Model(ABC, Generic[InterfaceClient]):
           to this drop, so making `optional` a base-class field doesn't accidentally cause
           e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
-        supported_types = self.profile.supported_native_tools
+        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
         supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
         unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
@@ -974,26 +983,42 @@ class Model(ABC, Generic[InterfaceClient]):
     def profile(self) -> ModelProfile:
         """The model profile.
 
-        We use this to compute the intersection of the profile's supported_native_tools
-        and the model's implemented tools, ensuring model.profile.supported_native_tools
-        is the single source of truth for what native tools are actually usable.
+        Resolution order (later layers override earlier ones):
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          2. The provider's `model_profile(model_name)` result — provider-specific defaults
+             for this model.
+          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+             `(default) -> profile` for full control.
+
+        After resolution we compute the intersection of the profile's `supported_native_tools`
+        and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
+        is the single source of truth for what's actually usable.
         """
-        _profile = self._profile
-        if callable(_profile):
-            _profile = _profile(self.model_name)
+        # Step 1+2: provider default merged with base default
+        provider_profile: ModelProfile = {}
+        if (provider := self.provider) is not None:
+            provider_profile = provider.model_profile(self.model_name) or {}
+        resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        if _profile is None:
-            _profile = DEFAULT_PROFILE
+        # Step 3: user override
+        user = self._profile
+        if user is None:
+            pass
+        elif callable(user):
+            # New v2 form: (default profile) -> final profile
+            resolved = user(resolved)
+        else:
+            # Partial dict — merge on top
+            resolved = merge_profile(resolved, user)
 
-        # Compute intersection: profile's allowed tools & model's implemented tools
+        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
-        profile_supported = _profile.supported_native_tools
+        profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported
-
         if effective_tools != profile_supported:
-            _profile = replace(_profile, supported_native_tools=effective_tools)
+            resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
-        return _profile
+        return resolved
 
     @property
     @abstractmethod
@@ -1065,6 +1090,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1151,6 +1177,14 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1210,6 +1244,12 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
@@ -1220,7 +1260,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
     # TODO (v2): Make this a property
@@ -1303,7 +1343,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'o1': 'openai',
     'o3': 'openai',
     'claude': 'anthropic',
-    'gemini': 'google-gla',
+    'gemini': 'google',
 }
 """Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
@@ -1400,10 +1440,10 @@ def infer_model(  # noqa: C901
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
+            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
+            PydanticAIDeprecationWarning,
         )
-        provider_name = 'google-vertex'
+        provider_name = 'google-cloud'
 
     provider = provider_factory(provider_name)
 
@@ -1443,7 +1483,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1635,7 +1675,7 @@ def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfil
     return schemas keep the schema as-is; other models get it injected into the tool description.
     Tools that haven't opted in have their `return_schema` cleared.
     """
-    inject = not profile.supports_tool_return_schema
+    inject = not profile.get('supports_tool_return_schema', False)
     resolved: list[ToolDefinition] = []
     changed = False
     for td in params.function_tools:
