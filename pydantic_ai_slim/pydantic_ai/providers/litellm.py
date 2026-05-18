@@ -126,18 +126,14 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         # The actual API calls will be intercepted and routed through LiteLLM
         if http_client is not None:
             self._client = AsyncOpenAI(
-                base_url=api_base,
-                api_key=api_key or 'litellm-placeholder',
-                http_client=http_client,
+                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(
-                base_url=api_base,
-                api_key=api_key or 'litellm-placeholder',
-                http_client=http_client,
+                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
 
     def _set_http_client(self, http_client: AsyncHTTPClient) -> None:

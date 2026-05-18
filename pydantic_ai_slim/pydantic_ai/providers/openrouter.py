@@ -199,20 +199,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             self._client = openai_client
         elif http_client is not None:
             self._client = AsyncOpenAI(
-                base_url=self.base_url,
-                api_key=api_key,
-                http_client=http_client,
-                default_headers=attribution_headers,
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(
-                base_url=self.base_url,
-                api_key=api_key,
-                http_client=http_client,
-                default_headers=attribution_headers,
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
