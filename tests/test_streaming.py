@@ -4656,11 +4656,13 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
 
 
-async def test_run_stream_events_done_task_exception_cleanup():
-    """A producer task that fails before context exit must still have its exception retrieved."""
+async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
+    """Breaking on the documented final-result event must still retrieve background task errors."""
     producer_finished = asyncio.Event()
 
-    async def failing_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    async def stream_that_fails_after_final_result(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
         yield 'hello'
         try:
             raise RuntimeError('producer boom')
@@ -4676,11 +4678,13 @@ async def test_run_stream_events_done_task_exception_cleanup():
 
     loop.set_exception_handler(handle_exception)
     try:
-        agent = Agent(FunctionModel(stream_function=failing_stream))
+        agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
 
         async with agent.run_stream_events('') as events:
             async for event in events:
                 if isinstance(event, FinalResultEvent):
+                    # This mirrors the documented "stop once final result is known" pattern.
+                    # The producer task can still finish with an exception before the CM exits.
                     await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
                     await asyncio.sleep(0)
                     break
