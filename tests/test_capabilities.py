@@ -5389,6 +5389,8 @@ class TestMCPCapability:
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
         """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        # `fastmcp.FastMCP` is server-side; the default `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
         from fastmcp import FastMCP
 
         from pydantic_ai.mcp import MCPToolset
