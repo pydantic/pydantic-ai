@@ -524,8 +524,15 @@ def test_model_json_schema_with_capabilities():
 Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
 
 Pass to `Agent(retries=...)` as a dict to set different budgets per category.
-Equivalent to passing an `int`, which sets all categories to the same value.
-At run and override time, only the `output` key is accepted.
+
+`int` semantics differ by call site:
+
+- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
+  to `N`.
+- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
+  budget. Tool retries cannot be overridden per run or via `override()` — passing
+  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
+  manager is built once at agent construction.
 
 Keys:
     tools: Default number of retries for tool calls before raising an error.
