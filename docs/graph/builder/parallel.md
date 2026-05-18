@@ -1,6 +1,6 @@
 # Parallel Execution
 
-The beta graph API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
+The graph builder API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
 
 ## Overview
 
@@ -16,8 +16,7 @@ Broadcasting sends identical data to multiple destinations simultaneously:
 ```python {title="basic_broadcast.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -71,8 +70,7 @@ Spreading fans out elements from an iterable, processing each element in paralle
 ```python {title="basic_map.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -117,8 +115,7 @@ The `.map()` operation also works with `AsyncIterable` values. When mapping over
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -162,13 +159,12 @@ This allows for progressive processing where downstream steps can start working 
 
 ### Using `add_mapping_edge()`
 
-The convenience method [`add_mapping_edge()`][pydantic_graph.beta.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
+The convenience method [`add_mapping_edge()`][pydantic_graph.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
 
 ```python {title="mapping_convenience.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -211,8 +207,7 @@ When mapping an empty iterable, you can specify a `downstream_join_id` to ensure
 ```python {title="empty_map.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -257,8 +252,7 @@ You can nest broadcasts and maps for complex parallel patterns:
 ```python {title="map_then_broadcast.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -308,8 +302,7 @@ The result contains:
 ```python {title="sequential_maps.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -359,8 +352,7 @@ Add labels to parallel edges for better documentation:
 ```python {title="labeled_parallel.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -408,8 +400,7 @@ All parallel tasks share the same graph state. Be careful with mutations:
 ```python {title="parallel_state.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass
@@ -458,7 +449,7 @@ You can transform data inline as it flows along edges using the `.transform()` m
 ```python {title="edge_transform.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -492,7 +483,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-The transform function receives a [`StepContext`][pydantic_graph.beta.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
+The transform function receives a [`StepContext`][pydantic_graph.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
 
 - Converting data types between incompatible steps
 - Extracting specific fields from complex objects
@@ -504,8 +495,7 @@ Transforms can be chained and combined with other edge operations like `.map()` 
 ```python {title="chained_transforms.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 
 
 @dataclass

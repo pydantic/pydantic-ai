@@ -909,6 +909,37 @@ Key behaviors:
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
 
+### Evaluating Failed Calls
+
+By default, when the decorated function or wrapped agent run raises, **no evaluators are dispatched** — only successful results reach evaluators. The exception propagates to the caller as usual.
+
+To score failure modes (e.g. classify exception types, count tool errors, alert on regressions), opt an evaluator in by setting `run_on_errors=True` on its [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator]. When the call raises, those evaluators are dispatched with the exception as `EvaluatorContext.output`; the exception still propagates after dispatch:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvaluator, evaluate
+
+
+@dataclass
+class CategorizeError(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> str:
+        # On failed calls, ctx.output is the raised exception.
+        if isinstance(ctx.output, Exception):
+            return type(ctx.output).__name__
+        return 'ok'
+
+
+@evaluate(OnlineEvaluator(evaluator=CategorizeError(), run_on_errors=True))
+async def my_function(x: int) -> int:
+    if x < 0:
+        raise ValueError('negative input')
+    return x * 2
+```
+
+Evaluators sampled for the call but without `run_on_errors=True` are skipped on the error path, so a cheap success-only check can sit alongside a dedicated error categorizer in the same decorator. The flag is also honored by the [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] agent capability.
+
 ## Agent Integration
 
 The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent. As with the `@evaluate` decorator, evaluators dispatch in the background and results are emitted as OTel events by default — no sink registration required:

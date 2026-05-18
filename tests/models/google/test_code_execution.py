@@ -24,10 +24,6 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.usage import RequestUsage
 
@@ -51,12 +47,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
     pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
 
@@ -109,7 +99,7 @@ print(result)\
                             'id': '8xju7mua',
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     NativeToolReturnPart(
@@ -117,11 +107,11 @@ print(result)\
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
+                        provider_name='google',
                     ),
                     TextPart(
                         content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -137,7 +127,7 @@ print(result)\
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
@@ -162,7 +152,7 @@ print(result)\
                         'id': '8xju7mua',
                     },
                     tool_call_id=IsStr(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -179,7 +169,7 @@ print(result)\
                         'id': '8xju7mua',
                     },
                     tool_call_id=IsStr(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
                 next_part_kind='builtin-tool-return',
@@ -191,7 +181,7 @@ print(result)\
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
@@ -207,7 +197,7 @@ print(result)\
                 index=2,
                 delta=TextPartDelta(
                     content_delta='',
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
@@ -215,34 +205,9 @@ print(result)\
                 index=2,
                 part=TextPart(
                     content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                        'id': '8xju7mua',
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google-gla',
-                    provider_details={'thought_signature': IsStr()},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
-                )
             ),
         ]
     )
@@ -283,7 +248,7 @@ print(f"Current day in Utrecht: {today_date}")
                             'id': 'h0mwtrhs',
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     NativeToolReturnPart(
@@ -295,7 +260,7 @@ print(f"Current day in Utrecht: {today_date}")
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
+                        provider_name='google',
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
@@ -308,7 +273,7 @@ print(datetime.datetime.now())
                             'id': '7lr99y60',
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     NativeToolReturnPart(
@@ -316,11 +281,11 @@ print(datetime.datetime.now())
                         content={'outcome': 'OUTCOME_OK', 'output': '2026-05-05 20:40:33.367937\n', 'id': '7lr99y60'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
+                        provider_name='google',
                     ),
                     TextPart(
                         content=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -336,7 +301,7 @@ print(datetime.datetime.now())
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
@@ -370,7 +335,7 @@ print(datetime.datetime.now())
                             'id': 'l5m4dm9r',
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     NativeToolReturnPart(
@@ -382,7 +347,7 @@ print(datetime.datetime.now())
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
+                        provider_name='google',
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
@@ -399,7 +364,7 @@ print(f"Time in Utrecht: {now}")
                             'id': 'tu0hnkbw',
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     NativeToolReturnPart(
@@ -411,11 +376,11 @@ print(f"Time in Utrecht: {now}")
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
+                        provider_name='google',
                     ),
                     TextPart(
                         content='Tomorrow in Utrecht will be **Friday, May 24, 2024**.',
-                        provider_name='google-gla',
+                        provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
@@ -431,7 +396,7 @@ print(f"Time in Utrecht: {now}")
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),

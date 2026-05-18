@@ -34,13 +34,15 @@ try:
         TextContent,
         TextResourceContents,
     )
+    from typing_extensions import deprecated
 
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
     raise ImportError(
-        'Please install the `fastmcp` package to use the FastMCP server, '
-        'you can use the `fastmcp` optional group — `pip install "pydantic-ai-slim[fastmcp]"`'
+        'Please install the fastmcp client to use `FastMCPToolset` — '
+        '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
+        'or install the full `fastmcp` package directly.'
     ) from _import_error
 
 
@@ -57,13 +59,26 @@ ToolErrorBehavior = Literal['model_retry', 'error']
 UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
+@deprecated(
+    '`FastMCPToolset` is deprecated and will be removed in v2. '
+    'Use `pydantic_ai.mcp.MCPToolset` instead — it is also built on the FastMCP `Client` and accepts '
+    'a pre-built `fastmcp.Client` or any input FastMCP can build a transport from, while adding full '
+    'parity with the legacy `MCPServer*` classes (caching, resource methods, sampling shortcuts, '
+    'OAuth auth). See the migration guide in the v2 release notes.'
+)
 @dataclass(init=False)
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
-    """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server.
+    """Toolset backed by a FastMCP `Client` for calling tools on a local or remote MCP server.
 
-    The Toolset can accept a FastMCP Client, a FastMCP Transport, or any other object which a FastMCP Transport can be created from.
+    Accepts a pre-built FastMCP `Client`, a FastMCP `ClientTransport`, or any other input that
+    FastMCP can build a transport from (a URL, a script path, etc.). See
+    [the FastMCP transports docs](https://gofastmcp.com/clients/transports) for the full list.
 
-    See https://gofastmcp.com/clients/transports for a full list of transports available.
+    !!! warning "Deprecated"
+        Use [`MCPToolset`][pydantic_ai.mcp.MCPToolset] instead — it accepts the same input shapes
+        (including a FastMCP `Client`), adds full parity with the legacy `MCPServer*` classes
+        (caching, resource methods, sampling shortcuts, OAuth auth), and runs on the same FastMCP
+        client under the hood.
     """
 
     client: Client[Any]

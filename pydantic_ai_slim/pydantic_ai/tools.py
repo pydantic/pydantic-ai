@@ -379,7 +379,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
-    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object from the previous run.
 
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """

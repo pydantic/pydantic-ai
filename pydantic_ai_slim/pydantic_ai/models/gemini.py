@@ -147,7 +147,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
                 provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -281,7 +281,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
-        vendor_details: dict[str, Any] | None = None
+        provider_details: dict[str, Any] | None = None
 
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
@@ -293,17 +293,17 @@ class GeminiModel(Model[httpx.AsyncClient]):
                     'Content field missing from Gemini response', str(response)
                 )
         parts = response['candidates'][0]['content']['parts']
-        vendor_id = response.get('vendor_id', None)
+        provider_response_id = response.get('response_id', None)
         finish_reason = response['candidates'][0].get('finish_reason')
         if finish_reason:
-            vendor_details = {'finish_reason': finish_reason}
+            provider_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
             response.get('model_version', self._model_name),
             usage,
-            vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            provider_response_id=provider_response_id,
+            provider_details=provider_details,
             provider_name=self._provider.name,
             provider_url=self.base_url,
         )
@@ -738,10 +738,10 @@ def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
     usage: usage.RequestUsage,
-    vendor_id: str | None,
+    provider_response_id: str | None,
     provider_name: str,
     provider_url: str,
-    vendor_details: dict[str, Any] | None = None,
+    provider_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -761,8 +761,8 @@ def _process_response_from_parts(
         usage=usage,
         model_name=model_name,
         provider_name=provider_name,
-        provider_response_id=vendor_id,
-        provider_details=vendor_details,
+        provider_response_id=provider_response_id,
+        provider_details=provider_details,
         provider_url=provider_url,
     )
 
@@ -868,7 +868,7 @@ class _GeminiResponse(TypedDict):
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
-    vendor_id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
+    response_id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
 
 
 class _GeminiCandidates(TypedDict):

@@ -14,8 +14,6 @@ from pydantic_ai import _utils
 from ..messages import (
     AgentStreamEvent,
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CompactionPart,
     FilePart,
     FileUrl,
@@ -205,10 +203,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, ToolResultEvent):
                     tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
-
-                elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
-                    # These events were deprecated before this feature was introduced
-                    continue
 
                 async for e in self.handle_event(event):
                     yield e

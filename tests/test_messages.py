@@ -7,6 +7,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -35,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -509,6 +511,43 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+@pytest.mark.anyio
+async def test_legacy_vendor_message_history_replays_through_agent():
+    """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
+
+    Backstop for the V2-RULES rule 4 (cross-history-replay): the deprecated `vendor_*` read properties
+    are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
+    stored histories load.
+    """
+    legacy_history: list[dict[str, Any]] = [
+        {
+            'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Hello!', 'part_kind': 'text'}],
+            'kind': 'response',
+            'model_name': 'gpt-5',
+            'provider_name': 'openai',
+            'vendor_details': {'finish_reason': 'stop'},
+            'vendor_id': 'chatcmpl-legacy',
+        },
+    ]
+    message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
+    response = next(m for m in message_history if isinstance(m, ModelResponse))
+    assert response.provider_details == {'finish_reason': 'stop'}
+    assert response.provider_response_id == 'chatcmpl-legacy'
+
+    agent = Agent(TestModel())
+    result = await agent.run('And now?', message_history=message_history)
+
+    replayed_response = next(
+        m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5'
+    )
+    assert replayed_response.provider_details == {'finish_reason': 'stop'}
+    assert replayed_response.provider_response_id == 'chatcmpl-legacy'
+
+
 def test_file_part_has_content():
     filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
     assert not filepart.has_content()
@@ -879,7 +918,7 @@ def test_uploaded_file_identifier_property():
     # Test with URL file_id (should still be hashed)
     uploaded_file_url = UploadedFile(
         file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        provider_name='google-gla',
+        provider_name='google',
     )
     assert uploaded_file_url.identifier == snapshot('d8d637')
 
@@ -940,7 +979,7 @@ def test_uploaded_file_in_otel_message_parts():
             'analyze this',
             UploadedFile(
                 file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-                provider_name='google-gla',
+                provider_name='google',
             ),
         ]
     )
