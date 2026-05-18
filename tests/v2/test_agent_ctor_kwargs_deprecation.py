@@ -53,7 +53,7 @@ async def test_event_stream_handler_kwarg_emits_deprecation_warning():
         PydanticAIDeprecationWarning,
         match=r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
-        agent = Agent(_make_model(), event_stream_handler=handler)  # pyright: ignore[reportCallIssue]
+        agent = Agent(_make_model(), event_stream_handler=handler)  # pyright: ignore[reportDeprecated]
 
     assert agent.event_stream_handler is handler
 
@@ -67,7 +67,7 @@ async def test_event_stream_handler_kwarg_runs_handler():
             seen.append(event)
 
     with pytest.warns(PydanticAIDeprecationWarning, match=r'event_stream_handler'):
-        agent = Agent(_make_model(), event_stream_handler=handler)  # pyright: ignore[reportCallIssue]
+        agent = Agent(_make_model(), event_stream_handler=handler)  # pyright: ignore[reportDeprecated]
 
     await agent.run('hello')
     assert seen, 'handler should have observed at least one event via the legacy path'
