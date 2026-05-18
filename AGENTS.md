@@ -103,15 +103,6 @@ The project uses:
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
 
-## AICA Context
-
-The repo-tracked context should describe stable project rules. Maintainer-local
-skills, hooks, subagents, and branch notes are copied by `pydantic-config` and
-should stay out of this repo unless they become project-level guidance.
-
-For test and cassette work, follow [tests/AGENTS.md](tests/AGENTS.md). Local
-testing skills may add helpers, but the repo docs are the source of truth.
-
 Additionally, always read the directory-specific instructions when working in those directories:
 
 - [docs/AGENTS.md](docs/AGENTS.md)
