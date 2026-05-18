@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, deprecated
 
 from . import _utils, exceptions, messages as _messages, models
 from ._deprecated_callable import deprecated_callable_property
