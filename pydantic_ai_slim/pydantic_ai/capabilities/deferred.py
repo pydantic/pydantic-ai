@@ -9,6 +9,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset
 
 from .abstract import AbstractCapability, CapabilityOrdering
+from .instrumentation import Instrumentation
 
 
 @dataclass
@@ -36,7 +37,7 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
         return create_catalog
 
     def get_ordering(self) -> CapabilityOrdering | None:
-        return CapabilityOrdering(position='outermost')
+        return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return DeferredCapabilityToolset(wrapped=toolset)

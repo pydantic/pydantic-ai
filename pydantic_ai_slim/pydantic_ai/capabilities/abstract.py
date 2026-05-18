@@ -158,7 +158,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     id: str = field(default_factory=lambda: str(uuid4()), kw_only=True)
-    """Stable identifier for this capability instance.
+    """Identifier used to reference this capability within a run.
 
     Required when `defer_loading=True` so the model can reference the capability
     by id when calling `load_capability`.
