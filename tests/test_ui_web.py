@@ -12,7 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
@@ -316,7 +316,7 @@ def test_model_profile():
 
 @pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
 def test_supported_native_tools(profile_name: str):
-    """Test profile.supported_native_tools returns proper tool types."""
+    """Test `profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)` returns proper tool types."""
     if profile_name == 'base':
         profile: ModelProfile = ModelProfile()
     elif profile_name == 'openai':
@@ -326,7 +326,7 @@ def test_supported_native_tools(profile_name: str):
     else:
         profile = GroqModelProfile()
 
-    result = profile.supported_native_tools
+    result = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractNativeTool) for t in result)
 

@@ -118,8 +118,18 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
-"""Lifecycle state of a model response."""
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+"""Lifecycle state of a model response.
+
+- `'complete'`: the response has been fully received from the model.
+- `'incomplete'`: the response is still being streamed and may receive more parts.
+  Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
+  while iteration is in flight.
+- `'interrupted'`: streaming was explicitly stopped via
+  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  finished generating.
+"""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -699,8 +709,22 @@ class CachePoint:
     """
 
 
-UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
-"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+UploadedFileProviderName: TypeAlias = Literal[
+    'anthropic',
+    'openai',
+    'google',
+    'google-cloud',
+    'google-gla',
+    'google-vertex',
+    'bedrock',
+    'xai',
+]
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile].
+
+The `'google-gla'` and `'google-vertex'` values are retained for backward compatibility with
+message history captured before the v2 provider rename — current code emits `'google'` and
+`'google-cloud'` respectively.
+"""
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -716,7 +740,7 @@ class UploadedFile:
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -724,8 +748,8 @@ class UploadedFile:
     """The provider-specific file identifier.
 
     For most providers, this is the file ID returned by the provider's upload API.
-    For GoogleModel (Vertex), this must be a GCS URI (`gs://bucket/path`).
-    For GoogleModel (GLA), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
+    For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -2113,7 +2137,7 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response."""
+    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
     @property
     def text(self) -> str | None:
@@ -2301,21 +2325,6 @@ class ModelResponse:
                 # Compaction parts don't map to standard OTel message part types
                 pass
         return parts
-
-    @property
-    @deprecated('`vendor_details` is deprecated, use `provider_details` instead')
-    def vendor_details(self) -> dict[str, Any] | None:
-        return self.provider_details
-
-    @property
-    @deprecated('`vendor_id` is deprecated, use `provider_response_id` instead')
-    def vendor_id(self) -> str | None:
-        return self.provider_response_id
-
-    @property
-    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
-    def provider_request_id(self) -> str | None:
-        return self.provider_response_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2785,12 +2794,6 @@ class FunctionToolCallEvent(ToolCallEvent):
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
-    @property
-    @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
-    def call_id(self) -> str:
-        """An ID used for matching details about the call to its result."""
-        return self.part.tool_call_id  # pragma: no cover
-
 
 @dataclass(repr=False)
 class OutputToolCallEvent(ToolCallEvent):
@@ -2840,45 +2843,8 @@ class OutputToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
-@deprecated(
-    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.'
-)
-@dataclass(repr=False)
-class BuiltinToolCallEvent:
-    """An event indicating the start to a call to a built-in tool."""
-
-    part: NativeToolCallPart
-    """The built-in tool call to make."""
-
-    _: KW_ONLY
-
-    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
-    """Event type identifier, used as a discriminator."""
-
-
-@deprecated(
-    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.'
-)
-@dataclass(repr=False)
-class BuiltinToolResultEvent:
-    """An event indicating the result of a built-in tool call."""
-
-    result: NativeToolReturnPart
-    """The result of the call to the built-in tool."""
-
-    _: KW_ONLY
-
-    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
-    """Event type identifier, used as a discriminator."""
-
-
 HandleResponseEvent = Annotated[
-    FunctionToolCallEvent
-    | FunctionToolResultEvent
-    | OutputToolCallEvent
-    | OutputToolResultEvent
-    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
-    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    FunctionToolCallEvent | FunctionToolResultEvent | OutputToolCallEvent | OutputToolResultEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""

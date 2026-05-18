@@ -60,7 +60,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -630,7 +630,7 @@ async def test_prefect_agent():
     # The wrapped toolset is the MCPServerStdio instance from the complex_agent
     # complex_agent.toolsets[0] is FunctionToolset for get_country
     # complex_agent.toolsets[1] is MCPServerStdio for mcp
-    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)
+    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)  # pyright: ignore[reportDeprecated]
 
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
