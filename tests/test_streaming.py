@@ -123,7 +123,7 @@ async def test_streamed_text_response():
                 ),
             ]
         )
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=103,
@@ -134,7 +134,7 @@ async def test_streamed_text_response():
         response = await result.get_output()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -173,7 +173,7 @@ async def test_streamed_text_response():
                 ),
             ]
         )
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=103,
@@ -227,7 +227,7 @@ def test_streamed_text_sync_response():
         ]
     )
     assert result.new_messages() == result.all_messages()
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             input_tokens=103,
@@ -238,7 +238,7 @@ def test_streamed_text_sync_response():
     response = result.get_output()
     assert response == snapshot('{"ret_a":"a-apple"}')
     assert result.is_complete
-    assert result.timestamp() == IsNow(tz=timezone.utc)
+    assert result.timestamp == IsNow(tz=timezone.utc)
     assert result.response == snapshot(
         ModelResponse(
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -286,7 +286,7 @@ def test_streamed_text_sync_response():
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             input_tokens=103,
@@ -338,8 +338,10 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_responses(debounce_by=None):
-            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
+        async for structured_response in result.stream_response(debounce_by=None):
+            response_data = await result.validate_response_output(
+                structured_response, allow_partial=structured_response.state == 'incomplete'
+            )
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -409,7 +411,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -417,6 +419,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
@@ -424,6 +427,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
@@ -431,6 +435,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
@@ -438,6 +443,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
@@ -445,6 +451,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -452,6 +459,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -459,6 +467,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -466,6 +475,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    state='complete',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -532,7 +542,7 @@ def test_streamed_text_stream_sync():
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_response(debounce_by=None)] == snapshot(
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -540,6 +550,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat ')],
@@ -547,6 +558,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat ')],
@@ -554,6 +566,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on ')],
@@ -561,6 +574,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the ')],
@@ -568,6 +582,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -575,6 +590,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -582,6 +598,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -589,6 +606,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
+                state='complete',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2830,7 +2848,7 @@ async def test_iter_stream_output():
                 async with node.stream(run.ctx) as stream:
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
-                stream_usage = deepcopy(stream.usage())
+                stream_usage = deepcopy(stream.usage)
     assert stream is not None
     assert stream.response == snapshot(
         ModelResponse(
@@ -2842,7 +2860,7 @@ async def test_iter_stream_output():
         )
     )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
-    assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
+    assert run.usage == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
     assert messages == snapshot(
         [
@@ -2960,7 +2978,7 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     assert sync_result.metadata == {'sync': 'metadata'}
 
 
-async def test_iter_stream_responses():
+async def test_iter_stream_response():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
@@ -2978,28 +2996,39 @@ async def test_iter_stream_responses():
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-                    async for chunk in stream.stream_responses(debounce_by=None):
+                    async for chunk in stream.stream_response(debounce_by=None):
                         messages.append(chunk)
 
+    incomplete_texts = [
+        '',
+        '',
+        'The ',
+        'The cat ',
+        'The cat sat ',
+        'The cat sat on ',
+        'The cat sat on the ',
+        'The cat sat on the mat.',
+        'The cat sat on the mat.',
+    ]
     assert messages == [
+        *(
+            ModelResponse(
+                parts=[TextPart(content=text)],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                state='incomplete',
+            )
+            for text in incomplete_texts
+        ),
         ModelResponse(
-            parts=[TextPart(content=text)],
+            parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='test',
-        )
-        for text in [
-            '',
-            '',
-            'The ',
-            'The cat ',
-            'The cat sat ',
-            'The cat sat on ',
-            'The cat sat on the ',
-            'The cat sat on the mat.',
-            'The cat sat on the mat.',
-        ]
+        ),
     ]
 
     # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:
@@ -3461,7 +3490,7 @@ async def test_tool_raises_call_deferred():
         assert await result.get_output() == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
             [
                 ModelResponse(
@@ -3478,8 +3507,8 @@ async def test_tool_raises_call_deferred():
         assert await result.validate_response_output(responses[0]) == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.timestamp == IsNow(tz=timezone.utc)
         assert result.is_complete
 
 
@@ -4005,8 +4034,10 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_responses(debounce_by=None):
-        response_data = result.validate_response_output(structured_response, allow_partial=not last)
+    for structured_response in result.stream_response(debounce_by=None):
+        response_data = result.validate_response_output(
+            structured_response, allow_partial=structured_response.state == 'incomplete'
+        )
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -4587,6 +4618,48 @@ async def test_completed_streamed_response_cancel_noop():
     assert streamed_response.cancelled
     assert streamed_response.get() is response
     assert response.state == 'complete'
+
+
+async def test_stream_response_state_incomplete_until_finished():
+    """`response.state` reads `'incomplete'` mid-stream and flips to `'complete'` once iteration ends."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            assert result.response.state == 'incomplete'
+        await result.get_output()
+
+    assert result.response.state == 'complete'
+
+
+async def test_stream_response_yields_incomplete_then_complete():
+    """`stream_response` yields `state='incomplete'` mid-stream; the trailing yield is `'complete'`."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        states = [msg.state async for msg in result.stream_response(debounce_by=None)]
+
+    assert states[-1] == 'complete'
+    assert all(state == 'incomplete' for state in states[:-1])
+
+
+async def test_stream_response_state_incomplete_after_early_break():
+    """Breaking out of the stream early must not flip `state` to `'complete'`.
+
+    `aclose()` on the underlying async generator raises `GeneratorExit` at the
+    suspended `yield`, so `_finished` must stay `False` and the truncated
+    response must keep reporting `'incomplete'`.
+    """
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.iter('Hello') as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:  # pragma: no branch
+                        break
+                    assert stream.response.state == 'incomplete'
+                return
 
 
 async def test_run_stream_events_aclose():

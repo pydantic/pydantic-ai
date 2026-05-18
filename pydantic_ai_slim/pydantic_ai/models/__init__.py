@@ -41,6 +41,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
@@ -182,16 +183,16 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash-image',
-        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-flash-preview',
-        'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-        'gateway/google-vertex:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-2.5-flash-image',
+        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-cloud:gemini-2.5-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash',
+        'gateway/google-cloud:gemini-2.5-pro',
+        'gateway/google-cloud:gemini-3-flash-preview',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+        'gateway/google-cloud:gemini-3.1-pro-preview',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -249,38 +250,38 @@ KnownModelName = TypeAliasType(
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
         'gateway/openai:o4-mini',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-flash-preview',
-        'google-gla:gemini-3-pro-image-preview',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3.1-flash-image-preview',
-        'google-gla:gemini-3.1-flash-lite-preview',
-        'google-gla:gemini-3.1-pro-preview',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-flash-preview',
-        'google-vertex:gemini-3-pro-image-preview',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3.1-flash-image-preview',
-        'google-vertex:gemini-3.1-flash-lite-preview',
-        'google-vertex:gemini-3.1-pro-preview',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-cloud:gemini-2.0-flash-lite',
+        'google-cloud:gemini-2.0-flash',
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'google-cloud:gemini-2.5-flash-lite',
+        'google-cloud:gemini-2.5-flash-preview-09-2025',
+        'google-cloud:gemini-2.5-flash',
+        'google-cloud:gemini-2.5-pro',
+        'google-cloud:gemini-3-flash-preview',
+        'google-cloud:gemini-3-pro-image-preview',
+        'google-cloud:gemini-3-pro-preview',
+        'google-cloud:gemini-3.1-flash-image-preview',
+        'google-cloud:gemini-3.1-flash-lite-preview',
+        'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-flash-latest',
+        'google-cloud:gemini-flash-lite-latest',
+        'google:gemini-2.0-flash-lite',
+        'google:gemini-2.0-flash',
+        'google:gemini-2.5-flash-image',
+        'google:gemini-2.5-flash-lite-preview-09-2025',
+        'google:gemini-2.5-flash-lite',
+        'google:gemini-2.5-flash-preview-09-2025',
+        'google:gemini-2.5-flash',
+        'google:gemini-2.5-pro',
+        'google:gemini-3-flash-preview',
+        'google:gemini-3-pro-image-preview',
+        'google:gemini-3-pro-preview',
+        'google:gemini-3.1-flash-image-preview',
+        'google:gemini-3.1-flash-lite-preview',
+        'google:gemini-3.1-pro-preview',
+        'google:gemini-flash-latest',
+        'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3-fast',
@@ -455,6 +456,83 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini-deep-research-2025-06-26',
         'openai:o4-mini-deep-research',
         'openai:o4-mini',
+        'openai-chat:computer-use-preview-2025-03-11',
+        'openai-chat:computer-use-preview',
+        'openai-chat:gpt-3.5-turbo-0125',
+        'openai-chat:gpt-3.5-turbo-0301',
+        'openai-chat:gpt-3.5-turbo-0613',
+        'openai-chat:gpt-3.5-turbo-1106',
+        'openai-chat:gpt-3.5-turbo-16k-0613',
+        'openai-chat:gpt-3.5-turbo-16k',
+        'openai-chat:gpt-3.5-turbo',
+        'openai-chat:gpt-4-0314',
+        'openai-chat:gpt-4-0613',
+        'openai-chat:gpt-4-turbo-2024-04-09',
+        'openai-chat:gpt-4-turbo',
+        'openai-chat:gpt-4.1-2025-04-14',
+        'openai-chat:gpt-4.1-mini-2025-04-14',
+        'openai-chat:gpt-4.1-mini',
+        'openai-chat:gpt-4.1-nano-2025-04-14',
+        'openai-chat:gpt-4.1-nano',
+        'openai-chat:gpt-4.1',
+        'openai-chat:gpt-4',
+        'openai-chat:gpt-4o-2024-05-13',
+        'openai-chat:gpt-4o-2024-08-06',
+        'openai-chat:gpt-4o-2024-11-20',
+        'openai-chat:gpt-4o-audio-preview-2024-12-17',
+        'openai-chat:gpt-4o-audio-preview-2025-06-03',
+        'openai-chat:gpt-4o-audio-preview',
+        'openai-chat:gpt-4o-mini-2024-07-18',
+        'openai-chat:gpt-4o-mini-audio-preview-2024-12-17',
+        'openai-chat:gpt-4o-mini-audio-preview',
+        'openai-chat:gpt-4o-mini-search-preview-2025-03-11',
+        'openai-chat:gpt-4o-mini-search-preview',
+        'openai-chat:gpt-4o-mini',
+        'openai-chat:gpt-4o-search-preview-2025-03-11',
+        'openai-chat:gpt-4o-search-preview',
+        'openai-chat:gpt-4o',
+        'openai-chat:gpt-5-2025-08-07',
+        'openai-chat:gpt-5-chat-latest',
+        'openai-chat:gpt-5-codex',
+        'openai-chat:gpt-5-mini-2025-08-07',
+        'openai-chat:gpt-5-mini',
+        'openai-chat:gpt-5-nano-2025-08-07',
+        'openai-chat:gpt-5-nano',
+        'openai-chat:gpt-5-pro-2025-10-06',
+        'openai-chat:gpt-5-pro',
+        'openai-chat:gpt-5.1-2025-11-13',
+        'openai-chat:gpt-5.1-chat-latest',
+        'openai-chat:gpt-5.1-codex-max',
+        'openai-chat:gpt-5.1-codex',
+        'openai-chat:gpt-5.1',
+        'openai-chat:gpt-5.2-2025-12-11',
+        'openai-chat:gpt-5.2-chat-latest',
+        'openai-chat:gpt-5.2-pro-2025-12-11',
+        'openai-chat:gpt-5.2-pro',
+        'openai-chat:gpt-5.2',
+        'openai-chat:gpt-5.3-chat-latest',
+        'openai-chat:gpt-5.4-mini-2026-03-17',
+        'openai-chat:gpt-5.4-mini',
+        'openai-chat:gpt-5.4-nano-2026-03-17',
+        'openai-chat:gpt-5.4-nano',
+        'openai-chat:gpt-5.4',
+        'openai-chat:gpt-5',
+        'openai-chat:o1-2024-12-17',
+        'openai-chat:o1-pro-2025-03-19',
+        'openai-chat:o1-pro',
+        'openai-chat:o1',
+        'openai-chat:o3-2025-04-16',
+        'openai-chat:o3-deep-research-2025-06-26',
+        'openai-chat:o3-deep-research',
+        'openai-chat:o3-mini-2025-01-31',
+        'openai-chat:o3-mini',
+        'openai-chat:o3-pro-2025-06-10',
+        'openai-chat:o3-pro',
+        'openai-chat:o3',
+        'openai-chat:o4-mini-2025-04-16',
+        'openai-chat:o4-mini-deep-research-2025-06-26',
+        'openai-chat:o4-mini-deep-research',
+        'openai-chat:o4-mini',
         'test',
     ],
 )
@@ -1083,6 +1161,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1169,6 +1248,14 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1228,6 +1315,12 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
@@ -1238,7 +1331,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
     # TODO (v2): Make this a property
@@ -1321,7 +1414,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'o1': 'openai',
     'o3': 'openai',
     'claude': 'anthropic',
-    'gemini': 'google-gla',
+    'gemini': 'google',
 }
 """Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
@@ -1418,10 +1511,10 @@ def infer_model(  # noqa: C901
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
+            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
+            PydanticAIDeprecationWarning,
         )
-        provider_name = 'google-vertex'
+        provider_name = 'google-cloud'
 
     provider = provider_factory(provider_name)
 
@@ -1448,12 +1541,20 @@ def infer_model(  # noqa: C901
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
+        if provider_name in ('openai', 'gateway/openai'):
+            warnings.warn(
+                "In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. "
+                "Use 'openai-chat:' to keep current Chat Completions behavior, or "
+                "'openai-responses:' to opt in early.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         return OpenAIChatModel(model_name, provider=provider)
     elif model_kind == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

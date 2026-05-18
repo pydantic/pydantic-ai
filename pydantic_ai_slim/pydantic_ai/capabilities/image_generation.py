@@ -41,7 +41,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     image-only API. Examples:
 
     * `'openai-responses:gpt-5.4'` — OpenAI model with image generation support
-    * `'google-gla:gemini-3-pro-image-preview'` — Google image generation model
+    * `'google:gemini-3-pro-image-preview'` — Google image generation model
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a `Model` instance.
@@ -82,13 +82,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     output_compression: int | None
     """Compression level for the output image.
 
-    Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Vertex AI (jpeg, default: 75).
+    Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Cloud (jpeg, default: 75).
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
     """Output format of the generated image.
 
-    Supported by: OpenAI Responses (default: `'png'`), Google Vertex AI.
+    Supported by: OpenAI Responses (default: `'png'`), Google Cloud.
     """
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None

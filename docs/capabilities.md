@@ -24,6 +24,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — native when supported, direct connection otherwise | Yes |
+| [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] | Discovery of [deferred tools](tools-advanced.md#tool-search) — native when supported, local `search_tools` function tool otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
 | [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
@@ -146,7 +147,7 @@ agent = Agent(
 To force native-only (errors on unsupported models instead of falling back to local):
 
 ```python {title="native_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', local=False)
+MCP(url='https://mcp.example.com/api', native=True, local=False)
 ```
 
 To force local-only (never use the native tool, even when the model supports it):
@@ -173,6 +174,21 @@ from pydantic_ai.capabilities import NativeOrLocalTool
 
 cap = NativeOrLocalTool(native=CodeExecutionTool(), local=my_local_executor)
 ```
+
+### ToolSearch
+
+The [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability handles discovery of tools marked with `defer_loading=True`, so agents with large toolsets only pay tokens for the tools the model needs. Like the [provider-adaptive tools](#provider-adaptive-tools) above, it picks the best path for the active model — native server-executed search on Anthropic and OpenAI Responses, a local `search_tools` function tool elsewhere — and is auto-injected into every agent with zero overhead when no deferred tools exist.
+
+Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to pick a specific [`strategy`][pydantic_ai.capabilities.ToolSearch.strategy] (`'keywords'`, `'bm25'`, `'regex'`, or a custom callable) or tune the local fallback:
+
+```python {title="tool_search_capability.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='keywords')])
+```
+
+See [Tool Search](tools-advanced.md#tool-search) for when to reach for it, the full strategy table, and provider support details.
 
 ### PrepareTools and PrepareOutputTools
 
@@ -771,7 +787,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass — these are also what the agent-level [`prepare_tools=`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools=`][pydantic_ai.tools.ToolsPrepareFunc] kwargs inject, so kwarg and capability share one execution path.
+For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass.
 
 #### Event stream hook
 
@@ -844,7 +860,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | Hook | Fires when | Recovery type |
 |---|---|---|
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | Agent run fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
-| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.nodes.End] |
+| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.basenode.End] |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Model request fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |
