@@ -1,14 +1,16 @@
+# pyright: reportDeprecated=false
+# Wraps the deprecated `FastMCPToolset` for durable execution. Will be removed in v2.
 from __future__ import annotations
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-from ._mcp import DBOSMCPToolset
+from ._mcp import DBOSMCPToolsetBase
 from ._utils import StepConfig
 
 
-class DBOSFastMCPToolset(DBOSMCPToolset[AgentDepsT]):
+class DBOSFastMCPToolset(DBOSMCPToolsetBase[AgentDepsT]):
     """A wrapper for FastMCPToolset that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
 
     def __init__(

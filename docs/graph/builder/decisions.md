@@ -14,13 +14,13 @@ The first matching branch is taken, similar to pattern matching or `if-elif-else
 
 ## Creating Decisions
 
-Use [`g.decision()`][pydantic_graph.beta.graph_builder.GraphBuilder.decision] to create a decision node, then add branches with [`g.match()`][pydantic_graph.beta.graph_builder.GraphBuilder.match]:
+Use [`g.decision()`][pydantic_graph.graph_builder.GraphBuilder.decision] to create a decision node, then add branches with [`g.match()`][pydantic_graph.graph_builder.GraphBuilder.match]:
 
 ```python {title="simple_decision.py"}
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -73,7 +73,7 @@ Match by type using regular Python types:
 ```python {title="type_matching.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -116,12 +116,12 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ### Matching Union Types
 
-For more complex type expressions like unions, you need to use [`TypeExpression`][pydantic_graph.beta.util.TypeExpression] because Python's type system doesn't allow union types to be used directly as runtime values:
+For more complex type expressions like unions, you need to use [`TypeExpression`][pydantic_graph.util.TypeExpression] because Python's type system doesn't allow union types to be used directly as runtime values:
 
 ```python {title="union_type_matching.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -165,7 +165,7 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
 !!! note
-    [`TypeExpression`][pydantic_graph.beta.util.TypeExpression] is only necessary for complex type expressions like unions (`int | str`), `Literal`, and other type forms that aren't valid as runtime `type` objects. For simple types like `int`, `str`, or custom classes, you can pass them directly to `g.match()`.
+    [`TypeExpression`][pydantic_graph.util.TypeExpression] is only necessary for complex type expressions like unions (`int | str`), `Literal`, and other type forms that aren't valid as runtime `type` objects. For simple types like `int`, `str`, or custom classes, you can pass them directly to `g.match()`.
 
     The `TypeForm` class introduced in [PEP 747](https://peps.python.org/pep-0747/) should eventually eliminate the need for this workaround.
 
@@ -177,7 +177,7 @@ Provide custom matching logic with the `matches` parameter:
 ```python {title="custom_matcher.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -225,7 +225,7 @@ Branches are evaluated in the order they're added. The first matching branch is 
 ```python {title="branch_priority.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -275,7 +275,7 @@ Use `object` or `Any` to create a catch-all branch:
 ```python {title="catch_all.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -315,7 +315,7 @@ Decisions can be nested for complex conditional logic:
 ```python {title="nested_decisions.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -377,7 +377,7 @@ Add labels to branches for documentation and diagram generation:
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -422,4 +422,4 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 - Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Understand [join nodes](joins.md) for aggregating parallel results
-- See the [API reference][pydantic_graph.beta.decision] for complete decision documentation
+- See the [API reference][pydantic_graph.decision] for complete decision documentation

@@ -59,7 +59,7 @@ TEST_CASES = [
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
         'gateway/gemini:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-vertex',
+        'google-cloud',
         'google',
         GoogleModel,
         id='gateway/gemini:gemini-1.5-flash',
@@ -122,7 +122,7 @@ TEST_CASES = [
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'google-gla:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-gla',
+        'google',
         'google',
         GoogleModel,
     ),
@@ -130,7 +130,7 @@ TEST_CASES = [
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-gla',
+        'google',
         'google',
         GoogleModel,
     ),
@@ -280,7 +280,7 @@ def test_infer_str_unknown():
         pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
         pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
         pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google-gla', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gemini-1.5-flash', ('google', 'gemini-1.5-flash'), id='legacy-gemini'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
@@ -338,6 +338,9 @@ def test_infer_model_profile(model_id: str, is_default: bool):
         ),
     ],
 )
+@pytest.mark.filterwarnings(
+    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""
     module_path, class_name = provider_path.rsplit('.', 1)
@@ -384,4 +387,4 @@ def test_custom_provider_instance_method_model_profile():
     assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
-    assert isinstance(profile, ModelProfile)
+    assert isinstance(profile, dict)

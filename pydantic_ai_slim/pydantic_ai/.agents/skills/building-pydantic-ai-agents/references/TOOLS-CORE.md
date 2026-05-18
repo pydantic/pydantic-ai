@@ -11,7 +11,7 @@ import random
 
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('google-gla:gemini-3-flash-preview', deps_type=str)
+agent = Agent('google:gemini-3-flash-preview', deps_type=str)
 
 
 @agent.tool_plain
