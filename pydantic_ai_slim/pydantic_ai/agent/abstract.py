@@ -1063,7 +1063,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -1187,8 +1186,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # advanced the iterator (an unstarted async generator's body — including any
             # try/finally inside it — never executes on `aclose()`).
             await iterator.aclose()
-            if not task.done():
-                await _utils.cancel_and_drain(task)
+            await _utils.cancel_and_drain(task)
             await receive_stream.aclose()
 
     @overload

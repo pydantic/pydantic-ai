@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import datetime
+import gc
 import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator
@@ -4653,6 +4654,43 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
     # drain the background task; otherwise the producer's `finally` never runs.
     await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
+
+
+async def test_run_stream_events_done_task_exception_cleanup():
+    """A producer task that fails before context exit must still have its exception retrieved."""
+    producer_finished = asyncio.Event()
+
+    async def failing_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+        try:
+            raise RuntimeError('producer boom')
+        finally:
+            producer_finished.set()
+
+    loop = asyncio.get_running_loop()
+    caught_contexts: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+
+    def handle_exception(loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
+        caught_contexts.append(context)
+
+    loop.set_exception_handler(handle_exception)
+    try:
+        agent = Agent(FunctionModel(stream_function=failing_stream))
+
+        async with agent.run_stream_events('') as events:
+            async for event in events:
+                if isinstance(event, FinalResultEvent):
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.sleep(0)
+                    break
+
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert caught_contexts == []
 
 
 async def test_run_stream_events_external_task_cancellation():
