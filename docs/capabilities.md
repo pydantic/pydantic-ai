@@ -147,7 +147,7 @@ agent = Agent(
 To force native-only (errors on unsupported models instead of falling back to local):
 
 ```python {title="native_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', local=False)
+MCP(url='https://mcp.example.com/api', native=True, local=False)
 ```
 
 To force local-only (never use the native tool, even when the model supports it):
@@ -857,7 +857,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | Hook | Fires when | Recovery type |
 |---|---|---|
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | Agent run fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
-| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.nodes.End] |
+| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.basenode.End] |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Model request fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |

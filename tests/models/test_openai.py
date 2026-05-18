@@ -52,6 +52,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -606,24 +607,23 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o-123',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1',
-                        provider_details={
-                            'finish_reason': 'stop',
-                            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=6, output_tokens=3),
+                    model_name='gpt-4o-123',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='123',
+                    finish_reason='stop',
                 )
+            )
 
 
 def struc_chunk(
@@ -1000,9 +1000,9 @@ async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None,
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
         'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
     )
-    profile = OpenAIModelProfile.from_profile(model.profile)
-    assert profile.openai_system_prompt_role == 'user'
-    assert profile.supports_tools is False
+    profile = model.profile
+    assert profile.get('openai_system_prompt_role', None) == 'user'
+    assert profile.get('supports_tools', True) is False
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
@@ -2699,8 +2699,8 @@ async def test_strict_mode_cannot_infer_strict(
     # If the model profile says strict is not supported, we never pass strict
     await assert_strict(
         None,
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(
-            openai_model_profile('test-model')
+        profile=merge_profile(
+            OpenAIModelProfile(openai_supports_strict_tool_definition=False), openai_model_profile('test-model')
         ),
     )
 
@@ -3224,7 +3224,7 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 def test_openai_model_profile():
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    assert isinstance(m.profile, OpenAIModelProfile)
+    assert isinstance(m.profile, dict)
 
 
 def test_openai_model_profile_custom():
@@ -3233,29 +3233,32 @@ def test_openai_model_profile_custom():
         provider=OpenAIProvider(api_key='foobar'),
         profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer),
     )
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
-    assert isinstance(m.profile, OpenAIModelProfile)
-    assert m.profile.openai_supports_strict_tool_definition is False
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('openai_supports_strict_tool_definition', True) is False
 
 
-def test_openai_model_profile_function():
-    def model_profile(model_name: str) -> ModelProfile:
-        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
+def test_openai_model_profile_callable():
+    """The user `profile=` kwarg accepts a `Callable[[ModelProfile], ModelProfile]` that receives the resolved default and returns the final profile."""
 
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    def override(default: ModelProfile) -> ModelProfile:
+        return merge_profile(default, ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer))
 
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=override)
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
+
+    # The callable can also fully replace the default.
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=lambda _default: ModelProfile())
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_openai_model_profile_from_provider():
@@ -3267,12 +3270,12 @@ def test_openai_model_profile_from_provider():
             )
 
     m = OpenAIChatModel('gpt-4o', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel('gpt-4o-mini', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_model_profile_strict_not_supported():
@@ -3302,7 +3305,7 @@ def test_model_profile_strict_not_supported():
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -4139,7 +4142,9 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -4158,7 +4163,9 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -4315,6 +4322,16 @@ response\
 """,
         }
     )
+
+
+def test_openai_send_back_thinking_field_requires_thinking_field():
+    """`openai_chat_send_back_thinking_parts='field'` requires `openai_chat_thinking_field` to be set."""
+    with pytest.raises(UserError, match='`openai_chat_thinking_field` must be set to a non-None value'):
+        OpenAIChatModel(
+            'foobar',
+            provider=OpenAIProvider(api_key='dummy'),
+            profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'),
+        )
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):
@@ -5197,7 +5214,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
     The final usage should equal the last chunk's usage, not the sum of all chunks.
-    We verify that usage is correctly updated at each step via stream_responses.
+    We verify that usage is correctly updated at each step via stream_response.
     """
     # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
     stream = [
@@ -5217,9 +5234,9 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
     async with agent.run_stream('', model_settings=settings) as result:
-        # Verify usage is updated at each step via stream_responses
+        # Verify usage is updated at each step via stream_response
         usage_at_each_step: list[RequestUsage] = []
-        async for response, _ in result.stream_responses(debounce_by=None):
+        async for response in result.stream_response(debounce_by=None):
             usage_at_each_step.append(response.usage)
 
         # Each step should have the cumulative usage from that chunk (not accumulated)

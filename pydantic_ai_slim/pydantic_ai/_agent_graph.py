@@ -24,9 +24,9 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_graph import BaseNode, GraphRunContext
-from pydantic_graph.beta import Graph, GraphBuilder
-from pydantic_graph.nodes import End, NodeRunEndT
+from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
+from pydantic_graph.basenode import End, NodeRunEndT
+from pydantic_graph.graph_builder import Graph
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context
@@ -1184,12 +1184,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
+                        # Text parts before a native tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text.
+                        # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
                         text = ''
-                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.NativeToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                        # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                        pass
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):
