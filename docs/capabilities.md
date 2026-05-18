@@ -120,9 +120,12 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] each pair a model-side [native tool](native-tools.md) with a client-side local fallback. The `native=` and `local=` kwargs control which side handles the request — when the model supports the native tool, it's used directly; otherwise the local fallback runs the request so your agent works across providers without code changes.
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, MCP) across two implementations:
 
-`native=` and `local=` each accept `True`, `False`, or a concrete value (a [native tool](native-tools.md) instance, a strategy string where supported, a callable, a [`Tool`][pydantic_ai.tools.Tool], or an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]). Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with the install hint) when you ask for a local strategy whose extra isn't installed.
+- **Native** — invoked by the model provider when the model supports it. The work happens on the provider's side (e.g. Anthropic's web search runs server-side, returning results inline).
+- **Local** — runs in your Python process. Used when the model doesn't support the native tool; your code does the work (e.g. calling DuckDuckGo directly).
+
+Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](native-tools.md) instance), `False` (disable native), or an explicit instance like `WebSearchTool(...)` for fine-grained config. `local=` accepts `True` (the bundled local fallback), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.
 
 ```python {title="provider_adaptive_tools.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -138,18 +141,18 @@ agent = Agent(
         # Native when supported; subagent fallback via `fallback_model`
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
-        MCP(url='https://mcp.example.com/api'),
+        MCP('https://mcp.example.com/api'),
     ],
 )
 ```
 
 `MCP` defaults the other way from the other three: because MCP carries credentials, it runs locally by default and you opt into native MCP with `native=True`. The other three default to native and you opt into local with `local=`.
 
-Some constraint fields require the native tool (the local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError]. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require native; [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally.
+Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ```python {title="constraints.py" test="skip" lint="skip"}
-# Only search example.com — requires native support
-WebSearch(allowed_domains=['example.com'])
+# Limit to 5 searches per run — requires native (the local fallback can't track call count)
+WebSearch(max_uses=5)
 
 # Only fetch example.com — enforced locally when native is unavailable
 WebFetch(allowed_domains=['example.com'], local=True)
@@ -157,18 +160,24 @@ WebFetch(allowed_domains=['example.com'], local=True)
 
 #### WebSearch
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch] defaults to native-only. Pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckGo](common-tools.md#duckduckgo-search-tool) fallback (requires the `duckduckgo` optional group); pass any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] for a custom fallback (e.g. a Tavily / Perplexity / Brave wrapper from [`common_tools`](common-tools.md)).
+[`WebSearch`][pydantic_ai.capabilities.WebSearch] defaults to native-only. Backed by [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] on the native side (see [Web Search Tool](native-tools.md#web-search-tool) for provider support and configuration) — pass `native=WebSearchTool(...)` directly when you need full control over the native instance.
 
-Native constraint fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`, `max_uses`. The domain and `max_uses` constraints require native support.
+For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckGo](common-tools.md#duckduckgo-search-tool) fallback (requires the `duckduckgo` optional group); for other search providers, use a [Tavily][pydantic_ai.common_tools.tavily.tavily_search_tool] or [Exa][pydantic_ai.common_tools.exa.ExaSearchTool] wrapper from [`common_tools`](common-tools.md), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
+
+Native constraint fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`, `max_uses`. The domain and `max_uses` constraints require native support (the shipped DuckDuckGo fallback doesn't enforce them).
 
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.native_tools import WebSearchTool
 
 # Native-only — raises on models without native web search
 WebSearch()
 
 # Native preferred; DuckDuckGo fallback (needs `pydantic-ai-slim[duckduckgo]`)
 WebSearch(local='duckduckgo')
+
+# Native preferred; explicit native instance for full control
+WebSearch(native=WebSearchTool(max_uses=5, allowed_domains=['example.com']))
 
 # Native preferred; custom callable as fallback
 def my_search(query: str) -> str: ...
@@ -177,12 +186,15 @@ WebSearch(local=my_search)
 
 #### WebFetch
 
-[`WebFetch`][pydantic_ai.capabilities.WebFetch] defaults to native-only. Pass `local=True` for the bundled [markdownify-based fetch tool](common-tools.md#web-fetch-tool) (requires the `web-fetch` optional group), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
+[`WebFetch`][pydantic_ai.capabilities.WebFetch] defaults to native-only. Backed by [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] on the native side (see [Web Fetch Tool](native-tools.md#web-fetch-tool) for provider support and configuration) — pass `native=WebFetchTool(...)` directly for full control.
+
+For the local side, pass `local=True` for the bundled [markdownify-based fetch tool](common-tools.md#web-fetch-tool) (requires the `web-fetch` optional group), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
 
 Native constraint fields: `allowed_domains`, `blocked_domains`, `max_uses`, `enable_citations`, `max_content_tokens`. Only `max_uses` requires native; domain filters are enforced locally when native isn't available.
 
 ```python {title="web_fetch.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebFetch
+from pydantic_ai.native_tools import WebFetchTool
 
 # Native-only — raises on models without native web fetch
 WebFetch()
@@ -190,22 +202,31 @@ WebFetch()
 # Native preferred; markdownify-based fallback (needs `pydantic-ai-slim[web-fetch]`)
 WebFetch(local=True)
 
+# Native preferred; explicit native instance for full control
+WebFetch(native=WebFetchTool(max_content_tokens=10_000, enable_citations=True))
+
 # Domain filters enforced locally when native isn't available
 WebFetch(allowed_domains=['example.com'], local=True)
 ```
 
 #### ImageGeneration
 
-[`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] defaults to native-only. Pass `fallback_model='…'` to delegate unsupported requests to a subagent running an image-generation-capable model (e.g. `openai-responses:gpt-5.4`), or `local=` with any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] for a custom generator.
+[`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] defaults to native-only. Backed by [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] on the native side (see [Image Generation Tool](native-tools.md#image-generation-tool) for provider support and configuration) — pass `native=ImageGenerationTool(...)` directly for full control.
+
+For the local side, pass `fallback_model='…'` to delegate unsupported requests to a subagent running an image-generation-capable model (e.g. `openai-responses:gpt-5.4`), or `local=` with any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] for a custom generator.
 
 ```python {title="image_generation.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import ImageGeneration
+from pydantic_ai.native_tools import ImageGenerationTool
 
 # Native-only — raises on models without native image generation
 ImageGeneration()
 
 # Native preferred; subagent fallback for unsupported models
 ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+
+# Native preferred; explicit native instance for full control
+ImageGeneration(native=ImageGenerationTool(background='transparent', moderation='low'))
 
 # Native preferred; custom callable as fallback
 def my_generator(prompt: str) -> bytes: ...
@@ -216,24 +237,33 @@ ImageGeneration(local=my_generator)
 
 [`MCP`][pydantic_ai.capabilities.MCP] is the primary entry point for [MCP](mcp/overview.md) in Pydantic AI. It runs the MCP server locally by default — keeping credentials, hooks, and tracing under your control — and supports both URL-based servers and direct client / toolset / transport inputs.
 
+Backed by [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] on the native side (see [MCP Server Tool](native-tools.md#mcp-server-tool) for provider support and configuration) — pass `native=MCPServerTool(...)` directly when you need full control (e.g. a different `id`, `authorization_token`, or `description` than the capability would derive). On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, …) — non-toolset inputs are wrapped in `MCPToolset` automatically.
+
 ```python {title="mcp.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import MCP
+from pydantic_ai.native_tools import MCPServerTool
 
 # URL-based MCP server, running locally (requires `pydantic-ai-slim[mcp]`)
-MCP(url='https://mcp.example.com/api')
+MCP('https://mcp.example.com/api')
 
 # Local client without a URL — pass any `MCPToolset` input
 # (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, etc.)
 MCP(local=my_fastmcp_client)
 
 # Native preferred; URL-based local fallback
-MCP(url='https://mcp.example.com/api', native=True)
+MCP('https://mcp.example.com/api', native=True)
+
+# Native preferred; explicit native instance for full control
+MCP(
+    'https://mcp.example.com/api',
+    native=MCPServerTool(id='my-mcp', url='https://mcp.example.com/api', description='…'),
+)
 
 # Strict native-only (no local — does not require the `mcp` extra)
-MCP(url='https://mcp.example.com/api', native=True, local=False)
+MCP('https://mcp.example.com/api', native=True, local=False)
 ```
 
-For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](mcp/overview.md). The native side of the capability is backed by [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool], which can also be used as a [native tool](native-tools.md) directly when the capability's local fallback isn't needed.
+For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](mcp/overview.md).
 
 #### Building your own
 
