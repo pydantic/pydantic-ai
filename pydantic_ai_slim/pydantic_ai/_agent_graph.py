@@ -862,8 +862,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         #   search (typed `ToolSearchReturnPart`s, plus the legacy metadata sideband).
         # - `tools_for_loaded_capabilities(ctx, toolset)` — tools whose owning
         #   deferred capability was loaded via `load_capability`. Pulled from the cap
-        #   registry rather than from `LoadCapabilityReturnPart.discovered_tools`, so
-        #   the load-cap part stays a "this cap was loaded" signal and tool-search
+        #   registry by walking the loaded cap's toolset; `LoadCapabilityReturnPart`
+        #   itself only carries `capability_id` + `instructions`, so tool-search
         #   history remains the authoritative discovery record.
         #
         # One set, not two fields: downstream consumers only ask "is this tool
