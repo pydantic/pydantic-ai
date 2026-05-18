@@ -4670,18 +4670,15 @@ async def test_run_stream_events_break_on_final_result_retrieves_late_producer_e
             producer_finished.set()
 
     loop = asyncio.get_running_loop()
-    caught_contexts: list[dict[str, object]] = []
     previous_handler = loop.get_exception_handler()
-
-    def handle_exception(loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
-        caught_contexts.append(context)
+    handle_exception = MagicMock()
 
     loop.set_exception_handler(handle_exception)
     try:
         agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
 
         async with agent.run_stream_events('') as events:
-            async for event in events:
+            async for event in events:  # pragma: no branch
                 if isinstance(event, FinalResultEvent):
                     # This mirrors the documented "stop once final result is known" pattern.
                     # The producer task can still finish with an exception before the CM exits.
@@ -4694,7 +4691,7 @@ async def test_run_stream_events_break_on_final_result_retrieves_late_producer_e
     finally:
         loop.set_exception_handler(previous_handler)
 
-    assert caught_contexts == []
+    handle_exception.assert_not_called()
 
 
 async def test_run_stream_events_external_task_cancellation():
