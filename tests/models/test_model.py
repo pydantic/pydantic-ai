@@ -298,6 +298,7 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('openai:gpt-5', False, id='openai'),
         pytest.param('anthropic:claude-sonnet-4-5', False, id='anthropic'),
         pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', False, id='gateway-google-cloud'),
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
