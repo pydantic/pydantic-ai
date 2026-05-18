@@ -313,18 +313,20 @@ class Response:
     answers: list[Answer]
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    name='complex_agent',
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    complex_agent = Agent(
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        name='complex_agent',
+    )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(

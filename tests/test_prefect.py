@@ -191,19 +191,21 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    capabilities=[Instrumentation(settings=InstrumentationSettings())],
-    name='complex_agent',
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    complex_agent = Agent(
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        name='complex_agent',
+    )
 complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
 
 
