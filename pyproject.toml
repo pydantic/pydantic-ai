@@ -57,6 +57,26 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
+# Opt-in extras for the non-default models / tools that used to ship with `pydantic-ai`
+# before the v2 default-deps narrowing. Exposed at the root so users (and CI's
+# `uv run --all-extras` matrix entry) can pull them through `pydantic-ai[<name>]`.
+cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
+mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
+bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
+xai = ["pydantic-ai-slim[xai]=={{ version }}"]
+groq = ["pydantic-ai-slim[groq]=={{ version }}"]
+openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
+huggingface = ["pydantic-ai-slim[huggingface]=={{ version }}"]
+vertexai = ["pydantic-ai-slim[vertexai]=={{ version }}"]
+fastmcp = ["pydantic-ai-slim[fastmcp]=={{ version }}"]
+ag-ui = ["pydantic-ai-slim[ag-ui]=={{ version }}"]
+ui = ["pydantic-ai-slim[ui]=={{ version }}"]
+duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
+tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
+exa = ["pydantic-ai-slim[exa]=={{ version }}"]
+web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
+spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
