@@ -82,14 +82,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         description: str | None = None,
     ) -> None:
-        # Native MCP requires a URL to give the model. Local-only use without a URL is fine —
-        # the user is expected to supply a concrete `local=` (toolset, client, callable, …).
-        if url is None and native is not False:
+        # Native MCP requires a URL only when the capability auto-constructs an `MCPServerTool`
+        # (i.e. `native=True`). Explicit `MCPServerTool(...)` instances and per-run callables
+        # carry their own URL, so the capability's `url=` isn't needed in those cases.
+        if url is None and native is True:
             raise UserError(
-                'MCP() requires `url=` when `native` is enabled — native MCP needs a URL to '
-                'give the model. For local-only use without a URL, pass `local=` (e.g. an '
-                '`MCPToolset`, `fastmcp.Client`, transport, in-process `FastMCP` server, or '
-                'script path) and leave `native` at its default of `False`.'
+                'MCP(native=True) requires `url=` — native MCP needs a URL to give the model. '
+                "Pass `url='https://…'`, pass an explicit `native=MCPServerTool(url='…', …)` "
+                'instance, or for local-only use leave `native` at its default of `False` and '
+                'pass `local=` (e.g. an `MCPToolset`, `fastmcp.Client`, transport, in-process '
+                '`FastMCP` server, or script path).'
             )
 
         self.url = url

@@ -6698,9 +6698,22 @@ def test_mcp_without_url_with_local_toolset():
 
 
 def test_mcp_without_url_with_native_true_raises():
-    """`MCP(native=True)` without `url=` raises — native MCP requires a URL to give the model."""
-    with pytest.raises(UserError, match=r'requires `url=`'):
+    """`MCP(native=True)` without `url=` raises — capability needs a URL to auto-construct an MCPServerTool."""
+    with pytest.raises(UserError, match=r'MCP\(native=True\) requires `url=`'):
         MCP(native=True, local=False)
+
+
+def test_mcp_without_url_with_explicit_native_instance():
+    """`MCP(native=MCPServerTool(...))` constructs without capability `url=` — the instance carries the URL."""
+    cap = MCP(
+        native=MCPServerTool(id='my-mcp', url='http://example.com/mcp'),
+        local=False,
+    )
+    assert cap.url is None
+    natives = cap.get_native_tools()
+    assert len(natives) == 1
+    assert isinstance(natives[0], MCPServerTool)
+    assert natives[0].url == 'http://example.com/mcp'
 
 
 def test_mcp_without_url_local_true_raises():

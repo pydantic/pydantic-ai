@@ -168,16 +168,12 @@ Native constraint fields: `search_context_size`, `user_location`, `blocked_domai
 
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
-from pydantic_ai.native_tools import WebSearchTool
 
 # Native-only — raises on models without native web search
 WebSearch()
 
 # Native preferred; DuckDuckGo fallback (needs `pydantic-ai-slim[duckduckgo]`)
 WebSearch(local='duckduckgo')
-
-# Native preferred; explicit native instance for full control
-WebSearch(native=WebSearchTool(max_uses=5, allowed_domains=['example.com']))
 
 # Native preferred; custom callable as fallback
 def my_search(query: str) -> str: ...
@@ -194,16 +190,12 @@ Native constraint fields: `allowed_domains`, `blocked_domains`, `max_uses`, `ena
 
 ```python {title="web_fetch.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebFetch
-from pydantic_ai.native_tools import WebFetchTool
 
 # Native-only — raises on models without native web fetch
 WebFetch()
 
 # Native preferred; markdownify-based fallback (needs `pydantic-ai-slim[web-fetch]`)
 WebFetch(local=True)
-
-# Native preferred; explicit native instance for full control
-WebFetch(native=WebFetchTool(max_content_tokens=10_000, enable_citations=True))
 
 # Domain filters enforced locally when native isn't available
 WebFetch(allowed_domains=['example.com'], local=True)
@@ -217,16 +209,12 @@ For the local side, pass `fallback_model='…'` to delegate unsupported requests
 
 ```python {title="image_generation.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import ImageGeneration
-from pydantic_ai.native_tools import ImageGenerationTool
 
 # Native-only — raises on models without native image generation
 ImageGeneration()
 
 # Native preferred; subagent fallback for unsupported models
 ImageGeneration(fallback_model='openai-responses:gpt-5.4')
-
-# Native preferred; explicit native instance for full control
-ImageGeneration(native=ImageGenerationTool(background='transparent', moderation='low'))
 
 # Native preferred; custom callable as fallback
 def my_generator(prompt: str) -> bytes: ...
@@ -253,14 +241,19 @@ MCP(local=my_fastmcp_client)
 # Native preferred; URL-based local fallback
 MCP('https://mcp.example.com/api', native=True)
 
-# Native preferred; explicit native instance for full control
-MCP(
-    'https://mcp.example.com/api',
-    native=MCPServerTool(id='my-mcp', url='https://mcp.example.com/api', description='…'),
-)
-
 # Strict native-only (no local — does not require the `mcp` extra)
 MCP('https://mcp.example.com/api', native=True, local=False)
+
+# Explicit native + explicit local — independent configuration on each side
+# (e.g. provider-relay URL for native, direct connection for local)
+MCP(
+    native=MCPServerTool(
+        id='public-mcp',
+        url='https://relay.example.com/mcp',
+        authorization_token='relay-token',
+    ),
+    local=my_fastmcp_client,
+)
 ```
 
 For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](mcp/overview.md).
