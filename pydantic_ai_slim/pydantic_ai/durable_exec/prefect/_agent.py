@@ -316,6 +316,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         event_stream_handler=event_stream_handler,
                         capabilities=capabilities,
                         spec=spec,
+                        **_deprecated_kwargs,
                     )
                     return result
             finally:
@@ -466,6 +467,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             event_stream_handler=event_stream_handler,
                             capabilities=capabilities,
                             spec=spec,
+                            **_deprecated_kwargs,
                         )
                     )
                     return result
@@ -683,6 +685,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AgentEventStream[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -771,6 +774,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             capabilities=capabilities,
             spec=spec,
+            **_deprecated_kwargs,
         )
 
     @overload
@@ -840,6 +844,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -955,6 +960,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 toolsets=toolsets,
                 capabilities=capabilities,
                 spec=spec,
+                **_deprecated_kwargs,
             ) as run:
                 yield run
 

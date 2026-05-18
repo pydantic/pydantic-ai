@@ -16,6 +16,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
@@ -106,9 +107,9 @@ AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSet
 class AgentRetries(TypedDict, total=False):
     """Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
 
-    Pass to `Agent(retries=...)`, `agent.run(retries=...)`, etc., as a dict to set
-    different budgets per category. Equivalent to passing an `int`, which sets all
-    categories to the same value.
+    Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+    Equivalent to passing an `int`, which sets all categories to the same value.
+    At run and override time, only the `output` key is accepted.
 
     Keys:
         tools: Default number of retries for tool calls before raising an error.
@@ -122,30 +123,49 @@ class AgentRetries(TypedDict, total=False):
     output: int
 
 
-def normalize_agent_retries(
+@dataclass(frozen=True)
+class ResolvedAgentRetries:
+    """Fully resolved retry budgets used internally."""
+
+    tools: int
+    output: int
+
+
+def normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> ResolvedAgentRetries:
+    """Resolve normalized retry overrides into concrete retry budgets.
+
+    Missing keys in an `AgentRetries` dict fall back to `default`, so internal code can work with a
+    single concrete shape.
+    """
+    validate_agent_retries(retries)
+    return ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
+
+
+def normalize_agent_retry_overrides(
     retries: int | AgentRetries | None,
     *,
     int_means: Literal['both', 'output'] = 'both',
-) -> tuple[int | None, int | None]:
-    """Split an `int | AgentRetries | None` into `(tool_retries, output_retries)`.
+) -> AgentRetries:
+    """Normalize retry input without filling missing keys.
 
-    `int_means='both'` (default, used at agent construction) applies an `int` shorthand to both
-    categories. `int_means='output'` (used at run/override time, where tool retries cannot be
-    overridden) treats an `int` as the output budget only and leaves tools `None`.
-
-    Keys not present in the dict are returned as `None` so callers can layer their own defaults.
+    This is used while merging layered configuration. At run/override time, `int_means='output'`
+    treats `retries=N` as an output-budget override only.
     """
     if retries is None:
-        return None, None
+        return {}
     if isinstance(retries, int):
         if int_means == 'output':
-            return None, retries
-        return retries, retries
-    # TypedDict at runtime is just a dict; unknown keys would silently no-op without this check.
+            return {'output': retries}
+        return {'tools': retries, 'output': retries}
+    validate_agent_retries(retries)
+    return retries.copy()
+
+
+def validate_agent_retries(retries: AgentRetries) -> None:
+    """Validate `AgentRetries` runtime keys."""
     extra = set(retries.keys()) - {'tools', 'output'}
     if extra:
         raise exceptions.UserError(f'Unknown `AgentRetries` keys: {sorted(extra)}. Valid keys are: "tools", "output".')
-    return retries.get('tools'), retries.get('output')
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):

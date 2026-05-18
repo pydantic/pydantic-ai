@@ -89,8 +89,10 @@ from .abstract import (
     AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
+    ResolvedAgentRetries,
     RunOutputDataT,
     normalize_agent_retries,
+    normalize_agent_retry_overrides,
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -210,6 +212,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
+    _retries: ResolvedAgentRetries = dataclasses.field(repr=False)
     _max_output_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -416,19 +419,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
             toolsets = mcp_servers
 
-        # Deprecated `tool_retries=` / `output_retries=` kwargs are accepted via `**_deprecated_kwargs`
-        # and folded into the new `retries: int | AgentRetries` knob. Each emits a warning so users
-        # migrate, but they still work in 1.x. `retries` itself remains a first-class kwarg.
-        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', None)
-        legacy_output_retries = _deprecated_kwargs.pop('output_retries', None)
-        if legacy_tool_retries is not None:
+        # Deprecated split retry kwargs are still accepted in 1.x and folded into `retries`.
+        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', _utils.UNSET)
+        legacy_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
+        if _utils.is_set(legacy_tool_retries):
             warnings.warn(
                 '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
                 "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both) instead.",
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-        if legacy_output_retries is not None:
+        if _utils.is_set(legacy_output_retries):
             warnings.warn(
                 '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
                 "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both) instead.",
@@ -448,15 +449,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        retries_tools, retries_output = normalize_agent_retries(retries)
+        retry_overrides = normalize_agent_retry_overrides(retries)
         # Explicit kwargs win over `retries` (matches the legacy precedence where
         # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
-        if legacy_tool_retries is not None:
-            retries_tools = legacy_tool_retries
-        if legacy_output_retries is not None:
-            retries_output = legacy_output_retries
-        self._max_tool_retries = retries_tools if retries_tools is not None else 1
-        self._max_output_retries = retries_output if retries_output is not None else 1
+        if _utils.is_set(legacy_tool_retries) and legacy_tool_retries is not None:
+            retry_overrides['tools'] = legacy_tool_retries
+        if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
+            retry_overrides['output'] = legacy_output_retries
+        self._retries = normalize_agent_retries(retry_overrides)
+        self._max_tool_retries = self._retries.tools
+        self._max_output_retries = self._retries.output
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -625,7 +627,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Model request settings.
             retries: Retry budgets for tools and output validation. Pass an `int` to set the same budget
                 for both, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to set them individually.
-                Overrides spec `tool_retries` / `output_retries` if provided.
+                Overrides spec `retries` if provided.
             validation_context: Pydantic validation context for tool arguments and outputs.
             tools: Tools to register with the agent.
             toolsets: Toolsets to register with the agent.
@@ -1129,8 +1131,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
         # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
-        retries_tools_override, retries_output_override = normalize_agent_retries(retries, int_means='output')
-        if retries_tools_override is not None:
+        retry_overrides = normalize_agent_retry_overrides(retries, int_means='output')
+        if 'tools' in retry_overrides:
             raise exceptions.UserError(
                 'Per-run `retries` cannot set tool retries: tool retries can only be configured at agent '
                 "construction time. Use `retries={'output': ...}` (or `retries=<int>` to override the output "
@@ -1139,7 +1141,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
-        effective_output_retries = retries_output_override
+        effective_output_retries = retry_overrides.get('output')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
@@ -1674,8 +1676,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
+        retry_overrides = _retry_overrides_from_spec(validated_spec)
+        if 'tools' in retry_overrides:
+            warnings.warn(
+                "AgentSpec retry field 'tools' is not supported at run/override time and will be ignored",
+                UserWarning,
+                stacklevel=3,
+            )
+
         # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
-        # triggering the pydantic deprecation warning on the deprecated `retries` field.
+        # triggering pydantic deprecation warnings on deprecated spec fields.
         for field_name in _UNSUPPORTED_SPEC_FIELDS:
             field_info = type(validated_spec).model_fields[field_name]
             if validated_spec.__dict__[field_name] != field_info.default:
@@ -1696,7 +1706,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             else None,
             metadata=validated_spec.metadata,
             name=validated_spec.name,
-            output_retries=validated_spec.output_retries,
+            output_retries=retry_overrides.get('output'),
         )
 
     @contextmanager
@@ -1763,14 +1773,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Tool retries cannot be overridden via `override()`. An int means "override output only".
         override_output_retries: int | _utils.Unset
         if _utils.is_set(retries):
-            tools_part, output_part = normalize_agent_retries(retries, int_means='output')
-            if tools_part is not None:
+            retry_overrides = normalize_agent_retry_overrides(retries, int_means='output')
+            if 'tools' in retry_overrides:
                 raise exceptions.UserError(
                     '`agent.override(retries=...)` cannot set tool retries: tool retries can only be '
                     "configured at agent construction time. Use `retries={'output': ...}` (or "
                     '`retries=<int>` to override the output budget) here.'
                 )
-            override_output_retries = output_part if output_part is not None else _utils.UNSET
+            override_output_retries = retry_overrides.get('output', _utils.UNSET)
         else:
             override_output_retries = _utils.UNSET
 
@@ -2810,29 +2820,30 @@ def _merge_retries_with_spec(
 ) -> int | AgentRetries | None:
     """Merge an explicit `retries=` value with the retry fields on an `AgentSpec`.
 
-    Explicit kwarg keys win over spec keys. The spec contributes `tool_retries`,
-    `output_retries`, and the legacy cascade-style `retries` field. Accessing the legacy
-    `spec.retries` triggers a `DeprecationWarning` from Pydantic when the field was
-    explicitly set, which is the documented migration signal.
+    Explicit kwarg keys win over spec keys. The spec's canonical `retries` field contributes
+    both budgets, while deprecated `tool_retries` / `output_retries` fields remain as
+    compatibility shims and override their corresponding category.
     """
-    explicit_tools, explicit_output = normalize_agent_retries(explicit)
-    spec_legacy_retries: int | None = spec.retries if 'retries' in spec.model_fields_set else None
-    tools = explicit_tools if explicit_tools is not None else (spec.tool_retries or spec_legacy_retries)
-    output = explicit_output if explicit_output is not None else (spec.output_retries or spec_legacy_retries)
-    if tools is None and output is None:
+    merged = _retry_overrides_from_spec(spec)
+    merged.update(normalize_agent_retry_overrides(explicit))
+    if not merged:
         return None
-    merged: AgentRetries = {}
-    if tools is not None:
-        merged['tools'] = tools
-    if output is not None:
-        merged['output'] = output
     return merged
+
+
+def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
+    """Return retry fields explicitly configured on an `AgentSpec`."""
+    retries: AgentRetries = normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
+    if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None:
+        retries['tools'] = spec.tool_retries
+    if 'output_retries' in spec.model_fields_set and spec.output_retries is not None:
+        retries['output'] = spec.output_retries
+    return retries
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'description',
     'end_strategy',
-    'retries',
     'tool_retries',
     'tool_timeout',
     'instrument',

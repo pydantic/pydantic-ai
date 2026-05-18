@@ -388,72 +388,42 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_retries_override():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_no_retries_does_not_warn():
-    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
-
-    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
-    user-set value; only an explicit value is forwarded to the deprecated
-    `Agent(retries=...)` kwarg.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test'})
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
 
     assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_explicit_retries_warns():
-    """An explicit `retries` in the spec still triggers the deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_tool_retries():
-    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
-
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_spec_retries_deprecated_getter():
-    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
     spec = AgentSpec(model='test', retries=5)
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        assert spec.retries == 5
-
-
-def test_agent_spec_tool_retries_field():
-    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
-    spec = AgentSpec(model='test', tool_retries=5)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        assert spec.tool_retries == 5
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -548,6 +518,29 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'description': """\
+Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+Equivalent to passing an `int`, which sets all categories to the same value.
+At run and override time, only the `output` key is accepted.
+
+Keys:
+    tools: Default number of retries for tool calls before raising an error.
+    output: Maximum number of retries for output validation. On the text path
+        this is a global per-run budget; on the tool path it is the default
+        per-tool `max_retries` for each output tool, overridable via
+        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
+""",
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -1765,17 +1758,18 @@ Supported by:
                 'tool_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Tool Retries',
                 },
                 'retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
-                    'deprecated': True,
                     'title': 'Retries',
                 },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Output Retries',
                 },
                 'end_strategy': {
@@ -2032,8 +2026,7 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -2096,14 +2089,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.tool_retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -6068,8 +6061,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
