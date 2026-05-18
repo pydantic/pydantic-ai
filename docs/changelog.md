@@ -40,7 +40,7 @@ In v1, `ModelProfile.update()` silently filtered out fields not declared on the 
 
 This means e.g. a Bedrock-hosted Anthropic model's resolved profile now carries the upstream `anthropic_*` fields alongside the `bedrock_*` fields, where v1 dropped them. No in-tree model class reads cross-class fields, so behavior is unchanged in the standard providers; but custom model classes that do `profile.get('anthropic_supports_adaptive_thinking', False)` on a non-Anthropic route will now see the value the upstream Anthropic profile set, where v1 always returned the default.
 
-See [PR #TBD](https://github.com/pydantic/pydantic-ai/pull/0) for the full ModelProfile redesign.
+See [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full ModelProfile redesign.
 
 ### v1.0.1 (2025-09-05)
 

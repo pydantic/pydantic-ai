@@ -6,7 +6,7 @@ case (Bedrock-Anthropic, OpenRouter-Google, etc.). The snapshots are the compari
 artifact: any refactor that changes a profile's resolved shape must explicitly update
 these tests.
 
-Used to gate the upcoming `ModelProfile` TypedDict migration (PR #5340 / #TBD): if any
+Used to gate the upcoming `ModelProfile` TypedDict migration (PR #5340 / #5481): if any
 of these snapshots change after the migration without an intentional reason, that's a
 silent semantics regression.
 
