@@ -2815,12 +2815,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 def _merge_retries_with_spec(
     explicit: int | AgentRetries | None,
     spec: AgentSpec,
-) -> int | AgentRetries | None:
+) -> AgentRetries | None:
     """Merge an explicit `retries=` value with the retry fields on an `AgentSpec`.
 
     Explicit kwarg keys win over spec keys. The spec's canonical `retries` field contributes
     both budgets, while deprecated `tool_retries` / `output_retries` fields remain as
-    compatibility shims and override their corresponding category.
+    compatibility shims for any category not already set via canonical `retries`.
     """
     merged = _retry_overrides_from_spec(spec)
     merged.update(normalize_agent_retry_overrides(explicit))
@@ -2830,11 +2830,16 @@ def _merge_retries_with_spec(
 
 
 def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
-    """Return retry fields explicitly configured on an `AgentSpec`."""
+    """Return retry fields explicitly configured on an `AgentSpec`.
+
+    Canonical `retries` takes precedence over deprecated `tool_retries` / `output_retries`
+    when both are set on the same spec — the deprecated fields only fill in categories
+    not provided by `retries`.
+    """
     retries: AgentRetries = normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
-    if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None:
+    if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None and 'tools' not in retries:
         retries['tools'] = spec.tool_retries
-    if 'output_retries' in spec.model_fields_set and spec.output_retries is not None:
+    if 'output_retries' in spec.model_fields_set and spec.output_retries is not None and 'output' not in retries:
         retries['output'] = spec.output_retries
     return retries
 

@@ -46,19 +46,67 @@ def test_agent_init_split_retry_kwargs_warn(kwargs: dict[str, Any], expected_war
 
 
 def test_agent_spec_tool_retries_warns_and_sets_tool_budget():
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.tool_retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
+    call_count = 0
 
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+    def tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart('plain_tool', '{"bad_field": 1}')])
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.tool_retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5}, model=FunctionModel(tool_model))
+
+    @agent.tool_plain
+    def plain_tool(x: int) -> str:
+        return str(x)  # pragma: no cover — tool always fails validation before running
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'plain_tool' exceeded max retries count of 5"):
+        agent.run_sync('Hello')
+
+    assert call_count == 6
 
 
 def test_agent_spec_output_retries_warns_and_sets_output_budget():
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.output_retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    call_count = 0
 
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
+    def output_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return _invalid_output_model(messages, info)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.output_retries` is deprecated'):
+        agent = Agent.from_spec(
+            {'model': 'test', 'output_retries': 10},
+            model=FunctionModel(output_model),
+            output_type=ToolOutput(Foo),
+        )
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(10\)'):
+        agent.run_sync('Hello')
+
+    assert call_count == 11
+
+
+def test_agent_spec_canonical_retries_wins_over_deprecated_output_retries():
+    """Setting both `retries` and `output_retries` on a spec — canonical `retries` wins."""
+    call_count = 0
+
+    def output_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return _invalid_output_model(messages, info)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.output_retries` is deprecated'):
+        agent = Agent.from_spec(
+            {'model': 'test', 'retries': {'output': 3}, 'output_retries': 10},
+            model=FunctionModel(output_model),
+            output_type=ToolOutput(Foo),
+        )
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(3\)'):
+        agent.run_sync('Hello')
+
+    assert call_count == 4
 
 
 def test_agent_spec_split_retry_fields_warn_on_model_construction():
