@@ -7,6 +7,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -35,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -517,9 +519,6 @@ async def test_legacy_vendor_message_history_replays_through_agent():
     are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
     stored histories load.
     """
-    from pydantic_ai import Agent
-    from pydantic_ai.models.test import TestModel
-
     legacy_history: list[dict[str, Any]] = [
         {
             'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
@@ -535,7 +534,7 @@ async def test_legacy_vendor_message_history_replays_through_agent():
         },
     ]
     message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
-    response = cast(ModelResponse, message_history[1])
+    response = next(m for m in message_history if isinstance(m, ModelResponse))
     assert response.provider_details == {'finish_reason': 'stop'}
     assert response.provider_response_id == 'chatcmpl-legacy'
 
