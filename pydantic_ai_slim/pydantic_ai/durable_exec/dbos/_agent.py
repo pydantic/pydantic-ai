@@ -760,8 +760,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
     ]: ...
 
-    @asynccontextmanager
-    async def run_stream_events(
+    def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -781,7 +780,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -839,14 +838,22 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
-        Yields:
-            An async iterator over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
+        Returns:
+            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
+            `AgentRunResultEvent` carrying the run result.
         """
-        raise UserError(
-            '`agent.run_stream_events()` cannot be used with DBOS. '
-            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-        )
-        yield  # type: ignore[unreachable]  # required to make this an async generator for @asynccontextmanager
+
+        @asynccontextmanager
+        async def run_stream_events_context() -> AsyncIterator[
+            AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
+        ]:
+            raise UserError(
+                '`agent.run_stream_events()` cannot be used with DBOS. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            )
+            yield  # type: ignore[unreachable]  # required to make this an async generator for @asynccontextmanager
+
+        return run_stream_events_context()
 
     @overload
     def iter(
