@@ -10,6 +10,6 @@ def harmony_model_profile(model_name: str) -> ModelProfile | None:
     See <https://cookbook.openai.com/articles/openai-harmony> for more details.
     """
     return merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False, ignore_streamed_leading_whitespace=True),
         openai_model_profile(model_name),
+        OpenAIModelProfile(openai_supports_tool_choice_required=False, ignore_streamed_leading_whitespace=True),
     )
