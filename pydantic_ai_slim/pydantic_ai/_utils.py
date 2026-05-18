@@ -48,7 +48,7 @@ else:
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_ai.agent import AgentRetries, AgentRun, AgentRunResult
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages
@@ -993,9 +993,9 @@ def consume_deprecated_output_retries(
     deprecated_kwargs: dict[str, Any],
     owner: str,
     *,
-    current_retries: Any = None,
+    current_retries: int | AgentRetries | None = None,
     stacklevel: int = 3,
-) -> Any:
+) -> int | AgentRetries | None:
     """Pop a deprecated `output_retries=` kwarg, warn, and reconcile with the new `retries=` kwarg.
 
     Returns a value suitable to pass as the new `retries` argument:

@@ -89,7 +89,6 @@ from .abstract import (
     AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
-    ResolvedAgentRetries,
     RunOutputDataT,
     normalize_agent_retries,
     normalize_agent_retry_overrides,
@@ -212,7 +211,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _retries: ResolvedAgentRetries = dataclasses.field(repr=False)
     _max_output_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -456,9 +454,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             retry_overrides['tools'] = legacy_tool_retries
         if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
             retry_overrides['output'] = legacy_output_retries
-        self._retries = normalize_agent_retries(retry_overrides)
-        self._max_tool_retries = self._retries.tools
-        self._max_output_retries = self._retries.output
+        resolved_retries = normalize_agent_retries(retry_overrides)
+        self._max_tool_retries = resolved_retries.tools
+        self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -1179,10 +1177,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else:
                     metadata = resolved.metadata
 
-        # `override(output_retries=...)` wins over the run kwarg + spec, matching the precedence
+        # `override(retries=...)` wins over the run kwarg + spec, matching the precedence
         # of `model`/`deps`/`instructions`/etc. (see `Agent._get_model`). This keeps testing
-        # fixtures that wrap call sites in `agent.override(output_retries=N)` effective even when
-        # production code passes its own `run(output_retries=...)`.
+        # fixtures that wrap call sites in `agent.override(retries=N)` effective even when
+        # production code passes its own `run(retries=...)`.
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
@@ -2844,13 +2842,18 @@ def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'description',
     'end_strategy',
-    'tool_retries',
     'tool_timeout',
     'instrument',
     'output_schema',
     'deps_schema',
 )
-"""AgentSpec fields that are not supported at run/override time."""
+"""AgentSpec fields that are not supported at run/override time.
+
+`tool_retries` is intentionally excluded: its run/override-time handling is covered by
+`_retry_overrides_from_spec` and the explicit `'tools' in retry_overrides` check in
+`_resolve_spec`, so listing it here would emit a duplicate `UserWarning` on top of the
+`PydanticAIDeprecationWarning` raised by `AgentSpec._warn_retry_field_deprecations`.
+"""
 
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
 """Infrastructure capabilities auto-injected when not already present."""
