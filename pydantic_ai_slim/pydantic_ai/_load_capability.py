@@ -60,15 +60,14 @@ class LoadCapabilityReturn(TypedDict):
 
     Carried on
     [`LoadCapabilityReturnPart.content`][pydantic_ai.messages.LoadCapabilityReturnPart.content].
-    """
 
-    capability_id: str
-    """ID of the loaded capability. Mirrors the call's `id` arg on success."""
+    The loaded capability's id is not echoed here — it's already present on the paired
+    [`LoadCapabilityCallPart.args['id']`][pydantic_ai.messages.LoadCapabilityCallPart.args].
+    Match call and return by `tool_call_id`.
+    """
 
     instructions: NotRequired[str]
-    """Instructions for the model to follow when using the loaded capability, or `None` if the capability declared none.
-    
-    """
+    """Instructions for the model to follow when using the loaded capability. Omitted when the capability declared none."""
 
 
 @dataclass(repr=False)
@@ -139,16 +138,13 @@ class LoadCapabilityCallPart(ToolCallPart):
 class LoadCapabilityReturnPart(ToolReturnPart):
     """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the framework-emitted `load_capability` function return.
 
-    Carries the loaded capability's id and any instructions it declared. There is no
-    native server-side counterpart — capability loading is always client-executed.
+    Carries any instructions the loaded capability declared. There is no native
+    server-side counterpart — capability loading is always client-executed.
 
     Shadows `content` with a narrower
     [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn] `TypedDict`.
     """
 
-    # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
-    # `tool_name` override: removing `content`'s default would otherwise place a non-default
-    # field after a default one in the synthesized `__init__`.
     content: LoadCapabilityReturn = field(kw_only=True)
     """Load-capability return payload.
 
@@ -163,17 +159,12 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     """Discriminator for the typed subclass (framework-emitted `load_capability` return)."""
 
     @property
-    def loaded_capability(self) -> str:
-        """Subfield accessor for `content['capability_id']`."""
-        return self.content['capability_id']
-
-    @property
     def instructions(self) -> str | None:
         """Subfield accessor for `content['instructions']`.
 
-        `None` when the capability declared no instructions.
+        `None` when the capability declared no instructions (the key is absent from `content`).
         """
-        return self.content['instructions']
+        return self.content.get('instructions')
 
 
 _LOAD_CAPABILITY_CALL_ARGS_TA: pydantic.TypeAdapter[str | LoadCapabilityArgs | None] = pydantic.TypeAdapter(

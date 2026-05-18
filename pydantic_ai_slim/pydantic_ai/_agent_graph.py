@@ -848,9 +848,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self.request.conversation_id = self.request.conversation_id or ctx.state.conversation_id
         ctx.state.message_history.append(self.request)
 
-        if ctx.state.run_step > 0:
-            await ctx.deps.root_capability.after_run_step(build_run_context(ctx))
-
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)

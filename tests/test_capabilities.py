@@ -2415,14 +2415,16 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
     )
 
     message_history = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(args={'id': 'missing'}, tool_call_id='load-missing'),
+            ]
+        ),
         ModelRequest(
             parts=[
-                LoadCapabilityReturnPart(
-                    content={'capability_id': 'missing', 'instructions': None},
-                    tool_call_id='load-missing',
-                )
+                LoadCapabilityReturnPart(content={}, tool_call_id='load-missing'),
             ]
-        )
+        ),
     ]
 
     with pytest.raises(UserError) as exc_info:
@@ -2456,17 +2458,16 @@ def test_load_capability_call_part_typed_args(args: Any, expected_id: str | None
 
 
 def test_load_capability_return_part_accessors() -> None:
-    """`LoadCapabilityReturnPart.loaded_capability` and `.instructions` are typed views over `content`."""
+    """`LoadCapabilityReturnPart.instructions` is a typed view over `content['instructions']`, `None` when the key is absent."""
     with_instructions = LoadCapabilityReturnPart(
         tool_call_id='c',
-        content={'capability_id': 'refunds', 'instructions': 'Use refunds carefully.'},
+        content={'instructions': 'Use refunds carefully.'},
     )
-    assert with_instructions.loaded_capability == 'refunds'
     assert with_instructions.instructions == 'Use refunds carefully.'
 
     without_instructions = LoadCapabilityReturnPart(
         tool_call_id='c',
-        content={'capability_id': 'refunds', 'instructions': None},
+        content={},
     )
     assert without_instructions.instructions is None
 
@@ -2486,7 +2487,7 @@ def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
     base_return = ToolReturnPart(
         tool_name='load_capability',
         tool_call_id='c',
-        content={'capability_id': 'refunds', 'instructions': None},
+        content={},
         tool_kind='capability-load',
     )
     promoted_return = ToolReturnPart.narrow_type(base_return)
@@ -2607,7 +2608,6 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     LoadCapabilityReturnPart(
                         tool_name='load_capability',
                         content={
-                            'capability_id': 'refunds',
                             'instructions': 'Use the refund policy before answering refund questions.\n\n'
                             'Load-time account context for run step 1.',
                         },
@@ -2629,7 +2629,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelResponse(
                 parts=[
                     ToolSearchCallPart(
-                        args={'queries': ['<auto-discovered:refunds>']},
+                        args={'queries': ['<auto-discovered>']},
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -2654,7 +2654,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=82, output_tokens=17),
+                usage=RequestUsage(input_tokens=80, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2681,7 +2681,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=88, output_tokens=24),
+                usage=RequestUsage(input_tokens=86, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

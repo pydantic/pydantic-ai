@@ -517,7 +517,6 @@ def _build_run_context(
         messages=messages or [],
         run_step=run_step,
         capabilities=capabilities or {},
-        discovered_tools=parse_discovered_tools(messages or []),
     )
 
 
@@ -1113,9 +1112,7 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
 
     cases: dict[str, object] = {
         'not_a_dict': 'loaded reports',
-        'missing_capability_id': {'instructions': None},
-        'non_string_capability_id': {'capability_id': 123, 'instructions': None},
-        'non_string_instructions': {'capability_id': 'reports', 'instructions': ['bad']},
+        'non_string_instructions': {'instructions': ['bad']},
     }
     # Capture (name, defer_loading) per case — the load-bearing check is that
     # `inherited_tool` stays `defer_loading=True` even with malformed load history.
@@ -1135,8 +1132,6 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
     assert visible_tool_state == snapshot(
         {
             'not_a_dict': [('inherited_tool', True), ('search_tools', False)],
-            'missing_capability_id': [('inherited_tool', True), ('search_tools', False)],
-            'non_string_capability_id': [('inherited_tool', True), ('search_tools', False)],
             'non_string_instructions': [('inherited_tool', True), ('search_tools', False)],
         }
     )
@@ -2292,7 +2287,6 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 parts=[
                     LoadCapabilityReturnPart(
                         content={
-                            'capability_id': 'refunds',
                             'instructions': 'Use the refund policy tool before answering refund questions.',
                         },
                         tool_call_id='toolu_0182L4vMNwQewrjJ5fgGrThD',

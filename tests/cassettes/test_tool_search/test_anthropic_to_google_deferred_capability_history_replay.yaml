@@ -141,7 +141,7 @@ interactions:
         role: assistant
       - content:
         - content:
-          - text: '{"capability_id":"refunds","instructions":"Use the refund policy tool before answering refund questions."}'
+          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
             type: text
           is_error: false
           tool_use_id: toolu_0182L4vMNwQewrjJ5fgGrThD
@@ -268,7 +268,7 @@ interactions:
         role: assistant
       - content:
         - content:
-          - text: '{"capability_id":"refunds","instructions":"Use the refund policy tool before answering refund questions."}'
+          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
             type: text
           is_error: false
           tool_use_id: toolu_0182L4vMNwQewrjJ5fgGrThD

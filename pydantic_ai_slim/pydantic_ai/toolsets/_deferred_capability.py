@@ -115,11 +115,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
 
         instructions_text = '\n\n'.join(parts) or None
 
-        # TODO: let us make it a property and read from message history instead
         ctx.loaded_capability_ids.add(capability_id)
-        return ToolReturn(
-            return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
-        )
+        content: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
+        return ToolReturn(return_value=content)
 
     async def _collect_scoped_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
         """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
