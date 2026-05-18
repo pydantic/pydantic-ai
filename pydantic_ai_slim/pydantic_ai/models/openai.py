@@ -4088,7 +4088,7 @@ def _map_provider_details(
 ) -> dict[str, Any] | None:
     provider_details: dict[str, Any] = {}
 
-    # Add logprobs to vendor_details if available
+    # Add logprobs to provider_details if available
     if choice.logprobs is not None and choice.logprobs.content:
         provider_details['logprobs'] = _map_logprobs(choice.logprobs.content)
     if raw_finish_reason := choice.finish_reason:

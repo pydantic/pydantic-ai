@@ -45,10 +45,6 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -90,12 +86,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -1829,24 +1819,6 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
                     provider_name='openai',
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -5532,57 +5504,6 @@ I\
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7470,23 +7391,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7793,28 +7697,6 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='image_generation',
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='image_generation',
-                    content={
-                        'status': 'completed',
-                        'background': 'opaque',
-                        'quality': 'high',
-                        'size': '1024x1536',
-                        'revised_prompt': IsStr(),
-                    },
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -10616,24 +10498,6 @@ async def test_openai_responses_model_file_search_tool_stream(
                 PartEndEvent(
                     index=2,
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
-                ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': ['What is the capital of France?']},
-                        tool_call_id=IsStr(),
-                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
-                        provider_name='openai',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    )
                 ),
             ]
         )

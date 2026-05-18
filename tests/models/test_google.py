@@ -61,8 +61,6 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     InstructionPart,
     UploadedFile,
 )
@@ -127,12 +125,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -1610,28 +1602,6 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_fetch',
-                    args={'urls': ['https://ai.pydantic.dev']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_fetch',
-                    content=[
-                        {
-                            'retrieved_url': 'https://ai.pydantic.dev',
-                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
-                        }
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                )
-            ),
         ]
     )
 
@@ -4570,28 +4540,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
-                ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'query': 'Capital of France'},
-                        tool_call_id=IsStr(),
-                        provider_name='google',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content=[
-                            {
-                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
-                            }
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google',
-                    )
                 ),
             ]
         )

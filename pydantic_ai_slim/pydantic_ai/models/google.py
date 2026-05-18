@@ -924,41 +924,41 @@ class GoogleModel(Model[Client]):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
-        vendor_id = response.response_id
+        provider_response_id = response.response_id
         finish_reason: FinishReason | None = None
-        vendor_details: dict[str, Any] = {}
+        provider_details: dict[str, Any] = {}
 
         raw_finish_reason = candidate.finish_reason if candidate else None
         if raw_finish_reason and candidate:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            provider_details = {'finish_reason': raw_finish_reason.value}
             # Add safety ratings to provider details
             if candidate.safety_ratings:
-                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
+                provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
-            vendor_details['block_reason'] = block_reason.value
+            provider_details['block_reason'] = block_reason.value
             if response.prompt_feedback.block_reason_message:
-                vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+                provider_details['block_reason_message'] = response.prompt_feedback.block_reason_message
             if response.prompt_feedback.safety_ratings:
-                vendor_details['safety_ratings'] = [
+                provider_details['safety_ratings'] = [
                     r.model_dump(by_alias=True) for r in response.prompt_feedback.safety_ratings
                 ]
             finish_reason = 'content_filter'
 
         if response.create_time is not None:  # pragma: no branch
-            vendor_details['timestamp'] = response.create_time
+            provider_details['timestamp'] = response.create_time
 
         if (
             response.sdk_http_response
             and response.sdk_http_response.headers
             and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
         ):
-            vendor_details['service_tier'] = service_tier.lower()
+            provider_details['service_tier'] = service_tier.lower()
 
         # Add traffic_type to provider_details for Flex PayGo verification
         if response.usage_metadata and response.usage_metadata.traffic_type:
-            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
+            provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -966,8 +966,8 @@ class GoogleModel(Model[Client]):
             parts = candidate.content.parts or []
 
         if candidate and (logprob_results := candidate.logprobs_result):
-            vendor_details['logprobs'] = logprob_results.model_dump(mode='json')
-            vendor_details['avg_logprobs'] = candidate.avg_logprobs
+            provider_details['logprobs'] = logprob_results.model_dump(mode='json')
+            provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None
@@ -980,8 +980,8 @@ class GoogleModel(Model[Client]):
             self._provider.name,
             self._provider.base_url,
             usage,
-            vendor_id=vendor_id,
-            vendor_details=vendor_details or None,
+            provider_response_id=provider_response_id,
+            provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
         )
@@ -1769,8 +1769,8 @@ def _process_response_from_parts(
     provider_name: str,
     provider_url: str,
     usage: usage.RequestUsage,
-    vendor_id: str | None,
-    vendor_details: dict[str, Any] | None = None,
+    provider_response_id: str | None,
+    provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
@@ -1802,8 +1802,8 @@ def _process_response_from_parts(
         parts=items,
         model_name=model_name,
         usage=usage,
-        provider_response_id=vendor_id,
-        provider_details=vendor_details,
+        provider_response_id=provider_response_id,
+        provider_details=provider_details,
         provider_name=provider_name,
         provider_url=provider_url,
         finish_reason=finish_reason,
