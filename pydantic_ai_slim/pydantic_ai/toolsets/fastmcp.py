@@ -22,8 +22,6 @@ try:
     from fastmcp.client.transports import ClientTransport
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import MCPConfig
-    from fastmcp.server import FastMCP
-    from mcp.server.fastmcp import FastMCP as FastMCP1Server
     from mcp.types import (
         AudioContent,
         BlobResourceContents,
@@ -47,7 +45,13 @@ except ImportError as _import_error:
 
 
 if TYPE_CHECKING:
+    # `fastmcp.server` / `mcp.server.fastmcp` are server-only entry points and aren't shipped by
+    # `fastmcp-slim[client]`. They only appear in the constructor's union annotation, so we keep
+    # them TYPE_CHECKING-only — importing them at runtime would make this module unusable on the
+    # client-only install path.
     from fastmcp.client.client import CallToolResult
+    from fastmcp.server import FastMCP
+    from mcp.server.fastmcp import FastMCP as FastMCP1Server
 
     from pydantic_ai.mcp import ProcessToolCallback
 
