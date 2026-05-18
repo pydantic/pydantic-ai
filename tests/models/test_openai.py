@@ -5169,6 +5169,34 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_transformer_does_not_mutate_top_level_oneof_when_strict_none():
+    """Top-level oneOf schemas must not get injected properties / additionalProperties at the outer level."""
+
+    schema = {
+        'type': 'object',
+        'oneOf': [
+            {
+                'type': 'object',
+                'properties': {'kind': {'const': 'final_answer'}, 'text': {'type': 'string'}},
+                'required': ['kind', 'text'],
+            },
+            {
+                'type': 'object',
+                'properties': {'kind': {'const': 'tool_call'}, 'tool': {'type': 'string'}, 'args': {'type': 'object'}},
+                'required': ['kind', 'tool', 'args'],
+            },
+        ],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert 'properties' not in result
+    assert 'additionalProperties' not in result
+    assert transformer.is_strict_compatible is False
+    assert 'oneOf' in result
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,

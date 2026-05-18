@@ -358,29 +358,37 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         if schema_type == 'object':
-            # Always ensure 'properties' key exists - OpenAI drops objects without it
-            if 'properties' not in schema:
+            has_composite = any(k in schema for k in ('oneOf', 'anyOf', 'allOf'))
+
+            # Only ensure 'properties' key exists when there isn't a composite sibling defining structure.
+            # Injecting properties / additionalProperties at the outer level breaks composite schemas
+            # because the outer restrictions would conflict with the inner branch requirements.
+            if not has_composite and 'properties' not in schema:
                 schema['properties'] = dict[str, Any]()
 
             if self.strict is True:
-                # additional properties are disallowed
-                schema['additionalProperties'] = False
-
-                # all properties are required
-                schema['required'] = list(schema['properties'].keys())
-
-            elif self.strict is None:
-                if schema.get('additionalProperties', None) not in (None, False):
-                    self.is_strict_compatible = False
-                else:
-                    # additional properties are disallowed by default
+                if not has_composite:
+                    # additional properties are disallowed
                     schema['additionalProperties'] = False
 
-                if 'properties' not in schema or 'required' not in schema:
+                    # all properties are required
+                    schema['required'] = list(schema['properties'].keys())
+
+            elif self.strict is None:
+                if has_composite:
                     self.is_strict_compatible = False
                 else:
-                    required = schema['required']
-                    for k in schema['properties'].keys():
-                        if k not in required:
-                            self.is_strict_compatible = False
+                    if schema.get('additionalProperties', None) not in (None, False):
+                        self.is_strict_compatible = False
+                    else:
+                        # additional properties are disallowed by default
+                        schema['additionalProperties'] = False
+
+                    if 'properties' not in schema or 'required' not in schema:
+                        self.is_strict_compatible = False
+                    else:
+                        required = schema['required']
+                        for k in schema['properties'].keys():
+                            if k not in required:
+                                self.is_strict_compatible = False
         return schema
