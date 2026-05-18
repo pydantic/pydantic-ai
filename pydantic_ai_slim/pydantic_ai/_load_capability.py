@@ -20,10 +20,9 @@ to inject loads mid-run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Union, cast
+from typing import Annotated, Literal, Union, cast
 
 import pydantic
-import pydantic_core
 from typing_extensions import NotRequired, TypedDict
 
 from ._utils import copy_dataclass_fields
@@ -51,7 +50,12 @@ class LoadCapabilityArgs(TypedDict):
     as the canonical shape of the framework-emitted `load_capability` function tool.
     """
 
-    id: str
+    id: Annotated[
+        str,
+        pydantic.Field(
+            description='The id of the capability to load, as shown in the available capabilities list.',
+        ),
+    ]
     """ID of the capability to load, as listed in the agent's capability registry."""
 
 
@@ -111,15 +115,10 @@ class LoadCapabilityCallPart(ToolCallPart):
         """
         if self.args is None:
             return None
-        if isinstance(self.args, dict):
-            return self.args
         try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
+            return cast('LoadCapabilityArgs', self.args_as_dict(raise_if_invalid=True))
+        except (ValueError, AssertionError):
             return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('LoadCapabilityArgs', parsed)
 
     @property
     def capability_id(self) -> str | None:

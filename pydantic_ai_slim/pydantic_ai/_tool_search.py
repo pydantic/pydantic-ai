@@ -26,7 +26,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
-import pydantic_core
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from . import messages as _messages
@@ -178,15 +177,10 @@ class NativeToolSearchCallPart(NativeToolCallPart):
         """
         if self.args is None:
             return None
-        if isinstance(self.args, dict):
-            return self.args
         try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
+            return cast('ToolSearchArgs', self.args_as_dict(raise_if_invalid=True))
+        except (ValueError, AssertionError):
             return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
 
     @property
     def queries(self) -> list[str]:
@@ -300,15 +294,10 @@ class ToolSearchCallPart(ToolCallPart):
         """
         if self.args is None:
             return None
-        if isinstance(self.args, dict):
-            return self.args
         try:
-            parsed = pydantic_core.from_json(self.args)
-        except ValueError:
+            return cast('ToolSearchArgs', self.args_as_dict(raise_if_invalid=True))
+        except (ValueError, AssertionError):
             return None
-        if not isinstance(parsed, dict):
-            return None
-        return cast('ToolSearchArgs', parsed)
 
     @property
     def queries(self) -> list[str]:

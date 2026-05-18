@@ -2566,8 +2566,8 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     assert seen_tool_names == snapshot(
         [
             ['load_capability', 'lookup_refund_policy'],
-            ['lookup_refund_policy'],
-            ['lookup_refund_policy'],
+            ['load_capability', 'lookup_refund_policy'],
+            ['load_capability', 'lookup_refund_policy'],
         ]
     )
     assert result.all_messages() == snapshot(
@@ -2688,15 +2688,15 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 async def test_deferred_capability_load_includes_toolset_instructions() -> None:
     """Instructions declared on a deferred capability's toolset surface via the `load_capability` return.
 
-    The wrapping `CapabilityScopedToolset` silences `get_instructions` while the capability is unloaded
-    (so toolset hints don't leak into the prompt), then re-emits them on load alongside the capability's
-    own instructions.
+    The wrapping `CapabilityScopedToolset` silences `get_instructions` for deferred-loading
+    capabilities (so toolset hints don't leak into the prompt), then re-emits them on load
+    alongside the capability's own instructions.
     """
     toolset = FunctionToolset[None](instructions='Use the refund tool with the order id, not the customer id.')
 
     @toolset.tool_plain
     def lookup_refund(order_id: str) -> str:
-        return f'{order_id}: ok'  # pragma: no cover
+        return f'{order_id}: ok'
 
     refunds = Capability[None](
         id='refunds',
@@ -2707,6 +2707,13 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
     )
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
         already_loaded = any(
             isinstance(part, LoadCapabilityReturnPart)
             for message in messages
@@ -2723,12 +2730,23 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
                     )
                 ]
             )
-        return make_text_response('ok')
+        if not any(part.tool_name == 'lookup_refund' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund')
+        return make_text_response(str(refund_result))
 
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
     result = await agent.run('hi')
 
-    assert result.output == 'ok'
+    assert result.output == 'order-123: ok'
     [load_return] = [
         part
         for message in result.all_messages()
@@ -2741,6 +2759,17 @@ Quote the refund policy verbatim.
 
 Use the refund tool with the order id, not the customer id.\
 """)
+    assert [message.instructions for message in result.all_messages() if isinstance(message, ModelRequest)] == snapshot(
+        [
+            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+            '- refunds: Refund tools.',
+            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+            '- refunds: Refund tools.',
+            None,
+            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+            '- refunds: Refund tools.',
+        ]
+    )
 
 
 async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:

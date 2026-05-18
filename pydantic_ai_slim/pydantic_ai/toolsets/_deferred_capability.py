@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Any
 
-from pydantic import Field, TypeAdapter
-from typing_extensions import TypedDict
+from pydantic import TypeAdapter
 
 from pydantic_ai._deferred import (
     LOAD_CAPABILITY_TOOL_NAME,
     LoadCapabilityReturn,
 )
 from pydantic_ai._instructions import normalize_instructions
+from pydantic_ai._load_capability import LoadCapabilityArgs
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -20,17 +20,7 @@ from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-
-class _LoadCapabilityArgs(TypedDict):
-    id: Annotated[
-        str,
-        Field(
-            description='The id of the capability to load, as shown in the available capabilities list.',
-        ),
-    ]
-
-
-_load_capability_args_ta = TypeAdapter(_LoadCapabilityArgs)
+_load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
@@ -39,23 +29,20 @@ _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a `load_capability` discovery tool.
 
-    When unloaded capabilities exist, `get_tools` adds a `load_capability` tool.
+    When deferred-loading capabilities exist, `get_tools` adds a `load_capability` tool.
     The catalog of loadable capabilities is provided by
     [`DeferredLoadingCapability`][pydantic_ai.capabilities.deferred.DeferredLoadingCapability]
     instructions.
     When the model calls `load_capability(id)`, the matching capability's
-    instructions are returned as the tool result. Once all capabilities are loaded,
-    the `load_capability` tool is removed.
+    instructions are returned as the tool result. The `load_capability` tool remains
+    present even after all deferred capabilities are loaded so the function-tool set
+    stays stable across turns.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        loaded_ids = ctx.loaded_capability_ids
-        unloaded = [
-            entry for entry in ctx.capabilities.values() if entry.id not in loaded_ids and entry.defer_loading is True
-        ]
-        if not unloaded:
+        if not any(entry.defer_loading is True for entry in ctx.capabilities.values()):
             return all_tools
 
         if LOAD_CAPABILITY_TOOL_NAME in all_tools:
@@ -108,10 +95,8 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                 if resolved is not None:
                     parts.append(resolved)
 
-        instructions = await self._collect_scoped_toolset_instructions(capability_id, ctx)
-
-        for resolved in instructions:
-            parts.append(resolved)
+        if toolset_instructions := await self._collect_owned_toolset_instructions(capability_id, ctx):
+            parts.append(toolset_instructions)
 
         instructions_text = '\n\n'.join(parts) or None
 
@@ -119,28 +104,28 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         content: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         return ToolReturn(return_value=content)
 
-    async def _collect_scoped_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
-        """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
+    async def _collect_owned_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> str | None:
+        """Pull instructions from `CapabilityScopedToolset`s owned by this capability.
 
-        Bypasses each wrapper's own gate (still closed because the cap isn't yet
-        in `loaded_capability_ids` — its tool return hasn't been appended to
-        history) by calling `get_instructions` on `ts.wrapped` directly.
+        Bypasses each wrapper's own gate, which stays closed for deferred-loading
+        capabilities so toolset instructions do not re-enter the prompt after the
+        capability has been loaded.
         """
-        scoped: list[CapabilityScopedToolset[AgentDepsT]] = []
+        owned: list[CapabilityScopedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
             if isinstance(ts, CapabilityScopedToolset) and ts.capability_id == capability_id:
-                scoped.append(ts)
+                owned.append(ts)
 
         self.apply(collect)
 
-        out: list[str] = []
-        for ts in scoped:
+        parts: list[InstructionPart] = []
+        for ts in owned:
             result = await ts.wrapped.get_instructions(ctx)
             if result is None:
                 continue
             for item in [result] if isinstance(result, (str, InstructionPart)) else result:
-                content = item.content if isinstance(item, InstructionPart) else item
-                if content and content.strip():
-                    out.append(content)
-        return out
+                part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
+                if part.content.strip():
+                    parts.append(part)
+        return InstructionPart.join(parts)

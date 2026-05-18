@@ -15,10 +15,9 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
 
     Stamps `capability_id` onto every emitted tool definition (so downstream
     filters like Tool Search can hide tools whose owning capability isn't loaded
-    yet), and silences `get_instructions` while the owning capability is
-    `defer_loading=True` and not yet in `RunContext.loaded_capability_ids`. The
-    suppressed instructions are re-emitted via the `load_capability` tool
-    return when the model loads the capability.
+    yet), and silences `get_instructions` for deferred-loading capabilities. The
+    suppressed instructions are re-emitted via the `load_capability` tool return
+    when the model loads the capability.
     """
 
     capability_id: str
@@ -26,10 +25,11 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
         cap = ctx.capabilities.get(self.capability_id)
-        # Whether the owning capability declared `defer_loading=True`. The
-        # value is independent of whether the capability is currently loaded
-        # so the tool_def stays stable for prompt-caching purposes.
-        defer_loading = cap is not None and cap.defer_loading is True
+        assert cap is not None
+        # Whether the owning capability declared `defer_loading=True`. The value is
+        # independent of whether the capability is currently loaded so the tool_def
+        # stays stable for prompt-caching purposes.
+        defer_loading = cap.defer_loading is True
         return {
             name: replace(
                 tool,
@@ -48,7 +48,8 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         cap = ctx.capabilities.get(self.capability_id)
-        if cap is not None and cap.defer_loading is True and self.capability_id not in ctx.loaded_capability_ids:
+        assert cap is not None
+        if cap.defer_loading is True:
             return None
         return await self.wrapped.get_instructions(ctx)
 
