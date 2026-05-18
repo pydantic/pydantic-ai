@@ -17,7 +17,7 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
 
     Added by the agent for a run when any capability has loadable deferred outputs.
     Its instructions include a stable catalog of deferred capabilities, while
-    :class:`~pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset`
+    [`DeferredCapabilityToolset`][pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset]
     exposes the `load_capability(id)` tool that loads a selected capability.
     """
 
@@ -30,7 +30,8 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
 
                 catalog.append((cap_id, cap.get_description(ctx) or ''))
 
-            return f'The following capabilities are deferred and can be loaded via load_capability: {", ".join(f"{id}: {description}" for id, description in catalog)}'
+            entries = '\n'.join(f'- {id}: {description}' for id, description in catalog)
+            return f'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n{entries}'
 
         return create_catalog
 

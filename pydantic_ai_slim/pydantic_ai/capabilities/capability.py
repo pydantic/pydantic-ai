@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
@@ -23,8 +23,14 @@ class Capability(AbstractCapability[AgentDepsT]):
     toolset: AgentToolset[AgentDepsT] | None = field(default=None, kw_only=True)
     """Toolset to register with the agent."""
 
+    description: str | None = field(default=None, kw_only=True)
+    """Human-readable description, surfaced in the `load_capability` catalog when `defer_loading=True`."""
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self.instructions
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.toolset
+
+    def get_description(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
+        return self.description

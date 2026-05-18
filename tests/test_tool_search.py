@@ -2257,7 +2257,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             ModelRequest(
                 parts=[UserPromptPart(content='Can I get a refund on order-123?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2300,7 +2300,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     )
                 ],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2358,7 +2358,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     )
                 ],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2433,7 +2433,7 @@ To proceed with your refund request, you should be eligible as long as the order
             ModelRequest(
                 parts=[UserPromptPart(content='And what about order-456?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2472,7 +2472,7 @@ To proceed with your refund request, you should be eligible as long as the order
                     )
                 ],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

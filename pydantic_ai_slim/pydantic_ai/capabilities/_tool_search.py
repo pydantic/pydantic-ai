@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from .._deferred import tools_for_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import parse_discovered_tools
 from ..messages import (
     ModelRequest,
     ModelResponse,

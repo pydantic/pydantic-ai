@@ -5,7 +5,7 @@ to gate hidden tools behind an explicit load step. There is no native server-sid
 counterpart — capability loading is always client-executed.
 
 This module follows the same leaf-module pattern as `_tool_search.py`: it is
-late-imported by :mod:`pydantic_ai.messages` after the base `ToolCallPart` /
+late-imported by `pydantic_ai.messages` after the base `ToolCallPart` /
 `ToolReturnPart` types are defined, registers its typed subclasses with the
 shared narrower and discriminator-tag tables, and is then re-exported via
 `messages.py` for public consumption.

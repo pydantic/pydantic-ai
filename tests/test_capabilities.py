@@ -2341,7 +2341,6 @@ def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
             [
                 SettingsCap(
                     id='settings',
-                    description='Changes model settings.',
                     defer_loading=True,
                 )
             ]
@@ -2350,7 +2349,6 @@ def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
     native_cap = NativeTool[None](
         tool=WebSearchTool(),
         id='web-search',
-        description='Search the web.',
         defer_loading=True,
     )
 
@@ -2585,7 +2583,8 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2620,7 +2619,8 @@ The following capabilities are deferred and can be loaded via load_capability: r
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2673,7 +2673,8 @@ The following capabilities are deferred and can be loaded via load_capability: r
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.\
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.\
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2865,7 +2866,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
             ModelRequest(
                 parts=[UserPromptPart(content='load missing', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- hidden: Hidden tool access.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2893,7 +2894,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
                     )
                 ],
                 timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- hidden: Hidden tool access.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -17486,17 +17487,14 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
 
 
 def test_dynamic_capability_rejects_wrapper_fields() -> None:
-    """`defer_loading`/`description` on the wrapper are silently ignored — reject at construction."""
+    """`defer_loading` on the wrapper would otherwise be silently ignored — reject at construction."""
     from pydantic_ai.capabilities import DynamicCapability
 
     def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')  # pragma: no cover
 
     with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, defer_loading=True, description='x')
-
-    with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
-        DynamicCapability(capability_func=factory, description='x')
+        DynamicCapability(capability_func=factory, defer_loading=True)
 
 
 # endregion

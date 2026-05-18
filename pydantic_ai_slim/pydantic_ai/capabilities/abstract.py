@@ -173,15 +173,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     to be set so the capability can be discovered in the load catalog.
     """
 
-    description: str | None = field(default=None, kw_only=True)
-    """Human-readable description of this capability.
-
-    Required when `defer_loading=True` so the model can decide whether to load it
-    from the `load_capability` catalog. Override
-    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
-    instead to compute it dynamically.
-    """
-
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Some capability subclasses override __init__ without calling super().__init__,
         # so default-factory for `id` may not fire. Guarantee a stable uuid4 here.
@@ -297,7 +288,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
         Override to compute the description dynamically.
         """
-        return self.description
+        return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
