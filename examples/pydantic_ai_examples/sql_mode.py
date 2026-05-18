@@ -1,10 +1,10 @@
 """Example of SQL Mode: letting the model orchestrate tool calls by writing SQL.
 
 SQL Mode (from the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness))
-registers your tools as DuckDB functions and gives the model a single `run_sql`
-tool. Instead of one model round-trip per tool call, the model writes one SQL
-query that calls the tools, navigates the nested JSON they return, pipes
-sub-objects from one tool into another, and aggregates the results.
+is a capability that registers the agent's tools as DuckDB functions and gives the
+model a single `run_sql` tool. Instead of one model round-trip per tool call, the
+model writes one SQL query that calls the tools, navigates the nested JSON they
+return, and aggregates the results.
 
 Run with:
 
@@ -12,7 +12,7 @@ Run with:
 """
 
 from pydantic import BaseModel
-from pydantic_ai_harness import SQLModeBuilder
+from pydantic_ai_harness import SQLMode
 
 from pydantic_ai import Agent
 
@@ -37,6 +37,11 @@ class Forecast(BaseModel):
     high_c: float
     low_c: float
     summary: str
+
+
+# `SQLMode` wraps the agent's tools: `geocode` and `get_forecast` become DuckDB
+# functions, and the model gets a single `run_sql` tool to orchestrate them.
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[SQLMode()])
 
 
 # Canned data keeps the example self-contained; real tools would call an API.
@@ -75,24 +80,21 @@ _UNKNOWN = Place(
 )
 
 
+@agent.tool_plain
 def geocode(city: str) -> Place:
-    """Look up a city's coordinates, structured address, and population."""
+    """Look up a city's coordinates, structured address, and population.
+
+    The result is a nested object: `coordinates` and `address` are sub-objects,
+    so in SQL the model navigates into it with `->` / `->>`.
+    """
     return _PLACES.get(city, _UNKNOWN)
 
 
-async def get_forecast(coordinates: Coordinates) -> Forecast:
+@agent.tool_plain
+async def get_forecast(lat: float, lon: float) -> Forecast:
     """Get today's forecast for a latitude/longitude pair."""
-    high = round(34.0 - abs(coordinates.lat) * 0.45, 1)
+    high = round(34.0 - abs(lat) * 0.45, 1)
     return Forecast(high_c=high, low_c=round(high - 8.0, 1), summary='clear skies')
-
-
-# `geocode` returns a nested object: `coordinates` and `address` are sub-objects.
-# `get_forecast` takes only the `Coordinates`, so in SQL the model has to navigate
-# into the geocode result with `->` and pipe the sub-object across:
-#     get_forecast(geocode(city) -> 'coordinates')
-sql_mode = SQLModeBuilder().register_tool(geocode).register_tool(get_forecast).build()
-
-agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[sql_mode])
 
 
 if __name__ == '__main__':
