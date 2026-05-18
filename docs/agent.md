@@ -597,7 +597,7 @@ agent = Agent('anthropic:claude-sonnet-4-6')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
-    usage_limits=UsageLimits(response_tokens_limit=10),
+    usage_limits=UsageLimits(output_tokens_limit=10),
 )
 print(result_sync.output)
 #> Rome
@@ -607,7 +607,7 @@ print(result_sync.usage)
 try:
     result_sync = agent.run_sync(
         'What is the capital of Italy? Answer with a paragraph.',
-        usage_limits=UsageLimits(response_tokens_limit=10),
+        usage_limits=UsageLimits(output_tokens_limit=10),
     )
 except UsageLimitExceeded as e:
     print(e)

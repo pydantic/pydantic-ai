@@ -2,12 +2,12 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -35,41 +35,52 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@dataclass(kw_only=True)
-class BedrockModelProfile(ModelProfile):
+class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
     ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    bedrock_supports_tool_choice: bool = False
-    bedrock_tool_result_format: Literal['text', 'json'] = 'text'
-    bedrock_send_back_thinking_parts: bool = False
-    bedrock_supports_prompt_caching: bool = False
-    bedrock_supports_tool_caching: bool = False
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
+    bedrock_supports_tool_choice: bool
+    """Default: `False`."""
+    bedrock_tool_result_format: Literal['text', 'json']
+    """Default: `'text'`."""
+    bedrock_send_back_thinking_parts: bool
+    """Default: `False`."""
+    bedrock_supports_prompt_caching: bool
+    """Default: `False`."""
+    bedrock_supports_tool_caching: bool
+    """Default: `False`."""
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
+    """Default: `frozenset({'image'})`."""
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
+
+    Default: `None`.
     """
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = _without_builtin_tools(amazon_model_profile(model_name))
+    profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
-        profile = BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
-            bedrock_supports_prompt_caching=True,
-        ).update(profile)
+        # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        profile = merge_profile(
+            profile,
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_supports_prompt_caching=True,
+            ),
+        )
 
     if 'nova-2' in model_name:
-        profile.supported_native_tools = frozenset({CodeExecutionTool})
+        profile = merge_profile(profile, ModelProfile(supported_native_tools=frozenset({CodeExecutionTool})))
 
     return profile
 
@@ -78,12 +89,13 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
     profile = deepseek_model_profile(model_name)
     if 'r1' in model_name:
-        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
+        # Bedrock-specific override applies on top of the upstream DeepSeek profile.
+        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
     return profile  # pragma: no cover
 
 
-def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
+def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return merge_profile(profile, ModelProfile(supported_native_tools=frozenset()))
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -114,7 +126,8 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
+            'anthropic': lambda model_name: merge_profile(
+                _strip_builtin_tools(anthropic_model_profile(model_name)),
                 BedrockModelProfile(
                     bedrock_supports_tool_choice=True,
                     bedrock_send_back_thinking_parts=True,
@@ -122,18 +135,19 @@ class BedrockProvider(Provider[BaseClient]):
                     bedrock_supports_tool_caching=True,
                     bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
                     bedrock_thinking_variant='anthropic',
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
+                    # We don't currently support native structured output with Bedrock.
+                    # See https://github.com/pydantic/pydantic-ai/issues/4209.
+                    supports_json_schema_output=False,
+                ),
             ),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                _without_builtin_tools(mistral_model_profile(model_name))
+            'mistral': lambda model_name: merge_profile(
+                _strip_builtin_tools(mistral_model_profile(model_name)),
+                BedrockModelProfile(bedrock_tool_result_format='json'),
             ),
-            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
+            'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
-            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,

@@ -1203,36 +1203,6 @@ All types must be serializable using Pydantic.\
                     'title': 'ToolSearchTool',
                     'type': 'object',
                 },
-                'UrlContextTool': {
-                    'deprecated': True,
-                    'properties': {
-                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
-                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
-                        'max_uses': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Uses',
-                        },
-                        'allowed_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Allowed Domains',
-                        },
-                        'blocked_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Blocked Domains',
-                        },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
-                        'max_content_tokens': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Content Tokens',
-                        },
-                    },
-                    'title': 'UrlContextTool',
-                    'type': 'object',
-                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
@@ -1368,7 +1338,6 @@ Supported by:
                                         {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
                                         {'$ref': '#/$defs/ImageGenerationTool'},
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
@@ -5155,8 +5124,6 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -5237,8 +5204,6 @@ class TestImageGenerationCapability:
         )
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
