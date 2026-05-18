@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Wraps the deprecated `FastMCPToolset` for durable execution. Will be removed in v2.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
@@ -11,11 +13,11 @@ from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-from ._mcp import TemporalMCPToolset
+from ._mcp import TemporalMCPToolsetBase
 from ._run_context import TemporalRunContext
 
 
-class TemporalFastMCPToolset(TemporalMCPToolset[AgentDepsT]):
+class TemporalFastMCPToolset(TemporalMCPToolsetBase[AgentDepsT]):
     def __init__(
         self,
         toolset: FastMCPToolset[AgentDepsT],

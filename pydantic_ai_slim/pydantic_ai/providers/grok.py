@@ -10,6 +10,7 @@ from typing_extensions import deprecated
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
@@ -66,12 +67,14 @@ class GrokProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = grok_model_profile(model_name)
 
-        # As the Grok API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly.
-        # Also, Grok does not support strict tool definitions: https://github.com/pydantic/pydantic-ai/issues/1846
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer, openai_supports_strict_tool_definition=False
-        ).update(profile)
+        # `json_schema_transformer` is a fallback (upstream wins if it set one).
+        # `openai_supports_strict_tool_definition=False` is a Grok-specific override (Grok does not support strict
+        # tool definitions: https://github.com/pydantic/pydantic-ai/issues/1846), so it goes in the gateway overlay.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(openai_supports_strict_tool_definition=False),
+        )
 
     @overload
     def __init__(self) -> None: ...

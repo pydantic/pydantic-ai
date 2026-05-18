@@ -38,8 +38,8 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
     'gpt-image-1-mini': 'openai-responses:gpt-5.4',
     'dall-e-3': 'openai-responses:gpt-5.4',
     'dall-e-2': 'openai-responses:gpt-5.4',
-    'imagen-3.0-generate-002': 'google-gla:gemini-3-pro-image-preview',
-    'imagen-3.0-fast-generate-001': 'google-gla:gemini-3-pro-image-preview',
+    'imagen-3.0-generate-002': 'google:gemini-3-pro-image-preview',
+    'imagen-3.0-fast-generate-001': 'google:gemini-3-pro-image-preview',
 }
 
 

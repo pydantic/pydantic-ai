@@ -168,7 +168,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     Defaults to `{'http', 'https'}`. Parts whose URL scheme is not in this set are
     dropped with a warning before the messages are passed to the agent.
 
-    Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Vertex AI) cause the model
+    Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Google Cloud) cause the model
     provider to fetch the object using the server-side IAM role or service account,
     so a client that can supply arbitrary URLs can read anything that identity can
     reach. HTTPS URLs are safe to forward because the provider fetches them with
