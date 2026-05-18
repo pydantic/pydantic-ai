@@ -111,6 +111,17 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
+    if provider.startswith('gateway/'):
+        from .gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
+    # `normalize_gateway_provider` returns `'google-vertex'` (the wire value the Gateway API
+    # still expects) for `gateway/google-cloud:` and `gateway/gemini:`. Map it back to the
+    # provider class name (rule 17). Drop this branch when the Gateway team renames their side.
+    if provider == 'google-vertex':
+        provider = 'google-cloud'
+
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
