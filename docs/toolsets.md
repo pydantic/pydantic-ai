@@ -884,7 +884,7 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities.md), whi
 
 ### MCP Servers
 
-Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers. See the [MCP client](./mcp/client.md) documentation for details.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities.md#mcp) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
 ### Agent Skills
 

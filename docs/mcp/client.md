@@ -1,9 +1,9 @@
 # Client
 
-Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers, regardless of whether they're built using [FastMCP Server](https://gofastmcp.com/servers/) or the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk).
+Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.
 
 !!! tip "Recommended: the `MCP` capability"
-    For most use cases, use the [`MCP` capability](../capabilities.md#mcp) — it accepts the same inputs as `MCPToolset` and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
+    For most use cases, use the [`MCP` capability](../capabilities.md#mcp) — it takes a URL (or any `MCPToolset` input via `local=`) and additionally lets you opt into the model provider's [native MCP support](../native-tools.md#mcp-server-tool) with a single `native=True` flag. Reach for `MCPToolset` directly when you need to manage the client lifecycle yourself, attach the same MCP server to multiple agents, or pass advanced transport / client configuration that doesn't fit the capability shape.
 
 ## Install
 
@@ -221,6 +221,78 @@ agent = Agent('openai:gpt-5.2', toolsets=toolsets)
 async def main():
     result = await agent.run('What is 7 plus 5?')
     print(result.output)
+```
+
+## Tool call customization
+
+`MCPToolset` accepts a `process_tool_call` callback that lets you customize tool call requests and their responses. A common use case is to inject metadata that the server-side handler needs to read:
+
+```python {title="mcp_process_tool_call.py" requires="mcp_server.py" test="skip"}
+from typing import Any
+
+from fastmcp.client.transports import StdioTransport
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.mcp import CallToolFunc, MCPToolset, ToolResult
+from pydantic_ai.models.test import TestModel
+
+
+async def process_tool_call(
+    ctx: RunContext[int],
+    call_tool: CallToolFunc,
+    name: str,
+    tool_args: dict[str, Any],
+) -> ToolResult:
+    """A tool call processor that passes along the deps."""
+    return await call_tool(name, tool_args, {'deps': ctx.deps})
+
+
+toolset = MCPToolset(
+    StdioTransport(command='python', args=['mcp_server.py']),
+    process_tool_call=process_tool_call,
+)
+agent = Agent(
+    model=TestModel(call_tools=['echo_deps']),
+    deps_type=int,
+    toolsets=[toolset],
+)
+
+
+async def main():
+    result = await agent.run('Echo with deps set to 42', deps=42)
+    print(result.output)
+    #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
+```
+
+How the server reads the injected metadata is MCP server SDK specific. For example, with the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) it's accessible via the [`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context) argument on tool handlers:
+
+```python {title="mcp_server.py"}
+from typing import Any
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
+
+mcp = FastMCP('Pydantic AI MCP Server')
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
+
+
+if __name__ == '__main__':
+    mcp.run()
 ```
 
 ## Tool prefixes to avoid naming conflicts

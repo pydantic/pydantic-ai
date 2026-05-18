@@ -58,7 +58,22 @@ Useful `RunContext` fields include:
 
 ## Use MCP Servers
 
-Attach an MCP server via the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. Accepts a URL string, script path, `fastmcp.client.transports.*Transport`, or pre-built `fastmcp.Client`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/#mcp).
+For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/#mcp).
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        MCP('https://mcp.example.com/api'),               # Streamable HTTP, local-only by default
+        MCP('https://mcp.example.com/other', native=True),  # opt into native with local fallback
+    ],
+)
+```
+
+The capability's first positional arg is the URL. To pass any other `MCPToolset` input — a `fastmcp.client.transports.*Transport`, pre-built `fastmcp.Client`, in-process `FastMCP` server, or local script path — use the `local=` keyword:
 
 ```python
 from fastmcp.client.transports import StdioTransport
@@ -68,19 +83,11 @@ from pydantic_ai.capabilities import MCP
 
 agent = Agent(
     'openai:gpt-5.2',
-    capabilities=[MCP(StdioTransport(command='python', args=['mcp_server.py']))],
+    capabilities=[MCP(local=StdioTransport(command='python', args=['mcp_server.py']))],
 )
-
-
-async def main():
-    async with agent:
-        result = await agent.run('What is the weather in Paris?')
-        print(result.output)
 ```
 
-For HTTP servers, pass the URL directly: `MCP(url='https://example.com/mcp')` (Streamable HTTP) or `MCP(url='https://example.com/sse')` (SSE).
-
-When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly with the same inputs and pass it via `toolsets=[...]`.
+When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly and pass it via `toolsets=[...]`.
 
 ## Search with DuckDuckGo, Tavily, or Exa
 
