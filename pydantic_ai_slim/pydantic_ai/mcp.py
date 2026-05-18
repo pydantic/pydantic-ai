@@ -88,7 +88,11 @@ try:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
-    from fastmcp.server import FastMCP
+
+    # `FastMCP` (from `fastmcp.server`) is only used in the *stringified* `MCPToolsetClient`
+    # type alias — resolved by type-checkers via the `TYPE_CHECKING` import above. Importing it
+    # at runtime would break the documented `[mcp]` install path, which pulls
+    # `fastmcp-slim[client]` (no `fastmcp.server`). See #5512.
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 except ImportError as _err:  # pragma: no cover
     _fastmcp_import_error = _err
