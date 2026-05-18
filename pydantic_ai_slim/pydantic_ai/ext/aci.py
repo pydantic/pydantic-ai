@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
+from typing_extensions import deprecated
+
 from pydantic_ai import FunctionToolset
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.tools import Tool
 
 try:
     from aci import ACI
 except ImportError as _import_error:
     raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
+
+
+_ACI_DEPRECATION_MESSAGE = (
+    '`pydantic_ai.ext.aci` is deprecated and will be removed in 2.0. '
+    'Wrap ACI.dev tools yourself using `pydantic_ai.tools.Tool.from_schema` against '
+    '`aci.ACI().functions.get_definition(...)`, or use the upstream `aci-sdk` integration directly.'
+)
 
 
 def _clean_schema(schema):
@@ -22,6 +33,7 @@ def _clean_schema(schema):
         return schema
 
 
+@deprecated(_ACI_DEPRECATION_MESSAGE, category=PydanticAIDeprecationWarning)
 def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
     """Creates a Pydantic AI tool proxy from an ACI.dev function.
 
@@ -32,6 +44,7 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
     Returns:
         A Pydantic AI tool that corresponds to the ACI.dev tool.
     """
+    warnings.warn(_ACI_DEPRECATION_MESSAGE, PydanticAIDeprecationWarning, stacklevel=2)
     aci = ACI()
     function_definition = aci.functions.get_definition(aci_function)
     function_name = function_definition['function']['name']
@@ -67,10 +80,13 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
     )
 
 
+@deprecated(_ACI_DEPRECATION_MESSAGE, category=PydanticAIDeprecationWarning)
 class ACIToolset(FunctionToolset):
     """A toolset that wraps ACI.dev tools."""
 
     def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str, *, id: str | None = None):
+        warnings.warn(_ACI_DEPRECATION_MESSAGE, PydanticAIDeprecationWarning, stacklevel=2)
         super().__init__(
-            [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions], id=id
+            [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions],  # pyright: ignore[reportDeprecated]
+            id=id,
         )
