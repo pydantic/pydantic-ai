@@ -62,9 +62,8 @@ def test_mcptoolset_importable_and_constructible_without_fastmcp_server():
             toolset = MCPToolset('https://example.com/mcp')
             assert toolset.client is not None
     finally:
-        # Restore previously-cached pydantic_ai.mcp module(s) so other tests don't
-        # pick up the version imported under the patched sys.modules.
-        for name in list(sys.modules):
-            if name == 'pydantic_ai.mcp' or name.startswith('pydantic_ai.mcp.'):
-                del sys.modules[name]
+        # `patch.dict` already restores everything it observed when entering the
+        # `with`, so any `pydantic_ai.mcp` that the import added inside the block
+        # is gone by here. We just re-seat the originally-cached entries so
+        # subsequent tests pick up the same module instance they started with.
         sys.modules.update(saved_modules)
