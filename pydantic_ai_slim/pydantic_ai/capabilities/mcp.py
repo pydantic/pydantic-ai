@@ -3,7 +3,6 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -23,6 +22,20 @@ except ImportError:  # pragma: lax no cover
     if not TYPE_CHECKING:
         MCPServer = Any  # type: ignore[assignment,misc]
         FastMCPToolset = Any  # type: ignore[assignment,misc]
+
+
+def _mcp_id_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip('/')
+    slug = path.split('/')[-1] if path else ''
+
+    if parsed.hostname:
+        return f'{parsed.hostname}-{slug}' if slug else parsed.hostname
+
+    if parsed.scheme and slug:
+        return f'{parsed.scheme}-{slug}'
+
+    return url
 
 
 @dataclass(init=False)
@@ -83,10 +96,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.url = url
         self.native = native
         self.local = local
-        # `AbstractCapability.__new__` seeds `id` with a UUID for subclasses that don't
-        # call `super().__init__()`. Overwrite it here so that an unset `id` keeps the
-        # URL-derived semantic in `_resolved_id` (empty string is falsy).
-        self.id = id if id is not None else self.id
+        # `AbstractCapability.__new__` seeds `id` with a UUID for subclasses that don't call
+        # `super().__init__()`. MCP needs a stable semantic id so provider server labels and
+        # local fallback `unless_native` markers refer to the same server across runs.
+        if id:
+            self.id = id
+        elif isinstance(native, MCPServerTool):
+            self.id = native.id
+        else:
+            self.id = _mcp_id_from_url(url)
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
@@ -94,20 +112,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.__post_init__()
 
-    @cached_property
-    def _resolved_id(self) -> str:
-        if self.id:
-            return self.id
-        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(self.url)
-        path = parsed.path.rstrip('/')
-        slug = path.split('/')[-1] if path else ''
-        host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or self.url
-
     def _default_native(self) -> MCPServerTool:
         return MCPServerTool(
-            id=self._resolved_id,
+            id=self.id,
             url=self.url,
             authorization_token=self.authorization_token,
             headers=self.headers,
@@ -116,7 +123,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _native_unique_id(self) -> str:
-        return f'mcp_server:{self._resolved_id}'
+        if isinstance(self.native, MCPServerTool):
+            return self.native.unique_id
+        return f'mcp_server:{self.id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         # The MCP extra may not be installed, in which case the capability still constructs cleanly

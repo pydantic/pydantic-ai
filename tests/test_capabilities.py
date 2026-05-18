@@ -6012,13 +6012,31 @@ class TestMCPCapability:
         cap = MCP(url='https://mcp.example.com/api', native=True)
         builtin = cap.get_native_tools()[0]
         assert isinstance(builtin, MCPServerTool)
+        assert cap.id == 'mcp.example.com-api'
         assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
         cap_sse = MCP(url='https://server1.example.com/sse', native=True)
         builtin_sse = cap_sse.get_native_tools()[0]
         assert isinstance(builtin_sse, MCPServerTool)
+        assert cap_sse.id == 'server1.example.com-sse'
         assert builtin_sse.id == 'server1.example.com-sse'
+
+    async def test_mcp_explicit_native_id_marks_local_fallback(self):
+        """An explicit native MCP tool keeps the local fallback tied to that server id."""
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        cap = MCP(
+            url='https://mcp.example.com/api',
+            native=MCPServerTool(id='custom-mcp', url='https://mcp.example.com/api'),
+            local=local_tool,
+        )
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert tools['local_tool'].tool_def.unless_native == 'mcp_server:custom-mcp'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL uses MCPServerSSE for local."""
