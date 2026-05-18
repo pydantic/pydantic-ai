@@ -44,7 +44,6 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
     Returns:
         A Pydantic AI tool that corresponds to the ACI.dev tool.
     """
-    warnings.warn(_ACI_DEPRECATION_MESSAGE, PydanticAIDeprecationWarning, stacklevel=2)
     aci = ACI()
     function_definition = aci.functions.get_definition(aci_function)
     function_name = function_definition['function']['name']
@@ -85,8 +84,9 @@ class ACIToolset(FunctionToolset):
     """A toolset that wraps ACI.dev tools."""
 
     def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str, *, id: str | None = None):
-        warnings.warn(_ACI_DEPRECATION_MESSAGE, PydanticAIDeprecationWarning, stacklevel=2)
-        super().__init__(
-            [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions],  # pyright: ignore[reportDeprecated]
-            id=id,
-        )
+        # `tool_from_aci` is itself `@deprecated`; suppress its warning here so users only see
+        # one warning from `ACIToolset` itself, not a second one per wrapped function.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            tools = [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions]  # pyright: ignore[reportDeprecated]
+        super().__init__(tools, id=id)
