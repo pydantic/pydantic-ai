@@ -125,6 +125,14 @@ def test_capability_types() -> None:
     )
 
 
+def test_instrumentation_default_settings() -> None:
+    """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    instr = Instrumentation()
+    assert isinstance(instr.settings, InstrumentationSettings)
+
+
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(
@@ -757,16 +765,16 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/google-vertex:gemini-2.5-flash-image',
-                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash',
-                        'gateway/google-vertex:gemini-2.5-pro',
-                        'gateway/google-vertex:gemini-3-flash-preview',
-                        'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-2.5-flash-image',
+                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-cloud:gemini-2.5-flash-lite',
+                        'gateway/google-cloud:gemini-2.5-flash',
+                        'gateway/google-cloud:gemini-2.5-pro',
+                        'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -824,38 +832,38 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
                         'gateway/openai:o4-mini',
-                        'google-gla:gemini-2.0-flash-lite',
-                        'google-gla:gemini-2.0-flash',
-                        'google-gla:gemini-2.5-flash-image',
-                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-gla:gemini-2.5-flash-lite',
-                        'google-gla:gemini-2.5-flash-preview-09-2025',
-                        'google-gla:gemini-2.5-flash',
-                        'google-gla:gemini-2.5-pro',
-                        'google-gla:gemini-3-flash-preview',
-                        'google-gla:gemini-3-pro-image-preview',
-                        'google-gla:gemini-3-pro-preview',
-                        'google-gla:gemini-3.1-flash-image-preview',
-                        'google-gla:gemini-3.1-flash-lite-preview',
-                        'google-gla:gemini-3.1-pro-preview',
-                        'google-gla:gemini-flash-latest',
-                        'google-gla:gemini-flash-lite-latest',
-                        'google-vertex:gemini-2.0-flash-lite',
-                        'google-vertex:gemini-2.0-flash',
-                        'google-vertex:gemini-2.5-flash-image',
-                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash-lite',
-                        'google-vertex:gemini-2.5-flash-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash',
-                        'google-vertex:gemini-2.5-pro',
-                        'google-vertex:gemini-3-flash-preview',
-                        'google-vertex:gemini-3-pro-image-preview',
-                        'google-vertex:gemini-3-pro-preview',
-                        'google-vertex:gemini-3.1-flash-image-preview',
-                        'google-vertex:gemini-3.1-flash-lite-preview',
-                        'google-vertex:gemini-3.1-pro-preview',
-                        'google-vertex:gemini-flash-latest',
-                        'google-vertex:gemini-flash-lite-latest',
+                        'google-cloud:gemini-2.0-flash-lite',
+                        'google-cloud:gemini-2.0-flash',
+                        'google-cloud:gemini-2.5-flash-image',
+                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash-lite',
+                        'google-cloud:gemini-2.5-flash-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash',
+                        'google-cloud:gemini-2.5-pro',
+                        'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image-preview',
+                        'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image-preview',
+                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-pro-preview',
+                        'google-cloud:gemini-flash-latest',
+                        'google-cloud:gemini-flash-lite-latest',
+                        'google:gemini-2.0-flash-lite',
+                        'google:gemini-2.0-flash',
+                        'google:gemini-2.5-flash-image',
+                        'google:gemini-2.5-flash-lite-preview-09-2025',
+                        'google:gemini-2.5-flash-lite',
+                        'google:gemini-2.5-flash-preview-09-2025',
+                        'google:gemini-2.5-flash',
+                        'google:gemini-2.5-pro',
+                        'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image-preview',
+                        'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image-preview',
+                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-pro-preview',
+                        'google:gemini-flash-latest',
+                        'google:gemini-flash-lite-latest',
                         'grok:grok-2-image-1212',
                         'grok:grok-2-vision-1212',
                         'grok:grok-3-fast',
@@ -1586,10 +1594,13 @@ Supported by:
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
                         'native': {
-                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -4632,6 +4643,10 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
+        from unittest.mock import patch
+
+        pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+        from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4649,7 +4664,11 @@ class TestWebSearchCapability:
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
-        result = agent.run_sync('search for something')
+        # `ddgs` calls Bing/DuckDuckGo via the Rust `primp` HTTP client, so VCR can't intercept it.
+        # Mock the result at the library boundary to keep the test hermetic.
+        fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
+        with patch.object(DDGS, 'text', return_value=fake_results):
+            result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
 
@@ -5370,26 +5389,36 @@ class TestMCPCapability:
         assert builtin_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
-        """MCP with /sse URL uses MCPServerSSE for local."""
-        from pydantic_ai.mcp import MCPServerSSE
+        """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
+        from fastmcp.client.transports import SSETransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/sse', native=True)
-        assert isinstance(cap.local, MCPServerSSE)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_streamable_transport(self):
-        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_authorization_token_in_local_headers(self):
-        """MCP passes authorization_token as Authorization header to local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP passes authorization_token as Authorization header through to the transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
-        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+        assert isinstance(cap.local, MCPToolset)
+        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'Authorization': 'Bearer xyz'}
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
@@ -5405,6 +5434,15 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+    def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
+        """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        from fastmcp import FastMCP
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
+        assert isinstance(cap.local, MCPToolset)
 
 
 class TestNamedSpecDictRoundTrip:
@@ -6606,9 +6644,25 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
         MCP(url='http://example.com/mcp', local=True, native=True)
 
 
+def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
 @pytest.mark.filterwarnings(
     'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
+)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
 def test_web_search_v2_deprecation_warning():
     """WebSearch() with duckduckgo installed warns about v2 default change."""
     pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
@@ -6830,11 +6884,25 @@ def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
         WebFetch(local=True)
 
 
-def test_mcp_unknown_strategy_raises():
-    """MCP(url=..., local='not_a_real_strategy') → UserError naming the unknown strategy."""
+def test_mcp_local_string_must_be_url_raises_user_error():
+    """`MCP(url=..., local='not-a-url')` raises a `UserError` directing the user to `local=MCPToolset(...)`."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.raises(UserError, match='not a known strategy'):
-        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match=r"MCP\(local='not_a_real_strategy'\) must be an `http\(s\)://` URL"):
+        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)
+
+
+def test_mcp_local_url_string_override_uses_provided_url():
+    """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+    from pydantic_ai.mcp import MCPToolset
+
+    cap = MCP(
+        url='http://primary.example.com/mcp',
+        local='https://override.example.com/mcp',
+        native=True,
+    )
+    assert isinstance(cap.local, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():

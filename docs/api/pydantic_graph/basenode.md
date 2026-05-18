@@ -1,6 +1,6 @@
-# `pydantic_graph.nodes`
+# `pydantic_graph.basenode`
 
-::: pydantic_graph.nodes
+::: pydantic_graph.basenode
     options:
         members:
             - StateT
