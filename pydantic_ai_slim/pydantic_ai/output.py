@@ -13,7 +13,11 @@ from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
+from .tools import (
+    DeferredToolRequests as DeferredToolRequests,
+    ObjectJsonSchema,
+    ToolDefinition,
+)
 
 __all__ = (
     # classes
@@ -24,7 +28,6 @@ __all__ = (
     'StructuredDict',
     'OutputObjectDefinition',
     'OutputContext',
-    'DeferredToolRequests',
     # types
     'OutputDataT',
     'OutputMode',
