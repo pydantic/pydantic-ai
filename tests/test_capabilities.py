@@ -2629,7 +2629,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelResponse(
                 parts=[
                     ToolSearchCallPart(
-                        args={'queries': ['<auto-discovered>']},
+                        args={'queries': ['<auto-discovered:refunds>']},
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -2654,7 +2654,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=82, output_tokens=16),
+                usage=RequestUsage(input_tokens=82, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2681,7 +2681,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=88, output_tokens=23),
+                usage=RequestUsage(input_tokens=88, output_tokens=24),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

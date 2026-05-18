@@ -37,7 +37,7 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE, parse_discovered_tools  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
@@ -227,7 +227,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered = ctx.discovered_tools
+        discovered = parse_discovered_tools(ctx.messages)
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Single entry per deferred tool, keyed by its real name. `with_native`

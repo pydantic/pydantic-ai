@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pydantic_ai._tool_search import parse_discovered_tools
+
 from .._deferred import tools_for_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
 from ..messages import (
@@ -233,7 +235,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             return request_context
 
         should_be = await tools_for_loaded_capabilities(ctx, ctx.tool_manager.toolset)
-        in_history = ctx.discovered_tools
+        in_history = parse_discovered_tools(ctx.messages)
         newly_loaded = should_be - in_history
         if not newly_loaded:
             return request_context

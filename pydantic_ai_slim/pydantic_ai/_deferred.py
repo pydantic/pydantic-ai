@@ -45,11 +45,6 @@ async def tools_for_loaded_capabilities(ctx: RunContext[Any], root: AbstractTool
     is in `ctx.loaded_capability_ids` and whose owning capability has
     `defer_loading=True`, then asks each wrapped toolset for its tools.
 
-    Source-of-truth pairs with `parse_discovered_tools` (which reads
-    `ToolSearchReturnPart` history): this helper is what tells the rest of the system
-    "these names are unlocked because their owning capability was loaded," while
-    `parse_discovered_tools` reports "these names are unlocked because tool search
-    discovered them." Together they form `ctx.discovered_tools`.
     """
     # Local import to avoid a module-level cycle: `_capability_scoped` lives under
     # `toolsets/` which imports from `_run_context`, which is itself referenced via

@@ -15,10 +15,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._deferred import tools_for_loaded_capabilities
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_search import parse_discovered_tools
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -199,8 +197,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     capabilities: dict[str, AbstractCapability[DepsT]]
     loaded_capability_ids: set[str]
-
-    discovered_tools: set[str] = dataclasses.field(default_factory=set[str])
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -852,40 +848,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self.request.conversation_id = self.request.conversation_id or ctx.state.conversation_id
         ctx.state.message_history.append(self.request)
 
+        if ctx.state.run_step > 0:
+            await ctx.deps.root_capability.after_run_step(build_run_context(ctx))
+
         ctx.state.run_step += 1
 
-        # `discovered_tools` is the single source of truth for "which deferred tools
-        # are callable this turn." Two contributors, unioned up-front so the
-        # downstream toolset resolution (`for_run_step` below) and
-        # `ToolSearchToolset` filter see the full set:
-        # - `parse_discovered_tools(history)` — tools the model surfaced via tool
-        #   search (typed `ToolSearchReturnPart`s, plus the legacy metadata sideband).
-        # - `tools_for_loaded_capabilities(ctx, toolset)` — tools whose owning
-        #   deferred capability was loaded via `load_capability`. Pulled from the cap
-        #   registry by walking the loaded cap's toolset; `LoadCapabilityReturnPart`
-        #   itself only carries `capability_id` + `instructions`, so tool-search
-        #   history remains the authoritative discovery record.
-        #
-        # One set, not two fields: downstream consumers only ask "is this tool
-        # callable this turn?" — discovery provenance is irrelevant to them, and
-        # splitting would force every consumer to union the two.
-        ctx.deps.discovered_tools = parse_discovered_tools(ctx.state.message_history)
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
-        )
-        # In-place `.update` (not reassignment) is load-bearing here:
-        # `build_run_context` above captured a reference to the set we just
-        # assigned, and `run_context.discovered_tools` aliases that same object.
-        # Reassigning `ctx.deps.discovered_tools = old | new` would point ctx.deps
-        # at a fresh set while leaving `run_context.discovered_tools` stranded on
-        # the pre-union set — the toolset filter (which reads via run_context)
-        # would then miss the cap-loaded names. Mutating in place keeps both
-        # references converged without a run_context rebuild.
-        ctx.deps.discovered_tools.update(
-            await tools_for_loaded_capabilities(run_context, ctx.deps.tool_manager.toolset)
         )
 
         # This will raise errors for any tool name conflicts.
@@ -1446,7 +1418,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
-        discovered_tools=ctx.deps.discovered_tools,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

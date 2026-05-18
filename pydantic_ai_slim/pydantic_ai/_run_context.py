@@ -132,23 +132,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     This is `None` outside capability hook dispatch, where there is no current capability.
     """
 
-    discovered_tools: set[str] = field(default_factory=set[str])
-    """Deferred tools that are callable on the current turn.
-
-    Union of two sources, computed at the start of each request step:
-    - Tools previously surfaced via tool search (parsed from `ToolSearchReturnPart`s
-      in message history).
-    - Tools whose owning deferred capability is currently loaded (derived from
-      `capabilities` and `loaded_capability_ids`).
-
-    `ToolSearchToolset` reads this to decide which deferred tools to flip visible
-    on the wire on the local fallback path.
-    """
-
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def available_tools(self) -> set[str]:
+        """Tools that are available to be called on the current turn."""
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return set()
+
+        return set(self.tool_manager.tools.keys())
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
