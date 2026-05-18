@@ -85,7 +85,6 @@ returns_capability = Capability[Store](
 
 
 support_agent = Agent(
-    # model='anthropic:claude-sonnet-4-6',
     model='gpt-5.2',
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
@@ -97,7 +96,7 @@ async def main() -> None:
     store = Store()
     for prompt in [
         'Where is order A-1042?',
-        # "I'd like to return A-1042 — it arrived damaged.",
+        "I'd like to return A-1042 — it arrived damaged.",
     ]:
         print(f'\n> {prompt}')
         result = await support_agent.run(prompt, deps=store)
