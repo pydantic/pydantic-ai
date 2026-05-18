@@ -57,6 +57,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 
+        seen: set[str] = set()
+
+        def _check_unique(cap: AbstractCapability[AgentDepsT]) -> None:
+            if cap.id in seen:
+                raise UserError(
+                    f'Capability id {cap.id!r} is used by multiple capabilities. '
+                    'Capability ids must be unique within a run.'
+                )
+            seen.add(cap.id)
+
+        self.apply(_check_unique)
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
             cap.apply(visitor)

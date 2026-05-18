@@ -1424,28 +1424,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
-        def collect_capabilities() -> dict[str, AbstractCapability[AgentDepsT]]:
-            capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
+        capabilities_dict: dict[str, AbstractCapability[AgentDepsT]] = {}
 
-            def collect(cap: AbstractCapability[AgentDepsT]) -> None:
-                if cap.defer_loading and not cap.get_description(initial_ctx):
-                    raise exceptions.UserError(
-                        f'Capability {cap.id!r} has defer_loading=True but no description. '
-                        'Capabilities with defer_loading=True must provide a description '
-                        '(via the `description` field or by overriding `get_description`) '
-                        'so the model can decide whether to load them from the `load_capability` catalog.'
-                    )
-                if cap.id in capabilities:
-                    raise exceptions.UserError(
-                        f'Capability id {cap.id!r} is used by multiple capabilities. '
-                        'Capability ids must be unique within a run.'
-                    )
-                capabilities[cap.id] = cap
+        def _register(cap: AbstractCapability[AgentDepsT]) -> None:
+            capabilities_dict.setdefault(cap.id, cap)
 
-            run_capability.apply(collect)
-            return capabilities
-
-        capabilities_dict = collect_capabilities()
+        run_capability.apply(_register)
 
         loaded_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
 

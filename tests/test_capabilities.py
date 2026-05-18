@@ -1503,7 +1503,6 @@ Supported by:
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                         'id': {'title': 'Id', 'type': 'string'},
                         'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
                     'type': 'object',
@@ -1521,7 +1520,6 @@ Supported by:
                         },
                         'id': {'title': 'Id', 'type': 'string'},
                         'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_IncludeToolReturnSchemas',
                     'type': 'object',
@@ -1538,7 +1536,6 @@ Supported by:
                         },
                         'id': {'title': 'Id', 'type': 'string'},
                         'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_Thinking',
                     'type': 'object',
@@ -1707,7 +1704,6 @@ Supported by:
                         },
                         'id': {'title': 'Id', 'type': 'string'},
                         'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ToolSearch',
                     'type': 'object',
@@ -2391,16 +2387,14 @@ async def test_load_capability_tool_name_conflict_raises() -> None:
 
 async def test_duplicate_capability_ids_raise() -> None:
     """Capability ids are used as a run registry, so duplicates must fail loudly."""
-    agent = Agent(
-        TestModel(),
-        capabilities=[
-            Capability[None](id='dup', description='First capability.', instructions='First.'),
-            Capability[None](id='dup', description='Second capability.', instructions='Second.'),
-        ],
-    )
-
     with pytest.raises(UserError) as exc_info:
-        await agent.run('hi')
+        Agent(
+            TestModel(),
+            capabilities=[
+                Capability[None](id='dup', description='First capability.', instructions='First.'),
+                Capability[None](id='dup', description='Second capability.', instructions='Second.'),
+            ],
+        )
 
     assert str(exc_info.value) == snapshot(
         "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
