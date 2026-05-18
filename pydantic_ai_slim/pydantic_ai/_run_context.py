@@ -18,9 +18,9 @@ from .messages import EnqueueContent, PendingMessage, PendingMessagePriority, bu
 if TYPE_CHECKING:
     from .agent import Agent
     from .models import Model
-    from .result import RunUsage
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+    from .usage import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
