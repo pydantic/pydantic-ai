@@ -33,6 +33,9 @@ print(model_response.usage)
 
 _(This example is complete, it can be run "as is")_
 
+!!! note
+    Set [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on the most recent [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Instructions on earlier `ModelRequest`s are ignored.
+
 ## Advanced Example with Tool Calling
 
 You can also use the direct API to work with function/tool calling.
