@@ -20,7 +20,7 @@ set -e
 
 WT="${1:-$PWD}"
 WT="$(cd "$WT" && pwd)"
-DIR="$WT/.claude/skills/branch-context"
+DIR="${BRANCH_CONTEXT_DIR:-$WT/local-notes/branch-context}"
 BRIEF="$DIR/issue-brief.md"
 DEC="$DIR/pr-decisions.md"
 
@@ -39,7 +39,7 @@ fi
 decisions_count=0
 last_decision_at=""
 if [ -f "$DEC" ]; then
-    decisions_count=$(grep -cE "^## .* · " "$DEC" 2>/dev/null || echo 0)
+    decisions_count=$(grep -cE "^## [0-9]{4}-[0-9]{2}-[0-9]{2} · " "$DEC" 2>/dev/null || echo 0)
     last_decision_at=$(date -u -r "$DEC" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 fi
 

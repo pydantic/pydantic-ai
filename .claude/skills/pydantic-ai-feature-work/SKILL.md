@@ -29,7 +29,7 @@ For nontrivial changes, delegate focused research before implementation:
 - Provider/API work: one agent checks provider docs and SDK types; one reads existing provider/profile patterns.
 - Tool/output/capability work: one agent traces graph/tool/output internals; one checks docs/tests/snapshots that define the public contract.
 - Durable/UI/MCP work: one agent checks downstream adapters and durable wrappers; one checks message serialization/replay expectations.
-- Large branch review: use `review-branch` rather than a single broad review pass.
+- Large branch review: use the Claude `review-branch` skill rather than a single broad review pass.
 
 Each subagent should receive only the files, PR/issue links, and reference sections it needs. Do not pass the whole conversation unless the subtask requires it.
 

@@ -1,8 +1,8 @@
 ---
 name: review-branch
-description: Run all review checks on the branch diff against main. Phase-aware — wave 1 (code-correctness) reviewers run first; wave 2 (test-shape, cassette) gates on wave 1 settling. Dispatches only the subset whose preconditions hold, in parallel within each wave. State persisted in `.claude/skills/review-branch/review-state.json` for re-runs and dashboard consumption.
+description: Run all review checks on the branch diff against main. Phase-aware — wave 1 (code-correctness) reviewers run first; wave 2 (test-shape, cassette) gates on wave 1 settling. Dispatches only the subset whose preconditions hold, in parallel within each wave. State persisted in `local-notes/review-branch/review-state.json` for re-runs and dashboard consumption.
 user-invocable: true
-allowed-tools: Read, Write, Glob, Grep, Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git merge-base:*), Bash(git show:*), Bash(git blame:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh api:*), Bash(~/.claude/skills/github-workflows/*), Bash(mkdir:*), Bash(cat:*), Bash(grep:*), Bash(wc:*), Bash(sort:*), Bash(uniq:*), Bash(head:*), Bash(tail:*), Bash(sed:*), Bash(jq:*), Bash(sha256sum:*), Bash(shasum:*), Agent
+allowed-tools: Read, Write, Glob, Grep, Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git merge-base:*), Bash(git show:*), Bash(git blame:*), Bash(git fetch:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh api:*), Bash(mkdir:*), Bash(cat:*), Bash(grep:*), Bash(wc:*), Bash(sort:*), Bash(uniq:*), Bash(head:*), Bash(tail:*), Bash(sed:*), Bash(jq:*), Bash(sha256sum:*), Bash(shasum:*), Agent
 ---
 
 # Review Branch
@@ -43,7 +43,7 @@ Pattern and Architecture currently remain skills (consumed by ralph agents too),
 
 ## State file
 
-Persistent at `.claude/skills/review-branch/review-state.json`. Read at the start of every run, written at the end. Dashboard consumes the same file (mirrors how `ralph-state.json` powers the Live tab).
+Persistent at `local-notes/review-branch/review-state.json`. Read at the start of every run, written at the end. Dashboard consumes the same file (mirrors how `ralph-state.json` powers the Live tab).
 
 ```json
 {
@@ -88,8 +88,9 @@ Reviewer ids:
 Identify branch-specific commits (excluding merges that dragged in main):
 
 ```bash
-~/.claude/skills/github-workflows/diff-from-base --fetch --stat
-~/.claude/skills/github-workflows/log-from-base --fetch
+git fetch origin main
+git diff --stat "$(git merge-base origin/main HEAD)..HEAD"
+git log --oneline --no-merges "$(git merge-base origin/main HEAD)..HEAD"
 ```
 
 Compute file union and the cassette-stripped code diff:
@@ -179,7 +180,7 @@ Preconditions:
 ### 4. Read / initialize state
 
 ```bash
-STATE_FILE=".claude/skills/review-branch/review-state.json"
+STATE_FILE="local-notes/review-branch/review-state.json"
 NEW_HASH=$(cat /tmp/review-branch/diff-hash.txt)
 
 if [ -f "$STATE_FILE" ]; then
@@ -269,7 +270,7 @@ Issue these only when wave 1's `gate_status == "closed"`. Otherwise mark wave-2 
 ```
 Agent(subagent_type="review-test-shape",
       description="Test shape review",
-      prompt="Inputs — code_diff_path: ..., blame_map_path: ..., wave_state_path: .claude/skills/review-branch/review-state.json. Run only if wave-1 gate is closed; otherwise defer.")
+      prompt="Inputs — code_diff_path: ..., blame_map_path: ..., wave_state_path: local-notes/review-branch/review-state.json. Run only if wave-1 gate is closed; otherwise defer.")
 # Skip if test-fn-count.txt is below threshold (10) or no new ui/<protocol>/ module.
 
 # Cassette (inlined here — small, cassette-specific):

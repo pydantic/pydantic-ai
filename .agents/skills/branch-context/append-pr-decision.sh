@@ -1,5 +1,5 @@
 #!/bin/bash
-# Append one decision entry to .claude/skills/branch-context/pr-decisions.md
+# Append one decision entry to local-notes/branch-context/pr-decisions.md
 #
 # Usage:
 #   append-pr-decision.sh <title> <decision> <why> <source-url> [iteration] [supersedes]
@@ -25,11 +25,14 @@ SOURCE="$4"
 ITER="${5:--}"
 SUPERSEDES="$6"
 
-# Must run from a worktree root — locate the file relative to cwd.
-FILE=".claude/skills/branch-context/pr-decisions.md"
+DIR="${BRANCH_CONTEXT_DIR:-local-notes/branch-context}"
+FILE="$DIR/pr-decisions.md"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TEMPLATE="$SCRIPT_DIR/pr-decisions.template.md"
+
+mkdir -p "$DIR"
 if [ ! -f "$FILE" ]; then
-    echo "error: $FILE not found. Are you at the worktree root? Run /initialize-worktree first." >&2
-    exit 1
+    cp "$TEMPLATE" "$FILE"
 fi
 
 DATE="$(date -u +%Y-%m-%d)"

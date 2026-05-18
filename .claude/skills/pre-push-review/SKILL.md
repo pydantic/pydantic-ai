@@ -1,5 +1,5 @@
 ---
-description: Review the current branch against main, simulating the automated CI review from the bots workflow
+description: Lightweight CI-prompt-style branch review. Use for simple branches or when review-branch is unavailable; use review-branch for non-trivial public API, provider, runtime, tool/output, UI, durable, or large branch reviews.
 allowed-tools:
   - Read
   - Glob
@@ -16,6 +16,8 @@ allowed-tools:
 # Pre-push Review
 
 Simulate the automated CI review job locally before pushing or opening a PR.
+
+For non-trivial branches, prefer `review-branch`: it dispatches focused review lanes in parallel and has clearer ownership boundaries. Use this skill as the lightweight fallback for simple branches or when the lane-based review stack is unavailable.
 
 ## How it works
 

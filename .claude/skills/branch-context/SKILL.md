@@ -1,22 +1,22 @@
 ---
 name: branch-context
-description: Branch-local issue brief and decisions log. Read-only reference — two data files under this dir are autoloaded into every session via `@` imports in CLAUDE.local.md. Don't invoke to "do" anything; read the files directly.
-allowed-tools: Read
+description: Branch-local issue brief and decisions log. Use when you need to read or append durable PR decisions that should survive across AICA sessions.
+allowed-tools: Read, Bash(.claude/skills/branch-context/status.sh:*), Bash(.claude/skills/branch-context/append-pr-decision.sh:*)
 ---
 
 # Branch Context
 
-This directory holds two files that persist branch-specific context across every Claude session in this worktree:
+This skill manages two ignored, branch-local files under `local-notes/branch-context/`:
 
-- `issue-brief.md` — synthesis of the issue(s) the branch addresses. Written by `/initialize-worktree`. Refreshed only on request via `/refresh-issue-brief` (when the user flags that the issue has new comments).
-- `pr-decisions.md` — append-only log of non-obvious decisions made while working the PR. Written by ralph-phase agents and the stop hook; never rewritten or summarized.
+- `issue-brief.md` — synthesis of the issue(s) the branch addresses.
+- `pr-decisions.md` — append-only log of non-obvious decisions made while working the PR.
 
-Both files are loaded automatically: `CLAUDE.local.md` has `@` imports at the top, so any session that reads `CLAUDE.local.md` picks them up.
+Templates live beside this skill as `issue-brief.template.md` and `pr-decisions.template.md`. Do not commit live branch context files.
 
 ## When to write
 
-- **issue-brief.md** — write only via `/initialize-worktree` (fresh) or `/refresh-issue-brief` (incremental update). Never edit in-session freestyle; it's a synthesis, not a scratchpad.
-- **pr-decisions.md** — append an entry whenever you make a decision that the issue didn't already spell out. Entry format below. Keep entries brief — one line each for decision, why, source link.
+- **issue-brief.md** — write only when bootstrapping or refreshing branch context from the issue/PR. It is a synthesis, not a scratchpad.
+- **pr-decisions.md** — append whenever you make a decision that the issue didn't already spell out. Keep entries brief: one line each for decision, why, source link.
 
 ### pr-decisions.md entry format
 
@@ -32,10 +32,10 @@ No prose. No multi-paragraph rationale. If the decision needs more context, the 
 
 ## When to read
 
-Both files are autoloaded — you already have them. Explicit re-reads only needed after `/refresh-issue-brief` updates the brief mid-session, or after appending a decision and wanting to verify formatting.
+Read `local-notes/branch-context/issue-brief.md` before reviving an existing branch or after the user says issue/PR context changed. Read `pr-decisions.md` before changing an approach that may have been deliberately chosen earlier.
 
 ## Scope boundary
 
 - This is not the place for research notes, investigation logs, or interim reports — those go in `local-notes/`.
-- This is not the place for implementation state (ralph-state.json, goals.json, plan-output.md) — those live in `start-worktree-loop/`.
+- This is not the place for implementation state, test logs, or review reports.
 - Decisions logged here should be *load-bearing for future reviewers* — ones that would be confusing without the link. Ordinary implementation details don't belong.

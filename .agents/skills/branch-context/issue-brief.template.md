@@ -8,11 +8,11 @@ issues: []
 
 # Issue Brief
 
-_This file has not been populated yet. Run `/initialize-worktree` to fill it from the linked issue(s)._
+_This file has not been populated yet. Fill it from the linked issue(s) when initializing branch context._
 
 <!--
 
-Populated schema below — `/initialize-worktree` writes this structure.
+Populated schema below — initialization writes this structure.
 
 ## Issues
 

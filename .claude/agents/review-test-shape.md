@@ -57,7 +57,7 @@ and exit. Do not stretch — the review is high-cost (recommends reshaping tests
 
 - `code_diff_path` — typically `/tmp/review-branch/code.diff`.
 - `blame_map_path` — for NEW / PRE-EXISTING tagging.
-- `wave_state_path` — typically `/tmp/review-branch/review-state.json`. Read it; if `waves.1.gate_status != "closed"`, exit with `Test Shape Review: wave 1 still open — deferring until code-correctness findings are addressed.`
+- `wave_state_path` — typically `local-notes/review-branch/review-state.json`. Read it; if `waves.1.gate_status != "closed"`, exit with `Test Shape Review: wave 1 still open — deferring until code-correctness findings are addressed.`
 
 ## Method
 
