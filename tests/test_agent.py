@@ -10951,11 +10951,6 @@ def test_from_spec_preserves_zero_retry_budgets():
     assert tool_call_count == 3
 
 
-def test_agent_retries_rejects_unknown_keys():
-    with pytest.raises(UserError, match=r'Unknown `AgentRetries` keys'):
-        Agent(TestModel(), retries={'invalid': 1})  # pyright: ignore[reportArgumentType, reportCallIssue]
-
-
 def test_run_retries_cannot_override_tool_budget():
     agent = Agent(TestModel())
 

@@ -131,24 +131,23 @@ class AgentRetries(TypedDict, total=False):
 
 
 @dataclass(frozen=True)
-class ResolvedAgentRetries:
+class _ResolvedAgentRetries:
     """Fully resolved retry budgets used internally."""
 
     tools: int
     output: int
 
 
-def normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> ResolvedAgentRetries:
+def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
     """Resolve normalized retry overrides into concrete retry budgets.
 
     Missing keys in an `AgentRetries` dict fall back to `default`, so internal code can work with a
     single concrete shape.
     """
-    validate_agent_retries(retries)
-    return ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
+    return _ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
 
 
-def normalize_agent_retry_overrides(
+def _normalize_agent_retry_overrides(
     retries: int | AgentRetries | None,
     *,
     int_means: Literal['both', 'output'] = 'both',
@@ -164,15 +163,7 @@ def normalize_agent_retry_overrides(
         if int_means == 'output':
             return {'output': retries}
         return {'tools': retries, 'output': retries}
-    validate_agent_retries(retries)
     return retries.copy()
-
-
-def validate_agent_retries(retries: AgentRetries) -> None:
-    """Validate `AgentRetries` runtime keys."""
-    extra = set(retries.keys()) - {'tools', 'output'}
-    if extra:
-        raise exceptions.UserError(f'Unknown `AgentRetries` keys: {sorted(extra)}. Valid keys are: "tools", "output".')
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):

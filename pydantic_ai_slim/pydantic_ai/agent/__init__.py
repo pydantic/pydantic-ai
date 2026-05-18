@@ -90,8 +90,8 @@ from .abstract import (
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
-    normalize_agent_retries,
-    normalize_agent_retry_overrides,
+    _normalize_agent_retries,
+    _normalize_agent_retry_overrides,
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -423,14 +423,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if _utils.is_set(legacy_tool_retries):
             warnings.warn(
                 '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both) instead.",
+                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
         if _utils.is_set(legacy_output_retries):
             warnings.warn(
                 '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both) instead.",
+                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
@@ -447,14 +447,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        retry_overrides = normalize_agent_retry_overrides(retries)
+        retry_overrides = _normalize_agent_retry_overrides(retries)
         # Explicit kwargs win over `retries` (matches the legacy precedence where
         # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
         if _utils.is_set(legacy_tool_retries) and legacy_tool_retries is not None:
             retry_overrides['tools'] = legacy_tool_retries
         if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
             retry_overrides['output'] = legacy_output_retries
-        resolved_retries = normalize_agent_retries(retry_overrides)
+        resolved_retries = _normalize_agent_retries(retry_overrides)
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
@@ -1129,7 +1129,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
         # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
-        retry_overrides = normalize_agent_retry_overrides(retries, int_means='output')
+        retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
         if 'tools' in retry_overrides:
             raise exceptions.UserError(
                 'Per-run `retries` cannot set tool retries: tool retries can only be configured at agent '
@@ -1771,7 +1771,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Tool retries cannot be overridden via `override()`. An int means "override output only".
         override_output_retries: int | _utils.Unset
         if _utils.is_set(retries):
-            retry_overrides = normalize_agent_retry_overrides(retries, int_means='output')
+            retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
             if 'tools' in retry_overrides:
                 raise exceptions.UserError(
                     '`agent.override(retries=...)` cannot set tool retries: tool retries can only be '
@@ -2823,7 +2823,7 @@ def _merge_retries_with_spec(
     compatibility shims for any category not already set via canonical `retries`.
     """
     merged = _retry_overrides_from_spec(spec)
-    merged.update(normalize_agent_retry_overrides(explicit))
+    merged.update(_normalize_agent_retry_overrides(explicit))
     if not merged:
         return None
     return merged
@@ -2836,7 +2836,7 @@ def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
     when both are set on the same spec — the deprecated fields only fill in categories
     not provided by `retries`.
     """
-    retries: AgentRetries = normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
+    retries: AgentRetries = _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
     if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None and 'tools' not in retries:
         retries['tools'] = spec.tool_retries
     if 'output_retries' in spec.model_fields_set and spec.output_retries is not None and 'output' not in retries:
