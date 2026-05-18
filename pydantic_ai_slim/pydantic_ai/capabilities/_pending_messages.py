@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ModelRequest, ModelRequestPart, PendingMessage, PendingMessagePriority
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.tools import RunContext
+from pydantic_graph import End
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
-    from pydantic_graph import End
 
 
 def _drain_by_priority(
@@ -32,50 +34,30 @@ def _drain_by_priority(
     return drained
 
 
-def _flatten_drained(
+def _stamped_requests(
     drained: list[PendingMessage],
     *,
     fallback_run_id: str | None,
     fallback_conversation_id: str | None,
 ) -> list[ModelRequest]:
-    """Flatten drained pending messages into a list of `ModelRequest`s.
+    """Stamp drained requests with `timestamp` / `run_id` / `conversation_id` where unset.
 
-    Adjacent parts-style payloads merge into one synthesized request (matching what
-    the model sees on the wire); each passthrough `ModelRequest` payload becomes its
-    own message. Synthesized requests are stamped with `now_utc()` / `fallback_run_id` /
-    `fallback_conversation_id`; passthrough requests keep producer-supplied values, only
-    filling in `timestamp` / `run_id` / `conversation_id` when unset.
+    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] already carries a built
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] (built at enqueue time by
+    [`build_enqueue_request`][pydantic_ai._enqueue.build_enqueue_request]); this only
+    fills in framework-tracked metadata that the producer left unset, so passthrough
+    requests preserve producer-supplied values.
     """
     requests: list[ModelRequest] = []
-    pending_parts: list[ModelRequestPart] = []
-
-    def flush_parts() -> None:
-        if pending_parts:
-            requests.append(
-                ModelRequest(
-                    parts=pending_parts.copy(),
-                    timestamp=now_utc(),
-                    run_id=fallback_run_id,
-                    conversation_id=fallback_conversation_id,
-                )
-            )
-            pending_parts.clear()
-
     for msg in drained:
-        if isinstance(msg.payload, ModelRequest):
-            flush_parts()
-            request = msg.payload
-            if request.timestamp is None:
-                request.timestamp = now_utc()
-            if request.run_id is None:
-                request.run_id = fallback_run_id
-            if request.conversation_id is None:
-                request.conversation_id = fallback_conversation_id
-            requests.append(request)
-        else:
-            pending_parts.extend(msg.payload)
-    flush_parts()
-
+        request = msg.request
+        if request.timestamp is None:
+            request.timestamp = now_utc()
+        if request.run_id is None:
+            request.run_id = fallback_run_id
+        if request.conversation_id is None:
+            request.conversation_id = fallback_conversation_id
+        requests.append(request)
     return requests
 
 
@@ -114,18 +96,15 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         """Drain `'asap'` messages into the upcoming model request.
 
-        Adjacent parts-style payloads merge into one synthesized
-        [`ModelRequest`][pydantic_ai.messages.ModelRequest]; each passthrough
-        `ModelRequest` payload becomes its own message. Each resulting request is
-        appended to both `request_context.messages` (so the model sees it this
-        step) and `ctx.messages` (so it persists in the agent's message history).
+        Each drained request is appended to both `request_context.messages` (so the model
+        sees it this step) and `ctx.messages` (so it persists in the agent's message
+        history). Stamps `timestamp`/`run_id`/`conversation_id` if the producer didn't —
+        `ModelRequestNode.run()` only stamps `self.request` (the current node's request),
+        and capabilities downstream of us might append more messages, so we can't rely on
+        that fixup.
         """
         drained = _drain_by_priority(ctx.pending_messages, 'asap')
-        # Stamp explicitly here: ModelRequestNode.run() only stamps `self.request`
-        # (the current node's request). The agent graph fixes up `messages[-1]`
-        # before calling the model, but relying on that is fragile — another
-        # capability could append after us.
-        for request in _flatten_drained(
+        for request in _stamped_requests(
             drained, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
         ):
             request_context.messages.append(request)
@@ -143,20 +122,16 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
 
         If the run is about to end, drain `'asap'` messages first (anything that arrived
         after the most recent `before_model_request` and would otherwise be lost), then
-        `'when_idle'` messages. Each priority is flattened independently so parts-style
-        payloads of different priorities don't get merged into one synthesized request —
-        the history keeps the priority split visible (matches pi-mono's separate
-        steering / follow-up turns). On the wire, `_clean_message_history` re-merges
-        adjacent requests with compatible instructions, so the model still sees one turn.
+        `'when_idle'` messages. Each priority is appended independently so the history
+        keeps the priority split visible (matches pi-mono's separate steering / follow-up
+        turns). On the wire, `_clean_message_history` re-merges adjacent requests with
+        compatible instructions, so the model still sees one turn.
 
         The last resulting request becomes the redirect
         [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
         earlier ones are appended to `ctx.messages` so they appear in history before the
         redirect.
         """
-        from pydantic_ai._agent_graph import ModelRequestNode
-        from pydantic_graph import End
-
         if not isinstance(result, End):
             return result
 
@@ -170,19 +145,11 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
             return result
 
         requests = [
-            *_flatten_drained(
-                leftover_asap,
-                fallback_run_id=ctx.run_id,
-                fallback_conversation_id=ctx.conversation_id,
-            ),
-            *_flatten_drained(
-                when_idle,
-                fallback_run_id=ctx.run_id,
-                fallback_conversation_id=ctx.conversation_id,
-            ),
+            *_stamped_requests(leftover_asap, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+            *_stamped_requests(when_idle, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
         ]
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
-        # will re-stamp it during the graph lifecycle. `_flatten_drained` already
+        # will re-stamp it during the graph lifecycle. `_stamped_requests` already
         # stamped it, which is harmless (the lifecycle stamp overwrites).
         *extras, final = requests
         ctx.messages.extend(extras)

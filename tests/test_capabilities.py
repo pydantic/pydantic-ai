@@ -11156,8 +11156,13 @@ async def test_pending_messages_accessible_on_run_context():
     )
 
 
-async def test_enqueue_rejects_empty_parts():
-    """`ctx.enqueue()` and `agent_run.enqueue()` reject zero-part calls."""
+async def test_enqueue_with_no_args_is_a_noop():
+    """`ctx.enqueue()` and `agent_run.enqueue()` with no content are silent no-ops.
+
+    Producers that conditionally enqueue (e.g. "announce if new tools were discovered")
+    can call `enqueue(*maybe_items)` without guarding for the empty case — `enqueue`
+    simply doesn't append a `PendingMessage` when there's nothing to send.
+    """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -11174,13 +11179,13 @@ async def test_enqueue_rejects_empty_parts():
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
-        with pytest.raises(ValueError, match='enqueue requires at least one item'):
-            ctx.enqueue()
+        ctx.enqueue()  # no-op, no exception
+        assert ctx.pending_messages == []
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        with pytest.raises(ValueError, match='enqueue requires at least one item'):
-            agent_run.enqueue()
+        agent_run.enqueue()  # no-op, no exception
+        assert agent_run.pending_messages == []
         async for _ in agent_run:
             pass
 
@@ -11407,28 +11412,28 @@ def test_pending_message_drain_capability_is_not_spec_constructible():
     assert PendingMessageDrainCapability.get_serialization_name() is None
 
 
-def test_pending_message_rejects_empty_payload():
-    """Directly constructing a `PendingMessage` with an empty payload is rejected.
+def test_pending_message_allows_empty_request():
+    """`PendingMessage` doesn't validate its `request`; empty-parts requests are tolerated.
 
-    `build_enqueue_payload` already guards the public `enqueue()` entry points,
-    but `PendingMessage` is a public type — guard against producers constructing
-    it directly with a bad payload (e.g. via deserialization or stub builders).
+    `enqueue()` already filters out the no-args case (no `PendingMessage` is appended).
+    An empty `ModelRequest` reaching the queue is harmless — the drain stamps and forwards
+    it, and downstream wire-merging absorbs zero-part messages as a natural no-op.
     """
-    from pydantic_ai.messages import PendingMessage
+    from pydantic_ai._enqueue import PendingMessage
 
-    with pytest.raises(ValueError, match='PendingMessage requires a request with at least one part'):
-        PendingMessage(payload=ModelRequest(parts=[]))
-
-    with pytest.raises(ValueError, match='PendingMessage requires at least one part'):
-        PendingMessage(payload=())
+    msg = PendingMessage(request=ModelRequest(parts=[]))
+    assert msg.priority == 'asap'
+    assert msg.request.parts == []
 
 
-async def test_enqueue_parts_style_calls_merge_into_one_request():
-    """Two parts-style `enqueue` calls of the same priority merge into one drained `ModelRequest`.
+async def test_enqueue_parts_style_calls_produce_one_request_per_call():
+    """Each `enqueue` call produces its own `ModelRequest` in history.
 
-    The merge matches what the model sees on the wire (consecutive `ModelRequest`s
-    get merged by `_clean_message_history`), keeping `all_messages()` aligned with
-    "what the model saw" rather than fragmented per-call.
+    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
+    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
+    history reflects per-call structure; wire-level `_clean_message_history` still merges
+    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
+    single message should pass a single `ModelRequest(parts=[...])` themselves.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -11457,9 +11462,11 @@ async def test_enqueue_parts_style_calls_merge_into_one_request():
         if isinstance(msg, ModelRequest)
         and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
     ]
-    assert len(drained) == 1, 'parts-style enqueues did not merge'
-    contents = [p.content for p in drained[0].parts if isinstance(p, UserPromptPart)]
-    assert contents == ['first hint', 'second hint']
+    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert [p.content for msg in drained for p in msg.parts if isinstance(p, UserPromptPart)] == [
+        'first hint',
+        'second hint',
+    ]
 
 
 async def test_enqueue_passthrough_stays_separate_from_parts_style():

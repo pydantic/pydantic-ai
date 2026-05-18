@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import TYPE_CHECKING, Any, overload
 
 from .. import (
+    _enqueue,
     _instructions,
     _utils,
     messages as _messages,
@@ -99,7 +100,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
-        pending_messages: list[_messages.PendingMessage] | None = None,
+        pending_messages: list[_enqueue.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         return await self.wrapped.system_prompt_parts(
             deps=deps,

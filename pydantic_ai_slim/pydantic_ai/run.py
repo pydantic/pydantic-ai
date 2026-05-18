@@ -19,6 +19,7 @@ from . import (
     usage as _usage,
 )
 from ._deprecated_callable import deprecated_callable_property
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_request
 from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -412,20 +413,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.conversation_id
 
     @property
-    def pending_messages(self) -> list[_messages.PendingMessage]:
-        """Queue of messages waiting to be injected into the conversation.
+    def pending_messages(self) -> list[PendingMessage]:
+        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
-        Messages are drained automatically: `'asap'` messages at the earliest
-        opportunity (next model request, or redirecting the run if the agent would
-        otherwise end); `'when_idle'` messages only when the agent would otherwise
-        end and no `'asap'` messages remain.
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
         """
         return self._graph_run.state.pending_messages
 
     def enqueue(
         self,
-        *content: _messages.EnqueueContent,
-        priority: _messages.PendingMessagePriority = 'asap',
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
     ) -> None:
         """Enqueue content to be injected into the conversation.
 
@@ -437,22 +435,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         atomic against concurrent appends from a different thread.
 
         Args:
-            *content: One or more items. Each is coerced:
-                a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
-                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
-                Adjacent parts-style enqueues of the same priority are merged into one synthesized
-                [`ModelRequest`][pydantic_ai.messages.ModelRequest] at drain time, matching what
-                the model sees on the wire.
-                Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue
-                it verbatim (preserving `instructions`, `metadata`, etc.) as its own message —
-                it cannot be mixed with other items.
+            *content: One or more items packed into a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+                at enqueue time. Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)`
+                accepts) is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Pass a single
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue it verbatim (preserving
+                `instructions`, `metadata`, etc.) — it cannot be mixed with other items. Calling with no
+                positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
         """
-        payload = _messages.build_enqueue_payload(content)
-        self._graph_run.state.pending_messages.append(_messages.PendingMessage(payload=payload, priority=priority))
+        request = build_enqueue_request(content)
+        if request is None:
+            return
+        self._graph_run.state.pending_messages.append(PendingMessage(request=request, priority=priority))
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

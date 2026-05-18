@@ -13,7 +13,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from .messages import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_payload
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_request
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -100,15 +100,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
-    pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage])
-    """Queue of messages waiting to be injected into the conversation.
+    pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage], repr=False)
+    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
-    Messages are drained automatically: `'asap'` messages at the earliest opportunity
-    (next model request, or redirecting the run if the agent would otherwise end);
-    `'when_idle'` messages only when the agent would otherwise end and no `'asap'`
-    messages remain.
-
-    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages.
+    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
@@ -142,22 +137,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the drain.
 
         Args:
-            *content: One or more items. Each is coerced:
-                a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
-                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
-                Adjacent parts-style enqueues of the same priority are merged into one synthesized
-                [`ModelRequest`][pydantic_ai.messages.ModelRequest] at drain time, matching what
-                the model sees on the wire.
-                Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue
-                it verbatim (preserving `instructions`, `metadata`, etc.) as its own message —
-                it cannot be mixed with other items.
+            *content: One or more items packed into a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+                at enqueue time. Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)`
+                accepts) is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Pass a single
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue it verbatim (preserving
+                `instructions`, `metadata`, etc.) — it cannot be mixed with other items. Calling with no
+                positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
         """
-        payload = build_enqueue_payload(content)
-        self.pending_messages.append(PendingMessage(payload=payload, priority=priority))
+        request = build_enqueue_request(content)
+        if request is None:
+            return
+        self.pending_messages.append(PendingMessage(request=request, priority=priority))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

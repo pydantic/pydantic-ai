@@ -27,6 +27,7 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
+    _enqueue,
     _instructions,
     _utils,
     exceptions,
@@ -180,7 +181,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
-        pending_messages: list[_messages.PendingMessage] | None = None,
+        pending_messages: list[_enqueue.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
