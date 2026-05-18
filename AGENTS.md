@@ -103,20 +103,14 @@ The project uses:
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
 
-## AICA Routing
+## AICA Context
 
-Use the first matching workflow:
+The repo-tracked context should describe stable project rules. Maintainer-local
+skills, hooks, subagents, and branch notes are copied by `pydantic-config` and
+should stay out of this repo unless they become project-level guidance.
 
-- Bug fix from a GitHub issue: use `mre-bug-workflow`.
-- Non-trivial `pydantic-ai-slim` feature/API/provider/tool/output/capability/durable/UI work: use `pydantic-ai-feature-work` before planning or editing.
-- VCR cassette recording, rewriting, or debugging: use `pytest-vcr`.
-- Logfire telemetry analysis: use `analyze-logfire-data`.
-- Preserve a non-obvious PR decision for future sessions: use `branch-context`.
-- Address existing PR review comments: use `address-feedback`.
-- Review a non-trivial branch before push/PR: use `review-branch` when the Claude review stack is available; otherwise use `pre-push-review`.
-- Run a small CI-prompt-style review on a simple branch: use `pre-push-review`.
-
-Do not invoke individual `review-*` agents directly. `review-branch` owns their ordering, inputs, and parallel dispatch.
+For test and cassette work, follow [tests/AGENTS.md](tests/AGENTS.md). Local
+testing skills may add helpers, but the repo docs are the source of truth.
 
 Additionally, always read the directory-specific instructions when working in those directories:
 

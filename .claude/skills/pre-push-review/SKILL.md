@@ -1,5 +1,5 @@
 ---
-description: Lightweight CI-prompt-style branch review. Use for simple branches or when review-branch is unavailable; use review-branch for non-trivial public API, provider, runtime, tool/output, UI, durable, or large branch reviews.
+description: Lightweight CI-prompt-style branch review for simple branches or when local review tooling is unavailable.
 allowed-tools:
   - Read
   - Glob
@@ -17,7 +17,7 @@ allowed-tools:
 
 Simulate the automated CI review job locally before pushing or opening a PR.
 
-For non-trivial branches, prefer `review-branch`: it dispatches focused review lanes in parallel and has clearer ownership boundaries. Use this skill as the lightweight fallback for simple branches or when the lane-based review stack is unavailable.
+Use this skill as the lightweight fallback for simple branches or when local lane-based review tooling is unavailable.
 
 ## How it works
 

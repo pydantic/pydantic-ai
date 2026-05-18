@@ -21,32 +21,14 @@ node_modules/
 /test_tmp/
 .mcp.json
 CLAUDE.local.md
+.codex/*
 .agents/*
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/branch-context/
-!.agents/skills/branch-context/**
-!.agents/skills/pydantic-ai-feature-work/
-!.agents/skills/pydantic-ai-feature-work/**
 .claude/*
 !.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
-!.claude/agents/
-.claude/agents/*
-!.claude/agents/review-*.md
-!.claude/skills/auto-review/
-!.claude/skills/auto-review/**
-!.claude/skills/branch-context/
-!.claude/skills/branch-context/**
-!.claude/skills/pydantic-ai-feature-work/
-!.claude/skills/pydantic-ai-feature-work/**
-!.claude/skills/review-branch/
-!.claude/skills/review-branch/**
-!.claude/skills/review-patterns/
-!.claude/skills/review-patterns/**
 .github/.review-context/
 /.cursor/
 /.devcontainer/
@@ -54,3 +36,4 @@ CLAUDE.local.md
 
 # AICA mini-PR diagnostic scratch (see team.pydantic.work)
 local-notes/
+local_notes/
