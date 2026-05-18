@@ -17,7 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-import httpx2
+import httpx
 import pytest
 
 from pydantic_ai import models
@@ -79,14 +79,14 @@ class TestMCPToolsetConstruction:
         assert toolset.client.transport.headers == {'X-Key': 'foo'}
 
     def test_http_client_kwarg_uses_factory(self):
-        client = httpx2.AsyncClient()
+        client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
 
     def test_sse_url_with_http_client_uses_factory(self):
-        client = httpx2.AsyncClient()
+        client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
@@ -106,7 +106,7 @@ class TestMCPToolsetConstruction:
             MCPToolset(
                 'https://example.com/mcp',
                 headers={'X-Key': 'foo'},
-                http_client=httpx2.AsyncClient(),
+                http_client=httpx.AsyncClient(),
             )
 
     def test_pre_built_client_with_handler_kwargs_raises(self):

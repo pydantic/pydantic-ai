@@ -1,4 +1,4 @@
-import httpx2
+import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -96,7 +96,7 @@ def test_sambanova_provider_with_openai_client():
 
 
 def test_sambanova_provider_with_http_client():
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = SambaNovaProvider(api_key='foo', http_client=http_client)
     assert provider.client.api_key == 'foo'
     # The line `self._client = AsyncOpenAI(..., http_client=http_client)` is executed,

@@ -6,7 +6,7 @@ This is particularly useful for handling transient failures like rate limits, ne
 ## Overview
 
 The retry functionality is built on top of the [tenacity](https://github.com/jd/tenacity) library and integrates
-seamlessly with httpx2 clients. You can configure retry behavior for any provider that accepts a custom HTTP client.
+seamlessly with httpx clients. You can configure retry behavior for any provider that accepts a custom HTTP client.
 
 ## Installation
 
@@ -21,7 +21,7 @@ pip/uv-add 'pydantic-ai-slim[retries]'
 Here's an example of adding retry functionality with smart retry handling:
 
 ```python {title="smart_retry_example.py"}
-from httpx2 import AsyncClient, HTTPStatusError
+from httpx import AsyncClient, HTTPStatusError
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pydantic_ai import Agent
@@ -97,7 +97,7 @@ This wait strategy:
 For asynchronous HTTP clients (recommended for most use cases):
 
 ```python {title="async_transport_example.py"}
-from httpx2 import AsyncClient
+from httpx import AsyncClient
 from tenacity import stop_after_attempt
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig
@@ -124,7 +124,7 @@ client = AsyncClient(transport=transport)
 For synchronous HTTP clients:
 
 ```python {title="sync_transport_example.py"}
-from httpx2 import Client
+from httpx import Client
 from tenacity import stop_after_attempt
 
 from pydantic_ai.retries import RetryConfig, TenacityTransport
@@ -151,7 +151,7 @@ client = Client(transport=transport)
 ### Rate Limit Handling with Retry-After Support
 
 ```python {title="rate_limit_handling.py"}
-from httpx2 import AsyncClient, HTTPStatusError
+from httpx import AsyncClient, HTTPStatusError
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -183,7 +183,7 @@ The `wait_retry_after` function automatically detects `Retry-After` headers in 4
 ### Network Error Handling
 
 ```python {title="network_error_handling.py"}
-import httpx2
+import httpx
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig
@@ -194,16 +194,16 @@ def create_network_resilient_client():
     transport = AsyncTenacityTransport(
         config=RetryConfig(
             retry=retry_if_exception_type((
-                httpx2.TimeoutException,
-                httpx2.ConnectError,
-                httpx2.ReadError
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.ReadError
             )),
             wait=wait_exponential(multiplier=1, max=10),
             stop=stop_after_attempt(3),
             reraise=True
         )
     )
-    return httpx2.AsyncClient(transport=transport)
+    return httpx.AsyncClient(transport=transport)
 
 # Example usage
 client = create_network_resilient_client()
@@ -213,7 +213,7 @@ client = create_network_resilient_client()
 ### Custom Retry Logic
 
 ```python {title="custom_retry_logic.py"}
-import httpx2
+import httpx
 from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -223,10 +223,10 @@ def create_custom_retry_client():
     """Create a client with custom retry logic."""
     def custom_retry_condition(exception):
         """Custom logic to determine if we should retry."""
-        if isinstance(exception, httpx2.HTTPStatusError):
+        if isinstance(exception, httpx.HTTPStatusError):
             # Retry on server errors but not client errors
             return 500 <= exception.response.status_code < 600
-        return isinstance(exception, httpx2.TimeoutException | httpx2.ConnectError)
+        return isinstance(exception, httpx.TimeoutException | httpx.ConnectError)
 
     transport = AsyncTenacityTransport(
         config=RetryConfig(
@@ -242,7 +242,7 @@ def create_custom_retry_client():
         ),
         validate_response=lambda r: r.raise_for_status()
     )
-    return httpx2.AsyncClient(transport=transport)
+    return httpx.AsyncClient(transport=transport)
 
 client = create_custom_retry_client()
 # Client will retry server errors (5xx) and network errors, but not client errors (4xx)
@@ -311,7 +311,7 @@ agent = Agent(model)
 
 4. **Handle Rate Limits Properly**: Respect `Retry-After` headers when possible.
 
-5. **Log Retry Attempts**: Add logging to monitor retry behavior in production. (This will be picked up by Logfire automatically if you instrument httpx2.)
+5. **Log Retry Attempts**: Add logging to monitor retry behavior in production. (This will be picked up by Logfire automatically if you instrument httpx.)
 
 6. **Consider Circuit Breakers**: For high-traffic applications, consider implementing circuit breaker patterns.
 
@@ -323,7 +323,7 @@ agent = Agent(model)
     - Monitor retry frequency over time
     - Identify opportunities to reduce retries
 
-    With [HTTPX2 instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
+    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
 
 ## Error Handling
 
@@ -354,7 +354,7 @@ For more advanced retry configurations, refer to the [tenacity documentation](ht
 
 ### AWS Bedrock
 
-The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of httpx2. To configure retries for Bedrock, use boto3's `Config`:
+The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of httpx. To configure retries for Bedrock, use boto3's `Config`:
 
 ```python
 from botocore.config import Config

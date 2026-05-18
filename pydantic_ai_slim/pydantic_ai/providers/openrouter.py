@@ -4,7 +4,7 @@ import os
 from dataclasses import replace
 from typing import overload
 
-import httpx2
+import httpx
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
@@ -152,7 +152,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -162,7 +162,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Configure the provider with either an API key or prebuilt client.
 
@@ -175,7 +175,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 `OPENROUTER_APP_TITLE` when omitted.
             openai_client: Existing `AsyncOpenAI` client to reuse instead of
                 creating one internally.
-            http_client: Custom `httpx2.AsyncClient` to pass into the
+            http_client: Custom `httpx.AsyncClient` to pass into the
                 `AsyncOpenAI` constructor when building a client.
 
         Raises:
@@ -201,7 +201,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=attribution_headers,
             )
         else:
@@ -211,9 +211,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=attribution_headers,
             )
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

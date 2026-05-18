@@ -15,7 +15,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx2
 
 from ._utils import run_in_executor
-from .models import create_async_http_client
+from .models import get_user_agent
 
 __all__ = ['safe_download']
 
@@ -354,7 +354,10 @@ async def safe_download(
     original_hostname = urlparse(url).hostname
     effective_headers = dict(headers) if headers else {}
 
-    async with create_async_http_client(timeout=timeout) as client:
+    async with httpx2.AsyncClient(
+        timeout=httpx2.Timeout(timeout=timeout, connect=5),
+        headers={'User-Agent': get_user_agent()},
+    ) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)

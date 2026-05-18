@@ -22,7 +22,7 @@ from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as starlette_import_successful:
-    import httpx2
+    import httpx
     from starlette.applications import Starlette
     from starlette.responses import Response
     from starlette.testclient import TestClient
@@ -227,7 +227,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
         async def get(self, url: str) -> MockResponse:
             return MockResponse()
 
-    monkeypatch.setattr(app_module.httpx2, 'AsyncClient', MockAsyncClient)
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
     result = await _get_ui_html()
 
@@ -460,7 +460,7 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
             captured_url.append(url)
             return MockResponse()
 
-    monkeypatch.setattr(app_module.httpx2, 'AsyncClient', MockAsyncClient)
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
     # URL is used directly, no version templating
     custom_url = 'https://my-internal-cdn.example.com/ui/index.html'
@@ -497,7 +497,7 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
             fetch_count += 1
             return MockResponse()
 
-    monkeypatch.setattr(app_module.httpx2, 'AsyncClient', MockAsyncClient)
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
     custom_url = 'https://my-internal-cdn.example.com/ui/cached.html'
 
@@ -598,9 +598,9 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
 
         async def get(self, url: str) -> None:
             response = MockResponse()
-            raise httpx2.HTTPStatusError('Server error', request=None, response=response)  # type: ignore
+            raise httpx.HTTPStatusError('Server error', request=None, response=response)  # type: ignore
 
-    monkeypatch.setattr(app_module.httpx2, 'AsyncClient', MockAsyncClient)
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
     # Use a fresh temp dir so there's no cached file
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: Path('/tmp/nonexistent-cache-dir-for-test'))
 
@@ -608,5 +608,5 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
     app = create_web_app(agent)
 
     with TestClient(app, raise_server_exceptions=True) as client:
-        with pytest.raises(httpx2.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError):
             client.get('/')

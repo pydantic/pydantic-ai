@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -87,7 +87,7 @@ class GroqProvider(Provider[AsyncGroq]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx2.AsyncClient | None = None
+        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
     ) -> None: ...
 
     def __init__(
@@ -96,7 +96,7 @@ class GroqProvider(Provider[AsyncGroq]):
         api_key: str | None = None,
         base_url: str | None = None,
         groq_client: AsyncGroq | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Groq provider.
 
@@ -125,12 +125,12 @@ class GroqProvider(Provider[AsyncGroq]):
                     ' to use the Groq provider.'
                 )
             elif http_client is not None:
-                self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+                self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)
             else:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-                self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+                self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

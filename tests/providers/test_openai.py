@@ -1,4 +1,4 @@
-import httpx2
+import httpx
 import pytest
 
 from ..conftest import TestEnv, try_import
@@ -46,6 +46,6 @@ def test_init_of_openai_with_base_url_and_without_api_key(env: TestEnv):
 
 
 async def test_init_with_http_client():
-    async with httpx2.AsyncClient() as http_client:
+    async with httpx.AsyncClient() as http_client:
         provider = OpenAIProvider(http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore

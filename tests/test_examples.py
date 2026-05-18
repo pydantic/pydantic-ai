@@ -12,7 +12,7 @@ from inspect import FrameInfo
 from pathlib import Path
 from typing import Any
 
-import httpx2
+import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
@@ -154,10 +154,10 @@ def test_docs_examples(
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
-    mocker.patch('httpx2.Client.get', side_effect=http_request)
-    mocker.patch('httpx2.Client.post', side_effect=http_request)
-    mocker.patch('httpx2.AsyncClient.get', side_effect=async_http_request)
-    mocker.patch('httpx2.AsyncClient.post', side_effect=async_http_request)
+    mocker.patch('httpx.Client.get', side_effect=http_request)
+    mocker.patch('httpx.Client.post', side_effect=http_request)
+    mocker.patch('httpx.AsyncClient.get', side_effect=async_http_request)
+    mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
@@ -311,13 +311,13 @@ def custom_include_print(path: Path, frame: FrameInfo, args: Sequence[Any]) -> b
     return path.samefile(frame.filename) or frame.filename.endswith('test_examples.py')
 
 
-def http_request(url: str, **kwargs: Any) -> httpx2.Response:
+def http_request(url: str, **kwargs: Any) -> httpx.Response:
     # sys.stdout.write(f'GET {args=} {kwargs=}\n')
-    request = httpx2.Request('GET', url, **kwargs)
-    return httpx2.Response(status_code=202, content='', request=request)
+    request = httpx.Request('GET', url, **kwargs)
+    return httpx.Response(status_code=202, content='', request=request)
 
 
-async def async_http_request(url: str, **kwargs: Any) -> httpx2.Response:
+async def async_http_request(url: str, **kwargs: Any) -> httpx.Response:
     return http_request(url, **kwargs)
 
 

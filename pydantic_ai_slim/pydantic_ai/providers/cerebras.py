@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -83,10 +83,10 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx2.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
-    def __init__(self, *, http_client: httpx2.AsyncClient) -> None: ...
+    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -96,7 +96,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Cerebras provider.
 
@@ -104,7 +104,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             api_key: The API key to use for authentication, if not provided, the `CEREBRAS_API_KEY` environment variable
                 will be used if available.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         api_key = api_key or os.getenv('CEREBRAS_API_KEY')
         if not api_key and openai_client is None:
@@ -121,7 +121,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=default_headers,
             )
         else:
@@ -131,9 +131,9 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=default_headers,
             )
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 import pytest
-from httpx2 import AsyncClient
+from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -96,7 +96,7 @@ http_client = create_async_http_client()
 
 
 @pytest.fixture(autouse=True, scope='module')
-async def close_cached_httpx2_client(anyio_backend: str) -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     try:
         yield
     finally:
@@ -1029,11 +1029,11 @@ async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
 
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
     unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
-    # Test this raises a serialization error because httpx2.AsyncClient is not serializable.
+    # Test this raises a serialization error because httpx.AsyncClient is not serializable.
     with pytest.raises(Exception) as exc_info:
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable
-            logfire.instrument_httpx(client, capture_all=True)  # pyright: ignore[reportArgumentType, reportCallIssue]
+            logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
 
     assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")

@@ -18,7 +18,7 @@ from functools import cache, cached_property
 from types import TracebackType
 from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx2
+import httpx
 import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
@@ -1278,13 +1278,13 @@ class StreamedResponse(ABC):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Return transport errors caused by `cancel()` tearing down the stream.
 
-        The default covers model classes whose SDKs iterate `httpx2` responses
+        The default covers model classes whose SDKs iterate `httpx` responses
         directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx2` errors
+        and the custom Gemini client), since they let bare `httpx` errors
         propagate from chunk reads. Model classes that use other transports
         (for example gRPC or botocore) should override this method.
         """
-        return (httpx2.StreamError, httpx2.TransportError)
+        return (httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
         """Close the underlying HTTP/gRPC connection.
@@ -1590,8 +1590,8 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
-    """Create an HTTPX2 async client.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+    """Create an HTTPX async client.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
@@ -1599,8 +1599,8 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=connect),
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
 
@@ -1608,7 +1608,7 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 @deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
 def cached_async_http_client(
     *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx2.AsyncClient:
+) -> httpx.AsyncClient:
     """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     return create_async_http_client(timeout=timeout, connect=connect)
 

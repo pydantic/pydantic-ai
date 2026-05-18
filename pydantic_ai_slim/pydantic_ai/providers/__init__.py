@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import Any, Generic
 
 import anyio
-import httpx2
+import httpx
 from typing_extensions import Self, TypeVar
 
 from .._warnings import PydanticAIDeprecationWarning
@@ -36,8 +36,8 @@ class Provider(ABC, Generic[InterfaceClient]):
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx2.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx2.AsyncClient] | None = None
+    _own_http_client: httpx.AsyncClient | None = None
+    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
     _entered_count: int = 0
 
     @functools.cached_property
@@ -76,7 +76,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject

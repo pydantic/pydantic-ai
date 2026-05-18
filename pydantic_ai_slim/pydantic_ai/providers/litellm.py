@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from typing import overload
 
-from httpx2 import AsyncClient as AsyncHTTPClient
+from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
@@ -128,7 +128,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=api_base,
                 api_key=api_key or 'litellm-placeholder',
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
             )
         else:
             http_client = create_async_http_client()
@@ -137,8 +137,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=api_base,
                 api_key=api_key or 'litellm-placeholder',
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
             )
 
     def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

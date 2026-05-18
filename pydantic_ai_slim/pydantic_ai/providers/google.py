@@ -5,7 +5,7 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import Literal, overload
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -53,10 +53,10 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def _build_http_options(
         self,
         *,
-        http_client: httpx2.AsyncClient | None,
+        http_client: httpx.AsyncClient | None,
         base_url: str | None,
     ) -> HttpOptions:
-        """Build `HttpOptions` and record ownership of the httpx2 client if we created it.
+        """Build `HttpOptions` and record ownership of the httpx client if we created it.
 
         Subclasses call this before constructing their `Client(...)` to keep timeout / user-agent /
         ownership wiring consistent.
@@ -66,21 +66,21 @@ class BaseGoogleProvider(Provider[Client], ABC):
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
-        # `timeout=None` to httpx2 and override any timeout on the supplied client. Pin the timeout
+        # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
         # here (ms) so requests actually time out.
         timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
         timeout_ms = int(timeout_seconds * 1000)
         return HttpOptions(
             base_url=base_url,
             headers={'User-Agent': get_user_agent()},
-            httpx2_async_client=http_client,  # pyright: ignore[reportCallIssue]
+            httpx_async_client=http_client,
             timeout=timeout_ms,
         )
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
-        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
+        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 class GoogleProvider(BaseGoogleProvider):
@@ -92,7 +92,7 @@ class GoogleProvider(BaseGoogleProvider):
 
     @overload
     def __init__(
-        self, *, api_key: str, http_client: httpx2.AsyncClient | None = None, base_url: str | None = None
+        self, *, api_key: str, http_client: httpx.AsyncClient | None = None, base_url: str | None = None
     ) -> None: ...
 
     @overload
@@ -102,7 +102,7 @@ class GoogleProvider(BaseGoogleProvider):
         credentials: Credentials | None = None,
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global'] | str | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None: ...
 
@@ -115,7 +115,7 @@ class GoogleProvider(BaseGoogleProvider):
         *,
         vertexai: bool = False,
         api_key: str | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None: ...
 
@@ -128,7 +128,7 @@ class GoogleProvider(BaseGoogleProvider):
         location: GoogleCloudLocation | Literal['global'] | str | None = None,
         vertexai: bool | None = None,
         client: Client | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None:
         """Create a new Google provider for the Gemini API.
@@ -141,7 +141,7 @@ class GoogleProvider(BaseGoogleProvider):
             location: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
             vertexai: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
             client: A pre-initialized client to use.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
         """
         if client is not None:

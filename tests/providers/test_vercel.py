@@ -1,6 +1,6 @@
 import re
 
-import httpx2
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -122,7 +122,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
 
 
 def test_vercel_with_http_client():
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = VercelProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'

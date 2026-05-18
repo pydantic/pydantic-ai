@@ -9,7 +9,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import httpx2
+import httpx
 import pytest
 
 from pydantic_ai import Agent
@@ -168,8 +168,8 @@ with try_import() as xai_imports:
 # ---------------------------------------------------------------------------
 
 
-def _httpx2_response(status_code: int, url: str = 'https://test.example.com') -> httpx2.Response:
-    return httpx2.Response(status_code, request=httpx2.Request('POST', url))
+def _httpx_response(status_code: int, url: str = 'https://test.example.com') -> httpx.Response:
+    return httpx.Response(status_code, request=httpx.Request('POST', url))
 
 
 def _anthropic_start_event() -> BetaRawMessageStartEvent:
@@ -218,7 +218,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx2_response(529),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -238,7 +238,7 @@ async def test_anthropic_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 async def test_anthropic_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com'))  # pyright: ignore[reportArgumentType]
+    error = AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com'))
     stream = [_anthropic_start_event(), error]
     mock_client = MockAnthropic.create_stream_mock(stream)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -257,7 +257,7 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = AnthropicStatusError(
         message='Rate limited',
-        response=_httpx2_response(429),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(429),
         body={'type': 'error', 'error': {'type': 'rate_limit_error'}},
     )
     stream = [error]
@@ -277,12 +277,12 @@ async def test_anthropic_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: AnthropicStatusError(message='SSE error', response=_httpx2_response(200), body={'type': 'error'}),  # pyright: ignore[reportArgumentType]
+            lambda: AnthropicStatusError(message='SSE error', response=_httpx_response(200), body={'type': 'error'}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: AnthropicConnectionError(request=httpx2.Request('POST', 'https://api.anthropic.com')),  # pyright: ignore[reportArgumentType]
+            lambda: AnthropicConnectionError(request=httpx.Request('POST', 'https://api.anthropic.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -310,7 +310,7 @@ async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: No
     """
     error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx2_response(200),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(200),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     stream = [_anthropic_start_event(), error]
@@ -337,7 +337,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Server error',
-        response=_httpx2_response(500),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(500),
         body={'error': {'message': 'Internal server error'}},
     )
     stream = [_openai_chunk(), error]
@@ -357,7 +357,7 @@ async def test_openai_midstream_status_error(allow_model_requests: None):
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_connection_error(allow_model_requests: None):
     """APIConnectionError during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com'))  # pyright: ignore[reportArgumentType]
+    error = OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com'))
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -376,7 +376,7 @@ async def test_openai_peek_error(allow_model_requests: None):
     """APIStatusError during peek is wrapped as ModelHTTPError."""
     error = OpenAIStatusError(
         message='Rate limited',
-        response=_httpx2_response(429),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(429),
         body={'error': {'message': 'Rate limit exceeded'}},
     )
     stream = [error]
@@ -396,12 +396,12 @@ async def test_openai_peek_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -424,7 +424,7 @@ async def test_openai_peek_non_http_error(
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 async def test_openai_midstream_non_http_error(allow_model_requests: None):
     """APIStatusError with status<400 during stream iteration is wrapped as ModelAPIError."""
-    error = OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={})  # pyright: ignore[reportArgumentType]
+    error = OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={})
     stream = [_openai_chunk(), error]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -451,19 +451,19 @@ def _openai_responses_created_event() -> responses.ResponseCreatedEvent:
     'error_factory,expected_exc,expected_status',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
             ModelHTTPError,
             500,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             None,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             None,
             id='connection',
@@ -493,17 +493,17 @@ async def test_openai_responses_peek_error(
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: OpenAIStatusError(message='Server error', response=_httpx2_response(500), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIStatusError(message='Server error', response=_httpx_response(500), body={}),
             ModelHTTPError,
             id='http',
         ),
         pytest.param(
-            lambda: OpenAIStatusError(message='SSE error', response=_httpx2_response(200), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: OpenAIConnectionError(request=httpx2.Request('POST', 'https://api.openai.com')),  # pyright: ignore[reportArgumentType]
+            lambda: OpenAIConnectionError(request=httpx.Request('POST', 'https://api.openai.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -534,7 +534,7 @@ async def test_groq_midstream_status_error(allow_model_requests: None):
     """APIStatusError during stream iteration is wrapped as ModelHTTPError."""
     error = GroqStatusError(
         message='Service unavailable',
-        response=_httpx2_response(503),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(503),
         body={'error': {'message': 'Service unavailable'}},
     )
     stream = [_groq_chunk(), error]
@@ -558,19 +558,19 @@ async def test_groq_midstream_status_error(allow_model_requests: None):
         pytest.param(
             lambda: GroqStatusError(
                 message='Rate limited',
-                response=_httpx2_response(429),  # pyright: ignore[reportArgumentType]
+                response=_httpx_response(429),
                 body={'error': {'message': 'Rate limited'}},
             ),
             ModelHTTPError,
             id='http',
         ),
         pytest.param(
-            lambda: GroqStatusError(message='SSE error', response=_httpx2_response(200), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: GroqStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: GroqConnectionError(request=httpx2.Request('POST', 'https://api.groq.com')),  # pyright: ignore[reportArgumentType]
+            lambda: GroqConnectionError(request=httpx.Request('POST', 'https://api.groq.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -596,12 +596,12 @@ async def test_groq_peek_error(allow_model_requests: None, error_factory: Any, e
     'error_factory,expected_exc',
     [
         pytest.param(
-            lambda: GroqStatusError(message='SSE error', response=_httpx2_response(200), body={}),  # pyright: ignore[reportArgumentType]
+            lambda: GroqStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
         ),
         pytest.param(
-            lambda: GroqConnectionError(request=httpx2.Request('POST', 'https://api.groq.com')),  # pyright: ignore[reportArgumentType]
+            lambda: GroqConnectionError(request=httpx.Request('POST', 'https://api.groq.com')),
             ModelAPIError,
             id='connection',
         ),
@@ -739,7 +739,7 @@ async def test_huggingface_midstream_error(allow_model_requests: None):
     )
     error = HfHubHTTPError(
         'Server error',
-        response=httpx2.Response(500, request=httpx2.Request('POST', 'https://api.hf.co'), content=b'error'),  # pyright: ignore[reportArgumentType]
+        response=httpx.Response(500, request=httpx.Request('POST', 'https://api.hf.co'), content=b'error'),
     )
     stream = [hf_chunk, error]
     mock_client = MockHuggingFace.create_stream_mock(stream)
@@ -789,7 +789,7 @@ def _mistral_client_raising(error: Any) -> Any:
 
 
 def _mistral_sdk_error(status_code: int, message: str) -> SDKError:
-    return SDKError(message, httpx2.Response(status_code, request=httpx2.Request('POST', 'https://api.mistral.ai')))  # pyright: ignore[reportArgumentType]
+    return SDKError(message, httpx.Response(status_code, request=httpx.Request('POST', 'https://api.mistral.ai')))
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
@@ -939,7 +939,7 @@ async def test_fallback_model_streaming_error_triggers_fallback(allow_model_requ
     # First model: Anthropic that errors on peek (first event is the error)
     anthropic_error = AnthropicStatusError(
         message='Overloaded',
-        response=_httpx2_response(529),  # pyright: ignore[reportArgumentType]
+        response=_httpx_response(529),
         body={'type': 'error', 'error': {'type': 'overloaded_error'}},
     )
     anthropic_stream = [anthropic_error]

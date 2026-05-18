@@ -86,14 +86,14 @@ Generally the delegate agent needs to either have the same [dependencies](depend
 ```python {title="agent_delegation_deps.py"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent, RunContext
 
 
 @dataclass
 class ClientAndKey:  # (1)!
-    http_client: httpx2.AsyncClient
+    http_client: httpx.AsyncClient
     api_key: str
 
 
@@ -138,7 +138,7 @@ async def get_jokes(ctx: RunContext[ClientAndKey], count: int) -> str:
 
 
 async def main():
-    async with httpx2.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
         deps = ClientAndKey(client, 'foobar')
         result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
         print(result.output)

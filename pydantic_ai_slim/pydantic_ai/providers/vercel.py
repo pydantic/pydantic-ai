@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -77,7 +77,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx2.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -87,7 +87,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         # Support Vercel AI Gateway's standard environment variables
         api_key = api_key or os.getenv('VERCEL_AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')
@@ -106,7 +106,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=default_headers,
             )
         else:
@@ -116,9 +116,9 @@ class VercelProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=api_key,
-                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                http_client=http_client,
                 default_headers=default_headers,
             )
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

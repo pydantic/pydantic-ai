@@ -187,7 +187,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if isinstance(body, bytes):
                         content_encoding = headers.get('content-encoding', [])
                         # Decompress the body and remove the content-encoding header.
-                        # Otherwise httpx2 will try to decompress again on cassette replay.
+                        # Otherwise httpx will try to decompress again on cassette replay.
                         if 'br' in content_encoding:
                             body = brotli.decompress(body)
                             headers.pop('content-encoding', None)

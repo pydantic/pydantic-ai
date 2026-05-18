@@ -7,7 +7,7 @@ from typing import Literal, overload
 
 import anyio
 import anyio.to_thread
-import httpx2
+import httpx
 from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
@@ -32,7 +32,7 @@ __all__ = ('GoogleVertexProvider',)
 
 
 @deprecated('`GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead.')
-class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
+class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     """Provider for Vertex AI API."""
 
     @property
@@ -49,7 +49,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         )
 
     @property
-    def client(self) -> httpx2.AsyncClient:
+    def client(self) -> httpx.AsyncClient:
         return self._client
 
     @staticmethod
@@ -64,7 +64,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: str = 'google',
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     @overload
@@ -75,7 +75,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: str = 'google',
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -86,7 +86,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         project_id: str | None = None,
         region: VertexAiRegion = 'us-central1',
         model_publisher: str = 'google',
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Vertex AI provider.
 
@@ -101,7 +101,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
                 and from trial and error it seems non-google models don't work with the `generateContent` and
                 `streamGenerateContent` functions, hence only `google` is currently supported.
                 Please create an issue or PR if you know how to use other publishers.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if service_account_file and service_account_info:
             raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided.')
@@ -120,7 +120,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         self._client.auth = _VertexAIAuth(service_account_file, service_account_info, project_id, region)
         self._client.base_url = self.base_url
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client = http_client
         self._client.auth = _VertexAIAuth(
             self.service_account_file,
@@ -131,7 +131,7 @@ class GoogleVertexProvider(Provider[httpx2.AsyncClient]):
         self._client.base_url = self.base_url
 
 
-class _VertexAIAuth(httpx2.Auth):
+class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
     credentials: BaseCredentials | ServiceAccountCredentials | None
@@ -157,14 +157,14 @@ class _VertexAIAuth(httpx2.Auth):
 
         self.credentials = None
 
-    async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         if self.credentials is None:  # pragma: no branch
             self.credentials = await self._get_credentials()
         if self.credentials.token is None:  # type: ignore[reportUnknownMemberType]
             await self._refresh_token()
         request.headers['Authorization'] = f'Bearer {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
         # NOTE: This workaround is in place because we might get the project_id from the credentials.
-        request.url = httpx2.URL(str(request.url).replace('projects/None', f'projects/{self.project_id}'))
+        request.url = httpx.URL(str(request.url).replace('projects/None', f'projects/{self.project_id}'))
         response = yield request
 
         if response.status_code == 401:

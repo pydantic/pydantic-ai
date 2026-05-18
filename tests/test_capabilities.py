@@ -4776,7 +4776,7 @@ class TestWebFetchCapability:
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
-        import httpx2
+        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -4795,11 +4795,11 @@ class TestWebFetchCapability:
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
             headers={'content-type': 'text/html'},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
@@ -4844,7 +4844,7 @@ class TestWebFetchCapability:
         """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
         from unittest.mock import AsyncMock, patch
 
-        import httpx2
+        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -4863,11 +4863,11 @@ class TestWebFetchCapability:
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text='<html><body><p>Hello</p></body></html>',
             headers={'content-type': 'text/html'},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))

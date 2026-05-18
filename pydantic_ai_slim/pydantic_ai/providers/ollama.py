@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -78,7 +78,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Ollama provider.
 
@@ -90,7 +90,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
@@ -110,12 +110,12 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             api_key = api_key or os.getenv('OLLAMA_API_KEY') or 'api-key-not-set'
 
             if http_client is not None:
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
             else:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

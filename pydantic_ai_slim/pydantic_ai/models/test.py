@@ -8,7 +8,7 @@ from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal, cast
 
-import httpx2
+import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -339,7 +339,7 @@ class TestStreamedResponse(StreamedResponse):
                     # Simulate the transport error that real providers raise
                     # when the HTTP connection is closed mid-stream by cancel().
                     if self._cancelled:
-                        raise httpx2.StreamClosed()
+                        raise httpx.StreamClosed()
                     self._usage += _get_string_usage(word)
                     for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                         yield event

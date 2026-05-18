@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import logfire
-from httpx2 import AsyncClient
+from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
@@ -94,7 +94,7 @@ async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str
 
 async def main():
     async with AsyncClient() as client:
-        logfire.instrument_httpx(client, capture_all=True)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        logfire.instrument_httpx(client, capture_all=True)
         deps = Deps(client=client)
         result = await weather_agent.run(
             'What is the weather like in London and in Wiltshire?', deps=deps

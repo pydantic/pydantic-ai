@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Literal
 
-import httpx2
+import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
@@ -2370,8 +2370,8 @@ async def test_to_ag_ui() -> None:
     deps = StateDeps(StateInt(value=0))
     app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
     async with LifespanManager(app):
-        transport = httpx2.ASGITransport(app)
-        async with httpx2.AsyncClient(transport=transport) as client:
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as client:
             client.base_url = 'http://localhost:8000'
             run_input = create_input(
                 UserMessage(

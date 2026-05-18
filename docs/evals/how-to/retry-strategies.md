@@ -344,7 +344,7 @@ report = dataset.evaluate_sync(
 ### Network Timeout Handling
 
 ```python
-import httpx2
+import httpx
 from tenacity import stop_after_attempt, wait_exponential
 
 from pydantic_evals import Case, Dataset
@@ -352,7 +352,7 @@ from pydantic_evals import Case, Dataset
 
 async def api_task(inputs: str) -> str:
     """Task that calls external API which might timeout."""
-    async with httpx2.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post('https://api.example.com', json={'input': inputs})
         return response.text
 

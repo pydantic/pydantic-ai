@@ -243,10 +243,10 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `GoogleProvider` with a custom `httpx2.AsyncClient`:
+You can customize the `GoogleProvider` with a custom `httpx.AsyncClient`:
 
 ```python
-from httpx2 import AsyncClient
+from httpx import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel

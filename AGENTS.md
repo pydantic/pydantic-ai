@@ -96,7 +96,7 @@ The project uses:
     - `mkdocstrings-python` to generate API docs from docstrings and types
     - `mkdocs-material` to theme the docs
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
-- [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx2`
+- [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
 # Coding Guidelines

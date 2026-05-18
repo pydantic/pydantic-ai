@@ -369,7 +369,7 @@ jobs:
             --var GIT_BRANCH:main
 
       - name: Set preview URL
-        run: uv run --no-project --with httpx2 .github/set_docs_main_preview_url.py
+        run: uv run --no-project --with httpx .github/set_docs_main_preview_url.py
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

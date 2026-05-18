@@ -1,4 +1,4 @@
-import httpx2
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -137,7 +137,7 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
 async def test_create_http_client_usage(mocker: MockerFixture):
     # Create a real AsyncClient for the mock
-    async with httpx2.AsyncClient() as mock_client:
+    async with httpx.AsyncClient() as mock_client:
         mock_create_func = mocker.patch(
             'pydantic_ai.providers.litellm.create_async_http_client', return_value=mock_client
         )
@@ -151,7 +151,7 @@ async def test_create_http_client_usage(mocker: MockerFixture):
 
 
 async def test_init_with_http_client_overrides_cached():
-    async with httpx2.AsyncClient() as custom_client:
+    async with httpx.AsyncClient() as custom_client:
         provider = LiteLLMProvider(api_key='test-key', http_client=custom_client)
 
         # Verify the provider was created successfully with custom client

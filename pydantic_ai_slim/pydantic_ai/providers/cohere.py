@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -48,7 +48,7 @@ class CohereProvider(Provider[AsyncClientV2]):
         *,
         api_key: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Cohere provider.
 
@@ -58,7 +58,7 @@ class CohereProvider(Provider[AsyncClientV2]):
             cohere_client: An existing
                 [AsyncClientV2](https://github.com/cohere-ai/cohere-python)
                 client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
@@ -75,16 +75,16 @@ class CohereProvider(Provider[AsyncClientV2]):
 
             base_url = os.getenv('CO_BASE_URL')
             if http_client is not None:
-                self._client = AsyncClientV2(api_key=api_key, httpx2_client=http_client, base_url=base_url)  # pyright: ignore[reportCallIssue]
-                self._v1_client = AsyncClient(api_key=api_key, httpx2_client=http_client, base_url=base_url)  # pyright: ignore[reportCallIssue]
+                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)  # pyright: ignore[reportArgumentType]
-                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)  # pyright: ignore[reportArgumentType]
+                self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
         if self._v1_client is not None:  # pragma: no branch
-            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]

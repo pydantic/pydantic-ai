@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from unittest.mock import MagicMock, Mock, patch
 
-import httpx2
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -47,7 +47,7 @@ def test_huggingface_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_huggingface_provider_pass_http_client() -> None:
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     with pytest.raises(
         ValueError,
         match=re.escape('`http_client` is ignored for HuggingFace provider, please use `hf_client` instead'),

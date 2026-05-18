@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
-import httpx2
+import httpx
 import pytest
 from pydantic import BaseModel, Field
 
@@ -179,7 +179,7 @@ class _BrokenClosableStream:
         return self
 
     async def __anext__(self) -> BetaRawMessageStreamEvent:
-        raise httpx2.ReadError('stream closed')
+        raise httpx.ReadError('stream closed')
 
     async def close(self) -> None:
         self.closed = True
@@ -221,7 +221,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _provider_url='https://api.anthropic.com',
     )
 
-    with pytest.raises(httpx2.ReadError):
+    with pytest.raises(httpx.ReadError):
         async for _event in response:
             pass
 
@@ -2673,7 +2673,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIStatusError(
             'test error',
-            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),  # pyright: ignore[reportArgumentType]
+            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -2690,7 +2690,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
             message='Connection to https://api.anthropic.com timed out',
-            request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'),  # pyright: ignore[reportArgumentType]
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
         )
     )
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -2705,7 +2705,7 @@ async def test_count_tokens_connection_error(allow_model_requests: None) -> None
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
             message='Connection to https://api.anthropic.com timed out',
-            request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'),  # pyright: ignore[reportArgumentType]
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
         )
     )
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -10678,15 +10678,15 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     API rejects the object form with `container: Input should be a valid string`.
     This test records a two-turn conversation using the code execution tool and
     asserts that the second request sends `container` on the wire as the raw id —
-    using an httpx2 event hook so the assertion runs against what the client
+    using an httpx event hook so the assertion runs against what the client
     actually sent, not what the VCR cassette happens to hold.
     """
     sent_bodies: list[dict[str, Any]] = []
 
-    async def capture_request(request: httpx2.Request) -> None:
+    async def capture_request(request: httpx.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    http_client = httpx2.AsyncClient(event_hooks={'request': [capture_request]})
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
     m = AnthropicModel(
         'claude-sonnet-4-5',
         provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),

@@ -36,8 +36,8 @@ result = agent.run_sync('Who let the dogs out?')
 
 If you're running into issues with setting the API key for your model, visit the [Models](models/overview.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
 
-## Monitoring HTTPX2 Requests
+## Monitoring HTTPX Requests
 
-You can use custom `httpx2` clients in your models in order to access specific requests, responses, and headers at runtime.
+You can use custom `httpx` clients in your models in order to access specific requests, responses, and headers at runtime.
 
-It's particularly helpful to use `logfire`'s [HTTPX2 integration](logfire.md#monitoring-http-requests) to monitor the above.
+It's particularly helpful to use `logfire`'s [HTTPX integration](logfire.md#monitoring-http-requests) to monitor the above.

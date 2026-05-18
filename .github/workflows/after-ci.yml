@@ -90,7 +90,7 @@ jobs:
             --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
 
       - name: Set preview URL
-        run: uv run --no-project --with httpx2 .github/set_docs_pr_preview_url.py
+        run: uv run --no-project --with httpx .github/set_docs_pr_preview_url.py
         if: steps.deploy.outcome == 'success'
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}

@@ -16,7 +16,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
-import httpx2
+import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
@@ -279,12 +279,12 @@ def allow_model_requests():
 
 @pytest.fixture
 async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
-    client: httpx2.AsyncClient | None = None
+    client: httpx.AsyncClient | None = None
 
-    def create_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
         nonlocal client
         assert client is None, 'client_with_handler can only be called once'
-        client = httpx2.AsyncClient(mounts={'all://': httpx2.MockTransport(handler)})
+        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
         return client
 
     try:
@@ -294,7 +294,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
             await client.aclose()
 
 
-ClientWithHandler: TypeAlias = Callable[[Callable[[httpx2.Request], httpx2.Response]], httpx2.AsyncClient]
+ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]
 
 
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
@@ -478,23 +478,23 @@ def vcr_config():
     }
 
 
-_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx2.AsyncClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
 
 
 @pytest.fixture(autouse=True)
-def track_httpx2_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
+def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
 
     Within a single test, calls with the same (timeout, connect) args reuse the same
-    httpx2.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
-    companion `close_httpx2_clients` fixture handles async cleanup first.
+    companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
     original = pydantic_ai.models.create_async_http_client
 
-    def cached_per_test(**kwargs: Any) -> httpx2.AsyncClient:
+    def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
         key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
         if key not in cache or cache[key].is_closed:
             cache[key] = original(**kwargs)
@@ -517,10 +517,10 @@ def track_httpx2_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClien
 
 
 @pytest.fixture(autouse=True)
-async def close_httpx2_clients(anyio_backend: str, track_httpx2_clients: _HttpClientCache) -> AsyncIterator[None]:
+async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClientCache) -> AsyncIterator[None]:
     """Close tracked HTTP clients after async tests."""
     yield
-    for client in track_httpx2_clients.values():
+    for client in track_httpx_clients.values():
         if not client.is_closed:
             await client.aclose()
 
@@ -553,7 +553,7 @@ def patch_google_genai_gc_crash():
     """Work around google-genai BaseApiClient GC crash.
 
     BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
-    object was only partially initialized (_async_httpx2_client never set).
+    object was only partially initialized (_async_httpx_client never set).
     Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
     """
     try:
@@ -565,7 +565,7 @@ def patch_google_genai_gc_crash():
     original_aclose = BaseApiClient.aclose
 
     async def safe_aclose(self: BaseApiClient) -> None:
-        if hasattr(self, '_async_httpx2_client'):
+        if hasattr(self, '_async_httpx_client'):
             await original_aclose(self)
         else:  # pragma: lax no cover
             # In some test runs, the `if` above will always run, so we get an `if -> exit` branch coverage miss.
@@ -819,7 +819,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
         token = 'my-token'
         quota_project_id = 'pydantic-ai'
 
-        def refresh(self, request: httpx2.Request): ...
+        def refresh(self, request: httpx.Request): ...
 
         def expired(self) -> bool:
             return False

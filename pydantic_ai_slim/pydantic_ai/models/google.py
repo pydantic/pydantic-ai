@@ -880,7 +880,7 @@ class GoogleModel(Model[Client]):
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx2.Timeout')
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
         config = GenerateContentConfigDict(
             http_options=http_options,

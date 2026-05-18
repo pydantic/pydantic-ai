@@ -16,9 +16,9 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import uuid4
 
-import httpx2
+import httpx
 import pydantic
-from httpx2 import USE_CLIENT_DEFAULT, Response as HTTPResponse
+from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -103,7 +103,7 @@ class GeminiModelSettings(ModelSettings, total=False):
 
 @deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
-class GeminiModel(Model[httpx2.AsyncClient]):
+class GeminiModel(Model[httpx.AsyncClient]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -113,14 +113,14 @@ class GeminiModel(Model[httpx2.AsyncClient]):
     """
 
     _model_name: GeminiModelName = field(repr=False)
-    _provider: Provider[httpx2.AsyncClient] = field(repr=False)
+    _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
 
     def __init__(
         self,
         model_name: GeminiModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[httpx2.AsyncClient] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -129,7 +129,7 @@ class GeminiModel(Model[httpx2.AsyncClient]):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[httpx2.AsyncClient]`.
+                'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
@@ -150,7 +150,7 @@ class GeminiModel(Model[httpx2.AsyncClient]):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
-    def client(self) -> httpx2.AsyncClient:
+    def client(self) -> httpx.AsyncClient:
         return self._provider.client
 
     @property

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx2
+import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -77,7 +77,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx2.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -87,7 +87,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new GitHub Models provider.
 
@@ -95,7 +95,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
             api_key: The GitHub token to use for authentication. If not provided, the `GITHUB_API_KEY`
                 environment variable will be used if available.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         api_key = api_key or os.getenv('GITHUB_API_KEY')
         if not api_key and openai_client is None:
@@ -107,12 +107,12 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)  # pyright: ignore[reportArgumentType]
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx2.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

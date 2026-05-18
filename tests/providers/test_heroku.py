@@ -1,6 +1,6 @@
 import re
 
-import httpx2
+import httpx
 import pytest
 
 from pydantic_ai.agent import Agent
@@ -44,7 +44,7 @@ def test_heroku_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_heroku_provider_pass_http_client() -> None:
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = HerokuProvider(http_client=http_client, api_key='api-key')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

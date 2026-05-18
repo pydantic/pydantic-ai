@@ -8,7 +8,7 @@ image = modal.Image.debian_slim(python_version='3.13').pip_install(
     'pydantic_ai_slim[openai,duckduckgo]',
     'logfire[httpx,fastapi]',
     'fastapi[standard]',
-    'httpx2',
+    'httpx',
 )
 app = modal.App(
     name='slack-lead-qualifier',

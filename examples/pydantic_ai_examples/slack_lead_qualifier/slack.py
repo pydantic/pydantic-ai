@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-import httpx2
+import httpx
 import logfire
 
 ### [send_slack_message]
@@ -11,7 +11,7 @@ assert API_KEY, 'SLACK_API_KEY is not set'
 
 @logfire.instrument('Send Slack message')
 async def send_slack_message(channel: str, blocks: list[dict[str, Any]]):
-    client = httpx2.AsyncClient()
+    client = httpx.AsyncClient()
     response = await client.post(
         'https://slack.com/api/chat.postMessage',
         json={

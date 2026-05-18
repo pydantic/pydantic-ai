@@ -3,7 +3,7 @@ import os
 import re
 import typing
 
-import httpx2
+import httpx
 
 DEPLOY_OUTPUT = os.environ['DEPLOY_OUTPUT']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
@@ -41,7 +41,7 @@ deployment_data: dict[str, typing.Any] = {
         'version_id': version_id,
     })
 }
-r = httpx2.post(deployment_url, headers=gh_headers, json=deployment_data)
+r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
 print(f'POST {deployment_url} {r.status_code} {r.text}', flush=True)
 r.raise_for_status()
 deployment_id = r.json()['id']
@@ -52,6 +52,6 @@ status_data = {
     'environment_url': preview_url,
     'state': 'success',
 }
-r = httpx2.post(status_url, headers=gh_headers, json=status_data)
+r = httpx.post(status_url, headers=gh_headers, json=status_data)
 print(f'POST {status_url} {r.status_code} {r.text}', flush=True)
 r.raise_for_status()

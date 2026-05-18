@@ -1,6 +1,6 @@
 import re
 
-import httpx2
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -57,7 +57,7 @@ def test_nebius_pass_openai_client() -> None:
 
 
 def test_nebius_provider_pass_http_client() -> None:
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = NebiusProvider(http_client=http_client, api_key='api-key')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

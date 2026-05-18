@@ -67,9 +67,9 @@ def test_azure_provider_with_azure_openai_client():
 
 
 def test_azure_provider_with_http_client():
-    import httpx2
+    import httpx
 
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',
         api_key='1234567890',

@@ -1,6 +1,6 @@
 import re
 
-import httpx2
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -44,7 +44,7 @@ def test_github_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_github_provider_pass_http_client() -> None:
-    http_client = httpx2.AsyncClient()
+    http_client = httpx.AsyncClient()
     provider = GitHubProvider(http_client=http_client, api_key='ghp_test_token')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal
 
-import httpx2
+import httpx
 
 try:
     from google.auth.credentials import Credentials
@@ -32,7 +32,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global'] | str | None = None,
         client: Client | None = None,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
     ) -> None:
         """Create a new Google Cloud provider.
@@ -49,7 +49,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
             location: The location to send API requests to (for example, `us-central1`). Can be obtained from
                 the `GOOGLE_CLOUD_LOCATION` environment variable.
             client: A pre-initialized client to use.
-            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.
         """
         if client is not None:

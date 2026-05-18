@@ -406,7 +406,7 @@ agent = Agent(model)
 You can also customize any provider with a custom `http_client`:
 
 ```python
-from httpx2 import AsyncClient
+from httpx import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel

@@ -15,7 +15,7 @@ Here's an example of defining an agent that requires dependencies.
 ```python {title="unused_dependencies.py"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent
 
@@ -23,7 +23,7 @@ from pydantic_ai import Agent
 @dataclass
 class MyDeps:  # (1)!
     api_key: str
-    http_client: httpx2.AsyncClient
+    http_client: httpx.AsyncClient
 
 
 agent = Agent(
@@ -33,7 +33,7 @@ agent = Agent(
 
 
 async def main():
-    async with httpx2.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run(
             'Tell me a joke.',
@@ -56,7 +56,7 @@ Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContex
 ```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent, RunContext
 
@@ -64,7 +64,7 @@ from pydantic_ai import Agent, RunContext
 @dataclass
 class MyDeps:
     api_key: str
-    http_client: httpx2.AsyncClient
+    http_client: httpx.AsyncClient
 
 
 agent = Agent(
@@ -84,7 +84,7 @@ async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
 
 
 async def main():
-    async with httpx2.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.output)
@@ -118,7 +118,7 @@ Here's the same example as above, but with a synchronous dependency:
 ```python {title="sync_dependencies.py"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent, RunContext
 
@@ -126,7 +126,7 @@ from pydantic_ai import Agent, RunContext
 @dataclass
 class MyDeps:
     api_key: str
-    http_client: httpx2.Client  # (1)!
+    http_client: httpx.Client  # (1)!
 
 
 agent = Agent(
@@ -145,7 +145,7 @@ def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
 
 
 async def main():
-    deps = MyDeps('foobar', httpx2.Client())
+    deps = MyDeps('foobar', httpx.Client())
     result = await agent.run(
         'Tell me a joke.',
         deps=deps,
@@ -154,7 +154,7 @@ async def main():
     #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. Here we use a synchronous `httpx2.Client` instead of an asynchronous `httpx2.AsyncClient`.
+1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
 2. To match the synchronous dependency, the system prompt function is now a plain function, not a coroutine.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -166,7 +166,7 @@ As well as system prompts, dependencies can be used in [tools](tools.md) and [ou
 ```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
@@ -174,7 +174,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 @dataclass
 class MyDeps:
     api_key: str
-    http_client: httpx2.AsyncClient
+    http_client: httpx.AsyncClient
 
 
 agent = Agent(
@@ -215,7 +215,7 @@ async def validate_output(ctx: RunContext[MyDeps], output: str) -> str:
 
 
 async def main():
-    async with httpx2.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
         print(result.output)
@@ -239,7 +239,7 @@ This is done via the [`override`][pydantic_ai.agent.Agent.override] method on th
 ```python {title="joke_app.py"}
 from dataclasses import dataclass
 
-import httpx2
+import httpx
 
 from pydantic_ai import Agent, RunContext
 
@@ -247,7 +247,7 @@ from pydantic_ai import Agent, RunContext
 @dataclass
 class MyDeps:
     api_key: str
-    http_client: httpx2.AsyncClient
+    http_client: httpx.AsyncClient
 
     async def system_prompt_factory(self) -> str:  # (1)!
         response = await self.http_client.get('https://example.com')
@@ -267,7 +267,7 @@ async def application_code(prompt: str) -> str:  # (3)!
     ...
     ...
     # now deep within application code we call our agent
-    async with httpx2.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
         app_deps = MyDeps('foobar', client)
         result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
     return result.output
