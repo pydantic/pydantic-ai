@@ -6,6 +6,44 @@ In September 2025, Pydantic AI reached V1, which means we're committed to API st
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0.0 (unreleased)
+
+#### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
+
+See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
+
+[`ModelProfile`][pydantic_ai.profiles.ModelProfile] and all its subclasses ([`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], [`AnthropicModelProfile`][pydantic_ai.profiles.anthropic.AnthropicModelProfile], [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile], `BedrockModelProfile`, etc.) are now `TypedDict(total=False)` instead of `@dataclass`. This unifies the mental model with [`ModelSettings`][pydantic_ai.settings.ModelSettings] (also a `TypedDict`) and enables direct dict-spread for cross-class merging.
+
+`ModelProfile.update()` and `ModelProfile.from_profile()` are removed; use the module-level [`merge_profile`][pydantic_ai.profiles.merge_profile] (later argument wins per key).
+
+Migration recipes:
+
+| v1 (dataclass) | v2 (TypedDict) |
+|---|---|
+| `OpenAIModelProfile(field=value)` | Same syntax; returns a partial `dict` instead of a fully-defaulted instance. |
+| `profile.field` (attribute read) | `profile.get('field', <default>)` — non-trivial defaults are exported from [`pydantic_ai.profiles`][pydantic_ai.profiles] (e.g. [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS], [`DEFAULT_PROMPTED_OUTPUT_TEMPLATE`][pydantic_ai.profiles.DEFAULT_PROMPTED_OUTPUT_TEMPLATE]); the fully-merged base is [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE]. |
+| `profile.field = value` (attribute write) | `profile['field'] = value` |
+| `dataclasses.replace(profile, field=value)` | `{**profile, 'field': value}` or `merge_profile(profile, ModelProfile(field=value))` |
+| `profile.update(other)` | `merge_profile(profile, other)` |
+| `OpenAIModelProfile.from_profile(p)` | Just `p` — no upcasting needed |
+| `Model(name, profile=full_profile)` (full replace) | Now merges on top of the provider's default profile — usually what you want. For a hard replace use `Model(name, profile=lambda _default: full_profile)`. |
+| `Model(name, profile=fn)` where `fn: Callable[[str], ModelProfile \| None]` | Removed — the user-passed callable is now `Callable[[ModelProfile], ModelProfile]`, receiving the resolved default and returning the final profile. The `(model_name: str) -> ModelProfile \| None` shape is still accepted internally by `Provider.model_profile`. |
+| `isinstance(profile, OpenAIModelProfile)` | Not supported by `TypedDict` at runtime — raises `TypeError`. Use `isinstance(profile, dict)` or check key presence (`'openai_chat_supports_web_search' in profile`). Pyright still narrows correctly via the TypedDict subclass annotation. |
+
+`Model.profile` is now the single source of truth for the **resolved** profile. It is composed by [`merge_profile`][pydantic_ai.profiles.merge_profile] in this order (later wins):
+
+1. [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] — base defaults for every documented key.
+2. `Provider.model_profile(model_name)` — provider/model-specific resolution.
+3. The user's `profile=` argument — either a partial dict (merged on top) or a `Callable[[ModelProfile], ModelProfile]` (full control: receives the resolved default, returns the final profile).
+
+#### Resolved profiles now carry cross-class fields
+
+In v1, `ModelProfile.update()` silently filtered out fields not declared on the target class. In v2, dict-spread preserves every key.
+
+This means e.g. a Bedrock-hosted Anthropic model's resolved profile now carries the upstream `anthropic_*` fields alongside the `bedrock_*` fields, where v1 dropped them. No in-tree model class reads cross-class fields, so behavior is unchanged in the standard providers; but custom model classes that do `profile.get('anthropic_supports_adaptive_thinking', False)` on a non-Anthropic route will now see the value the upstream Anthropic profile set, where v1 always returned the default.
+
+See [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full ModelProfile redesign.
+
 ### v1.0.1 (2025-09-05)
 
 The following breaking change was accidentally left out of v1.0.0:

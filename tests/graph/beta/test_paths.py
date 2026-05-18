@@ -1,4 +1,4 @@
-"""Tests for pydantic_graph.beta.paths module."""
+"""Tests for pydantic_graph.paths module."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.id_types import ForkID, NodeID
-from pydantic_graph.beta.paths import (
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.id_types import ForkID, NodeID
+from pydantic_graph.paths import (
     BroadcastMarker,
     DestinationMarker,
     LabelMarker,
