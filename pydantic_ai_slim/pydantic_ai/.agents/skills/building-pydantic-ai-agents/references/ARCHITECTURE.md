@@ -142,8 +142,8 @@ Need deterministic, fast tests?
 |----------|--------|---------|
 | OpenAI | `openai:` | `openai:gpt-5.2` |
 | Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-6` |
-| Google (AI Studio) | `google-gla:` | `google-gla:gemini-3-pro-preview` |
-| Google (Vertex) | `google-vertex:` | `google-vertex:gemini-3-pro-preview` |
+| Google (Gemini API) | `google:` | `google:gemini-3-pro-preview` |
+| Google Cloud | `google-cloud:` | `google-cloud:gemini-3-pro-preview` |
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
@@ -160,7 +160,7 @@ Need deterministic, fast tests?
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `outlines:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
 
 ### Tool Decorator Comparison
 
@@ -220,7 +220,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
 
-**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google-gla:gemini-3-pro-preview"`)
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 
 **Output modes:**
 

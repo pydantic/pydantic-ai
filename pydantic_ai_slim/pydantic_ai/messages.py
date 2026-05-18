@@ -4,7 +4,6 @@ import base64
 import hashlib
 import mimetypes
 import os
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -26,7 +25,6 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -120,8 +118,18 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
-"""Lifecycle state of a model response."""
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+"""Lifecycle state of a model response.
+
+- `'complete'`: the response has been fully received from the model.
+- `'incomplete'`: the response is still being streamed and may receive more parts.
+  Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
+  while iteration is in flight.
+- `'interrupted'`: streaming was explicitly stopped via
+  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  finished generating.
+"""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -701,8 +709,22 @@ class CachePoint:
     """
 
 
-UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
-"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+UploadedFileProviderName: TypeAlias = Literal[
+    'anthropic',
+    'openai',
+    'google',
+    'google-cloud',
+    'google-gla',
+    'google-vertex',
+    'bedrock',
+    'xai',
+]
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile].
+
+The `'google-gla'` and `'google-vertex'` values are retained for backward compatibility with
+message history captured before the v2 provider rename — current code emits `'google'` and
+`'google-cloud'` respectively.
+"""
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -718,7 +740,7 @@ class UploadedFile:
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -726,8 +748,8 @@ class UploadedFile:
     """The provider-specific file identifier.
 
     For most providers, this is the file ID returned by the provider's upload API.
-    For GoogleModel (Vertex), this must be a GCS URI (`gs://bucket/path`).
-    For GoogleModel (GLA), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
+    For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -2115,7 +2137,7 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response."""
+    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
     @property
     def text(self) -> str | None:
@@ -2171,16 +2193,6 @@ class ModelResponse:
             for call_part in calls
             if call_part.tool_call_id in returns_by_id
         ]
-
-    @property
-    def builtin_tool_calls(self) -> list[tuple[NativeToolCallPart, NativeToolReturnPart]]:
-        """Deprecated: use [`native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls] instead."""
-        warnings.warn(
-            '`ModelResponse.builtin_tool_calls` is deprecated, use `ModelResponse.native_tool_calls` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.native_tool_calls
 
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
@@ -2831,42 +2843,17 @@ class ToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False, init=False)
+@dataclass(repr=False)
 class FunctionToolResultEvent(ToolResultEvent):
     """An event indicating the result of a function tool call."""
+
+    _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
 
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
-
-    def __init__(
-        self,
-        part: ToolReturnPart | RetryPromptPart | None = None,
-        *,
-        content: str | Sequence[UserContent] | None = None,
-        result: ToolReturnPart | RetryPromptPart | None = None,
-    ) -> None:
-        if result is not None:
-            if part is not None:
-                raise TypeError('FunctionToolResultEvent: pass either `part` or `result` (deprecated alias), not both')
-            warnings.warn(
-                'Passing `result=...` to `FunctionToolResultEvent` is deprecated, use `part=...` instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            part = result
-        if part is None:
-            raise TypeError("FunctionToolResultEvent.__init__() missing required argument: 'part'")
-        self.part = part
-        self.content = content
-
-    @property
-    @deprecated('`result` is deprecated, use `part` instead.')
-    def result(self) -> ToolReturnPart | RetryPromptPart:
-        """The tool result part that will be sent back to the model."""
-        return self.part
 
 
 @dataclass(repr=False)
@@ -2922,21 +2909,3 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
-
-
-_RENAMED_PART_CLASSES: dict[str, str] = {
-    'BuiltinToolCallPart': 'NativeToolCallPart',
-    'BuiltinToolReturnPart': 'NativeToolReturnPart',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_PART_CLASSES:
-        new_name = _RENAMED_PART_CLASSES[name]
-        warnings.warn(
-            f'`pydantic_ai.messages.{name}` is deprecated, use `pydantic_ai.messages.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

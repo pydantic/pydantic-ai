@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -51,6 +52,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -64,8 +66,8 @@ from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.join import reduce_list_append
 
 from ._inline_snapshot import snapshot
 
@@ -92,6 +94,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
+    from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
@@ -117,12 +120,14 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP, MCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('fastmcp not installed', allow_module_level=True)
 
@@ -309,19 +314,27 @@ class Response:
     answers: list[Answer]
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    event_stream_handler=event_stream_handler,
-    name='complex_agent',
-)
+# The legacy `event_stream_handler=` kwarg path is still how `TemporalAgent` discovers the
+# handler in 1.x (it reads `agent.event_stream_handler`, which is only populated by the kwarg).
+# A capability-based wiring is a v2 follow-up; for now we suppress the deprecation locally.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
+    )
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        event_stream_handler=event_stream_handler,
+        name='complex_agent',
+    )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(
@@ -1351,12 +1364,14 @@ mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
 
 
 @mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
-def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:  # pyright: ignore[reportDeprecated]
     """Dynamic toolset that returns an MCP toolset.
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
     """
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', r'`MCPServerStreamableHTTP` is deprecated', DeprecationWarning)
+        return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')  # pyright: ignore[reportDeprecated]
 
 
 mcp_dynamic_toolset_temporal_agent = TemporalAgent(
@@ -1392,6 +1407,52 @@ async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         # The deepwiki MCP server should return info about the pydantic-ai repo
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+# Parallel to `mcp_dynamic_toolset_agent` above, but using `MCPToolset` instead of
+# `MCPServerStreamableHTTP`. Exercises `TemporalMCPToolset` inside a `DynamicToolset`.
+mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
+
+
+@mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
+def my_mcptoolset_dynamic_toolset(ctx: RunContext[None]) -> MCPToolset[None]:
+    """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
+    return MCPToolset('https://mcp.deepwiki.com/mcp')
+
+
+mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcptoolset_dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPToolsetDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """`@agent.toolset` returning an `MCPToolset` works in a Temporal workflow.
+
+    Parallel to `test_mcp_dynamic_toolset_in_workflow`; verifies the `MCPToolset`/`TemporalMCPToolset`
+    pair handles `DynamicToolset` lifecycle the same way the legacy `MCPServerStreamableHTTP` does.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_mcptoolset_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
@@ -2552,11 +2613,13 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
-    FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    mcp_instructions_agent = Agent(
+        FunctionModel(return_mcp_instructions),
+        name='mcp_instructions_agent',
+        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
+    )
 
 mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
@@ -2584,6 +2647,63 @@ async def test_temporal_mcp_toolset_instructions_propagate(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('Be a helpful assistant.')
+
+
+# Parallel to `mcp_instructions_agent` above, but using `MCPToolset` instead of the legacy
+# `MCPServerStdio`. Exercises the `TemporalMCPToolset` wrapper's `get_instructions` activity path.
+mcptoolset_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
+        )
+    ],
+)
+
+mcptoolset_instructions_temporal_agent = TemporalAgent(
+    mcptoolset_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class MCPToolsetInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_mcptoolset_instructions_propagate(client: Client):
+    """`MCPToolset` instructions propagate through the `TemporalMCPToolset` wrapper.
+
+    Parallel to `test_temporal_mcp_toolset_instructions_propagate` above; exercises the
+    `MCPToolset`/`TemporalMCPToolset` path instead of the legacy `MCPServerStdio`/`TemporalMCPServer`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetInstructionsWorkflow],
+        plugins=[AgentPlugin(mcptoolset_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetInstructionsWorkflow.run,
+            args=['Use MCP instructions'],
+            id=MCPToolsetInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('Be a helpful assistant.')
+
+
+def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
+    """`temporalize_toolset` wraps `MCPToolset` in `TemporalMCPToolset`."""
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
+    assert wrapped.wrapped is toolset
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
@@ -2843,11 +2963,13 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
+    fastmcp_agent = Agent(
+        model,
+        name='fastmcp_agent',
+        toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
+    )
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2975,6 +3097,46 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
         assert output == snapshot(
             'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
         )
+
+
+# Parallel to `fastmcp_agent` / `test_fastmcp_toolset` above, but using the new `MCPToolset`
+# instead of the legacy `FastMCPToolset`. Both are fastmcp-Client-backed, so the wrapper paths
+# (`TemporalFastMCPToolset` vs `TemporalMCPToolset`) should behave the same way.
+mcptoolset_agent = Agent(
+    model,
+    name='mcptoolset_agent',
+    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+mcptoolset_temporal_agent = TemporalAgent(
+    mcptoolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, client: Client):
+    """`MCPToolset` works in a Temporal workflow — parallel to `test_fastmcp_toolset`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetAgentWorkflow.run,
+            args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
+            id=MCPToolsetAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 # ============================================================================

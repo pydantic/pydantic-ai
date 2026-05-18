@@ -343,7 +343,6 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
         type='image_generation',
         action=tool.action,
         background=tool.background,
-        input_fidelity=tool.input_fidelity,
         moderation=tool.moderation,
         output_compression=output_compression,
         output_format=tool.output_format or 'png',
@@ -353,6 +352,8 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     )
     if tool.model is not None:
         image_generation_tool['model'] = tool.model
+    if tool.input_fidelity is not None:
+        image_generation_tool['input_fidelity'] = tool.input_fidelity
     return image_generation_tool
 
 
@@ -670,32 +671,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
     sets this automatically in its default (stateful) mode.
     """
-
-
-def _resolve_openai_native_tools_setting(
-    model_settings: OpenAIResponsesModelSettings,
-) -> Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]:
-    """Resolve `openai_native_tools` from settings, falling back to the deprecated `openai_builtin_tools` key.
-
-    The legacy `openai_builtin_tools` key was silently dropped after the rename, so this
-    helper preserves backward compatibility while emitting a deprecation warning.
-    """
-    if native := model_settings.get('openai_native_tools'):
-        return native
-    # `OpenAIResponsesModelSettings` is a `TypedDict`, but at runtime it's a plain dict —
-    # legacy callers may still pass `openai_builtin_tools` via `cast()` or a dict literal.
-    legacy = cast('dict[str, Any]', model_settings).get('openai_builtin_tools')
-    if legacy:
-        from .._warnings import PydanticAIDeprecationWarning
-
-        warnings.warn(
-            '`OpenAIResponsesModelSettings({"openai_builtin_tools": [...]})` is deprecated, '
-            'use `openai_native_tools` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=3,
-        )
-        return cast('Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]', legacy)
-    return ()
 
 
 def _resolve_openai_service_tier(
@@ -2128,7 +2103,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
-        extra_native_tools = _resolve_openai_native_tools_setting(model_settings)
+        extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
         )
@@ -2155,11 +2130,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
+            system_prompt_role = profile.openai_system_prompt_role or 'system'
             system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
             openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
+                system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
             )
             instructions = OMIT
 
@@ -2590,7 +2566,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
+                        openai_messages.append(
+                            responses.EasyInputMessageParam(
+                                role=profile.openai_system_prompt_role or 'system', content=part.content
+                            )
+                        )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):

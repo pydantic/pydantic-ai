@@ -19,7 +19,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -518,7 +518,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     validation_context=10,
 )
@@ -533,7 +533,7 @@ class Deps:
 
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -573,7 +573,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -738,7 +738,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')  # (1)!
+agent = Agent('google:gemini-3-flash-preview')  # (1)!
 
 
 async def main():
@@ -764,7 +764,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-flash-preview')
+agent = Agent('google:gemini-3-flash-preview')
 
 
 async def main():
@@ -855,11 +855,11 @@ agent = Agent('openai:gpt-5.2', output_type=UserProfile)
 async def main():
     user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
-        async for message, last in result.stream_responses(debounce_by=0.01):  # (1)!
+        async for message in result.stream_response(debounce_by=0.01):  # (1)!
             try:
                 profile = await result.validate_response_output(  # (2)!
                     message,
-                    allow_partial=not last,
+                    allow_partial=message.state == 'incomplete',
                 )
             except ValidationError:
                 continue
@@ -874,7 +874,7 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
-1. [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
+1. [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
 2. [`validate_response_output`][pydantic_ai.result.StreamedRunResult.validate_response_output] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -884,7 +884,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task.
 
 !!! note "Model support"
-    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
+    The deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] does not currently support stream cancellation.
     The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, which limits when [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] can interrupt an in-flight chunk read. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider docs for the recommended pattern.
 
 #### Cleaning up `run_stream_events`

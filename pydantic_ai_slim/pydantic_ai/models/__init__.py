@@ -16,10 +16,9 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
@@ -41,6 +40,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
@@ -182,16 +182,16 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash-image',
-        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-flash-preview',
-        'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-        'gateway/google-vertex:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-2.5-flash-image',
+        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-cloud:gemini-2.5-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash',
+        'gateway/google-cloud:gemini-2.5-pro',
+        'gateway/google-cloud:gemini-3-flash-preview',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+        'gateway/google-cloud:gemini-3.1-pro-preview',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -249,38 +249,38 @@ KnownModelName = TypeAliasType(
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
         'gateway/openai:o4-mini',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-flash-preview',
-        'google-gla:gemini-3-pro-image-preview',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3.1-flash-image-preview',
-        'google-gla:gemini-3.1-flash-lite-preview',
-        'google-gla:gemini-3.1-pro-preview',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-flash-preview',
-        'google-vertex:gemini-3-pro-image-preview',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3.1-flash-image-preview',
-        'google-vertex:gemini-3.1-flash-lite-preview',
-        'google-vertex:gemini-3.1-pro-preview',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-cloud:gemini-2.0-flash-lite',
+        'google-cloud:gemini-2.0-flash',
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'google-cloud:gemini-2.5-flash-lite',
+        'google-cloud:gemini-2.5-flash-preview-09-2025',
+        'google-cloud:gemini-2.5-flash',
+        'google-cloud:gemini-2.5-pro',
+        'google-cloud:gemini-3-flash-preview',
+        'google-cloud:gemini-3-pro-image-preview',
+        'google-cloud:gemini-3-pro-preview',
+        'google-cloud:gemini-3.1-flash-image-preview',
+        'google-cloud:gemini-3.1-flash-lite-preview',
+        'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-flash-latest',
+        'google-cloud:gemini-flash-lite-latest',
+        'google:gemini-2.0-flash-lite',
+        'google:gemini-2.0-flash',
+        'google:gemini-2.5-flash-image',
+        'google:gemini-2.5-flash-lite-preview-09-2025',
+        'google:gemini-2.5-flash-lite',
+        'google:gemini-2.5-flash-preview-09-2025',
+        'google:gemini-2.5-flash',
+        'google:gemini-2.5-pro',
+        'google:gemini-3-flash-preview',
+        'google:gemini-3-pro-image-preview',
+        'google:gemini-3-pro-preview',
+        'google:gemini-3.1-flash-image-preview',
+        'google:gemini-3.1-flash-lite-preview',
+        'google:gemini-3.1-pro-preview',
+        'google:gemini-flash-latest',
+        'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3-fast',
@@ -583,12 +583,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    native_tools: Annotated[
-        list[AbstractNativeTool],
-        # Accept the pre-rename `builtin_tools` key when validating from a dict (e.g. through
-        # `pydantic.TypeAdapter`). The dump uses the new name only.
-        pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
-    ] = field(default_factory=list[AbstractNativeTool])
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -620,16 +615,6 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
-    @property
-    def builtin_tools(self) -> list[AbstractNativeTool]:
-        """Deprecated: use [`native_tools`][pydantic_ai.models.ModelRequestParameters.native_tools] instead."""
-        warnings.warn(
-            '`ModelRequestParameters.builtin_tools` is deprecated, use `ModelRequestParameters.native_tools` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.native_tools
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -648,12 +633,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-# Wrap the dataclass-generated `__init__` so direct construction still accepts a
-# deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
-# `validation_alias` on the `native_tools` field above.)
-_utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
 @dataclass(kw_only=True)
@@ -1010,61 +989,6 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         return frozenset()
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """Deprecated: use [`supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] instead."""
-        warnings.warn(
-            '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.supported_native_tools()
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # If a subclass overrides only the deprecated `supported_builtin_tools` classmethod
-        # (and not the new `supported_native_tools`), wire the legacy override through so
-        # the framework still picks up the user's declared tools — with a warning.
-        own = cls.__dict__
-        if 'supported_builtin_tools' in own and 'supported_native_tools' not in own:
-            legacy: Any = own['supported_builtin_tools']
-            warnings.warn(
-                f'{cls.__name__} overrides `supported_builtin_tools()`, which is deprecated — '
-                'override `supported_native_tools()` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-
-            # Promote the legacy override to be this class's `supported_native_tools`, and
-            # replace its `supported_builtin_tools` with a stub that warns and delegates to
-            # the modern method. This way a further subclass overriding only the modern
-            # method still wins when callers reach for the legacy name (mixed-generation
-            # MRO case): `Sub.supported_builtin_tools()` → modern stub → `cls.supported_native_tools()`
-            # → modern override on `Sub`.
-            if isinstance(legacy, classmethod):
-                legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
-            else:
-                legacy_func = legacy
-
-            def _supported_native_tools_via_legacy(
-                _cls: type[Model[Any]],
-                _legacy_func: Any = legacy_func,
-            ) -> frozenset[type[AbstractNativeTool]]:
-                return _legacy_func(_cls)
-
-            def _supported_builtin_tools_delegating(
-                _cls: type[Model[Any]],
-            ) -> frozenset[type[AbstractNativeTool]]:
-                warnings.warn(
-                    '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-                return _cls.supported_native_tools()
-
-            setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
-            setattr(cls, 'supported_builtin_tools', classmethod(_supported_builtin_tools_delegating))
-
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
@@ -1160,6 +1084,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1246,6 +1171,14 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1305,6 +1238,12 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
@@ -1315,7 +1254,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
     # TODO (v2): Make this a property
@@ -1398,7 +1337,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'o1': 'openai',
     'o3': 'openai',
     'claude': 'anthropic',
-    'gemini': 'google-gla',
+    'gemini': 'google',
 }
 """Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
@@ -1495,10 +1434,10 @@ def infer_model(  # noqa: C901
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
+            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
+            PydanticAIDeprecationWarning,
         )
-        provider_name = 'google-vertex'
+        provider_name = 'google-cloud'
 
     provider = provider_factory(provider_name)
 
@@ -1538,7 +1477,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

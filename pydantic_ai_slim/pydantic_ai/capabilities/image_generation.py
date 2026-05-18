@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
@@ -41,7 +40,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     image-only API. Examples:
 
     * `'openai-responses:gpt-5.4'` — OpenAI model with image generation support
-    * `'google-gla:gemini-3-pro-image-preview'` — Google image generation model
+    * `'google:gemini-3-pro-image-preview'` — Google image generation model
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a `Model` instance.
@@ -82,13 +81,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     output_compression: int | None
     """Compression level for the output image.
 
-    Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Vertex AI (jpeg, default: 75).
+    Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Cloud (jpeg, default: 75).
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
     """Output format of the generated image.
 
-    Supported by: OpenAI Responses (default: `'png'`), Google Vertex AI.
+    Supported by: OpenAI Responses (default: `'png'`), Google Cloud.
     """
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None
@@ -198,6 +197,3 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
-
-
-install_deprecated_kwarg_alias(ImageGeneration, old='builtin', new='native')

@@ -294,7 +294,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -341,11 +340,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.run')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -485,7 +479,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -531,13 +524,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_sync'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -634,7 +620,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
@@ -690,13 +675,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
@@ -931,7 +909,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
@@ -989,13 +966,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream_sync'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1160,13 +1130,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Yields:
             An async iterator over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream_events'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
@@ -1679,6 +1642,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 lifespan=lifespan,
             )
 
+    @deprecated(
+        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
+        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — '
+        "install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) "
+        'and use `from fasta2a.pydantic_ai import agent_to_a2a` directly.',
+        category=PydanticAIDeprecationWarning,
+    )
     def to_a2a(
         self,
         *,
@@ -1700,12 +1670,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> FastA2A:
         """Convert the agent to a FastA2A application.
 
-        Example:
-        ```python
+        Deprecated in 1.x and removed in 2.0; use
+        [`agent_to_a2a`][fasta2a.pydantic_ai.agent_to_a2a] from
+        [`fasta2a`](https://github.com/datalayer/fasta2a) (v0.6.1+) instead:
+
+        ```python {test="skip" lint="skip"}
+        from fasta2a.pydantic_ai import agent_to_a2a
+
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
-        app = agent.to_a2a()
+        app = agent_to_a2a(agent)
         ```
 
         The `app` is an ASGI application that can be used with any ASGI server.

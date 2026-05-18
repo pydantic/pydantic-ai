@@ -42,7 +42,6 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
-          - models/outlines.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -98,12 +97,12 @@ nav:
 
   - Pydantic Graph:
       - Overview: graph.md
-      - Beta API:
-          - Getting Started: graph/beta/index.md
-          - Steps: graph/beta/steps.md
-          - Joins & Reducers: graph/beta/joins.md
-          - Decisions: graph/beta/decisions.md
-          - Parallel Execution: graph/beta/parallel.md
+      - Graph Builder:
+          - Getting Started: graph/builder/index.md
+          - Steps: graph/builder/steps.md
+          - Joins & Reducers: graph/builder/joins.md
+          - Decisions: graph/builder/decisions.md
+          - Parallel Execution: graph/builder/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -179,7 +178,6 @@ nav:
           - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
-          - api/models/outlines.md
           - api/models/test.md
           - api/models/wrapper.md
           - api/output.md
@@ -205,19 +203,13 @@ nav:
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
       - pydantic_graph:
-          - api/pydantic_graph/graph.md
-          - api/pydantic_graph/nodes.md
-          - api/pydantic_graph/persistence.md
-          - api/pydantic_graph/mermaid.md
+          - api/pydantic_graph/basenode.md
+          - api/pydantic_graph/graph_builder.md
+          - api/pydantic_graph/step.md
+          - api/pydantic_graph/join.md
+          - api/pydantic_graph/decision.md
+          - api/pydantic_graph/node.md
           - api/pydantic_graph/exceptions.md
-          - Beta API:
-              - api/pydantic_graph/beta.md
-              - api/pydantic_graph/beta_graph.md
-              - api/pydantic_graph/beta_graph_builder.md
-              - api/pydantic_graph/beta_step.md
-              - api/pydantic_graph/beta_join.md
-              - api/pydantic_graph/beta_decision.md
-              - api/pydantic_graph/beta_node.md
       - fasta2a:
           - api/fasta2a.md
 

@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1296,7 +1297,7 @@ def test_dynamic_tools_agent_wide():
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1324,7 +1325,7 @@ def test_sync_prepare_tools_agent_wide():
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1452,7 +1453,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), tool_retries=3, output_retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), tool_retries=3, output_retries=3, capabilities=[PrepareTools(prepare_tool_defs)])
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
@@ -4281,6 +4282,31 @@ def test_include_return_schema_on_toolset_tool():
     tools = list(toolset.tools.values())
     assert len(tools) == 1
     assert tools[0].include_return_schema is True
+
+
+def test_tool_definition_prefer_native_kwarg_deprecated():
+    """`ToolDefinition(prefer_native=...)` warns and remaps to the new `unless_native` field."""
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\(prefer_native=\.\.\.\)` is deprecated, use `unless_native=` instead\.',
+    ):
+        td = ToolDefinition(name='foo', prefer_native='web_search')  # pyright: ignore[reportCallIssue]
+    assert td.unless_native == 'web_search'
+
+
+def test_tool_definition_prefer_native_attribute_deprecated():
+    """Reading `ToolDefinition.prefer_native` warns and returns the new `unless_native` value."""
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+    td = ToolDefinition(name='foo', unless_native='web_search')
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ToolDefinition\.prefer_native` is deprecated, use `ToolDefinition\.unless_native` instead\.',
+    ):
+        result = td.prefer_native
+    assert result == 'web_search'
 
 
 # endregion

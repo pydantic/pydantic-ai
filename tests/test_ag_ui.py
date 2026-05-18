@@ -57,6 +57,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -2164,7 +2165,7 @@ async def test_request_with_state() -> None:
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_inputs = [
@@ -2267,7 +2268,7 @@ async def test_request_with_state_with_custom_handler() -> None:
     agent: Agent[CustomStateDeps, str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=CustomStateDeps,
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_input = create_input(
@@ -2511,6 +2512,28 @@ async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
         pass
 
     assert captured_results[0].conversation_id == 'explicit-conv-id'
+
+
+async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() -> None:
+    """`AGUIAdapter.run_stream_native(capabilities=[...])` extends the run-level capability
+    list passed through to `Agent.run_stream_events`."""
+    seen_tool_defs: list[ToolDefinition] = []
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_tool_defs.extend(tool_defs)
+        return tool_defs
+
+    def my_tool() -> str:
+        return 'ok'
+
+    agent = Agent(TestModel(), tools=[my_tool])
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(adapter.run_stream_native(capabilities=[PrepareTools(prep)])):
+        pass
+
+    assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
 
 
 async def test_callback_async() -> None:

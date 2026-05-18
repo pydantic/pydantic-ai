@@ -21,18 +21,18 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.13"
           enable-cache: true
           cache-suffix: lint
 
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra outlines-vllm-offline --all-packages --group lint
+        run: uv sync --all-extras --all-packages --group lint
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
@@ -47,11 +47,11 @@ jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
           cache-suffix: mypy
@@ -64,11 +64,11 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
           cache-suffix: docs
@@ -121,16 +121,16 @@ jobs:
           - name: standard
             command: ""
           - name: all-extras
-            command: "--all-extras --no-extra outlines-vllm-offline"
+            command: "--all-extras"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -182,11 +182,11 @@ jobs:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -206,7 +206,7 @@ jobs:
 
       - run: unset UV_FROZEN
 
-      - run: uv run --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
@@ -228,31 +228,23 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-suffix: examples
 
-      - name: cache HuggingFace models
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            hf-${{ runner.os }}-
-
-      - run: uv run --all-extras --no-extra outlines-vllm-offline python tests/import_examples.py
+      - run: uv run --all-extras python tests/import_examples.py
 
   coverage:
     runs-on: ubuntu-latest
     needs: [test, test-lowest-versions]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # needed for diff-cover
           fetch-depth: 0
@@ -264,7 +256,7 @@ jobs:
           merge-multiple: true
           path: .coverage
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
           cache-suffix: dev
@@ -310,7 +302,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
           app-id: ${{ vars.DOCS_APP_ID }}
@@ -339,7 +331,7 @@ jobs:
       statuses: write
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -347,7 +339,7 @@ jobs:
       - run: npm install
         working-directory: docs-site
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
           cache-suffix: deploy-docs-preview
@@ -390,14 +382,13 @@ jobs:
       package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          enable-cache: true
-          cache-suffix: release
+          enable-cache: false
 
       - run: uv build --all-packages
 
