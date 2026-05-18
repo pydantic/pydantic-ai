@@ -28,11 +28,11 @@ from ._run_context import AgentDepsT, RunContext
 from ._warnings import PydanticAIDeprecationWarning
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
-    DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
 from .tool_manager import ToolManager
+from .tools import DeferredToolRequests
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
