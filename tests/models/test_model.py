@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
@@ -240,6 +241,7 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)
@@ -385,4 +387,4 @@ def test_custom_provider_instance_method_model_profile():
     assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
-    assert isinstance(profile, ModelProfile)
+    assert isinstance(profile, dict)

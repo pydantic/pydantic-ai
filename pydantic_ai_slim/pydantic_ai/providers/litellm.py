@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -80,7 +81,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
         # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
 
     @overload
     def __init__(
