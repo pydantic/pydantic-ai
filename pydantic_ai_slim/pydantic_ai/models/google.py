@@ -15,6 +15,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -181,7 +182,14 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-GoogleVertexServiceTier = Literal[
+# Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
+# (`google-vertex` / `google-gla`) so history captured against the old provider name
+# still routes correctly through the new model class.
+_GOOGLE_CLOUD_PROVIDER_NAMES: frozenset[str] = frozenset({'google-cloud', 'google-vertex'})
+_GEMINI_API_PROVIDER_NAMES: frozenset[str] = frozenset({'google', 'google-gla'})
+
+
+GoogleCloudServiceTier = Literal[
     'pt_then_on_demand',
     'pt_only',
     'pt_then_flex',
@@ -190,9 +198,9 @@ GoogleVertexServiceTier = Literal[
     'flex_only',
     'priority_only',
 ]
-"""Values for the `google_vertex_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+"""Values for the `google_cloud_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
-Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
+Controls Google Cloud HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
 (PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo).
 
 - `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
@@ -204,6 +212,13 @@ Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.googl
 - `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
+"""
+
+GoogleVertexServiceTier = GoogleCloudServiceTier
+"""Deprecated alias for [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier].
+
+Use `GoogleCloudServiceTier` instead — Google Cloud is the new name for the platform formerly
+known as Vertex AI.
 """
 
 GoogleServiceTier = Literal[
@@ -218,7 +233,7 @@ GoogleServiceTier = Literal[
 """Deprecated alias for service tier values.
 
 Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
-or [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] for Vertex AI.
+or [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] for Google Cloud.
 """
 
 
@@ -277,18 +292,21 @@ class GoogleModelSettings(ModelSettings, total=False):
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
-    google_vertex_service_tier: GoogleVertexServiceTier
-    """The service tier to use for the model request when using Vertex AI.
+    google_cloud_service_tier: GoogleCloudServiceTier
+    """The service tier to use for the model request when using Google Cloud.
 
     Controls routing for Provisioned Throughput, Flex PayGo, and Priority PayGo
     (e.g., `'pt_only'`, `'flex_only'`, `'priority_only'`).
 
-    See [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] for all values,
+    See [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] for all values,
     headers sent, and links to Google docs.
     """
 
+    google_vertex_service_tier: GoogleCloudServiceTier
+    """Deprecated: use `google_cloud_service_tier`. Will be removed in v2."""
+
     google_service_tier: GoogleServiceTier
-    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
+    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_cloud_service_tier` for Google Cloud."""
 
 
 def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
@@ -297,9 +315,26 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
         # stacklevel=2 points at the resolver (caller of this helper); the warning text already
         # names the field so users can identify the source from the message itself.
         warnings.warn(
-            '`google_service_tier` is deprecated; use `google_vertex_service_tier` for Vertex AI '
+            '`google_service_tier` is deprecated; use `google_cloud_service_tier` for Google Cloud '
             'or the top-level `service_tier` for the Gemini API (GLA).',
             DeprecationWarning,
+            stacklevel=2,
+        )
+        return deprecated
+    return None
+
+
+def _get_deprecated_google_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier | None:
+    """Return `google_vertex_service_tier`, emitting a `PydanticAIDeprecationWarning` when it is set.
+
+    Google retired the "Vertex AI" brand for "Google Cloud"; the field is renamed accordingly. The old
+    key keeps working in 1.x but warns; v2 will drop it.
+    """
+    if (deprecated := model_settings.get('google_vertex_service_tier')) is not None:
+        warnings.warn(
+            '`google_vertex_service_tier` is deprecated; use `google_cloud_service_tier` instead. '
+            'Google Cloud is the new name for the platform formerly known as Vertex AI.',
+            PydanticAIDeprecationWarning,
             stacklevel=2,
         )
         return deprecated
@@ -328,11 +363,11 @@ def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServic
     return None
 
 
-# Mapping from cross-provider `ServiceTier` to the safe Vertex equivalent, used when the top-level
+# Mapping from cross-provider `ServiceTier` to the safe Google Cloud equivalent, used when the top-level
 # `service_tier` is the only signal available. `'flex'` / `'priority'` always pick the PT-with-spillover
 # variant (never `*_only`) so PT customers keep using their reserved capacity first; users who want to
-# bypass PT must set `google_vertex_service_tier` explicitly.
-_TOP_LEVEL_TO_VERTEX_SERVICE_TIER: dict[ServiceTier, GoogleVertexServiceTier] = {
+# bypass PT must set `google_cloud_service_tier` explicitly.
+_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER: dict[ServiceTier, GoogleCloudServiceTier] = {
     'auto': 'pt_then_on_demand',
     'default': 'pt_then_on_demand',
     'flex': 'pt_then_flex',
@@ -340,25 +375,27 @@ _TOP_LEVEL_TO_VERTEX_SERVICE_TIER: dict[ServiceTier, GoogleVertexServiceTier] = 
 }
 
 
-def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier:
-    """Resolve the Vertex tier to use for this request.
+def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier:
+    """Resolve the Google Cloud tier to use for this request.
 
-    Per-provider `google_vertex_service_tier` wins, then the deprecated `google_service_tier`
-    (with warning), then the top-level `service_tier` mapped via
-    [`_TOP_LEVEL_TO_VERTEX_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Vertex's
-    built-in PT-with-spillover behavior is the baseline.
+    Per-provider `google_cloud_service_tier` wins, then the deprecated `google_vertex_service_tier`
+    (with warning), then the deprecated `google_service_tier` (with warning), then the top-level
+    `service_tier` mapped via [`_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER`][]. Defaults to
+    `'pt_then_on_demand'` so Google Cloud's built-in PT-with-spillover behavior is the baseline.
     """
-    if vertex_tier := model_settings.get('google_vertex_service_tier'):
+    if tier := model_settings.get('google_cloud_service_tier'):
+        return tier
+    if vertex_tier := _get_deprecated_google_vertex_service_tier(model_settings):
         return vertex_tier
     if deprecated := _get_deprecated_google_service_tier(model_settings):
         return deprecated
     if top_level := model_settings.get('service_tier'):
-        return _TOP_LEVEL_TO_VERTEX_SERVICE_TIER[top_level]
+        return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
 
 
-def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
+def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
+    """HTTP headers for Google Cloud Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
         return {}
     if service_tier == 'pt_only':
@@ -399,7 +436,7 @@ class GoogleModel(Model[Client]):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
+        provider: Literal['google', 'google-cloud', 'gateway'] | Provider[Client] = 'google',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -408,15 +445,15 @@ class GoogleModel(Model[Client]):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[google.genai.AsyncClient]`.
-                Defaults to 'google-gla'.
+                'google' (Gemini API) or 'google-cloud' (Google Cloud, formerly known as Vertex AI),
+                or an instance of `Provider[google.genai.AsyncClient]`. Defaults to 'google'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/google-cloud' if provider == 'gateway' else provider)
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -438,6 +475,14 @@ class GoogleModel(Model[Client]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @property
+    def _matching_provider_names(self) -> frozenset[str]:
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+            return _GOOGLE_CLOUD_PROVIDER_NAMES
+        if self.system in _GEMINI_API_PROVIDER_NAMES:
+            return _GEMINI_API_PROVIDER_NAMES
+        return frozenset({self.system})  # pragma: no cover
 
     @property
     def _resolved_profile(self) -> GoogleModelProfile:
@@ -509,7 +554,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name != 'google-gla':
+        if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             config.update(  # pragma: lax no cover
                 system_instruction=generation_config.get('system_instruction'),
@@ -580,7 +625,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system == 'google-vertex':
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -825,8 +870,8 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system == 'google-vertex':
-            headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+            headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
@@ -1018,7 +1063,7 @@ class GoogleModel(Model[Client]):
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(
-                    m, self.system, supports_tool_combination=supports_tool_combination
+                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
                 )
                 if maybe_content:
                     contents.append(maybe_content)
@@ -1081,22 +1126,22 @@ class GoogleModel(Model[Client]):
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
 
-        GLA uses the Files API (https:// URIs). Vertex uses GCS (gs:// URIs).
-        The Files API is not available on Vertex AI.
+        The Gemini API uses the Files API (https:// URIs). Google Cloud uses GCS
+        (gs:// URIs). The Files API is not available on Google Cloud.
         """
-        if file.provider_name != self.system:
+        if file.provider_name not in self._matching_provider_names:
             raise UserError(
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
+                f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system == 'google-vertex':
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
-                    f'UploadedFile for GoogleModel (Vertex) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
+                    f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
                 )
         elif not file.file_id.startswith('https://'):
             raise UserError(
-                f'UploadedFile for GoogleModel (GLA) must use a file URI from the Google Files API '
+                f'UploadedFile for GoogleModel (Gemini API) must use a file URI from the Google Files API '
                 f'(https://generativelanguage.googleapis.com/...), got: {file.file_id}'
             )
         return file.file_id, file.media_type
@@ -1114,12 +1159,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+            file.is_youtube or (file.url.startswith('gs://') and self.system in _GOOGLE_CLOUD_PROVIDER_NAMES)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system == 'google-gla'
+                self.system in _GEMINI_API_PROVIDER_NAMES
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
@@ -1497,8 +1542,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, provider_name: str, *, supports_tool_combination: bool = False
+    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
 ) -> ContentDict | None:
+    # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
+    # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
+    # routes its thinking signatures and native tool parts back to this provider.
     parts: list[PartDict] = []
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
     pending_thinking_signature: str | None = None
@@ -1508,7 +1556,7 @@ def _content_model_response(
     needs_function_call_signature = True
 
     for item in m.parts:
-        item_signature = _decode_inline_thought_signature(item, m, provider_name)
+        item_signature = _decode_inline_thought_signature(item, m, accepted_provider_names)
         if item_signature is None and pending_thinking_signature is not None:
             item_signature = base64.b64decode(pending_thinking_signature)
         pending_thinking_signature = None
@@ -1520,7 +1568,7 @@ def _content_model_response(
         elif isinstance(item, TextPart):
             part = _attach_signature({'text': item.content}, item_signature)
         elif isinstance(item, ThinkingPart):
-            if item.provider_name == provider_name and item.signature:
+            if item.provider_name in accepted_provider_names and item.signature:
                 # The signature attaches to the _next_ part, not the thinking part itself.
                 pending_thinking_signature = item.signature
             if item.content:
@@ -1529,11 +1577,11 @@ def _content_model_response(
                 part = None
         elif isinstance(item, NativeToolCallPart):
             part = _native_tool_call_part_dict(
-                item, provider_name, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, NativeToolReturnPart):
             part = _native_tool_return_part_dict(
-                item, provider_name, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, FilePart):
             inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -1552,7 +1600,9 @@ def _content_model_response(
     return ContentDict(role='model', parts=parts)
 
 
-def _decode_inline_thought_signature(item: ModelResponsePart, m: ModelResponse, provider_name: str) -> bytes | None:
+def _decode_inline_thought_signature(
+    item: ModelResponsePart, m: ModelResponse, accepted_provider_names: frozenset[str]
+) -> bytes | None:
     """Decode the thought signature stored on `item.provider_details`, if any.
 
     Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
@@ -1560,7 +1610,7 @@ def _decode_inline_thought_signature(item: ModelResponsePart, m: ModelResponse, 
     """
     if not item.provider_details:
         return None
-    if m.provider_name != provider_name and item.provider_name != provider_name:
+    if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
         return None  # pragma: no cover
     raw = item.provider_details.get('thought_signature')
     if not raw:
@@ -1582,15 +1632,19 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
     if signature is None and needs_signature:
         # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
         # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
-        # the documented dummy `skip_thought_signature_validator` works for both GLA and Vertex.
+        # the documented dummy `skip_thought_signature_validator` works for both Gemini API and Google Cloud.
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
 
 
 def _native_tool_call_part_dict(
-    item: NativeToolCallPart, provider_name: str, signature: bytes | None, *, supports_tool_combination: bool
+    item: NativeToolCallPart,
+    accepted_provider_names: frozenset[str],
+    signature: bytes | None,
+    *,
+    supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name != provider_name:
+    if item.provider_name not in accepted_provider_names:
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
@@ -1606,9 +1660,13 @@ def _native_tool_call_part_dict(
 
 
 def _native_tool_return_part_dict(
-    item: NativeToolReturnPart, provider_name: str, signature: bytes | None, *, supports_tool_combination: bool
+    item: NativeToolReturnPart,
+    accepted_provider_names: frozenset[str],
+    signature: bytes | None,
+    *,
+    supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name != provider_name:
+    if item.provider_name not in accepted_provider_names:
         return None
     if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
         return _attach_signature(

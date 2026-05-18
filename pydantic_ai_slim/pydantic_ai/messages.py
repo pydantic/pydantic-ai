@@ -118,8 +118,18 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
-"""Lifecycle state of a model response."""
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+"""Lifecycle state of a model response.
+
+- `'complete'`: the response has been fully received from the model.
+- `'incomplete'`: the response is still being streamed and may receive more parts.
+  Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
+  while iteration is in flight.
+- `'interrupted'`: streaming was explicitly stopped via
+  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  finished generating.
+"""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -699,8 +709,22 @@ class CachePoint:
     """
 
 
-UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
-"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+UploadedFileProviderName: TypeAlias = Literal[
+    'anthropic',
+    'openai',
+    'google',
+    'google-cloud',
+    'google-gla',
+    'google-vertex',
+    'bedrock',
+    'xai',
+]
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile].
+
+The `'google-gla'` and `'google-vertex'` values are retained for backward compatibility with
+message history captured before the v2 provider rename — current code emits `'google'` and
+`'google-cloud'` respectively.
+"""
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -716,7 +740,7 @@ class UploadedFile:
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -724,8 +748,8 @@ class UploadedFile:
     """The provider-specific file identifier.
 
     For most providers, this is the file ID returned by the provider's upload API.
-    For GoogleModel (Vertex), this must be a GCS URI (`gs://bucket/path`).
-    For GoogleModel (GLA), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
+    For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -2113,7 +2137,7 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response."""
+    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
     @property
     def text(self) -> str | None:

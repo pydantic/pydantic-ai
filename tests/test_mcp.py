@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 from __future__ import annotations
@@ -84,6 +86,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
+    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -546,7 +552,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(name, tool_args, {'deps': ctx.deps})
+        return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
@@ -1324,7 +1330,7 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
@@ -1355,7 +1361,7 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
@@ -1393,7 +1399,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
-                            provider_name='google-gla',
+                            provider_name='google',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -1402,7 +1408,7 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
@@ -1433,7 +1439,7 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
