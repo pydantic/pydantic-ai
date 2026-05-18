@@ -761,6 +761,19 @@ def test_messages_to_otel_messages_multimodal_v3():
             }
         ]
     )
+    settings_without_binary = InstrumentationSettings(version=3, include_binary_content=False)
+    assert settings_without_binary.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Describe these files'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {'type': 'binary', 'media_type': 'image/png'},
+                ],
+            }
+        ]
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v4():
