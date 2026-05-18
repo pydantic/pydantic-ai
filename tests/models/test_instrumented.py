@@ -34,6 +34,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._instrumentation import InstrumentationNames, get_instructions, serialize_any
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -728,6 +729,38 @@ def test_messages_to_otel_message_parts_compaction_part():
     otel_messages = settings.messages_to_otel_messages(messages)
     # CompactionPart is skipped; only TextPart appears
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
+
+
+def test_messages_to_otel_messages_multimodal_v3():
+    """Test that version 3 keeps the pre-v4 multimodal format."""
+    image_data = BinaryContent(data=b'fake image data', media_type='image/png')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe these files',
+                        ImageUrl('https://example.com/image.jpg', media_type='image/jpeg'),
+                        image_data,
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=3)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Describe these files'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {'type': 'binary', 'media_type': 'image/png', 'content': image_data.base64},
+                ],
+            }
+        ]
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v4():
@@ -1749,6 +1782,26 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
             },
         ]
     )
+
+
+def test_get_instructions_from_message_history():
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hello')], instructions='Be kind', timestamp=IsDatetime()),
+    ]
+    assert get_instructions(messages) == snapshot('Be kind')
+
+
+def test_serialize_any_handles_broken_str():
+    class BrokenStr:
+        def __str__(self) -> str:
+            raise RuntimeError('broken')
+
+    assert serialize_any(BrokenStr()) == snapshot('Unable to serialize: broken')
+
+
+def test_instrumentation_names_rejects_removed_version():
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
+        InstrumentationNames.for_version(1)
 
 
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
