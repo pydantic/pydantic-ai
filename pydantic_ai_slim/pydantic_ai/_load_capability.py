@@ -24,7 +24,7 @@ from typing import Literal, Union, cast
 
 import pydantic
 import pydantic_core
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from ._utils import copy_dataclass_fields
 
@@ -65,8 +65,10 @@ class LoadCapabilityReturn(TypedDict):
     capability_id: str
     """ID of the loaded capability. Mirrors the call's `id` arg on success."""
 
-    instructions: str | None
-    """Instructions for the model to follow when using the loaded capability, or `None` if the capability declared none."""
+    instructions: NotRequired[str]
+    """Instructions for the model to follow when using the loaded capability, or `None` if the capability declared none.
+    
+    """
 
 
 @dataclass(repr=False)
