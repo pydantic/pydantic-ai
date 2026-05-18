@@ -112,11 +112,7 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 XaiModelName = str | ChatModel
 """Possible xAI model names."""
 
-# Legacy `provider_name` values that still appear in `ModelMessage` histories serialized
-# before v2. `GrokProvider` (the OpenAI-compatible REST shim) was dropped in v2 in favor
-# of `XaiProvider`, but stored histories may carry `provider_name='grok'` on
-# `ThinkingPart` / `NativeToolCallPart` / `NativeToolReturnPart` / `UploadedFile` parts —
-# accept those as equivalent to the current `system` value in every replay check.
+# Legacy `provider_name` values from pre-v2 histories (when `GrokProvider` existed) accepted on replay.
 _LEGACY_PROVIDER_NAMES = frozenset({'grok'})
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
@@ -666,11 +662,7 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
-                # `UploadedFile.provider_name` is a `Literal[...]` that postdates `GrokProvider` —
-                # legacy `'grok'` could never have been serialized into it (Pydantic rejects at deserialize).
-                # The `_LEGACY_PROVIDER_NAMES` check is kept here for self-consistency with the rest of the file;
-                # in practice this branch always sees a non-legacy value.
-                if item.provider_name != self.system and item.provider_name not in _LEGACY_PROVIDER_NAMES:
+                if item.provider_name != self.system:
                     raise UserError(
                         f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
                         f'Expected `provider_name` to be `{self.system!r}`.'
