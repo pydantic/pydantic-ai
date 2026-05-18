@@ -7,12 +7,11 @@ from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
-from typing_extensions import deprecated, overload
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
 
 @dataclass(repr=False, kw_only=True)
@@ -57,16 +56,6 @@ class UsageBase:
         new.__dict__.update(self.__dict__)
         new.details = self.details.copy()
         return new
-
-    @property
-    @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
-    def request_tokens(self) -> int:
-        return self.input_tokens
-
-    @property
-    @deprecated('`response_tokens` is deprecated, use `output_tokens` instead')
-    def response_tokens(self) -> int:
-        return self.output_tokens
 
     @property
     def total_tokens(self) -> int:
@@ -254,12 +243,6 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
 
 
 @dataclass(repr=False, kw_only=True)
-@deprecated('`Usage` is deprecated, use `RunUsage` instead')
-class Usage(RunUsage):
-    """Deprecated alias for `RunUsage`."""
-
-
-@dataclass(repr=False, kw_only=True)
 class UsageLimits:
     """Limits on model usage.
 
@@ -281,7 +264,7 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` ahead of time.
 
     This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
 
@@ -293,75 +276,6 @@ class UsageLimits:
 
     Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
     """
-
-    @property
-    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
-    def request_tokens_limit(self) -> int | None:
-        return self.input_tokens_limit
-
-    @property
-    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
-    def response_tokens_limit(self) -> int | None:
-        return self.output_tokens_limit
-
-    @overload
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    @overload
-    @deprecated(
-        'Use `input_tokens_limit` instead of `request_tokens_limit` and `output_tokens_limit` and `total_tokens_limit`'
-    )
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-        # deprecated:
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-    ):
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

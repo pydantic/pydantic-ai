@@ -61,7 +61,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -2862,9 +2862,6 @@ class WebSearchAgentWorkflow:
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
-)
 async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -3448,7 +3445,7 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
-    if WebSearchTool in ctx.model.profile.supported_native_tools:
+    if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 

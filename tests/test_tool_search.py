@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -57,8 +57,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
@@ -258,9 +259,12 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     setattr(
         model,
         'profile',
-        replace(
+        merge_profile(
             model.profile,
-            supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+            ModelProfile(
+                supported_native_tools=model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                - {ToolSearchTool}
+            ),
         ),
     )
     agent: Agent[None, str] = Agent(model=model)
@@ -443,12 +447,6 @@ _CASES = [
 
 @pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed')
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 @pytest.mark.parametrize(
     'case',
     [pytest.param(c, id=c.model_name.split(':')[0], marks=c.marks) for c in _CASES],
@@ -1230,12 +1228,6 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end against live Anthropic: native BM25 server-side tool search
     populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes
@@ -1407,8 +1399,6 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_anthropic_promotes_local_search_history_round_trip(
     allow_model_requests: None, anthropic_api_key: str
 ) -> None:
@@ -1507,8 +1497,6 @@ async def test_anthropic_promotes_local_search_history_round_trip(
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_openai_promotes_local_search_history_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI: a turn with local-shape `ToolSearch*Part`
     history runs cleanly on OpenAI Responses. The adapter promotes the local-shape
@@ -2081,12 +2069,6 @@ def test_openai_map_tool_search_call_unit():
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_openai_native_tool_search_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI Responses: native server-executed `tool_search`
     populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes the
@@ -2249,12 +2231,6 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_anthropic_native_tool_search_streaming(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end streaming against live Anthropic: native BM25 server-side tool search
     streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` through the part
@@ -2314,12 +2290,6 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_openai_native_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end streaming against live OpenAI Responses: native server-executed
     `tool_search` streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart`
@@ -3217,7 +3187,7 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     splits into `ModelResponse(call) + ModelRequest(return)`."""
     # Default `TestModel` excludes `ToolSearchTool` from `supported_native_tools`.
     model = TestModel()
-    assert ToolSearchTool not in model.profile.supported_native_tools
+    assert ToolSearchTool not in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
@@ -3272,7 +3242,7 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
             return frozenset({ToolSearchTool})
 
     model = NativeToolSearchTestModel()
-    assert ToolSearchTool in model.profile.supported_native_tools
+    assert ToolSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),

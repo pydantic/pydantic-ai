@@ -1,23 +1,20 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
-
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
 
 
-@dataclass(kw_only=True)
-class GrokModelProfile(ModelProfile):
+class GrokModelProfile(ModelProfile, total=False):
     """Profile for Grok models (used with both GrokProvider and XaiProvider).
 
     ALL FIELDS MUST BE `grok_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    grok_supports_builtin_tools: bool = False
-    """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp)."""
+    grok_supports_builtin_tools: bool
+    """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp). Default: `False`."""
 
-    grok_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
+    grok_supports_tool_choice_required: bool
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:

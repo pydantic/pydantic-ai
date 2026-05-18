@@ -113,7 +113,6 @@ from .native_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -299,7 +298,6 @@ __all__ = (
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
-    'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',

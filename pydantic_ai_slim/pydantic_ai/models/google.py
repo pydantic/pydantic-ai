@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
@@ -386,7 +387,7 @@ class GoogleModel(Model[Client]):
             provider = infer_provider('gateway/google-cloud' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Client:
@@ -414,9 +415,9 @@ class GoogleModel(Model[Client]):
             return _GEMINI_API_PROVIDER_NAMES
         return frozenset({self.system})  # pragma: no cover
 
-    @property
-    def _resolved_profile(self) -> GoogleModelProfile:
-        return GoogleModelProfile.from_profile(self.profile)
+    @cached_property
+    def profile(self) -> GoogleModelProfile:
+        return cast(GoogleModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -433,7 +434,7 @@ class GoogleModel(Model[Client]):
         if (
             user_native_tools
             and model_request_parameters.output_tools
-            and not self._resolved_profile.google_supports_tool_combination
+            and not self.profile.get('google_supports_tool_combination', False)
         ):
             # Pre-Gemini-3 models reject `output_tools + native_tools` together. Force prompted
             # output (the only mode that doesn't add a tool to the request); raise if the caller
@@ -593,7 +594,9 @@ class GoogleModel(Model[Client]):
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
         if model_request_parameters.native_tools:
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self.profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError('This model does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.native_tools:
@@ -607,7 +610,7 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.supports_image_output:
+                    if not self.profile.get('supports_image_output', False):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
@@ -665,7 +668,7 @@ class GoogleModel(Model[Client]):
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self._resolved_profile.google_supports_server_side_tool_invocations:
+        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -732,14 +735,12 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        # Don't use `self._resolved_profile`: `tests/test_thinking.py` invokes this as an
-        # unbound method with a `FunctionModel` carrying a `GoogleModelProfile`.
-        profile = GoogleModelProfile.from_profile(self.profile)
+        profile = self.profile
         if thinking is False:
-            if profile.google_supports_thinking_level:
+            if profile.get('google_supports_thinking_level', False):
                 return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
             return ThinkingConfigDict(thinking_budget=0)
-        if profile.google_supports_thinking_level:
+        if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             level_map: dict[ThinkingEffort, str] = {
@@ -769,13 +770,15 @@ class GoogleModel(Model[Client]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
-        if model_request_parameters.function_tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self.profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError(
                     'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
@@ -784,13 +787,13 @@ class GoogleModel(Model[Client]):
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not tools:
-            if not self.profile.supports_json_object_output:
+            if not self.profile.get('supports_json_object_output', False):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities: list[str] = [Modality.TEXT.value]
-        if self.profile.supports_image_output:
+        if self.profile.get('supports_image_output', False):
             modalities.append(Modality.IMAGE.value)
             if not model_request_parameters.allow_text_output:
                 modalities.remove(Modality.TEXT.value)
@@ -851,41 +854,41 @@ class GoogleModel(Model[Client]):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
-        vendor_id = response.response_id
+        provider_response_id = response.response_id
         finish_reason: FinishReason | None = None
-        vendor_details: dict[str, Any] = {}
+        provider_details: dict[str, Any] = {}
 
         raw_finish_reason = candidate.finish_reason if candidate else None
         if raw_finish_reason and candidate:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            provider_details = {'finish_reason': raw_finish_reason.value}
             # Add safety ratings to provider details
             if candidate.safety_ratings:
-                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
+                provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
-            vendor_details['block_reason'] = block_reason.value
+            provider_details['block_reason'] = block_reason.value
             if response.prompt_feedback.block_reason_message:
-                vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+                provider_details['block_reason_message'] = response.prompt_feedback.block_reason_message
             if response.prompt_feedback.safety_ratings:
-                vendor_details['safety_ratings'] = [
+                provider_details['safety_ratings'] = [
                     r.model_dump(by_alias=True) for r in response.prompt_feedback.safety_ratings
                 ]
             finish_reason = 'content_filter'
 
         if response.create_time is not None:  # pragma: no branch
-            vendor_details['timestamp'] = response.create_time
+            provider_details['timestamp'] = response.create_time
 
         if (
             response.sdk_http_response
             and response.sdk_http_response.headers
             and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
         ):
-            vendor_details['service_tier'] = service_tier.lower()
+            provider_details['service_tier'] = service_tier.lower()
 
         # Add traffic_type to provider_details for Flex PayGo verification
         if response.usage_metadata and response.usage_metadata.traffic_type:
-            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
+            provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -893,8 +896,8 @@ class GoogleModel(Model[Client]):
             parts = candidate.content.parts or []
 
         if candidate and (logprob_results := candidate.logprobs_result):
-            vendor_details['logprobs'] = logprob_results.model_dump(mode='json')
-            vendor_details['avg_logprobs'] = candidate.avg_logprobs
+            provider_details['logprobs'] = logprob_results.model_dump(mode='json')
+            provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None
@@ -907,8 +910,8 @@ class GoogleModel(Model[Client]):
             self._provider.name,
             self._provider.base_url,
             usage,
-            vendor_id=vendor_id,
-            vendor_details=vendor_details or None,
+            provider_response_id=provider_response_id,
+            provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
         )
@@ -938,7 +941,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
-        supports_tool_combination = self._resolved_profile.google_supports_tool_combination
+        supports_tool_combination = self.profile.get('google_supports_tool_combination', False)
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1020,7 +1023,7 @@ class GoogleModel(Model[Client]):
         parts after the function_response (fallback strategy).
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
-        supported_mime_types = self._resolved_profile.google_supported_mime_types_in_tool_returns
+        supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []
@@ -1696,8 +1699,8 @@ def _process_response_from_parts(
     provider_name: str,
     provider_url: str,
     usage: usage.RequestUsage,
-    vendor_id: str | None,
-    vendor_details: dict[str, Any] | None = None,
+    provider_response_id: str | None,
+    provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
@@ -1729,8 +1732,8 @@ def _process_response_from_parts(
         parts=items,
         model_name=model_name,
         usage=usage,
-        provider_response_id=vendor_id,
-        provider_details=vendor_details,
+        provider_response_id=provider_response_id,
+        provider_details=provider_details,
         provider_name=provider_name,
         provider_url=provider_url,
         finish_reason=finish_reason,
