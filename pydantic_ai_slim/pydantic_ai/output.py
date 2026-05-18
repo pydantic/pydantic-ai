@@ -13,11 +13,7 @@ from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import (
-    DeferredToolRequests as DeferredToolRequests,
-    ObjectJsonSchema,
-    ToolDefinition,
-)
+from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
