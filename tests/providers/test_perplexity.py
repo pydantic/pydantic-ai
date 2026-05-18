@@ -73,6 +73,13 @@ def test_perplexity_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
+def test_perplexity_provider_set_http_client() -> None:
+    new_http_client = httpx.AsyncClient()
+    provider = PerplexityProvider(api_key='api-key')
+    provider._set_http_client(new_http_client)  # pyright: ignore[reportPrivateUsage]
+    assert provider.client._client == new_http_client  # type: ignore[reportPrivateUsage]
+
+
 def test_perplexity_model_profile_enables_web_search() -> None:
     provider = PerplexityProvider(api_key='api-key')
     model = PerplexityModel('sonar-pro', provider=provider)

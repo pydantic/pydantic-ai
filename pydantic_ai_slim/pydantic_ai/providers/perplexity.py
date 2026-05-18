@@ -83,9 +83,7 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
                 must not be set.
             http_client: An existing `httpx.AsyncClient` to use for HTTP requests.
         """
-        api_key = (
-            api_key or os.getenv('PERPLEXITY_API_KEY') or os.getenv('PPLX_API_KEY')
-        )
+        api_key = api_key or os.getenv('PERPLEXITY_API_KEY') or os.getenv('PPLX_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `PERPLEXITY_API_KEY` environment variable or pass it via `PerplexityProvider(api_key=...)`'
@@ -95,16 +93,12 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client
-            )
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client
-            )
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
