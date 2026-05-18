@@ -778,7 +778,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         super().__init__(settings=settings, profile=profile)
 
         if system_prompt_role is not None:
-            self.profile = merge_profile(self.profile, OpenAIModelProfile(openai_system_prompt_role=system_prompt_role))
+            self.profile = cast(
+                OpenAIModelProfile,
+                merge_profile(self.profile, OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)),
+            )
 
         validate_openai_profile(self.profile)
 
@@ -806,7 +809,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return frozenset({WebSearchTool})
 
     @cached_property
-    def profile(self) -> ModelProfile:
+    def profile(self) -> OpenAIModelProfile:
         """The model profile.
 
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
@@ -815,7 +818,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
-        return _profile
+        return cast(OpenAIModelProfile, _profile)
 
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
@@ -921,7 +924,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -1089,7 +1092,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
         custom_field = profile.get('openai_chat_thinking_field', None)
         items: list[ThinkingPart] = []
 
@@ -1173,7 +1176,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        openai_profile = cast(OpenAIModelProfile, self.profile)
+        openai_profile = self.profile
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
@@ -1311,7 +1314,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling thinking parts.
             """
-            profile = cast(OpenAIModelProfile, self._model.profile)
+            profile = self._model.profile
             include_method = profile.get('openai_chat_send_back_thinking_parts', 'auto')
 
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
@@ -1502,7 +1505,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
         if _is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
@@ -1539,7 +1542,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
         data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
         assert downloaded_item['data_type'] in (
@@ -1551,7 +1554,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
         """Map a DocumentUrl to a chat completion content part."""
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
         # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
         # Some providers (e.g., OpenRouter) support URLs via the profile flag.
         if not item.force_download and profile.get('openai_chat_supports_file_urls', False):
@@ -1735,6 +1738,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @cached_property
+    def profile(self) -> OpenAIModelProfile:
+        return cast(OpenAIModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -2118,7 +2125,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if not tools:
             tool_choice = None
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
@@ -2260,7 +2267,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             A tuple of (filtered_function_tools, tool_choice).
             Note: builtin tools are handled separately and should be added to this list.
         """
-        openai_profile = cast(OpenAIModelProfile, self.profile)
+        openai_profile = self.profile
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -2554,7 +2561,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
-        profile = cast(OpenAIModelProfile, self.profile)
+        profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -3029,7 +3036,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
     _model_name: OpenAIModelName
-    _model_profile: ModelProfile
+    _model_profile: OpenAIModelProfile
     _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
@@ -3118,7 +3125,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        profile = cast(OpenAIModelProfile, self._model_profile)
+        profile = self._model_profile
         custom_field = profile.get('openai_chat_thinking_field', None)
 
         # Prefer the configured custom reasoning field, if present in profile.

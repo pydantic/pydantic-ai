@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -456,6 +457,12 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @cached_property
+    def profile(self) -> BedrockModelProfile:
+        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
+        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
+        return cast(BedrockModelProfile, super().profile)
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
@@ -647,7 +654,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if thinking is None:
             return existing or None
 
-        profile = cast(BedrockModelProfile, self.profile)
+        profile = self.profile
         variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
@@ -775,7 +782,7 @@ class BedrockConverseModel(Model[BaseClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        profile = cast(BedrockModelProfile, self.profile)
+        profile = self.profile
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )
@@ -832,7 +839,7 @@ class BedrockConverseModel(Model[BaseClient]):
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
         settings = model_settings or BedrockModelSettings()
-        profile = cast(BedrockModelProfile, self.profile)
+        profile = self.profile
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)

@@ -52,9 +52,7 @@ class Pet(BaseModel):
 
 
 def _get_profile(model: OllamaModel) -> OpenAIModelProfile:
-    from typing import cast as _cast
-
-    return _cast(OpenAIModelProfile, model.profile)
+    return model.profile
 
 
 def test_local_ollama_supports_json_schema_output(ollama_api_key: str) -> None:

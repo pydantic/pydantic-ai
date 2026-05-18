@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast, overload
 
 import pydantic_core
@@ -501,6 +502,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model provider."""
         return self._provider.name
 
+    @cached_property
+    def profile(self) -> AnthropicModelProfile:
+        return cast(AnthropicModelProfile, super().profile)
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
@@ -572,7 +577,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        profile = cast(AnthropicModelProfile, self.profile)
+        profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
         if (
@@ -654,7 +659,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = cast(AnthropicModelProfile, self.profile)
+        profile = self.profile
         if profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
@@ -702,7 +707,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        anthropic_profile = cast(AnthropicModelProfile, self.profile)
+        anthropic_profile = self.profile
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -861,7 +866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        anthropic_profile = cast(AnthropicModelProfile, self.profile)
+        anthropic_profile = self.profile
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -978,7 +983,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, model_settings: AnthropicModelSettings
     ) -> AnthropicCodeExecutionToolVersion:
         version = model_settings.get('anthropic_code_execution_tool_version', 'auto')
-        profile = cast(AnthropicModelProfile, self.profile)
+        profile = self.profile
         if version == 'auto':
             return profile.get('anthropic_default_code_execution_tool_version', '20250825')
         if version not in profile.get('anthropic_supported_code_execution_tool_versions', ('20250825',)):
@@ -1921,7 +1926,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = cast(AnthropicModelProfile, self.profile)
+        profile = self.profile
         if (
             effort is None
             and profile.get('anthropic_supports_effort', False)
@@ -1955,7 +1960,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = cast(AnthropicModelProfile, self.profile)
+        profile = self.profile
         if not profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '

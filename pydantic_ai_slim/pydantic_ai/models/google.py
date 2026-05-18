@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
@@ -484,9 +485,9 @@ class GoogleModel(Model[Client]):
             return _GEMINI_API_PROVIDER_NAMES
         return frozenset({self.system})  # pragma: no cover
 
-    @property
-    def _resolved_profile(self) -> GoogleModelProfile:
-        return cast(GoogleModelProfile, self.profile)
+    @cached_property
+    def profile(self) -> GoogleModelProfile:
+        return cast(GoogleModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -503,7 +504,7 @@ class GoogleModel(Model[Client]):
         if (
             user_native_tools
             and model_request_parameters.output_tools
-            and not self._resolved_profile.get('google_supports_tool_combination', False)
+            and not self.profile.get('google_supports_tool_combination', False)
         ):
             # Pre-Gemini-3 models reject `output_tools + native_tools` together. Force prompted
             # output (the only mode that doesn't add a tool to the request); raise if the caller
@@ -663,7 +664,7 @@ class GoogleModel(Model[Client]):
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
         if model_request_parameters.native_tools:
-            if model_request_parameters.function_tools and not self._resolved_profile.get(
+            if model_request_parameters.function_tools and not self.profile.get(
                 'google_supports_tool_combination', False
             ):
                 raise UserError('This model does not support function tools and built-in tools at the same time.')
@@ -737,9 +738,7 @@ class GoogleModel(Model[Client]):
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self._resolved_profile.get(
-            'google_supports_server_side_tool_invocations', False
-        ):
+        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -806,7 +805,7 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        profile = cast(GoogleModelProfile, self.profile)
+        profile = self.profile
         if thinking is False:
             if profile.get('google_supports_thinking_level', False):
                 return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
@@ -847,7 +846,7 @@ class GoogleModel(Model[Client]):
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools and not self._resolved_profile.get(
+            if model_request_parameters.function_tools and not self.profile.get(
                 'google_supports_tool_combination', False
             ):
                 raise UserError(
@@ -1012,7 +1011,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
-        supports_tool_combination = self._resolved_profile.get('google_supports_tool_combination', False)
+        supports_tool_combination = self.profile.get('google_supports_tool_combination', False)
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1094,7 +1093,7 @@ class GoogleModel(Model[Client]):
         parts after the function_response (fallback strategy).
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
-        supported_mime_types = self._resolved_profile.get('google_supported_mime_types_in_tool_returns', ())
+        supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []

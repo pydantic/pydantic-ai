@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterat
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -338,6 +339,10 @@ class XaiModel(Model[AsyncClient]):
     def system(self) -> str:
         """The model provider."""
         return 'xai'
+
+    @cached_property
+    def profile(self) -> GrokModelProfile:
+        return cast(GrokModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type]:
@@ -682,7 +687,7 @@ class XaiModel(Model[AsyncClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        profile = cast(GrokModelProfile, self.profile)
+        profile = self.profile
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
         if resolved_tool_choice in ('auto', 'none'):
@@ -748,7 +753,7 @@ class XaiModel(Model[AsyncClient]):
             tool_choice = None
 
         # Set response_format based on the output_mode
-        profile = cast(GrokModelProfile, self.profile)
+        profile = self.profile
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object

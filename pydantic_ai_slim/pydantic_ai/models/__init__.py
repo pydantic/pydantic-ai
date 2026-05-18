@@ -674,7 +674,7 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
-        return self._provider
+        return getattr(self, '_provider', None)
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
