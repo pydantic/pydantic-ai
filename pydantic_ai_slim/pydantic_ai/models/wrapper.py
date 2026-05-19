@@ -144,6 +144,12 @@ class ReplayStreamedResponse(StreamedResponse):
                 )
             # PartEndEvent is added automatically by StreamedResponse.__aiter__
 
+    async def close_stream(self) -> None:
+        # The events are replayed locally from an already-completed `ModelResponse`
+        # (typically captured inside a durable-execution activity/step/task), so
+        # there is no live connection to close.
+        pass
+
     def get(self) -> ModelResponse:
         return self.response
 

@@ -4620,6 +4620,20 @@ async def test_completed_streamed_response_cancel_noop():
     assert response.state == 'complete'
 
 
+async def test_replay_streamed_response_cancel_noop():
+    """`ReplayStreamedResponse.cancel()` is a no-op — events are replayed locally, no live connection to close."""
+    from pydantic_ai.models.wrapper import ReplayStreamedResponse
+
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = ReplayStreamedResponse(models.ModelRequestParameters(), response)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.get() is response
+
+
 async def test_stream_response_state_incomplete_until_finished():
     """`response.state` reads `'incomplete'` mid-stream and flips to `'complete'` once iteration ends."""
     agent = Agent(TestModel(custom_output_text='hello world'))
