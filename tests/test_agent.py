@@ -91,7 +91,6 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -113,7 +112,6 @@ else:
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider
-        from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -126,7 +124,7 @@ else:
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = GrokProvider = HerokuProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
         TogetherProvider = VercelProvider = None  # type: ignore
@@ -5973,6 +5971,123 @@ def test_capture_run_messages_with_user_exception_does_not_contain_internal_erro
         assert e.__context__ is None
 
 
+async def test_tool_exception_captures_partial_request() -> None:
+    """When one tool raises mid-loop, completed tool returns are captured in a
+    `ModelRequest` with `state='interrupted'` so `capture_run_messages` reflects
+    the partial state.
+    """
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    # `sequential=True` makes tool execution deterministic: good_tool runs and
+    # completes before bad_tool raises, so the captured partial reliably includes
+    # good_tool's return.
+    @agent.tool_plain(sequential=True)
+    def good_tool(x: int) -> int:
+        return x * 10
+
+    @agent.tool_plain(sequential=True)
+    def bad_tool(x: int) -> int:
+        raise RuntimeError('tool-failure')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='tool-failure'):
+            await agent.run('Hello')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                    ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='good_tool',
+                        content=10,
+                        tool_call_id='call_good',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_tool_execution_cancellation_captures_partial_request() -> None:
+    """Cancellation mid-tool-execution captures the completed tool returns as a partial
+    `ModelRequest` with `state='interrupted'`.
+    """
+    first_done = asyncio.Event()
+    never = asyncio.Event()
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_tool', args='{"x": 1}', tool_call_id='call_fast'),
+                ToolCallPart(tool_name='slow_tool', args='{"x": 2}', tool_call_id='call_slow'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    @agent.tool_plain
+    async def fast_tool(x: int) -> int:
+        first_done.set()
+        return x * 10
+
+    @agent.tool_plain
+    async def slow_tool(x: int) -> int:
+        await never.wait()
+        return x  # pragma: no cover
+
+    captured: list[ModelMessage] = []
+
+    async def consume() -> None:
+        nonlocal captured
+        with capture_run_messages() as messages:
+            try:
+                await agent.run('Hello')
+            finally:
+                captured = list(messages)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_done.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    partial_requests = [m for m in captured if isinstance(m, ModelRequest) and m.state == 'interrupted']
+    assert len(partial_requests) == 1
+    parts = partial_requests[0].parts
+    assert any(isinstance(p, ToolReturnPart) and p.tool_name == 'fast_tool' and p.content == 10 for p in parts)
+
+
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
@@ -6357,6 +6472,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6430,6 +6546,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6510,6 +6627,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -7008,13 +7126,6 @@ async def test_agent_context_manager_no_model():
         pass
 
 
-def test_cached_async_http_client_deprecated():
-    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
-
-    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
-        cached_async_http_client()  # pyright: ignore[reportDeprecated]
-
-
 @requires_openai
 async def test_provider_lifecycle_closes_client():
     """Provider lifecycle closes owned HTTP client on exit.
@@ -7189,7 +7300,6 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
-@pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -7208,7 +7318,6 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
-        pytest.param(lambda: GrokProvider(api_key='t'), marks=[requires_openai], id='grok'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
@@ -7287,6 +7396,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'run_id': IsStr(),
             'conversation_id': IsStr(),
             'metadata': None,
+            'state': 'complete',
         }
     )
 

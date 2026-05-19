@@ -833,22 +833,6 @@ Keys:
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
-                        'grok:grok-2-image-1212',
-                        'grok:grok-2-vision-1212',
-                        'grok:grok-3-fast',
-                        'grok:grok-3-mini-fast',
-                        'grok:grok-3-mini',
-                        'grok:grok-3',
-                        'grok:grok-4-0709',
-                        'grok:grok-4-latest',
-                        'grok:grok-4-1-fast-non-reasoning',
-                        'grok:grok-4-1-fast-reasoning',
-                        'grok:grok-4-1-fast',
-                        'grok:grok-4-fast-non-reasoning',
-                        'grok:grok-4-fast-reasoning',
-                        'grok:grok-4-fast',
-                        'grok:grok-4',
-                        'grok:grok-code-fast-1',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -10245,14 +10229,6 @@ class TestCompaction:
 
         with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
             OpenAICompaction(stateless=True)
-
-    def test_openai_compaction_instructions_deprecated(self):
-        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
-        pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction
-
-        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
-            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""

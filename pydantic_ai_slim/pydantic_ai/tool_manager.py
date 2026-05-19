@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._output import (
@@ -108,14 +107,6 @@ class ToolManager(Generic[AgentDepsT]):
             yield
         finally:
             _parallel_execution_mode_ctx_var.reset(token)
-
-    @classmethod
-    @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with cls.parallel_execution_mode('sequential'):
-            yield
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""

@@ -452,24 +452,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._metadata = metadata
         self._deps_type = deps_type
 
-        # Deprecated split retry kwargs are still accepted in 1.x and folded into `retries`.
-        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', _utils.UNSET)
-        legacy_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
-        if _utils.is_set(legacy_tool_retries):
-            warnings.warn(
-                '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        if _utils.is_set(legacy_output_retries):
-            warnings.warn(
-                '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
@@ -483,12 +465,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_dynamic_functions = {}
 
         retry_overrides = _normalize_agent_retry_overrides(retries)
-        # Explicit kwargs win over `retries` (matches the legacy precedence where
-        # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
-        if _utils.is_set(legacy_tool_retries) and legacy_tool_retries is not None:
-            retry_overrides['tools'] = legacy_tool_retries
-        if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
-            retry_overrides['output'] = legacy_output_retries
         resolved_retries = _normalize_agent_retries(retry_overrides)
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output

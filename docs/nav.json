@@ -317,10 +317,6 @@
         ]
       },
       {
-        "label": "Agent2Agent (A2A)",
-        "slug": "a2a"
-      },
-      {
         "label": "Command Line Interface (CLI)",
         "slug": "cli"
       }
@@ -389,7 +385,6 @@
       {
         "label": "pydantic_ai",
         "items": [
-          "api/ag_ui",
           "api/agent",
           "api/native_tools",
           "api/capabilities",
@@ -481,12 +476,6 @@
               "api/pydantic_graph/graph_builder_node"
             ]
           }
-        ]
-      },
-      {
-        "label": "fasta2a",
-        "items": [
-          "api/fasta2a"
         ]
       }
     ]

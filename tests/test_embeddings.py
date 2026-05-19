@@ -1521,7 +1521,7 @@ async def test_instrument_all():
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)
     assert m.wrapped is model
-    assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
+    assert m.instrumentation_settings.version == InstrumentationSettings().version
 
     assert m.model_name == model.model_name
     assert m.system == model.system
@@ -1534,7 +1534,7 @@ async def test_instrument_all():
     assert await m.max_input_tokens() == await model.max_input_tokens()
     assert await m.count_tokens('Hello, world!') == await model.count_tokens('Hello, world!')
 
-    options = InstrumentationSettings(version=1, event_mode='logs')
+    options = InstrumentationSettings(version=5)
     Embedder.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)
