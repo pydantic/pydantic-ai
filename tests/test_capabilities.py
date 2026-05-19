@@ -2351,7 +2351,7 @@ def test_toolset_capability_get_toolset():
     assert convenience_cap.get_toolset() is ts
 
     def greet(name: str) -> str:
-        return f'Hello, {name}!'
+        return f'Hello, {name}!'  # pragma: no cover
 
     with pytest.raises(UserError, match='Cannot use both `toolset` and `tools`'):
         Capability[None](toolset=ts, tools=[greet])
@@ -2360,7 +2360,7 @@ def test_toolset_capability_get_toolset():
         convenience_cap.tool_plain(greet)
 
     def greet_with_context(_ctx: RunContext[None], name: str) -> str:
-        return f'Hello, {name}!'
+        return f'Hello, {name}!'  # pragma: no cover
 
     with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolset=` is set\.'):
         convenience_cap.tool(greet_with_context)
@@ -17674,6 +17674,13 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
 
         if not any(
             isinstance(part, LoadCapabilityReturnPart)
@@ -17691,15 +17698,28 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
                 ]
             )
 
-        return make_text_response('done')
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'done: {refund_result}')
 
     agent = Agent(FunctionModel(model_fn), capabilities=[factory])
     result = await agent.run('Can I get a refund?')
 
-    assert result.output == 'done'
+    assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
             [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', False)],
             [('load_capability', False), ('lookup_refund_policy', False)],
         ]
     )
