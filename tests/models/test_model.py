@@ -92,6 +92,14 @@ TEST_CASES = [
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
+        'openai-chat:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'openai',
+        'openai',
+        OpenAIChatModel,
+    ),
+    pytest.param(
+        {'OPENAI_API_KEY': 'openai-api-key'},
         'gpt-3.5-turbo',
         'gpt-3.5-turbo',
         'openai',
