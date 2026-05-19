@@ -137,9 +137,9 @@ def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
 # Mapping of provider names to their canonical gateway form
 GATEWAY_MODEL_MAP = {
     'anthropic': 'anthropic',
-    'openai': 'openai',
+    'openai': 'openai-responses',
     'openai-responses': 'openai-responses',
-    'openai-chat': 'openai',
+    'openai-chat': 'openai-chat',
     'bedrock': 'bedrock',
     'google-gla': 'gemini',
     'google-vertex': 'google-vertex',
