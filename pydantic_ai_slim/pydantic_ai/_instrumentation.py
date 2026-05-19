@@ -396,7 +396,7 @@ class InstrumentationNames:
                 tool_result_attr='tool_response',
                 output_tool_span_name='running output function',
             )
-        elif version in (3, 4, 5):
+        else:
             return cls(
                 agent_run_span_name='invoke_agent',
                 agent_name_attr='gen_ai.agent.name',
@@ -405,8 +405,6 @@ class InstrumentationNames:
                 tool_result_attr='gen_ai.tool.call.result',
                 output_tool_span_name='execute_tool',
             )
-        else:
-            raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
 
     def get_agent_run_span_name(self, agent_name: str) -> str:
         """Get the formatted agent span name.

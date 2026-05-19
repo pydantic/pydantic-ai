@@ -269,7 +269,7 @@ Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_name
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
-**The default is `version=5`**, which follows the current instrumentation format.
+**The default is `version=5`**.
 
 #### Version 2
 

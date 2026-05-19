@@ -34,7 +34,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import InstrumentationNames, get_instructions, serialize_any
+from pydantic_ai._instrumentation import get_instructions, serialize_any
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1810,11 +1810,6 @@ def test_serialize_any_handles_broken_str():
             raise RuntimeError('broken')
 
     assert serialize_any(BrokenStr()) == snapshot('Unable to serialize: broken')
-
-
-def test_instrumentation_names_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
-        InstrumentationNames.for_version(1)
 
 
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
