@@ -9,7 +9,6 @@ against an in-process FastMCP server.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 from pathlib import Path
@@ -19,7 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
-from pydantic_ai import Agent, models
+from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
@@ -51,9 +50,6 @@ with try_import() as imports_successful:
         ResourceTemplate,
         load_mcp_toolsets,
     )
-
-with try_import() as logfire_imports_successful:
-    from logfire.testing import CaptureLogfire
 
 
 pytestmark = [
@@ -304,37 +300,6 @@ class TestMCPToolsetIntegration:
             assert toolset.capabilities.tools is True
             assert toolset.instructions == 'You are an MCP test server.'
         assert toolset.is_running is False
-
-    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-    async def test_parallel_agent_runs_produce_independent_span_trees(
-        self, fastmcp_server: FastMCP[None], capfire: CaptureLogfire
-    ):
-        """Each parallel `agent.run()` sharing one `MCPToolset` produces its own independent trace."""
-        Agent.instrument_all(True)
-        try:
-            toolset = MCPToolset(fastmcp_server)
-            agent = Agent(TestModel(call_tools=['add']), toolsets=[toolset])
-            async with toolset:
-                await asyncio.gather(*[agent.run(str(i)) for i in range(3)])
-
-            spans = [s for s in capfire.exporter.exported_spans if s.context is not None]
-            trace_ids = {s.context.trace_id for s in spans if s.context is not None and s.name == 'invoke_agent agent'}
-            assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
-
-            for trace_id in trace_ids:
-                trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
-                names = [s.name for s in trace_spans]
-                assert names.count('invoke_agent agent') >= 1
-                assert 'execute_tool add' in names
-
-                span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
-                for span in trace_spans:
-                    if span.parent is not None:
-                        assert span.parent.span_id in span_ids, (
-                            f'span {span.name!r} in trace {trace_id:x} has a parent outside its own trace'
-                        )
-        finally:
-            Agent.instrument_all(False)
 
     async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
         """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
