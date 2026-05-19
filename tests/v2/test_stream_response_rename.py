@@ -37,6 +37,8 @@ async def test_agent_stream_stream_response_yields_model_response_snapshots():
 
     assert len(items) > 0
     assert all(isinstance(item, ModelResponse) for item in items)
+    assert items[-1].state == 'complete'
+    assert all(item.state == 'incomplete' for item in items[:-1])
 
 
 # StreamedRunResult ──────────────────────────────────────────────────────────
