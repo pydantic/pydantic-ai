@@ -120,29 +120,9 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/chat/create#chat-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
-## OpenAI Responses API
+## Responses API features
 
-Pydantic AI uses OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) by default through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. Both `'openai:'` and `'openai-responses:'` resolve to it:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openai-responses:gpt-5.2')
-...
-```
-
-Or initialise the model directly with just the model name:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
-
-model = OpenAIResponsesModel('gpt-5.2')
-agent = Agent(model)
-...
-```
-
-You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
 
 ### Native tools
 
@@ -316,6 +296,28 @@ The mode is inferred from which parameters you pass: supplying `message_count_th
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
 For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+## Chat Completions API
+
+If you need the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead of the default [Responses API](https://platform.openai.com/docs/api-reference/responses), pin to it with the `'openai-chat:'` prefix or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-chat:gpt-5.2')
+...
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+
+model = OpenAIChatModel('gpt-5.2')
+agent = Agent(model)
+...
+```
+
+`OpenAIChatModel` is also what backs every [OpenAI-compatible provider](#openai-compatible-models) below — DeepSeek, Alibaba Cloud Model Studio, Vercel AI Gateway, MoonshotAI, GitHub Models, Perplexity, Fireworks, Together, Heroku, LiteLLM, Nebius, OVHcloud, SambaNova all speak the Chat Completions wire format, so the same model class applies.
 
 ## OpenAI-compatible Models
 
