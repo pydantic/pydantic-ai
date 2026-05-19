@@ -34,12 +34,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot, warns
 from ..conftest import IsDatetime, IsInt, IsStr, try_import
@@ -1797,11 +1797,19 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
     )
 
 
-def test_get_instructions_from_message_history():
+def test_instrumentation_run_span_end_attributes_from_message_history():
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('hello')], instructions='Be kind', timestamp=IsDatetime()),
     ]
-    assert get_instructions(messages) == snapshot('Be kind')
+    ctx = RunContext(deps=None, model=MyModel(), usage=RunUsage())
+    instrumentation = Instrumentation(settings=InstrumentationSettings())
+    assert instrumentation._run_span_end_attributes(ctx, messages, metadata=None) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        {
+            'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
+            'gen_ai.system_instructions': '[{"type": "text", "content": "Be kind"}]',
+            'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
+        }
+    )
 
 
 def test_messages_to_otel_messages_serialization_errors():
