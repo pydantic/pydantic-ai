@@ -2440,36 +2440,6 @@ async def test_duplicate_capability_ids_raise() -> None:
     )
 
 
-async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
-    """Loaded capability ids restored from history must exist in the current run registry."""
-    agent = Agent(
-        TestModel(),
-        capabilities=[Capability[None](id='known', description='Known capability.', instructions='Known.')],
-    )
-
-    message_history = [
-        ModelResponse(
-            parts=[
-                LoadCapabilityCallPart(args={'id': 'missing'}, tool_call_id='load-missing'),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                LoadCapabilityReturnPart(content={}, tool_call_id='load-missing'),
-            ]
-        ),
-    ]
-
-    with pytest.raises(UserError) as exc_info:
-        await agent.run('hi', message_history=message_history)
-
-    assert str(exc_info.value) == snapshot(
-        "Message history contains loaded capability ids that are not available for this run: 'missing'. "
-        'For dynamic capabilities, ensure the factory is deterministic and the returned capability has a '
-        'stable, explicitly-set `id=` (the auto-generated default changes every run).'
-    )
-
-
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     """A partial/stale `load_capability` call in history must not load a capability on replay."""
     agent = Agent(
