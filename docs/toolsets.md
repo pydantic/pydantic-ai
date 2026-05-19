@@ -929,29 +929,3 @@ toolset = LangChainToolset(toolkit.get_tools())
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
 ```
-
-### ACI.dev Tools {#aci-tools}
-
-!!! warning "Deprecated in 1.x, removed in 2.0"
-    `pydantic_ai.ext.aci` (`tool_from_aci` and `ACIToolset`) is deprecated and will be removed in 2.0 (see [#5467](https://github.com/pydantic/pydantic-ai/pull/5467)). Wrap ACI.dev tools yourself using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] against `aci.ACI().functions.get_definition(...)`, or call the upstream `aci-sdk` integration directly.
-
-If you'd like to use tools from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
-
-You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import ACIToolset
-
-toolset = ACIToolset(
-    [
-        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
-        'OPEN_WEATHER_MAP__FORECAST',
-    ],
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
-```

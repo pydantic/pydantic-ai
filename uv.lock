@@ -4978,15 +4978,42 @@ email = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "retries", "web"] },
 ]
 
 [package.optional-dependencies]
+ag-ui = [
+    { name = "pydantic-ai-slim", extra = ["ag-ui"] },
+]
+bedrock = [
+    { name = "pydantic-ai-slim", extra = ["bedrock"] },
+]
+cohere = [
+    { name = "pydantic-ai-slim", extra = ["cohere"] },
+]
 dbos = [
     { name = "pydantic-ai-slim", extra = ["dbos"] },
 ]
+duckduckgo = [
+    { name = "pydantic-ai-slim", extra = ["duckduckgo"] },
+]
+exa = [
+    { name = "pydantic-ai-slim", extra = ["exa"] },
+]
 examples = [
     { name = "pydantic-ai-examples" },
+]
+groq = [
+    { name = "pydantic-ai-slim", extra = ["groq"] },
+]
+huggingface = [
+    { name = "pydantic-ai-slim", extra = ["huggingface"] },
+]
+mistral = [
+    { name = "pydantic-ai-slim", extra = ["mistral"] },
+]
+openrouter = [
+    { name = "pydantic-ai-slim", extra = ["openrouter"] },
 ]
 prefect = [
     { name = "pydantic-ai-slim", extra = ["prefect"] },
@@ -4994,8 +5021,29 @@ prefect = [
 sentence-transformers = [
     { name = "pydantic-ai-slim", extra = ["sentence-transformers"] },
 ]
+spec = [
+    { name = "pydantic-ai-slim", extra = ["spec"] },
+]
+tavily = [
+    { name = "pydantic-ai-slim", extra = ["tavily"] },
+]
+temporal = [
+    { name = "pydantic-ai-slim", extra = ["temporal"] },
+]
+ui = [
+    { name = "pydantic-ai-slim", extra = ["ui"] },
+]
+vertexai = [
+    { name = "pydantic-ai-slim", extra = ["vertexai"] },
+]
 voyageai = [
     { name = "pydantic-ai-slim", extra = ["voyageai"] },
+]
+web-fetch = [
+    { name = "pydantic-ai-slim", extra = ["web-fetch"] },
+]
+xai = [
+    { name = "pydantic-ai-slim", extra = ["xai"] },
 ]
 
 [package.dev-dependencies]
@@ -5048,13 +5096,29 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui"], marker = "extra == 'ag-ui'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "retries", "web"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["bedrock"], marker = "extra == 'bedrock'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["cohere"], marker = "extra == 'cohere'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'duckduckgo'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["exa"], marker = "extra == 'exa'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'spec'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["tavily"], marker = "extra == 'tavily'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ui"], marker = "extra == 'ui'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["vertexai"], marker = "extra == 'vertexai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["voyageai"], marker = "extra == 'voyageai'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["dbos", "examples", "prefect", "sentence-transformers", "voyageai"]
+provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -47,7 +47,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -56,6 +56,26 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
+# Opt-in extras forwarded from `pydantic-ai-slim` (some previously included in the
+# default `pydantic-ai` install, others newly exposed here for convenience).
+# Exposed at the root so users (and CI's `uv run --all-extras` matrix entry) can
+# pull them through `pydantic-ai[<name>]`.
+cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
+mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
+bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
+xai = ["pydantic-ai-slim[xai]=={{ version }}"]
+groq = ["pydantic-ai-slim[groq]=={{ version }}"]
+openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
+huggingface = ["pydantic-ai-slim[huggingface]=={{ version }}"]
+vertexai = ["pydantic-ai-slim[vertexai]=={{ version }}"]
+ag-ui = ["pydantic-ai-slim[ag-ui]=={{ version }}"]
+ui = ["pydantic-ai-slim[ui]=={{ version }}"]
+duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
+tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
+exa = ["pydantic-ai-slim[exa]=={{ version }}"]
+web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
+spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -223,8 +243,6 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
-    "tests/v2/test_aci_deprecation.py",                      # imports aci-sdk under try_import; SDK not installed in CI lint env
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -291,8 +309,6 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
-    "tests/v2/test_aci_deprecation.py",  # paired with the omit above; aci-sdk isn't installed in the coverage env
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
@@ -363,4 +379,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,aci,fpr'
+ignore-words-list = 'asend,fpr'

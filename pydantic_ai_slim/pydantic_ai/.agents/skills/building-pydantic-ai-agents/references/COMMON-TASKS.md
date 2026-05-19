@@ -92,7 +92,7 @@ Read only the relevant section in [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTR
 - [Direct API](./ORCHESTRATION-AND-INTEGRATIONS.md#call-the-model-without-using-an-agent)
 - [Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution)
 - [Embeddings](./ORCHESTRATION-AND-INTEGRATIONS.md#use-embeddings-for-rag)
-- [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-or-acidev-tools)
+- [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-tools)
 - [Custom Extensibility](./ORCHESTRATION-AND-INTEGRATIONS.md#build-custom-toolsets-models-or-agents)
 - [Evals](./ORCHESTRATION-AND-INTEGRATIONS.md#systematically-verify-agent-behavior-with-evals)
 

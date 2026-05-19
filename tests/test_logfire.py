@@ -3357,6 +3357,8 @@ def test_instrumentation_capability_template_description(
     capfire: CaptureLogfire,
 ) -> None:
     """Test that TemplateStr descriptions are rendered in agent run spans."""
+    # `TemplateStr` rendering requires the `[spec]` extra (pydantic-handlebars); not in default v2 deps.
+    pytest.importorskip('pydantic_handlebars')
     from dataclasses import dataclass
 
     from pydantic_ai._template import TemplateStr
