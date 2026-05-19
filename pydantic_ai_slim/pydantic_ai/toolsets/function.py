@@ -9,7 +9,6 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
-from .._utils import takes_run_context
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionPart
 from ..tools import (
@@ -266,12 +265,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            if not takes_run_context(func_):
-                raise UserError(
-                    f'`FunctionToolset.tool()` requires a function whose first parameter is annotated with `RunContext`. '
-                    f'For tools that do not need run context, use `FunctionToolset.tool_plain()` instead. '
-                    f'Got: {func_.__qualname__!r}'
-                )
             self.add_function(
                 func=func_,
                 takes_ctx=True,
