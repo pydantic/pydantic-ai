@@ -2,31 +2,21 @@ from __future__ import annotations
 
 import itertools
 import json
-import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
-from opentelemetry._logs import (
-    Logger,
-    LoggerProvider,
-    LogRecord,
-    get_logger_provider,
-)
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
-    GEN_AI_SYSTEM_ATTRIBUTE,
     TOKEN_HISTOGRAM_BOUNDARIES,
-    event_to_dict,
     get_instructions,
     open_model_request_span,
-    serialize_any,
 )
 
 from .. import _otel_messages
@@ -69,11 +59,9 @@ class InstrumentationSettings:
     """
 
     tracer: Tracer = field(repr=False)
-    logger: Logger = field(repr=False)
-    event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
@@ -83,9 +71,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
-        logger_provider: LoggerProvider | None = None,
+        version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = False,
     ):
         """Create instrumentation options.
@@ -101,9 +87,6 @@ class InstrumentationSettings:
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
-                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec
-                    and will be removed in a future release.
-                    The parameters `event_mode` and `logger_provider` are only relevant for version 1.
                 Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
@@ -116,13 +99,6 @@ class InstrumentationSettings:
                 Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
                     no longer record an exception event or set the span status to ERROR — the span is left
                     as UNSET, since deferrals are control flow, not errors.
-            event_mode: The mode for emitting events in version 1.
-                If `'attributes'`, events are attached to the span as attributes.
-                If `'logs'`, events are emitted as OpenTelemetry log-based events.
-            logger_provider: The OpenTelemetry logger provider to use.
-                If not provided, the global logger provider is used.
-                Calling `logfire.configure()` sets the global logger provider, so most users don't need this.
-                This is only used if `event_mode='logs'` and `version=1`.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Enable this to prevent double-counting in observability backends that aggregate span
@@ -134,22 +110,14 @@ class InstrumentationSettings:
 
         tracer_provider = tracer_provider or get_tracer_provider()
         meter_provider = meter_provider or get_meter_provider()
-        logger_provider = logger_provider or get_logger_provider()
         scope_name = 'pydantic-ai'
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
-        self.logger = logger_provider.get_logger(scope_name, __version__)
-        self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
 
-        if event_mode == 'logs' and version != 1:
-            warnings.warn(
-                'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
-                stacklevel=2,
-            )
-            version = 1
-
+        if version not in (2, 3, 4, 5):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
         self.version = version
         self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
 
@@ -176,47 +144,6 @@ class InstrumentationSettings:
             description='Monetary cost',
         )
 
-    def messages_to_otel_events(
-        self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
-    ) -> list[LogRecord]:
-        """Convert a list of model messages to OpenTelemetry events.
-
-        Args:
-            messages: The messages to convert.
-            parameters: The model request parameters.
-
-        Returns:
-            A list of OpenTelemetry events.
-        """
-        events: list[LogRecord] = []
-        instructions = get_instructions(messages, parameters)
-        if instructions is not None:
-            events.append(
-                LogRecord(
-                    attributes={'event.name': 'gen_ai.system.message'},
-                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
-                )
-            )
-
-        for message_index, message in enumerate(messages):
-            message_events: list[LogRecord] = []
-            if isinstance(message, ModelRequest):
-                for part in message.parts:
-                    if hasattr(part, 'otel_event'):
-                        message_events.append(part.otel_event(self))
-            elif isinstance(message, ModelResponse):  # pragma: no branch
-                message_events = message.otel_events(self)
-            for event in message_events:
-                event.attributes = {
-                    'gen_ai.message.index': message_index,
-                    **(event.attributes or {}),
-                }
-            events.extend(message_events)
-
-        for event in events:
-            event.body = serialize_any(event.body)
-        return events
-
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
@@ -241,57 +168,33 @@ class InstrumentationSettings:
         self,
         input_messages: list[ModelMessage],
         response: ModelResponse,
-        system: str,
         span: Span,
         parameters: ModelRequestParameters | None = None,
     ):
-        if self.version == 1:
-            events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response]):
-                events.append(
-                    LogRecord(
-                        attributes={'event.name': 'gen_ai.choice'},
-                        body={
-                            'index': 0,
-                            'message': event.body,
-                        },
-                    )
-                )
-            for event in events:
-                event.attributes = {
-                    GEN_AI_SYSTEM_ATTRIBUTE: system,
-                    **(event.attributes or {}),
+        output_messages = self.messages_to_otel_messages([response])
+        assert len(output_messages) == 1
+        output_message = output_messages[0]
+
+        instructions = get_instructions(input_messages, parameters)
+        system_instructions_attributes = self.system_instructions_attributes(instructions)
+
+        attributes: dict[str, AttributeValue] = {
+            'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
+            'gen_ai.output.messages': json.dumps([output_message]),
+            **system_instructions_attributes,
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.input.messages': {'type': 'array'},
+                        'gen_ai.output.messages': {'type': 'array'},
+                        **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
+                        'model_request_parameters': {'type': 'object'},
+                    },
                 }
-            self._emit_events(span, events)
-        else:
-            output_messages = self.messages_to_otel_messages([response])
-            assert len(output_messages) == 1
-            output_message = output_messages[0]
-
-            instructions = get_instructions(input_messages, parameters)
-            system_instructions_attributes = self.system_instructions_attributes(instructions)
-
-            attributes: dict[str, AttributeValue] = {
-                'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
-                'gen_ai.output.messages': json.dumps([output_message]),
-                **system_instructions_attributes,
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'gen_ai.input.messages': {'type': 'array'},
-                            'gen_ai.output.messages': {'type': 'array'},
-                            **(
-                                {'gen_ai.system_instructions': {'type': 'array'}}
-                                if system_instructions_attributes
-                                else {}
-                            ),
-                            'model_request_parameters': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-            span.set_attributes(attributes)
+            ),
+        }
+        span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
@@ -299,27 +202,6 @@ class InstrumentationSettings:
                 'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
             }
         return {}
-
-    def _emit_events(self, span: Span, events: list[LogRecord]) -> None:
-        if self.event_mode == 'logs':
-            for event in events:
-                self.logger.emit(event)
-        else:
-            attr_name = 'events'
-            span.set_attributes(
-                {
-                    attr_name: json.dumps([event_to_dict(event) for event in events]),
-                    'logfire.json_schema': json.dumps(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                attr_name: {'type': 'array'},
-                                'model_request_parameters': {'type': 'object'},
-                            },
-                        }
-                    ),
-                }
-            )
 
     def record_metrics(
         self,
