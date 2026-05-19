@@ -1,0 +1,14 @@
+pydantic_ai_slim/pydantic_ai/capabilities/instrumentation.py
+  h_d9dd17644dded9 15,79,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "065a68f8b0f3ce32ee9ee949149d10ffca545c04",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
