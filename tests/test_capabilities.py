@@ -11548,16 +11548,20 @@ async def test_enqueue_rejects_model_request_mixed_with_other_items():
 
 
 async def test_enqueue_asap_with_rich_message_history_tail():
-    """`'asap'` enqueue lands as its own `ModelRequest` after a rich-tail `message_history`.
+    """`'asap'` enqueue lands as its own `ModelRequest` in history *and* gets wire-merged into the rich tail.
 
-    `all_messages()` keeps the un-merged view (drain's request is a separate
-    `ModelRequest` after the rich tail). On the wire, `_clean_message_history`
-    merges the two adjacent `ModelRequest`s and sorts `ToolReturnPart`/`RetryPromptPart`
-    first — non-tool parts keep arrival order, so the enqueued content lands at the
-    *end* of the merged turn (not interleaved between existing parts).
+    The history keeps the un-merged view (drain's request is a separate `ModelRequest`
+    after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
+    `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
+    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    enqueued content lands at the *end* of the merged turn (not interleaved between
+    existing parts). Captures the `messages` arg `FunctionModel` actually received to
+    validate the wire-level merge through the public path.
     """
+    captured_wire_messages: list[list[ModelMessage]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_wire_messages.append(messages)
         return ModelResponse(
             parts=[TextPart(content='done')],
             usage=RequestUsage(input_tokens=10, output_tokens=5),
@@ -11586,9 +11590,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
 
     assert agent_run.result is not None
     # `all_messages()` keeps the un-merged view (drain's request is a separate
-    # `ModelRequest` after the rich tail). See `test_messages.py` for the
-    # wire-level assertion that `_clean_message_history` merges the two adjacent
-    # `ModelRequest`s and sorts `ToolReturnPart`s first.
+    # `ModelRequest` after the rich tail).
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
@@ -11618,6 +11620,30 @@ async def test_enqueue_asap_with_rich_message_history_tail():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # And the wire-level view: the rich tail and the drained request merged into one
+    # `ModelRequest`, with `ToolReturnPart` first and the user-prompt parts in arrival
+    # order (so the enqueued content lands at the end, not interleaved).
+    assert len(captured_wire_messages) == 1
+    assert captured_wire_messages[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                    UserPromptPart(content='injected after rich tail', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -11673,10 +11699,37 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
     assert call_count == 2
     # The 'asap' message landed in its own ModelRequest before the final response,
     # not lost despite the agent producing a no-tool-call response.
-    assert any(
-        isinstance(msg, ModelRequest)
-        and any(isinstance(p, UserPromptPart) and p.content == 'background task result' for p in msg.parts)
-        for msg in result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='background task result', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final after late asap')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
 
 

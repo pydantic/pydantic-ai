@@ -80,9 +80,6 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     """
 
     def get_ordering(self) -> CapabilityOrdering:
-        # Outermost so `'asap'` messages are drained into the request before other
-        # capabilities see it, and the end-of-run redirection runs after all other
-        # after_node_run hooks (which run in reverse order).
         return CapabilityOrdering(position='outermost')
 
     @classmethod
