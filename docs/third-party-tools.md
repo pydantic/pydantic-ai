@@ -24,7 +24,7 @@ search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     tools=[search_tool],
 )
 
