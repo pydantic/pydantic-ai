@@ -53,9 +53,7 @@ with try_import() as imports_successful:
     )
 
 with try_import() as logfire_imports_successful:
-    import logfire
-    from logfire.testing import TestExporter
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from logfire.testing import CaptureLogfire
 
 
 pytestmark = [
@@ -308,10 +306,10 @@ class TestMCPToolsetIntegration:
         assert toolset.is_running is False
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-    async def test_parallel_agent_runs_produce_independent_span_trees(self, fastmcp_server: FastMCP[None]):
+    async def test_parallel_agent_runs_produce_independent_span_trees(
+        self, fastmcp_server: FastMCP[None], capfire: CaptureLogfire
+    ):
         """Each parallel `agent.run()` sharing one `MCPToolset` produces its own independent trace."""
-        exporter = TestExporter()
-        logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
         Agent.instrument_all(True)
         try:
             toolset = MCPToolset(fastmcp_server)
@@ -319,7 +317,7 @@ class TestMCPToolsetIntegration:
             async with toolset:
                 await asyncio.gather(*[agent.run(str(i)) for i in range(3)])
 
-            spans = [s for s in exporter.exported_spans if s.context is not None]
+            spans = [s for s in capfire.exporter.exported_spans if s.context is not None]
             trace_ids = {s.context.trace_id for s in spans if s.context is not None and s.name == 'invoke_agent agent'}
             assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
 
