@@ -482,12 +482,18 @@ result = agent.run_sync('Can I get a refund for order-123?')
 print(result.output)
 #> order-123 is eligible for a refund for 30 days after purchase.
 print(seen_tool_names)
-#> [['load_capability'], ['lookup_refund_policy'], ['lookup_refund_policy']]
+"""
+[
+    ['load_capability'],
+    ['load_capability', 'lookup_refund_policy'],
+    ['load_capability', 'lookup_refund_policy'],
+]
+"""
 ```
 
 _(This example is complete, it can be run "as is")_
 
-The first turn only sees `load_capability`; `lookup_refund_policy` is still in `info.function_tools` but stamped `defer_loading=True`, which providers honor as "not callable yet." After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible.
+The first turn only sees `load_capability`; `lookup_refund_policy` is still in `info.function_tools` but stamped `defer_loading=True`, which providers honor as "not callable yet." After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible. `load_capability` stays visible so the function-tool set remains stable across turns.
 
 ### Dynamic descriptions and load-time instructions
 
