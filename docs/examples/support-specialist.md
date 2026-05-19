@@ -1,14 +1,16 @@
-Customer-support agent that uses [deferred capability loading](../capabilities.md#deferred-capability-loading) to keep specialist instructions and tools out of the initial request.
+Customer-support agent that uses [capabilities on demand](../capabilities.md#deferred-capability-loading) to scale one agent across multiple support specialties without loading every specialty into every request.
 
 Demonstrates:
 
-- [deferred capability loading](../capabilities.md#deferred-capability-loading)
+- [capabilities on demand](../capabilities.md#deferred-capability-loading)
 - [capabilities](../capabilities.md) bundling instructions and a [toolset](../toolsets.md)
 - [agent dependencies](../dependencies.md)
 
 The agent advertises two specialists — `orders` and `returns` — by `id` and `description` only. The model sees the catalog on its first request and calls `load_capability(id)` to unlock the specialist that matches the user's question; that specialist's instructions and tools then appear on the next model request. The specialist not loaded on a given run never enters the context window.
 
-Contrast with the [bank support example](./bank-support.md), where a single toolset is always loaded: this example shows the same support-agent pattern scaled to multiple specialist modes without bloating every request.
+This is the same shape as skills-style progressive disclosure, but each specialist can bring both instructions and tools. The order specialist carries order lookup behavior, the returns specialist carries return-policy guidance and return-opening tools, and the model chooses which one to load at runtime.
+
+Contrast with the [bank support example](./bank-support.md), where a single toolset is always loaded: this example shows the same support-agent pattern scaled to multiple specialist modes without bloating every request. As the number of specialties grows, the first request still only needs the compact catalog.
 
 ## Running the Example
 

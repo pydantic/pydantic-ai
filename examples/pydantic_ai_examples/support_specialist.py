@@ -1,4 +1,4 @@
-"""Customer-support agent demonstrating deferred capability loading.
+"""Customer-support agent demonstrating capabilities on demand.
 
 The agent advertises two specialist capabilities — `orders` and `returns` —
 by id and description only. The model reads the catalog, calls

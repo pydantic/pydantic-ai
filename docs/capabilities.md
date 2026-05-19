@@ -390,25 +390,27 @@ _(This example is complete, it can be run "as is")_
 
 The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
 
-## Deferred capability loading
+## Capabilities on demand {#deferred-capability-loading}
 
-Deferred capability loading is progressive disclosure for capabilities. It lets an agent advertise a specialist capability by `id` and `description`, while keeping that capability's instructions and tools out of the model's initial context.
+Use capabilities on demand when your agent has more capabilities than most requests need. The model first sees only a compact catalog of capability `id`s and `description`s. When it needs one, it calls `load_capability(id)`; Pydantic AI then returns that capability's instructions and makes its function tools available.
 
-When the model calls `load_capability(id)`, Pydantic AI returns the capability's instructions and exposes its function tools on later model requests. This is useful for agents with several specialist modes where most runs only need one of them.
+The result is smaller prompts, less irrelevant context, and lower token use without removing capabilities from the agent. It is skills-style progressive disclosure, but for Pydantic AI capability bundles: instructions plus the tools that make those instructions actionable.
 
-For large flat tool collections, use [tool search](tools-advanced.md#tool-search) instead. Tool search discovers individual tools; deferred capability loading unlocks a named bundle of instructions and tools.
+On models with native [tool search](tools-advanced.md#tool-search) support, capability tools are unlocked through an append-only discovery path. The provider-visible tool definitions stay stable, so prompt caching can be preserved across capability loads. On models using the local fallback, Pydantic AI still keeps the context window smaller, but local function-tool visibility can change between requests.
 
-### Deferring a capability
+For large flat tool collections, use [tool search](tools-advanced.md#tool-search) instead. Tool search discovers individual tools; capabilities on demand unlock a named bundle of instructions and tools.
 
-Every deferred capability needs:
+### Adding an on-demand capability
+
+Every on-demand capability needs:
 
 * a stable, unique [`id`][pydantic_ai.capabilities.AbstractCapability.id]
 * a short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description]
 * `defer_loading=True`
 
-[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to defer static instructions and a [toolset](toolsets.md):
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and a [toolset](toolsets.md) available on demand:
 
-```python {title="deferred_capability_support.py"}
+```python {title="capability_on_demand.py"}
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
@@ -493,13 +495,15 @@ print(seen_tool_names)
 
 _(This example is complete, it can be run "as is")_
 
-The first turn only sees `load_capability`; `lookup_refund_policy` is still in `info.function_tools` but stamped `defer_loading=True`, which providers honor as "not callable yet." After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible. `load_capability` stays visible so the function-tool set remains stable across turns.
+The first turn only sees the `load_capability` entry point, so the refund-specific instructions and tool schema do not consume the initial context window. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible. `load_capability` stays visible so the function-tool set remains stable across turns.
+
+For a complete multi-specialist example, see the [support specialist example](examples/support-specialist.md), where the same agent can load order or return handling on demand.
 
 ### Dynamic descriptions and load-time instructions
 
 Subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] when the catalog entry or load-time instructions depend on the current run:
 
-```python {title="dynamic_deferred_capability.py"}
+```python {title="dynamic_capability_on_demand.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import RunContext
@@ -535,13 +539,13 @@ The description is visible before loading. Dynamic instructions run when `load_c
 
 ### Gotchas
 
-[`id`][pydantic_ai.capabilities.AbstractCapability.id] values must be unique across all capabilities in a run, not just deferred ones.
+[`id`][pydantic_ai.capabilities.AbstractCapability.id] values must be unique across all capabilities in a run, not just on-demand ones.
 
-`load_capability` is reserved when any deferred capability is present. `search_tools` is reserved when [tool search](tools-advanced.md#tool-search) is active.
+`load_capability` is reserved when any on-demand capability is present. `search_tools` is reserved when [tool search](tools-advanced.md#tool-search) is active.
 
-Deferred capabilities currently support instructions and function tools. Model settings and [builtin tools](builtin-tools.md) must stay in always-on capabilities.
+On-demand capabilities currently support instructions and function tools. Model settings and [builtin tools](builtin-tools.md) must stay in always-on capabilities.
 
-Tools in a deferred capability are hidden until the capability is loaded. Set a tool's `defer_loading=True` to keep it behind `search_tools` after loading, or `False` to expose it before loading.
+Tools in an on-demand capability are hidden until the capability is loaded. Set a tool's `defer_loading=True` to keep it behind `search_tools` after loading, or `False` to expose it before loading.
 
 Loaded capability state comes from the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) removes the `load_capability` tool return, the model may need to load the capability again.
 
