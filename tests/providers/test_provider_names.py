@@ -104,9 +104,10 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
     assert infer_provider_class(provider) == provider_cls
 
 
-def test_infer_provider_rejects_removed_google_vertex_prefix():
-    """The `google-vertex:` provider prefix was removed in v2; only the internal gateway wire value still maps to GoogleCloudProvider."""
-    with pytest.raises(ValueError, match='Unknown provider: google-vertex'):
-        infer_provider_class('google-vertex')
-    with pytest.raises(ValueError, match='Unknown provider: google-vertex'):
-        infer_provider('google-vertex')
+@pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])
+def test_infer_provider_rejects_removed_google_prefixes(removed_prefix: str):
+    """The `google-gla:`, `google-vertex:`, and `vertexai:` provider prefixes were removed in v2. The `google-vertex` internal gateway wire value still maps to GoogleCloudProvider, but only when prefixed with `gateway/`."""
+    with pytest.raises(ValueError, match=f'Unknown provider: {removed_prefix}'):
+        infer_provider_class(removed_prefix)
+    with pytest.raises(ValueError, match=f'Unknown provider: {removed_prefix}'):
+        infer_provider(removed_prefix)
