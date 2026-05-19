@@ -102,14 +102,26 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         settings_chain: list[ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
         for capability in self.capabilities:
             cap_settings = capability.get_model_settings()
-            if capability.defer_loading is True and cap_settings is not None:
-                raise UserError(
-                    f'Deferred capability {capability.id!r} provides model settings, but lazy-loading model '
-                    'settings is not supported yet. Remove the model settings from this capability or set '
-                    '`defer_loading=False`.'
-                )
-            if cap_settings is not None:
+
+            if cap_settings is None:
+                continue
+
+            if capability.defer_loading is True:
+
+                def deferred_settings(
+                    ctx: RunContext[AgentDepsT],
+                    *,
+                    capability_id: str = capability.id,
+                    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
+                ) -> ModelSettings:
+                    if capability_id in ctx.loaded_capability_ids:
+                        return cap_settings(ctx) if callable(cap_settings) else cap_settings
+                    return ModelSettings()
+
+                settings_chain.append(deferred_settings)
+            else:
                 settings_chain.append(cap_settings)
+
         if not settings_chain:
             return None
         if all(not callable(s) for s in settings_chain):
