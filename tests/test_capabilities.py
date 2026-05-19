@@ -2618,13 +2618,12 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            # Synthesized by `ToolSearch.before_model_request` after the cap load —
-            # `auto_load_*` id is uuid4-randomized so it's matched as `IsStr()`.
+            # Synthesized by `ToolSearch.before_model_request` after the capability load.
             ModelResponse(
                 parts=[
                     ToolSearchCallPart(
                         args={'queries': ['<auto-discovered>']},
-                        tool_call_id=IsStr(),
+                        tool_call_id='auto_load_0f10f8b659c3c105',
                     )
                 ],
                 usage=RequestUsage(),
@@ -2634,7 +2633,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 parts=[
                     ToolSearchReturnPart(
                         content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
-                        tool_call_id=IsStr(),
+                        tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
                 ],

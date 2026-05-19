@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import uuid
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -225,7 +225,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         framework-synthesized `ToolSearchCallPart` + `ToolSearchReturnPart` appended to
         the message list — append-only so the cached prefix stays intact, idempotent
         because the next turn's `parse_discovered_tools` picks the synthesized part up
-        and the diff collapses to empty.
+        and the diff collapses to empty. The synthetic call id is derived from the
+        discovered tool names so regenerating the same exchange does not change the
+        persisted message history.
         """
         # `ctx.tool_manager` is guaranteed populated in model-request hooks (see
         # `RunContext.tool_manager` docstring), so walking its toolset here is safe.
@@ -240,7 +242,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         if not newly_loaded:
             return request_context
 
-        call_id = f'auto_load_{uuid.uuid4().hex[:8]}'
+        newly_loaded_names = sorted(newly_loaded)
+        # BLAKE2s is stdlib and accepts `digest_size`, so the synthetic id stays
+        # deterministic, compact, and provider-safe even for many long tool names.
+        # Eight digest bytes keeps accidental per-conversation collisions negligible.
+        call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
+        call_id = f'auto_load_{call_id_digest}'
         request_context.messages.append(
             ModelResponse(
                 parts=[
@@ -255,7 +262,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': n, 'description': None} for n in sorted(newly_loaded)]},
+                        content={
+                            'discovered_tools': [{'name': name, 'description': None} for name in newly_loaded_names]
+                        },
                         tool_call_id=call_id,
                     ),
                 ]
