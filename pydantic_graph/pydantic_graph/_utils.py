@@ -85,21 +85,10 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
 
 
 def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:
-    """Attempt to get the namespace where the graph was defined.
-
-    If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
-    to get the correct namespace.
-    """
+    """Return the calling frame's local namespace, used to resolve forward references in type hints."""
     if frame is not None:  # pragma: no branch
         if back := frame.f_back:  # pragma: no branch
-            if back.f_globals.get('__name__') == 'typing':  # pragma: no cover
-                # If the class calling this function is generic, explicitly parameterizing the class
-                # results in a `typing._GenericAlias` instance, which proxies instantiation calls to the
-                # "real" class and thus adding an extra frame to the call. To avoid pulling anything
-                # from the `typing` module, use the correct frame (the one before):
-                return get_parent_namespace(back)
-            else:
-                return back.f_locals
+            return back.f_locals
 
 
 class Unset:
