@@ -52,7 +52,6 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
-a2a = ["fasta2a>=0.6.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
@@ -139,7 +138,6 @@ dev = [
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
-    "pydantic-ai[a2a]",
     "black>=24.10.0",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
@@ -201,8 +199,6 @@ ignore = [
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
-# weird issue with ruff thinking fasta2a is still editable
-known-third-party = ["fasta2a"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -246,6 +242,7 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "tests/v2/test_aci_deprecation.py",                      # imports aci-sdk under try_import; SDK not installed in CI lint env
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -312,6 +309,7 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
+    "tests/v2/test_aci_deprecation.py",  # aci-sdk isn't installed in the coverage env
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
@@ -319,7 +317,6 @@ omit = [
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
-    "pydantic_ai_slim/pydantic_ai/_a2a.py",  # deprecated in 1.x, removed in v2; equivalent code now lives in `fasta2a.pydantic_ai` and is exercised through `tests/test_a2a.py` against that import. `tests/v2/test_a2a_deprecation.py` covers the deprecation warning path.
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

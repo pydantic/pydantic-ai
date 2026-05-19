@@ -59,7 +59,6 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `web-fetch` - installs [Web Fetch Tool](common-tools.md#web-fetch-tool) dependency `markdownify` [PyPI ↗](https://pypi.org/project/markdownify){:target="_blank"}
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
-* `a2a` - (deprecated, will be removed in v2) installs [A2A](a2a.md) dependency `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}. Prefer installing `fasta2a[pydantic-ai]>=0.6.1` directly and using `from fasta2a.pydantic_ai import agent_to_a2a`.
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}

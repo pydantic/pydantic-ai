@@ -1149,7 +1149,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         model = infer_model(model)
 
     if isinstance(model, FallbackModel):
-        # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
+        # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
         def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')

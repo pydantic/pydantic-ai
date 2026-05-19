@@ -90,7 +90,6 @@ Read [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-va
 Read only the relevant section in [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md):
 
 - [Direct API](./ORCHESTRATION-AND-INTEGRATIONS.md#call-the-model-without-using-an-agent)
-- [A2A](./ORCHESTRATION-AND-INTEGRATIONS.md#expose-agents-as-http-servers-a2a)
 - [Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution)
 - [Embeddings](./ORCHESTRATION-AND-INTEGRATIONS.md#use-embeddings-for-rag)
 - [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-tools)

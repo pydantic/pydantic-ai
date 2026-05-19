@@ -1603,20 +1603,6 @@ lua = [
 ]
 
 [[package]]
-name = "fasta2a"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "pydantic" },
-    { name = "starlette" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/28/35949997804129537becf17d0635b8b2b67036589a4da851e44a053857fc/fasta2a-0.6.1.tar.gz", hash = "sha256:e97b92771ad338166b1516dcbb687c9f3f8392a5cd5820542ec4b75ff5219a48", size = 1453473, upload-time = "2026-05-15T20:51:22.059Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/21/4d7e00c10bb4ec33a196efc55190ae086e97f5f487945bdfceb94df3e8d8/fasta2a-0.6.1-py3-none-any.whl", hash = "sha256:1b5369ee1b62405eebafa6d71c57c9e40a1a3f0dcbae5ec3aa6ee450361028dd", size = 28888, upload-time = "2026-05-15T20:51:20.222Z" },
-]
-
-[[package]]
 name = "fastapi"
 version = "0.127.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4996,9 +4982,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-a2a = [
-    { name = "fasta2a" },
-]
 ag-ui = [
     { name = "pydantic-ai-slim", extra = ["ag-ui"] },
 ]
@@ -5098,7 +5081,6 @@ docs = [
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocs-redirects" },
     { name = "mkdocstrings-python" },
-    { name = "pydantic-ai", extra = ["a2a"] },
     { name = "pydantic-docs" },
 ]
 docs-upload = [
@@ -5113,7 +5095,6 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui"], marker = "extra == 'ag-ui'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "retries", "web"], editable = "pydantic_ai_slim" },
@@ -5137,7 +5118,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5174,7 +5155,6 @@ docs = [
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.7.0" },
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
     { name = "mkdocstrings-python", specifier = ">=2.0.0" },
-    { name = "pydantic-ai", extras = ["a2a"], editable = "." },
     { name = "pydantic-docs", git = "https://github.com/pydantic/pydantic-docs" },
 ]
 docs-upload = [
@@ -5242,9 +5222,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-a2a = [
-    { name = "fasta2a" },
-]
 ag-ui = [
     { name = "ag-ui-protocol" },
     { name = "starlette" },
@@ -5354,7 +5331,6 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
-    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0" },
     { name = "genai-prices", specifier = ">=0.0.48" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
@@ -5394,7 +5370,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
 
 [[package]]
 name = "pydantic-core"
