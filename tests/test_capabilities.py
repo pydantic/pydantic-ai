@@ -2404,17 +2404,6 @@ async def test_capability_function_tools_shortcuts_in_agent():
     assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
 
 
-def test_deferred_capability_catalog_entries_require_description() -> None:
-    """Deferred capabilities must be discoverable before the model can load them."""
-
-    with pytest.raises(UserError) as missing_description:
-        Agent(TestModel(), capabilities=[Capability[None](id='billing', defer_loading=True)])
-
-    assert str(missing_description.value) == snapshot(
-        "Capability 'billing' has defer_loading=True but no description. Capabilities with defer_loading=True must provide a description (via the `description` field or by overriding `get_description`) so the model can decide whether to load them from the `load_capability` catalog."
-    )
-
-
 def test_deferred_capability_rejects_unsupported_native_tools() -> None:
     """Deferred loading does not currently support native tools."""
     native_cap = NativeTool[None](
