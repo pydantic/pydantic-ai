@@ -35,11 +35,10 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
 from ..conftest import IsDatetime, IsInt, IsStr, try_import
@@ -148,6 +147,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
 
     messages = [
         ModelRequest(
+            instructions='instructions',
             parts=[
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
@@ -204,6 +204,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
                             'model_request_parameters': {'type': 'object'},
                         },
                     },
@@ -258,6 +259,7 @@ Fix the errors and try again.\
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                     'gen_ai.usage.cache_creation.input_tokens': 10,
                     'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
@@ -1910,21 +1912,6 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
                 ],
             },
         ]
-    )
-
-
-def test_instrumentation_run_span_end_attributes_from_message_history():
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('hello')], instructions='Be kind', timestamp=IsDatetime()),
-    ]
-    ctx = RunContext(deps=None, model=MyModel(), usage=RunUsage())
-    instrumentation = Instrumentation(settings=InstrumentationSettings())
-    assert instrumentation._run_span_end_attributes(ctx, messages, metadata=None) == snapshot(  # pyright: ignore[reportPrivateUsage]
-        {
-            'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Be kind"}]',
-            'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
-        }
     )
 
 
