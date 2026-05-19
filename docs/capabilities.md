@@ -148,7 +148,7 @@ agent = Agent(
 To force native-only (errors on unsupported models instead of falling back to local):
 
 ```python {title="native_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', local=False)
+MCP(url='https://mcp.example.com/api', native=True, local=False)
 ```
 
 To force local-only (never use the native tool, even when the model supports it):
@@ -896,7 +896,7 @@ Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exception
 Capabilities can filter or modify which tool definitions the model sees on each step via two hooks:
 
 - [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **function** tools only. Use this for filtering or modifications to tools the model can call directly.
-- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`output_retries`), matching the [output hook](#output-hooks) lifecycle.
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** side of the agent retry budget, matching the [output hook](#output-hooks) lifecycle.
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
@@ -1012,7 +1012,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | Hook | Fires when | Recovery type |
 |---|---|---|
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | Agent run fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
-| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.nodes.End] |
+| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.basenode.End] |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Model request fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |

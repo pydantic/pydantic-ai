@@ -116,8 +116,8 @@ class ToolOutput(Generic[OutputDataT]):
     max_retries: int | None
     """Per-tool retry limit for this output tool.
 
-    Overrides the agent-level `output_retries` default (which itself acts as the per-tool default
-    for output tools that do not specify their own limit). If not set, the agent-level value is used.
+    Overrides the output side of the agent's retry budget, which itself acts as the per-tool default
+    for output tools that do not specify their own limit. If not set, the agent-level value is used.
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""

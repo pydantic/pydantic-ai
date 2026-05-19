@@ -128,6 +128,14 @@ def test_capability_types() -> None:
     )
 
 
+def test_instrumentation_default_settings() -> None:
+    """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    instr = Instrumentation()
+    assert isinstance(instr.settings, InstrumentationSettings)
+
+
 def test_agent_from_spec_basic():
     """Test Agent.from_spec with basic capabilities."""
     agent = Agent.from_spec(
@@ -384,72 +392,42 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_retries_override():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_no_retries_does_not_warn():
-    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
-
-    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
-    user-set value; only an explicit value is forwarded to the deprecated
-    `Agent(retries=...)` kwarg.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test'})
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
 
     assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_explicit_retries_warns():
-    """An explicit `retries` in the spec still triggers the deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_tool_retries():
-    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
-
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_spec_retries_deprecated_getter():
-    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
     spec = AgentSpec(model='test', retries=5)
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        assert spec.retries == 5
-
-
-def test_agent_spec_tool_retries_field():
-    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
-    spec = AgentSpec(model='test', tool_retries=5)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        assert spec.tool_retries == 5
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -544,6 +522,36 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'description': """\
+Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+
+`int` semantics differ by call site:
+
+- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
+  to `N`.
+- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
+  budget. Tool retries cannot be overridden per run or via `override()` — passing
+  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
+  manager is built once at agent construction.
+
+Keys:
+    tools: Default number of retries for tool calls before raising an error.
+    output: Maximum number of retries for output validation. On the text path
+        this is a global per-run budget; on the tool path it is the default
+        per-tool `max_retries` for each output tool, overridable via
+        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
+""",
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -1623,10 +1631,13 @@ Supported by:
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
                         'native': {
-                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -1801,17 +1812,18 @@ Supported by:
                 'tool_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Tool Retries',
                 },
                 'retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
-                    'deprecated': True,
                     'title': 'Retries',
                 },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Output Retries',
                 },
                 'end_strategy': {
@@ -2068,8 +2080,7 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -2132,14 +2143,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.tool_retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -5110,8 +5121,7 @@ class TestPrepareOutputToolsHook:
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            tool_retries=4,
-            output_retries=4,
+            retries={'tools': 4, 'output': 4},
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
@@ -6067,26 +6077,36 @@ class TestMCPCapability:
         assert tools['local_tool'].tool_def.unless_native == 'mcp_server:custom-mcp'
 
     def test_mcp_sse_transport(self):
-        """MCP with /sse URL uses MCPServerSSE for local."""
-        from pydantic_ai.mcp import MCPServerSSE
+        """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
+        from fastmcp.client.transports import SSETransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/sse', native=True)
-        assert isinstance(cap.local, MCPServerSSE)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_streamable_transport(self):
-        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_authorization_token_in_local_headers(self):
-        """MCP passes authorization_token as Authorization header to local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP passes authorization_token as Authorization header through to the transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
-        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+        assert isinstance(cap.local, MCPToolset)
+        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'Authorization': 'Bearer xyz'}
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
@@ -6102,6 +6122,15 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+    def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
+        """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        from fastmcp import FastMCP
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
+        assert isinstance(cap.local, MCPToolset)
 
 
 class TestNamedSpecDictRoundTrip:
@@ -6729,8 +6758,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
@@ -7303,6 +7345,22 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
         MCP(url='http://example.com/mcp', local=True, native=True)
 
 
+def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
 @pytest.mark.filterwarnings(
     'ignore::RuntimeWarning'
 )  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
@@ -7547,11 +7605,25 @@ def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
         WebFetch(local=True)
 
 
-def test_mcp_unknown_strategy_raises():
-    """MCP(url=..., local='not_a_real_strategy') → UserError naming the unknown strategy."""
+def test_mcp_local_string_must_be_url_raises_user_error():
+    """`MCP(url=..., local='not-a-url')` raises a `UserError` directing the user to `local=MCPToolset(...)`."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.raises(UserError, match='not a known strategy'):
-        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match=r"MCP\(local='not_a_real_strategy'\) must be an `http\(s\)://` URL"):
+        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)
+
+
+def test_mcp_local_url_string_override_uses_provided_url():
+    """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+    from pydantic_ai.mcp import MCPToolset
+
+    cap = MCP(
+        url='http://primary.example.com/mcp',
+        local='https://override.example.com/mcp',
+        native=True,
+    )
+    assert isinstance(cap.local, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():
@@ -9598,7 +9670,7 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
@@ -9926,7 +9998,9 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
@@ -10126,7 +10200,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10453,7 +10527,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10529,7 +10603,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10603,7 +10677,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10677,7 +10751,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:

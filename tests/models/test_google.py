@@ -198,7 +198,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -384,25 +384,24 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='The capital of France is Paris.\n')],
-                        usage=RequestUsage(
-                            input_tokens=13,
-                            output_tokens=8,
-                            details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
-                        ),
-                        model_name='gemini-2.0-flash-exp',
-                        timestamp=IsDatetime(),
-                        provider_name='google',
-                        provider_url='https://generativelanguage.googleapis.com/',
-                        provider_details={'finish_reason': 'STOP'},
-                        provider_response_id=IsStr(),
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='The capital of France is Paris.\n')],
+                    usage=RequestUsage(
+                        input_tokens=13,
+                        output_tokens=8,
+                        details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                    ),
+                    model_name='gemini-2.0-flash-exp',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
                 )
+            )
     assert data == snapshot('The capital of France is Paris.\n')
 
 
@@ -412,8 +411,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
         model=model,
         system_prompt='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -4118,8 +4116,7 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
         m,
         output_type=TopModel,
         instructions='You are a helpful assistant that creates structured data.',
-        tool_retries=5,
-        output_retries=5,
+        retries={'tools': 5, 'output': 5},
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
