@@ -97,6 +97,7 @@ ModelProvider = Literal[
     'groq',
     'anthropic',
     'bedrock',
+    'google',
     'google-cloud',
 ]
 
@@ -108,7 +109,6 @@ APIFlavor = Literal[
     'chat',
     'responses',
     'converse',
-    'google',
 ]
 
 UpstreamProvider = ModelProvider | APIFlavor
@@ -268,6 +268,8 @@ def normalize_gateway_provider(provider: str) -> str:
         return 'openai-responses'
     elif provider == 'converse':
         return 'bedrock'
+    elif provider == 'gemini':
+        return 'google'
     return provider
 
 

@@ -136,7 +136,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
-    elif provider in ('google', 'gemini'):
+    elif provider == 'google':
         from .google import GoogleProvider
 
         return GoogleProvider
