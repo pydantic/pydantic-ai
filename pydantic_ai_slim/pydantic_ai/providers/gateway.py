@@ -197,11 +197,9 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google', 'gemini'):
-        from .google import GoogleProvider
-
-        return _with_http_client(GoogleProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif upstream_provider == 'google-cloud':
+    elif upstream_provider in ('google', 'google-cloud'):
+        # `google` is a convenience alias for `google-cloud` — the Gateway server
+        # only exposes the Google Cloud (Vertex) route today.
         from .google_cloud import GoogleCloudProvider
 
         return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
@@ -250,9 +248,6 @@ def _gateway_route(provider: str) -> str:
     if provider == 'openai-chat':
         # Gateway doesn't use the `-chat` suffix for the Chat Completions route.
         return 'openai'
-    elif provider == 'google':
-        # GLA-style Gemini API is called `gemini` on Gateway.
-        return 'gemini'
     elif provider == 'google-cloud':
         # Gateway still uses the old name; flip when they rename.
         return 'google-vertex'
@@ -260,7 +255,12 @@ def _gateway_route(provider: str) -> str:
 
 
 def normalize_gateway_provider(provider: str) -> str:
-    """Strip the `gateway/` prefix and resolve API-flavor aliases to canonical provider names."""
+    """Strip the `gateway/` prefix and resolve API-flavor aliases to canonical provider names.
+
+    `gateway/google` is collapsed to `google-cloud` as a convenience: the Gateway server
+    only exposes the Google Cloud (Vertex) route today, so both shorthands land on the
+    same backend.
+    """
     provider = provider.removeprefix('gateway/')
     if provider == 'chat':
         return 'openai-chat'
@@ -268,8 +268,8 @@ def normalize_gateway_provider(provider: str) -> str:
         return 'openai-responses'
     elif provider == 'converse':
         return 'bedrock'
-    elif provider == 'gemini':
-        return 'google'
+    elif provider == 'google':
+        return 'google-cloud'
     return provider
 
 

@@ -22,7 +22,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
-    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -93,8 +92,7 @@ def vcr_config():
         ('openai-chat', OpenAIProvider, 'openai'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
         ('groq', GroqProvider, 'groq'),
-        ('google', GoogleProvider, 'gemini'),
-        ('gemini', GoogleProvider, 'gemini'),
+        ('google', GoogleCloudProvider, 'google-vertex'),
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
