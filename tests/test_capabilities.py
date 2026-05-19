@@ -14648,7 +14648,6 @@ class TestErrorHookCoveragePaths:
         class BareCap(AbstractCapability[Any]):
             """Has no hook overrides — uses all defaults."""
 
-
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[BareCap()])
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=3)
