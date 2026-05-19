@@ -198,7 +198,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -411,8 +411,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
         model=model,
         system_prompt='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -4117,8 +4116,7 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
         m,
         output_type=TopModel,
         instructions='You are a helpful assistant that creates structured data.',
-        tool_retries=5,
-        output_retries=5,
+        retries={'tools': 5, 'output': 5},
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
@@ -6471,6 +6469,50 @@ async def test_google_vertex_service_tier_flex_stream(
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'STOP', 'traffic_type': 'ON_DEMAND_FLEX'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-3.5-flash', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run('What is 2 + 2? Reply with just the number.')
+    assert result.output == snapshot('4')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2 + 2? Reply with just the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='4',
+                        provider_name='google',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=15, output_tokens=73, details={'thoughts_tokens': 72, 'text_prompt_tokens': 15}
+                ),
+                model_name='gemini-3.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),

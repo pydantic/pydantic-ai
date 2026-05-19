@@ -18,6 +18,7 @@ from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -54,16 +55,15 @@ class AgentSpec(BaseModel):
     deps_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
-    tool_retries: int | None = None
-    retries: int | None = Field(
+    retries: int | AgentRetries | None = None
+    tool_retries: int | None = Field(
         default=None,
-        deprecated=(
-            '`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead. '
-            'In 1.x, setting `retries` on a spec still cascades to `output_retries` '
-            'when the latter is unset, matching `Agent(retries=...)` behavior.'
-        ),
+        json_schema_extra={'deprecated': True},
     )
-    output_retries: int | None = None
+    output_retries: int | None = Field(
+        default=None,
+        json_schema_extra={'deprecated': True},
+    )
     end_strategy: EndStrategy = 'early'
     tool_timeout: float | None = None
     # `instrument` is deprecated in favor of an `Instrumentation` entry in `capabilities` —
@@ -80,6 +80,24 @@ class AgentSpec(BaseModel):
             warnings.warn(
                 '`AgentSpec.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead. '
                 'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+        return self
+
+    @model_validator(mode='after')
+    def _warn_retry_field_deprecations(self) -> Self:
+        if 'tool_retries' in self.model_fields_set:
+            warnings.warn(
+                "`AgentSpec.tool_retries` is deprecated. Use `retries={'tools': ...}` instead. "
+                'In 1.x, setting `tool_retries` on a spec still resolves to the tool retry budget.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+        if 'output_retries' in self.model_fields_set:
+            warnings.warn(
+                "`AgentSpec.output_retries` is deprecated. Use `retries={'output': ...}` instead. "
+                'In 1.x, setting `output_retries` on a spec still resolves to the output retry budget.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
@@ -233,12 +251,15 @@ class AgentSpec(BaseModel):
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
-            tool_retries: int | None = None
-            retries: int | None = Field(
+            retries: int | AgentRetries | None = None
+            tool_retries: int | None = Field(
                 default=None,
-                deprecated='`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead.',
+                json_schema_extra={'deprecated': True},
             )
-            output_retries: int | None = None
+            output_retries: int | None = Field(
+                default=None,
+                json_schema_extra={'deprecated': True},
+            )
             end_strategy: EndStrategy = 'early'
             tool_timeout: float | None = None
             instrument: bool | None = None
