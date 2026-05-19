@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import json
 import os
 import re
@@ -46,6 +47,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserPromptPart,
 )
@@ -10338,8 +10340,7 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
     assert exc_info.value.model_name == model_id
 
 
-async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
-    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
+async def test_anthropic_bedrock_count_tokens(env: TestEnv):
     from anthropic import AsyncAnthropicBedrock
 
     bedrock_client = AsyncAnthropicBedrock(
@@ -10347,12 +10348,92 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
         aws_secret_key='test-secret-key',
         aws_region='us-east-1',
     )
+    bedrock_client.post = AsyncMock(return_value={'inputTokens': 42})
     provider = AnthropicProvider(anthropic_client=bedrock_client)
     model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
-    agent = Agent(model)
 
-    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    result = await model.count_tokens(
+        [ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hello')])],
+        AnthropicModelSettings(
+            anthropic_betas=['custom-beta'],
+            extra_body={'metadata': {'purpose': 'test'}},
+            timeout=12.5,
+        ),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == 42
+    bedrock_client.post.assert_awaited_once()
+    assert bedrock_client.post.call_args.args == ('/model/anthropic.claude-3-5-sonnet-20241022-v2:0/count-tokens',)
+    kwargs = bedrock_client.post.call_args.kwargs
+    assert kwargs['cast_to'] == dict[str, object]
+    assert kwargs['options']['headers']['Content-Type'] == 'application/json'
+    assert kwargs['options']['timeout'] == 12.5
+    content = json.loads(kwargs['content'])
+    body = base64.b64decode(content['input']['invokeModel']['body']).decode()
+    assert json.loads(body) == snapshot(
+        {
+            'anthropic_version': 'bedrock-2023-05-31',
+            'anthropic_beta': ['custom-beta'],
+            'max_tokens': 4096,
+            'metadata': {'purpose': 'test'},
+            'messages': [{'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]}],
+            'system': 'You are helpful.',
+        }
+    )
+
+
+async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key='test-access-key',
+        aws_secret_key='test-secret-key',
+        aws_region='us-east-1',
+    )
+    bedrock_client.post = AsyncMock(return_value={'outputTokens': 42})
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected Bedrock count tokens response'):
+        await model.count_tokens(
+            [ModelRequest.user_text_prompt('hello')],
+            None,
+            ModelRequestParameters(),
+        )
+
+
+def test_anthropic_process_response_server_tool_blocks(allow_model_requests: None):
+    response = completion_message(
+        [
+            BetaTextBlock(text='Let me search.', type='text'),
+            BetaServerToolUseBlock(
+                id='server_tool_123',
+                name='web_search',
+                input={'query': 'current date today'},
+                type='server_tool_use',
+                caller=BetaDirectCaller(type='direct'),
+            ),
+            BetaWebSearchToolResultBlock(
+                tool_use_id='server_tool_123',
+                type='web_search_tool_result',
+                content=[
+                    BetaWebSearchResultBlock(
+                        title='Current Date and Time',
+                        url='https://example.com/date',
+                        type='web_search_result',
+                        encrypted_content='dummy_encrypted_content',
+                    )
+                ],
+            ),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert part_types_from_messages([result]) == snapshot([[TextPart, NativeToolCallPart, NativeToolReturnPart]])
 
 
 @pytest.mark.vcr()
