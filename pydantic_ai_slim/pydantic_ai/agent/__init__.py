@@ -251,11 +251,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    # NOTE: this overload exists solely to keep pyright in N>=2-overload mode after the `mcp_servers=` overload was dropped.
-    # When `event_stream_handler=` is itself removed (PR #5475), drop this overload too — but verify there's another
-    # `@deprecated` overload still in place, or pyright will collapse and a different unrelated site will start failing.
     @overload
-    @deprecated('`event_stream_handler` is deprecated, use `capabilities=[ProcessEventStream(...)]` instead.')
+    @deprecated('Configure deprecated kwargs via `capabilities=[...]` instead.')
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -276,10 +273,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        # Deprecated kwargs that still flow through `**_deprecated_kwargs` and get remapped to
+        # equivalent capabilities (see `_utils.consume_deprecated_*`) before the impl runs.
+        # Typed as loose `Callable[..., Any]` since the consumer helpers handle the actual
+        # signature variations.
+        event_stream_handler: Callable[..., Any] | None = None,
+        history_processors: Sequence[Any] = (),
+        prepare_tools: Callable[..., Any] | None = None,
+        prepare_output_tools: Callable[..., Any] | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
     ) -> None: ...
 
     def __init__(
@@ -306,7 +311,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
-    ):
+    ) -> None:
         """Create an agent.
 
         Args:
@@ -2587,7 +2592,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        This will start all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered as `toolsets` so they are ready to be used,
         and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
@@ -2614,7 +2619,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._exit_stack = None
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
-        """Set the sampling model on all MCP servers registered with the agent.
+        """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
 
         If no sampling model is provided, the agent's model will be used.
         """
@@ -2623,11 +2628,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         except exceptions.UserError as e:
             raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
 
-        from ..mcp import MCPServer
+        from ..mcp import MCPToolset
 
         def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(toolset, MCPServer):
-                toolset.sampling_model = sampling_model
+            if isinstance(toolset, MCPToolset):
+                toolset.set_sampling_model(sampling_model)
 
         self._get_toolset().apply(_set_sampling_model)
 

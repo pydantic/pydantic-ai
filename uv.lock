@@ -4993,7 +4993,7 @@ email = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"] },
 ]
 
 [package.optional-dependencies]
@@ -5028,6 +5028,7 @@ dev = [
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
     { name = "exa-py" },
+    { name = "fastmcp" },
     { name = "genai-prices" },
     { name = "inline-snapshot" },
     { name = "markdownify" },
@@ -5067,7 +5068,7 @@ lint = [
 requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
@@ -5087,6 +5088,7 @@ dev = [
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
+    { name = "fastmcp", specifier = ">=3.3.0" },
     { name = "genai-prices", specifier = ">=0.0.28" },
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
@@ -5212,9 +5214,6 @@ evals = [
 exa = [
     { name = "exa-py" },
 ]
-fastmcp = [
-    { name = "fastmcp" },
-]
 google = [
     { name = "google-genai" },
 ]
@@ -5293,7 +5292,6 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1" },
-    { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=3.3.0" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0" },
     { name = "genai-prices", specifier = ">=0.0.48" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
@@ -5333,7 +5331,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
 
 [[package]]
 name = "pydantic-core"
