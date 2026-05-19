@@ -8,6 +8,7 @@ import random
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -3977,6 +3978,18 @@ async def test_google_optional_fields_native_output_gemini_2_0(
     # Test with optional fields as None
     result2 = await agent.run('Just tell me a city: Paris')
     assert result2.output.city == snapshot('Paris')
+
+
+async def test_google_decimal_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 async def test_google_integer_enum_native_output(allow_model_requests: None, google_provider: GoogleProvider):
