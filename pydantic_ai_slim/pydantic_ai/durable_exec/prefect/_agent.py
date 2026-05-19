@@ -73,7 +73,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
             event_stream_handler_task_config: The Prefect task config to use for the event stream handler task. If no config is provided, use the default settings of Prefect.
             prefectify_toolset_func: Optional function to use to prepare toolsets for Prefect by wrapping them in a `PrefectWrapperToolset` that moves methods that require IO to Prefect tasks.
-                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Prefect.
+                If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Prefect.
                 The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
         """
         super().__init__(wrapped)
@@ -170,7 +170,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _prefect_overrides(self) -> Iterator[None]:
-        # Override with PrefectModel and PrefectMCPServer in the toolsets.
+        # Override with PrefectModel and PrefectMCPToolset in the toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
 
@@ -243,7 +243,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -316,7 +315,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         event_stream_handler=event_stream_handler,
                         capabilities=capabilities,
                         spec=spec,
-                        **_deprecated_kwargs,
                     )
                     return result
             finally:
@@ -393,7 +391,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -467,7 +464,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             event_stream_handler=event_stream_handler,
                             capabilities=capabilities,
                             spec=spec,
-                            **_deprecated_kwargs,
                         )
                     )
                     return result
@@ -546,7 +542,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -615,7 +610,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         ) as result:
             yield result
 
@@ -978,7 +972,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -1016,6 +1009,5 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             retries=retries,
             spec=spec,
-            **_deprecated_kwargs,
         ):
             yield

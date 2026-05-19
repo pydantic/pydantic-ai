@@ -379,7 +379,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
-    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object from the previous run.
 
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
@@ -872,11 +872,10 @@ class ToolDefinition:
         return self.kind in ('external', 'unapproved')
 
     def __getattr__(self, name: str) -> Any:
-        # Deprecated aliases for read access to the renamed `unless_native` field
-        # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
-        if name in ('prefer_builtin', 'prefer_native'):
+        # Deprecated alias for read access to the renamed `unless_native` field (was `prefer_native`).
+        if name == 'prefer_native':
             warnings.warn(
-                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
+                '`ToolDefinition.prefer_native` is deprecated, use `ToolDefinition.unless_native` instead.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
@@ -886,23 +885,4 @@ class ToolDefinition:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
 _utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
-
-
-_RENAMED_TYPE_ALIASES: dict[str, str] = {
-    'BuiltinToolFunc': 'NativeToolFunc',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_TYPE_ALIASES:
-        new_name = _RENAMED_TYPE_ALIASES[name]
-        warnings.warn(
-            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

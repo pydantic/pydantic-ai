@@ -616,7 +616,7 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
@@ -647,9 +647,9 @@ For MCP servers, use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.d
 
 ```python {title="tool_search_mcp.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPToolset
 
-mcp = MCPServerHTTP('http://localhost:8000/mcp')
+mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
 ```
 

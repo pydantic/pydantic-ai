@@ -110,7 +110,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
-                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
+                If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Temporal.
                 The function takes the toolset, the activity name prefix, the toolset-specific activity config, the tool-specific activity configs and the run context type.
         """
         super().__init__(wrapped)
@@ -366,7 +366,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -443,7 +442,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
-                **_deprecated_kwargs,
             )
 
     @overload
@@ -515,7 +513,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -585,7 +582,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         )
 
     @overload
@@ -658,7 +654,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
@@ -727,7 +722,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         ) as result:
             yield result
 
@@ -908,7 +902,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -932,7 +925,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -956,7 +948,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -1084,7 +1075,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         ) as run:
             yield run
 
@@ -1102,7 +1092,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -1153,6 +1142,5 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             retries=retries,
             spec=spec,
-            **_deprecated_kwargs,
         ):
             yield

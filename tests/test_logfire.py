@@ -3301,7 +3301,10 @@ def test_agent_instrument_setter(
     This is the path `logfire.instrument_pydantic_ai(agent)` uses on its `Agent` branch.
     """
     agent = Agent(model=TestModel())
-    agent.instrument = InstrumentationSettings()
+    assert agent.instrument is None
+    settings = InstrumentationSettings()
+    agent.instrument = settings
+    assert agent.instrument is settings
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')

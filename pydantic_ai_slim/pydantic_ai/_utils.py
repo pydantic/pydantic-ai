@@ -48,7 +48,7 @@ else:
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent import AgentRetries, AgentRun, AgentRunResult
+    from pydantic_ai.agent import AgentRun, AgentRunResult
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages
@@ -793,110 +793,6 @@ def install_deprecated_kwarg_alias(
     cls.__init__ = wrapper
 
 
-_T = TypeVar('_T')
-
-
-def consume_deprecated_builtin_tools(
-    deprecated_kwargs: dict[str, Any],
-    native_tools: _T,
-    *,
-    stacklevel: int = 3,
-) -> _T:
-    """Pop a deprecated `builtin_tools=` kwarg, warn, and reconcile it with `native_tools=`.
-
-    Used by `override()` (and its `WrapperAgent` counterpart), where `native_tools=`
-    survives as a first-party kwarg. The legacy `builtin_tools=` kwarg stays functional
-    but emits a `PydanticAIDeprecationWarning` (visible by default, `UserWarning`
-    subclass) at runtime.
-
-    Returns `native_tools` if the caller passed an explicit value (anything other
-    than `None`/`UNSET`); otherwise the legacy value.
-
-    For per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
-    use [`consume_deprecated_builtin_tools_as_capabilities`][pydantic_ai._utils.consume_deprecated_builtin_tools_as_capabilities]
-    instead — those surfaces no longer expose a `native_tools=` kwarg.
-    """
-    from ._warnings import PydanticAIDeprecationWarning
-
-    if 'builtin_tools' not in deprecated_kwargs:
-        return native_tools
-    legacy = deprecated_kwargs.pop('builtin_tools')
-    import warnings
-
-    warnings.warn(
-        '`builtin_tools=` is deprecated, use `native_tools=` instead. '
-        'For higher-level capability-based registration, use '
-        '`capabilities=[NativeTool(...)]` or a provider-adaptive capability '
-        'like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()`.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    if native_tools is None or native_tools is UNSET:
-        return legacy
-    return native_tools
-
-
-def consume_deprecated_builtin_tools_as_capabilities(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    stacklevel: int = 3,
-) -> list[Any]:
-    """Pop a deprecated `builtin_tools=` kwarg, warn, and return native-tool capability wrappers.
-
-    Returns a list of [`NativeTool`][pydantic_ai.capabilities.NativeTool] capabilities to
-    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
-
-    Used by per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
-    where the `native_tools=` parameter has been removed. For `override()` (which keeps
-    `native_tools=`), use
-    [`consume_deprecated_builtin_tools`][pydantic_ai._utils.consume_deprecated_builtin_tools] instead.
-    """
-    if 'builtin_tools' not in deprecated_kwargs:
-        return []
-    legacy = deprecated_kwargs.pop('builtin_tools')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-    from .capabilities import NativeTool
-
-    warnings.warn(
-        f'`{owner}(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
-        'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
-        '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    return [NativeTool(t) for t in legacy]
-
-
-def consume_deprecated_instrument(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    stacklevel: int = 3,
-) -> Any:
-    """Pop a deprecated `instrument=` kwarg and warn.
-
-    Returns the legacy value (an `InstrumentationSettings | bool | None`) for the caller
-    to forward into the existing instrumentation resolution path, or `None` if the
-    kwarg was not passed. The `Instrumentation` capability is the preferred surface.
-    """
-    if 'instrument' not in deprecated_kwargs:
-        return None
-    legacy = deprecated_kwargs.pop('instrument')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-
-    warnings.warn(
-        f'`{owner}(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    return legacy
-
-
 def consume_deprecated_history_processors_as_capabilities(
     deprecated_kwargs: dict[str, Any],
     owner: str,
@@ -987,39 +883,6 @@ def consume_deprecated_prepare_output_tools_as_capabilities(
         stacklevel=stacklevel,
     )
     return [PrepareOutputTools(legacy)]
-
-
-def consume_deprecated_output_retries(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    current_retries: int | AgentRetries | None = None,
-    stacklevel: int = 3,
-) -> int | AgentRetries | None:
-    """Pop a deprecated `output_retries=` kwarg, warn, and reconcile with the new `retries=` kwarg.
-
-    Returns a value suitable to pass as the new `retries` argument:
-    - If the caller already provided `retries=`, it wins and `output_retries=` is just warned about.
-    - Otherwise the legacy `output_retries=` value is returned wrapped as `{'output': value}`.
-    """
-    if 'output_retries' not in deprecated_kwargs:
-        return current_retries
-    legacy = deprecated_kwargs.pop('output_retries')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-
-    warnings.warn(
-        f'`{owner}(output_retries=...)` is deprecated and will be removed in v2.0. '
-        "Use `retries={'output': ...}` (or `retries=<int>` to override the output budget) instead.",
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    if current_retries is not None:
-        return current_retries
-    if legacy is None:
-        return None
-    return {'output': legacy}
 
 
 def consume_deprecated_event_stream_handler(

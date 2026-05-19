@@ -520,9 +520,9 @@ _(This example is complete, it can be run "as is")_
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPToolset
 
-mcp = MCPServerHTTP('http://localhost:8000/mcp')
+mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
 ```
 
@@ -648,7 +648,7 @@ _(This example is complete, it can be run "as is")_
 
 If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
 
 When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
@@ -884,10 +884,7 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities.md), whi
 
 ### MCP Servers
 
-Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
-
-1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
-2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities.md#mcp) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
 ### Agent Skills
 
@@ -912,7 +909,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 

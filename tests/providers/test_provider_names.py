@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import pytest
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
 
@@ -34,7 +33,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
-    from pydantic_ai.providers.outlines import OutlinesProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
@@ -69,7 +67,6 @@ with try_import() as imports_successful:
         ('gateway/gemini', GoogleProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
-        ('outlines', OutlinesProvider, None),  # pyright: ignore[reportDeprecated]
         ('vertexai', GoogleCloudProvider, 'Your default credentials were not found'),
     ]
 
@@ -101,11 +98,6 @@ def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], except
             infer_provider(provider)
         except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
             pytest.skip('Google credentials not available')
-
-    if provider == 'outlines':
-        with pytest.warns(PydanticAIDeprecationWarning, match=r'`OutlinesProvider` is deprecated'):
-            assert isinstance(infer_provider(provider), provider_cls)
-        return
 
     if exception_has is not None:
         with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):
