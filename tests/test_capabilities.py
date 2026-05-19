@@ -3510,7 +3510,7 @@ def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 class LoggingCapability(AbstractCapability[Any]):
     """A capability that logs all hook invocations for testing."""
 
-    log: list[str] = field(default_factory=list)
+    log: list[str] = field(default_factory=lambda: [])
 
     async def before_run(self, ctx: RunContext[Any]) -> None:
         self.log.append('before_run')
@@ -5231,7 +5231,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=list)
+            nodes: list[str] = field(default_factory=lambda: [])
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5247,7 +5247,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=list)
+            nodes: list[str] = field(default_factory=lambda: [])
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5277,7 +5277,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=list)
+            nodes: list[str] = field(default_factory=lambda: [])
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5317,7 +5317,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=list)
+            nodes: list[str] = field(default_factory=lambda: [])
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -7806,7 +7806,7 @@ class TestRunErrorHooks:
     async def test_on_run_error_not_called_when_wrap_run_recovers(self):
         @dataclass
         class WrapRecoveryCap(AbstractCapability[Any]):
-            log: list[str] = field(default_factory=list)
+            log: list[str] = field(default_factory=lambda: [])
 
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
                 try:
@@ -8942,7 +8942,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=list)
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -8981,7 +8981,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=list)
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -9054,7 +9054,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=list)
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
