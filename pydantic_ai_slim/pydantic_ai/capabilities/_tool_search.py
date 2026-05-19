@@ -236,13 +236,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             return request_context
 
         newly_loaded_names = sorted(newly_loaded)
-        # The synthetic exchange is normally persisted to message history, so this
+        # The synthetic exchange is persisted to message history, so this
         # should not be regenerated every turn. Keep the id deterministic anyway so
         # replay from a prefix or aborted request preparation reconstructs the same
         # provider-visible bytes for the same logical discovery event.
-        # BLAKE2s is stdlib and accepts `digest_size`, so the synthetic id stays
-        # compact and provider-safe even for many long tool names. Eight digest
-        # bytes keeps accidental per-conversation collisions negligible.
+
         call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 
