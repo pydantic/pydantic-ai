@@ -36,14 +36,14 @@ async def test_prepare_output_tools_kwarg_emits_deprecation_warning():
         PydanticAIDeprecationWarning,
         match=r'`Agent\(prepare_output_tools=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
-        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
+        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prepare_output_tools_kwarg_warning_points_at_capability():
     with pytest.warns(
         PydanticAIDeprecationWarning, match=r'capabilities=\[PrepareOutputTools\(prepare_output_tools\)\]'
     ):
-        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
+        Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportDeprecated]
 
 
 async def test_prepare_output_tools_kwarg_remaps_to_capability():
@@ -56,7 +56,7 @@ async def test_prepare_output_tools_kwarg_remaps_to_capability():
         return tool_defs
 
     with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_output_tools'):
-        agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=prep)  # pyright: ignore[reportCallIssue]
+        agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=prep)  # pyright: ignore[reportDeprecated]
 
     assert any(isinstance(cap, PrepareOutputTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
     await agent.run('hello')
@@ -78,7 +78,7 @@ async def test_prepare_output_tools_kwarg_vs_capability_equivalence():
         return tool_defs
 
     with pytest.warns(PydanticAIDeprecationWarning, match=r'prepare_output_tools'):
-        kwarg_agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=kwarg_prep)  # pyright: ignore[reportCallIssue]
+        kwarg_agent = Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=kwarg_prep)  # pyright: ignore[reportDeprecated]
     cap_agent = Agent(TestModel(), output_type=ToolOutput(str), capabilities=[PrepareOutputTools(cap_prep)])
 
     kwarg_result = await kwarg_agent.run('hello')

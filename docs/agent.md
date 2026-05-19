@@ -632,7 +632,7 @@ class NeverOutputType(TypedDict):
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    tool_retries=3,
+    retries={'tools': 3},
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
@@ -1085,15 +1085,15 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The agent-level `output_retries` can also be overridden per run via `agent.run(output_retries=...)` and friends.
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__] with `retries` or [`AgentRetries`][pydantic_ai.agent.AgentRetries], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The output side of the agent retry budget can also be overridden per run via `agent.run(retries={'output': ...})` and friends.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
 
 ### How output retries are enforced
 
-Pydantic AI enforces `output_retries` differently depending on how the model returns its final output:
+Pydantic AI enforces the output retry budget differently depending on how the model returns its final output:
 
-- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget of size `output_retries` is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Exceeded maximum output retries (N)'`.
-- **Tool output path** ([`output_type=ToolOutput(...)`](output.md#tool-output), structured outputs): `output_retries` is the *default per-tool limit*. See [Tool Output](output.md#tool-output) for per-tool overrides via [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries].
+- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Exceeded maximum output retries (N)'`.
+- **Tool output path** ([`output_type=ToolOutput(...)`](output.md#tool-output), structured outputs): the output retry budget is the *default per-tool limit*. See [Tool Output](output.md#tool-output) for per-tool overrides via [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries].
 
 For how the budget appears inside [output validators](output.md#output-validator-functions) — including what `ctx.max_retries` and `ctx.retry` reflect on each path — see the [Output validators](output.md#output-validator-functions) section.
 
@@ -1294,6 +1294,61 @@ with capture_run_messages() as messages:  # (2)!
 2. [`capture_run_messages`][pydantic_ai.capture_run_messages] is used to capture the messages exchanged during the run.
 
 _(This example is complete, it can be run "as is")_
+
+When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
+
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. Half-finished tool call parts are not turned into synthetic tool results; only completed tool returns are captured.
+
+In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
+
+```python {title="capture_interrupted_run.py"}
+from pydantic_ai import Agent, ModelRequest, capture_run_messages
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='get_volume', args={'size': 6}, tool_call_id='volume_call'),
+            ToolCallPart(tool_name='get_mass', args={'size': 6}, tool_call_id='mass_call'),
+        ]
+    )
+
+
+agent = Agent(FunctionModel(function=call_tools))
+
+
+@agent.tool_plain(sequential=True)
+def get_volume(size: int) -> int:
+    return size**3
+
+
+@agent.tool_plain(sequential=True)
+def get_mass(size: int) -> int:
+    raise RuntimeError('missing density')
+
+
+with capture_run_messages() as messages:
+    try:
+        agent.run_sync('Calculate volume and mass.')
+    except RuntimeError as exc:
+        print(f'Run failed: {exc}')
+        #> Run failed: missing density
+
+interrupted_request = next(
+    message for message in messages if isinstance(message, ModelRequest) and message.state == 'interrupted'
+)
+assert any(
+    isinstance(part, ToolReturnPart) and part.tool_name == 'get_volume' and part.content == 216
+    for part in interrupted_request.parts
+)
+```
 
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.

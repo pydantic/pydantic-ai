@@ -8,6 +8,8 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 ### v2.0.0 (unreleased)
 
+- Drop `pydantic_ai.providers.grok.GrokProvider` (use `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel('grok-N', ...)` instead). The `'grok:'` model-string prefix is also removed; use `'xai:'` instead. `pydantic_ai.providers.grok.GrokModelName` is removed; use `pydantic_ai.models.xai.XaiModelName`.
+
 #### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
 See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.

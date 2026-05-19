@@ -60,7 +60,7 @@ agent = Agent.from_spec(
 
 Keyword arguments interact with spec fields as follows:
 
-* **Scalar fields** (`model`, `name`, `output_retries`, `end_strategy`, etc.) — the keyword argument overrides the spec value when provided.
+* **Scalar fields** (`model`, `name`, `end_strategy`, etc.) — the keyword argument overrides the spec value when provided. For retry budgets, the `retries` keyword argument overrides the spec's `retries` value.
 * **`instructions`** — merged: spec instructions come first, then keyword argument instructions.
 * **`capabilities`** — merged: spec capabilities come first, then keyword argument capabilities.
 * **`model_settings`** — merged additively: keyword argument settings override matching spec settings.
@@ -130,8 +130,7 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
-| `tool_retries` | `int \| None` | Default [tool retries](tools-advanced.md#tool-retries) (default: `None`, treated as `1`) |
-| `output_retries` | `int \| None` | [Output validation retries](output.md#output-validator-functions) |
+| `retries` | `int \| AgentRetries \| None` | Retry budgets for [tools](tools-advanced.md#tool-retries) and [output validation](output.md#output-validator-functions). Pass an integer to use the same budget for both, or [`AgentRetries`][pydantic_ai.agent.AgentRetries] to configure them separately. |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default [tool](tools.md) timeout in seconds |
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |

@@ -520,9 +520,9 @@ _(This example is complete, it can be run "as is")_
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPToolset
 
-mcp = MCPServerHTTP('http://localhost:8000/mcp')
+mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
 ```
 
@@ -884,10 +884,7 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities.md), whi
 
 ### MCP Servers
 
-Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
-
-1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
-2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities.md#mcp) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
 ### Agent Skills
 
@@ -912,7 +909,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -931,27 +928,4 @@ toolset = LangChainToolset(toolkit.get_tools())
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
-```
-
-### ACI.dev Tools {#aci-tools}
-
-If you'd like to use tools from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
-
-You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import ACIToolset
-
-toolset = ACIToolset(
-    [
-        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
-        'OPEN_WEATHER_MAP__FORECAST',
-    ],
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```

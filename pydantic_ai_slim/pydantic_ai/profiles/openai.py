@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import re
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -90,9 +89,6 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_strict_tool_definition: bool
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
 
-    openai_supports_sampling_settings: bool
-    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models. Default: `True`."""
-
     openai_unsupported_model_settings: Sequence[str]
     """A list of model settings that are not supported by this model. Default: `()`."""
 
@@ -174,12 +170,6 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
-    if profile.get('openai_supports_sampling_settings') is False:  # pragma: no cover
-        warnings.warn(
-            'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
-            'Use `openai_unsupported_model_settings` instead.',
-            DeprecationWarning,
-        )
     if profile.get('openai_chat_send_back_thinking_parts') == 'field' and not profile.get('openai_chat_thinking_field'):
         raise UserError(
             'If `openai_chat_send_back_thinking_parts` is "field", '

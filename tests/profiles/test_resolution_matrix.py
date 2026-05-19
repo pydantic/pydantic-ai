@@ -1,21 +1,26 @@
-"""Lock-in snapshots of `Provider.model_profile(model_name)` resolution.
+"""Regression matrix for resolved `ModelProfile` flags across providers, gateways, and routing.
 
-Captures the resolved `ModelProfile` for every interesting (provider, model_name)
-combination — every gateway, every inference provider, every cross-provider routing
-case (Bedrock-Anthropic, OpenRouter-Google, etc.). The snapshots are the comparison
-artifact: any refactor that changes a profile's resolved shape must explicitly update
-these tests.
+Captures the resolved `Provider.model_profile(model_name)` output for every interesting
+(provider, model_name) combination — every gateway (OpenRouter, Azure, Vertex), every
+inference provider (Cerebras, Groq, Together, etc.), and every cross-provider routing case
+(Bedrock-Anthropic, OpenRouter-Google, etc.).
 
-Used to gate the upcoming `ModelProfile` TypedDict migration (PR #5340 / #5481): if any
-of these snapshots change after the migration without an intentional reason, that's a
-silent semantics regression.
+The snapshots are the comparison artifact: any change to a provider profile, an upstream
+profile, or `merge_profile()` semantics that affects a resolved flag must show up as a
+diff here. The PR author then has to confront the diff and decide whether each delta is
+intentional. Without this matrix, a one-line tweak to an upstream profile can silently
+change behavior on a downstream routing case (e.g. an OpenAI profile change quietly
+flipping a flag for the Azure-OpenAI route), and nobody on the PR is thinking about that.
 
-Provider classes that do `merge_profile(fallback, upstream, override)` (3-layer) have
-the highest risk of silent inversion in the migration — those cases are the densest here.
+Provider classes that do `merge_profile(fallback, upstream, override)` (3-layer) are the
+densest here, because they have the most layers where an ordering change can silently
+invert a flag.
 
-The `_normalize` helper strips default values, so each snapshot shows only the
-non-default fields of the resolved profile. That keeps snapshots stable across the
-dataclass→TypedDict migration (both representations normalize to the same dict).
+The `_normalize` helper strips canonical default values (everything in `DEFAULT_PROFILE`
+plus the subclass defaults), so each snapshot shows only the deltas the provider/gateway
+is opinionating about. Snapshots stay scannable — a real diff stands out.
+
+To regenerate after an intentional change: `pytest tests/profiles/test_resolution_lockin.py --inline-snapshot=fix`.
 """
 
 from __future__ import annotations
@@ -104,7 +109,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_thinking_field': None,
     'openai_chat_send_back_thinking_parts': 'auto',
     'openai_supports_strict_tool_definition': True,
-    'openai_supports_sampling_settings': True,
     'openai_unsupported_model_settings': (),
     'openai_supports_tool_choice_required': True,
     'openai_system_prompt_role': None,
@@ -883,38 +887,31 @@ def test_groq_deepseek():
 
 
 # =============================================================================
-# Grok (xAI's OpenAI-compat gateway) — three-layer merge
+# xAI (native, single-layer post-M4)
 # =============================================================================
 
 
-def test_grok_provider_grok_4():
-    """`openai_supports_strict_tool_definition=False` is gateway-level."""
-    from pydantic_ai.providers.grok import GrokProvider  # type: ignore[reportDeprecated]
-
-    profile = GrokProvider.model_profile('grok-4')  # type: ignore[reportDeprecated]
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_4():
+    profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
-            'openai_supports_strict_tool_definition': False,
         }
     )
 
 
-def test_grok_provider_grok_3_mini():
-    from pydantic_ai.providers.grok import GrokProvider  # type: ignore[reportDeprecated]
-
-    profile = GrokProvider.model_profile('grok-3-mini')  # type: ignore[reportDeprecated]
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_3_mini():
+    profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'supported_native_tools': frozenset(),
-            'openai_supports_strict_tool_definition': False,
         }
     )
 

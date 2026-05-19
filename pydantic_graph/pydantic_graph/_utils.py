@@ -4,13 +4,11 @@ import asyncio
 import inspect
 import types
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
-from functools import partial
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, TypeAlias, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
-from typing_extensions import ParamSpec, TypeIs
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -86,15 +84,6 @@ def unpack_annotated(tp: Any) -> tuple[Any, list[Any]]:
         return tp, []
 
 
-def comma_and(items: list[str]) -> str:
-    """Join with a comma and 'and' for the last item."""
-    if len(items) == 1:
-        return items[0]
-    else:
-        # oxford comma ¯\_(ツ)_/¯
-        return ', '.join(items[:-1]) + ', and ' + items[-1]
-
-
 def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None:
     """Attempt to get the namespace where the graph was defined.
 
@@ -103,7 +92,7 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
     """
     if frame is not None:  # pragma: no branch
         if back := frame.f_back:  # pragma: no branch
-            if back.f_globals.get('__name__') == 'typing':
+            if back.f_globals.get('__name__') == 'typing':  # pragma: no cover
                 # If the class calling this function is generic, explicitly parameterizing the class
                 # results in a `typing._GenericAlias` instance, which proxies instantiation calls to the
                 # "real" class and thus adding an extra frame to the call. To avoid pulling anything
@@ -123,23 +112,6 @@ class Unset:
 
 
 UNSET = Unset()
-T = TypeVar('T')
-
-
-def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
-    return t_or_unset is not UNSET
-
-
-_P = ParamSpec('_P')
-_R = TypeVar('_R')
-
-
-async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        # noinspection PyTypeChecker
-        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
-    else:
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
 
 
 try:
