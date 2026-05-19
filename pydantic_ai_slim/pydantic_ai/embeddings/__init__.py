@@ -102,8 +102,6 @@ def infer_embedding_model(
 
     if model_kind in (
         'openai',
-        'openai-chat',
-        'openai-responses',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
         *get_args(OpenAIChatCompatibleProvider.__value__),
