@@ -109,7 +109,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_thinking_field': None,
     'openai_chat_send_back_thinking_parts': 'auto',
     'openai_supports_strict_tool_definition': True,
-    'openai_supports_sampling_settings': True,
     'openai_unsupported_model_settings': (),
     'openai_supports_tool_choice_required': True,
     'openai_system_prompt_role': None,
