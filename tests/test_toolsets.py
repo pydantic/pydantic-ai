@@ -2015,24 +2015,6 @@ async def test_no_input_raises_without_toolset_instructions():
         await agent.run()
 
 
-def test_tool_without_runctx_raises_warning():
-    toolset = FunctionToolset()
-    with pytest.warns(
-        DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'
-    ):
-
-        @toolset.tool  # type: ignore[arg-type]  # pragma: no cover
-        def add(x: int):
-            return x + 1
-
-        @toolset.tool(retries=2)  # type: ignore[arg-type]  # pragma: no cover
-        def sub(x: int):
-            return x - 1
-
-    assert 'add' in toolset.tools
-    assert 'sub' in toolset.tools
-
-
 class StatefulToolset(AbstractToolset[None]):
     """A custom stateful toolset for testing for_run/for_run_step."""
 

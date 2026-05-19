@@ -14,7 +14,7 @@ from typing import Any, Literal, cast, overload
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, assert_never, deprecated
+from typing_extensions import Never, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -86,7 +86,6 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
-    OpenAISystemPromptRole,
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
@@ -192,10 +191,8 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 
 __all__ = (
     'DEPRECATED_OPENAI_MODELS',
-    'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
-    'OpenAIModelSettings',
     'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
@@ -570,11 +567,6 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
 
-@deprecated('Use `OpenAIChatModelSettings` instead.')
-class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
-    """Deprecated alias for `OpenAIChatModelSettings`."""
-
-
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
@@ -736,7 +728,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
-    @overload
     def __init__(
         self,
         model_name: OpenAIModelName,
@@ -749,40 +740,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
-        settings: ModelSettings | None = None,
-    ) -> None: ...
-
-    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
-    @overload
-    def __init__(
-        self,
-        model_name: OpenAIModelName,
-        *,
-        provider: OpenAIChatCompatibleProvider
-        | Literal[
-            'openai',
-            'openai-chat',
-            'gateway',
-        ]
-        | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec | None = None,
-        system_prompt_role: OpenAISystemPromptRole | None = None,
-        settings: ModelSettings | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: OpenAIModelName,
-        *,
-        provider: OpenAIChatCompatibleProvider
-        | Literal[
-            'openai',
-            'openai-chat',
-            'gateway',
-        ]
-        | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec | None = None,
-        system_prompt_role: OpenAISystemPromptRole | None = None,
         settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI model.
@@ -793,8 +750,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
-            system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
-                In the future, this may be inferred from the model name.
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
@@ -804,12 +759,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
-
-        if system_prompt_role is not None:
-            self.profile = cast(
-                OpenAIModelProfile,
-                merge_profile(self.profile, OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)),
-            )
 
         validate_openai_profile(self.profile)
 
@@ -847,11 +796,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
         return cast(OpenAIModelProfile, _profile)
-
-    @property
-    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
-    def system_prompt_role(self) -> OpenAISystemPromptRole | None:
-        return self.profile.get('openai_system_prompt_role')
 
     def prepare_request(
         self,
@@ -1691,16 +1635,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             ]
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
-
-
-@deprecated(
-    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
-    "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
-    "require a feature that the Responses API doesn't support yet like audio."
-)
-@dataclass(init=False)
-class OpenAIModel(OpenAIChatModel):
-    """Deprecated alias for `OpenAIChatModel`."""
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
@@ -3950,7 +3884,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         token_threshold: int | None = None,
         message_count_threshold: int | None = None,
         trigger: Callable[[list[ModelMessage]], bool] | None = None,
-        instructions: str | None = None,
     ) -> None:
         """Initialize the OpenAI compaction capability.
 
@@ -3969,24 +3902,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             trigger: Stateless-mode only. Custom callable that decides whether
                 to compact based on the current messages. Takes precedence
                 over `message_count_threshold`.
-            instructions: Deprecated. OpenAI's `/compact` endpoint treats
-                `instructions` as a system/developer message inserted into
-                the compaction model's context, not as a directive for how
-                to summarize the conversation. This does not match
-                [`AnthropicCompaction.instructions`][pydantic_ai.models.anthropic.AnthropicCompaction]
-                semantics, so the field is deprecated and will be removed
-                in a future version.
         """
-        if instructions is not None:
-            warnings.warn(
-                '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '
-                "OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted "
-                "into the compaction model's context, not as a directive for how to summarize the conversation, "
-                'so this field does not match `AnthropicCompaction(instructions=...)` semantics.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         has_stateless_only = message_count_threshold is not None or trigger is not None
         has_stateful_only = token_threshold is not None
 
@@ -4016,7 +3932,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         self.token_threshold = token_threshold
         self.message_count_threshold = message_count_threshold
         self.trigger = trigger
-        self.instructions = instructions
 
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         if self.stateless:
@@ -4076,7 +3991,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
-        compacted_response = await request_context.model.compact_messages(compact_ctx, instructions=self.instructions)
+        compacted_response = await request_context.model.compact_messages(compact_ctx)
 
         # Replace message history with compaction + last request
         request_context.messages = [compacted_response, request_context.messages[-1]]
