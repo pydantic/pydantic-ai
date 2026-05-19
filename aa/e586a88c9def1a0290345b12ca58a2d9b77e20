@@ -1,0 +1,31 @@
+docs/logfire.md
+  s_ae45058a0235a7::t_ee92e410b307c3 272
+tests/models/test_instrumented.py
+  s_ae45058a0235a7::t_ee92e410b307c3 37
+pydantic_ai_slim/pydantic_ai/_instrumentation.py
+  s_ae45058a0235a7::t_ee92e410b307c3 399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "aae586a88c9def1a0290345b12ca58a2d9b77e20",
+  "prompts": {},
+  "humans": {
+    "h_bc896295f46a8b": {
+      "author": "Alex Hall"
+    },
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_ae45058a0235a7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3c60-161c-75d1-a526-dec43e666613",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
