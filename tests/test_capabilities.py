@@ -96,10 +96,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, try_import
-
-with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XaiModel  # noqa: F401 # pyright: ignore[reportUnusedImport]
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -4767,7 +4764,6 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 class TestXSearchCapability:
     def test_xsearch_default(self):
         """XSearch() with defaults → native XSearchTool, no local."""
@@ -6816,7 +6812,6 @@ def test_web_fetch_unique_id():
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()
