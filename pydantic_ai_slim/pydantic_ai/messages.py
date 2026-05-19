@@ -1978,24 +1978,22 @@ deserialized). Same population pattern.
 """
 
 
-# Typed subclasses + narrowers + cross-provider history translation live in their own
-# module to keep this file focused on the base part shapes. Imported here so the
-# discriminator unions below can reference them and so import-time registration of
-# narrowers happens whenever `pydantic_ai.messages` is imported.
-from ._deferred_capabilities import (  # noqa: E402  (same late-import rationale as `_tool_search` above)
-    LoadCapabilityArgs,
-    LoadCapabilityCallPart,
-    LoadCapabilityReturn,
-    LoadCapabilityReturnPart,
+# Typed subclasses live outside this module; import them here for discriminator
+# unions, narrower registration, and public re-exports from `pydantic_ai.messages`.
+from ._deferred_capabilities import (  # noqa: E402
+    LoadCapabilityArgs as LoadCapabilityArgs,
+    LoadCapabilityCallPart as LoadCapabilityCallPart,
+    LoadCapabilityReturn as LoadCapabilityReturn,
+    LoadCapabilityReturnPart as LoadCapabilityReturnPart,
 )
-from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
-    NativeToolSearchCallPart,
-    NativeToolSearchReturnPart,
-    ToolSearchArgs,
-    ToolSearchCallPart,
-    ToolSearchMatch,
-    ToolSearchReturnContent,
-    ToolSearchReturnPart,
+from ._tool_search import (  # noqa: E402
+    NativeToolSearchCallPart as NativeToolSearchCallPart,
+    NativeToolSearchReturnPart as NativeToolSearchReturnPart,
+    ToolSearchArgs as ToolSearchArgs,
+    ToolSearchCallPart as ToolSearchCallPart,
+    ToolSearchMatch as ToolSearchMatch,
+    ToolSearchReturnContent as ToolSearchReturnContent,
+    ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
 
