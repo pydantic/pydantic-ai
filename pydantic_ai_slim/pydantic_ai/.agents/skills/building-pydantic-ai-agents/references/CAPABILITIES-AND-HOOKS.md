@@ -100,3 +100,15 @@ Reach for a custom capability when:
 - the behavior should be installable or declarative
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
+
+For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
+
+## Defer Capability Loading
+
+For capabilities on demand, load [Capabilities on Demand](./CAPABILITIES-ON-DEMAND.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.
+
+Keep the distinction clear:
+
+- deferred capabilities hide a named bundle of instructions and function tools until `load_capability(id)`
+- tool search hides individual tools behind `search_tools`
+- deferred tool calls pause or externalize execution of a tool the model can already see
