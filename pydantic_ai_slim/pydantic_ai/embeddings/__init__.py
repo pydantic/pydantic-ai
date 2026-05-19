@@ -98,11 +98,10 @@ def infer_embedding_model(
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = normalize_gateway_provider(model_kind)
         # The gateway normalizer routes `openai`/`openai-chat`/`openai-responses` to the chat/responses
         # split used by completions, but the embeddings API has no such split — collapse back to `openai`.
-        if model_kind in ('openai-chat', 'openai-responses'):
-            model_kind = 'openai'
+        model_kind = normalize_gateway_provider(model_kind)
+        model_kind = {'openai-chat': 'openai', 'openai-responses': 'openai'}.get(model_kind, model_kind)
 
     if model_kind in (
         'openai',
