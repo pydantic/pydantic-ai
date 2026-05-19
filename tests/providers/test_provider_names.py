@@ -82,7 +82,6 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-@pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if provider == 'google-cloud':
         try:
