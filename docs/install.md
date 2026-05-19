@@ -9,7 +9,7 @@ pip/uv-add pydantic-ai
 (Requires Python 3.10+)
 
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), [Retries](retries.md), and [Logfire](logfire.md) integrations.
-To use any other models or integrations, add extras to `pydantic-ai`, e.g. `pip/uv-add 'pydantic-ai[bedrock,temporal]'`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
+To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
 
 ## Use with Pydantic Logfire
 
