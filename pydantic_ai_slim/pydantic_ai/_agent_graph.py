@@ -732,11 +732,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # may be False here (downstream exception rather than explicit cancel).
                 # We append directly rather than via `_append_response` to skip the usage-limit
                 # check; raising `UsageLimitExceeded` here would mask `stream_error`.
-                # `sr.get()` returns a response with run_id/conversation_id unset, so we assign
-                # those directly via `replace` rather than using `or` after the fact.
                 if agent_stream_holder:  # pragma: no branch
                     partial_response = replace(
-                        agent_stream_holder[0].get(),
+                        agent_stream_holder[0].response,
                         state='interrupted',
                         run_id=ctx.state.run_id,
                         conversation_id=ctx.state.conversation_id,
