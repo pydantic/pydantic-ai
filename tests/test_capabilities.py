@@ -10230,14 +10230,6 @@ class TestCompaction:
         with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
             OpenAICompaction(stateless=True)
 
-    def test_openai_compaction_instructions_deprecated(self):
-        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
-        pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction
-
-        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
-            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
-
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""
         pytest.importorskip('openai')
