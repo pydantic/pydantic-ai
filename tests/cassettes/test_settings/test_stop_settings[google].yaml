@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '216'
+      - '248'
       content-type:
       - application/json
       host:
@@ -20,19 +20,21 @@ interactions:
         - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         stopSequences:
         - Paris
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '677'
+      - '1211'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=362
+      - gfet4t7; dur=1840
       transfer-encoding:
       - chunked
       vary:
@@ -41,24 +43,23 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.5998413562774658
-        content:
+      - content:
           parts:
-          - text: 'The most iconic city in France is '
+          - text: 'The capital of France is '
+            thoughtSignature: EsgECsUEAb4+9vtGSDAsW/reVoREPNw69gj/iQfSHuRMGAeFGJ1EZUTLTY+W2B/qKxreLucW51cjLVLO7zwcWbkVRqh1WHak49Y0fuAWU3GIdnzNTxUM735RZXlwyH9c2kjLThDgWHCJDGeCyPr3pPgBe56gf26/YoQgGseyVvog+KGsFL9yj83a4mQ0yd+RVYIVaXs4bE/n1Hq2e2oSMycCWv9O8zlhSBXhFcYD2rAPI3euye7TUnZHymzlSSPzJpXpouOZuuI9bt4Qdu9iONUcDTvDNsZjBNED3C/WFj1/njUPZ1xHKZtMB5r/Q0Eu+9U9yHvpnavbgrfoajFKSBPwlutgld9wGDup7bfoqhvi0L8LasbVds4JF0UKE/YXD7bBXMZGlDSrmURlm42s19gP9AwCMAHs5hBhdxU8IQSofEP/rfzBgxUt7ogUmlbfp+TUu5ojTgkyaHatMipQRuvGChgr9Qw/MBK08e7uj4vxknqIWT2OvZ+W3hXwmFIy+n/xe8AUIaKdsGo6P+s+Z9tsT7GV02Q2jf6RZQUx9B0Zrz2cxN180MchPSePVlaHkP2R3vAQhwYvzqRWa8nrETG7+5LYpDkBer/QLpq4mUwTnEGeEzqqS8oI7dReBYhQu8gSex2yFTVZNvPgCWzsRuRGORAf88AKqF8r3nc1RcCxTvF20TcVpgsddyuJO2rl20IalGI0LzPOvJ8kSFMkKZpX/1M/jZoCbJu3nQHmrDVY9urw8i5ZReptXFvo1B5Njj5Ti12fJi/Xin0=
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: UB5DaMfEN7jFnvgPocrJaA
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: 8MutaZ2qOs76qtsP_8H6sAg
       usageMetadata:
-        candidatesTokenCount: 8
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        promptTokenCount: 25
+        candidatesTokenCount: 5
+        promptTokenCount: 26
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 25
-        totalTokenCount: 33
+          tokenCount: 26
+        thoughtsTokenCount: 152
+        totalTokenCount: 183
     status:
       code: 200
       message: OK

@@ -4,23 +4,22 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '123'
+      - '144'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
-      max_completion_tokens: 100
+      max_completion_tokens: 500
       messages:
-      - content: hello
+      - content: What is the capital of France?
         role: user
-      model: gpt-4.5-preview
-      n: 1
+      model: o3-mini
       stream: false
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -32,13 +31,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '807'
+      - '648'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1408'
+      - '1447'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -51,27 +52,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: Hello! How can I help you today?
+          content: The capital of France is Paris.
           refusal: null
           role: assistant
-      created: 1742636225
-      id: chatcmpl-BDpZplWguNLn40wA5mIpCR3OIzvYP
-      model: gpt-4.5-preview-2025-02-27
+      created: 1772840959
+      id: chatcmpl-DGZCxJPKOeJL7T4J4Rn8DVlLnrVSL
+      model: o3-mini-2025-01-31
       object: chat.completion
       service_tier: default
-      system_fingerprint: null
+      system_fingerprint: fp_772f0d4cbb
       usage:
-        completion_tokens: 10
+        completion_tokens: 84
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
-        prompt_tokens: 8
+        prompt_tokens: 13
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 18
+        total_tokens: 97
     status:
       code: 200
       message: OK

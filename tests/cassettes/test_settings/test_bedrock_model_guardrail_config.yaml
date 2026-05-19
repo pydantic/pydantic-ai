@@ -6,7 +6,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Nzk4MjcwYmEtZWU5MS00ZGRmLWI4YmEtODM0ZjBkNDE4Y2Mw
+        OGUzOGI0ZTUtNjY4My00YTRhLWE2ZDUtZjUyNzBkNGVlYzRi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -22,19 +22,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1935'
+      - '2008'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1257
+        latencyMs: 1098
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
-              serving as the center of French government, culture, and commerce. It's known for its historical and cultural
-              landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and many charming neighborhoods
-              like Montmartre.
+          - text: The capital of France is Paris. Paris is not only the capital city but also a major cultural, economic,
+              and political center of the country. It is well-known for its historical landmarks, such as the Eiffel Tower,
+              Louvre Museum, Notre-Dame Cathedral, and Champs-Élysées, among many other attractions.
           role: assistant
       stopReason: end_turn
       trace:
@@ -43,7 +42,7 @@ interactions:
           inputAssessment:
             xbgw7g293v7o:
               appliedGuardrailDetails:
-                guardrailArn: arn:aws:bedrock:us-east-1:353014496775:guardrail/xbgw7g293v7o
+                guardrailArn: arn:aws:bedrock:us-east-1:000000000000:guardrail/xbgw7g293v7o
                 guardrailId: xbgw7g293v7o
                 guardrailOrigin:
                 - REQUEST
@@ -54,7 +53,7 @@ interactions:
                   textCharacters:
                     guarded: 30
                     total: 30
-                guardrailProcessingLatency: 397
+                guardrailProcessingLatency: 270
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
@@ -69,7 +68,7 @@ interactions:
           outputAssessments:
             xbgw7g293v7o:
             - appliedGuardrailDetails:
-                guardrailArn: arn:aws:bedrock:us-east-1:353014496775:guardrail/xbgw7g293v7o
+                guardrailArn: arn:aws:bedrock:us-east-1:000000000000:guardrail/xbgw7g293v7o
                 guardrailId: xbgw7g293v7o
                 guardrailOrigin:
                 - REQUEST
@@ -78,9 +77,9 @@ interactions:
               invocationMetrics:
                 guardrailCoverage:
                   textCharacters:
-                    guarded: 345
-                    total: 345
-                guardrailProcessingLatency: 370
+                    guarded: 300
+                    total: 300
+                guardrailProcessingLatency: 300
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
@@ -93,9 +92,9 @@ interactions:
                   wordPolicyUnits: 0
       usage:
         inputTokens: 13
-        outputTokens: 69
+        outputTokens: 67
         serverToolUsage: {}
-        totalTokens: 82
+        totalTokens: 80
     status:
       code: 200
       message: OK

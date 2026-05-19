@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '245'
+      - '154'
       content-type:
       - application/json
       host:
@@ -20,23 +20,20 @@ interactions:
         - text: What is the capital of France?
         role: user
       generationConfig:
-        thinkingConfig:
-          includeThoughts: false
-      systemInstruction:
-        parts:
-        - text: You are a helpful chatbot.
-        role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+        responseModalities:
+        - TEXT
+        topP: 0.5
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '583'
+      - '689'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4236
+      - gfet4t7; dur=1172
       transfer-encoding:
       - chunked
       vary:
@@ -48,19 +45,20 @@ interactions:
       - content:
           parts:
           - text: The capital of France is **Paris**.
+            thoughtSignature: ErsBCrgBAb4+9vt2Ne1J669dWPTg2ScsVSN4LyLrYIlq0RRG4xEoioKBGyrHy9P7sFTAyJc5FBRQUN3fK4Sqqgwr8IBsdULmnuDT8JL/5/ZAoUlYzjsq+TTRKIUa0DHtx66wGh0CjOaorqhsCNY9ZAKjmCfzlnhRNb2qbwJYMEFEHbB7BkLEahxQBEdoIa6djh0oq8jo9+x5/u151Ru/IQQzthaS6Qh9sMppwpm7M/ZFr0vp/kklXEYSP3hbYg==
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: 1FpeaOWpAs-lkdUP_4eY2QY
+      modelVersion: gemini-3-flash-preview
+      responseId: 88utabCeMaiHz7IP6d-msAY
       usageMetadata:
         candidatesTokenCount: 8
-        promptTokenCount: 15
+        promptTokenCount: 8
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 15
-        thoughtsTokenCount: 275
-        totalTokenCount: 298
+          tokenCount: 8
+        thoughtsTokenCount: 30
+        totalTokenCount: 46
     status:
       code: 200
       message: OK
