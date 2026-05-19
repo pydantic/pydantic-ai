@@ -151,6 +151,10 @@ def gateway_provider(
     if route is None:
         # Use the implied providerId as the default route.
         route = normalize_gateway_provider(upstream_provider)
+        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
+        # When the Gateway team renames their side, drop this remap.
+        if route == 'google-cloud':
+            route = 'google-vertex'
 
     base_url = _merge_url_path(base_url, route)
 
@@ -249,9 +253,7 @@ def normalize_gateway_provider(provider: str) -> str:
     elif provider in ('openai-responses', 'responses'):
         return 'openai-responses'
     elif provider in ('gemini', 'google-cloud'):
-        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
-        # When the Gateway team renames their side, flip this to `google-cloud`.
-        return 'google-vertex'
+        return 'google-cloud'
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'
     return provider

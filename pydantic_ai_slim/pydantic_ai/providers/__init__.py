@@ -115,9 +115,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .gateway import normalize_gateway_provider
 
         provider = normalize_gateway_provider(provider)
-        # Gateway wire value: google-vertex → google-cloud until Gateway team renames their side.
-        if provider == 'google-vertex':
-            provider = 'google-cloud'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider

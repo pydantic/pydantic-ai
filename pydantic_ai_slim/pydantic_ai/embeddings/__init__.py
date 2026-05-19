@@ -118,8 +118,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud', 'google-vertex'):
-        # See providers/__init__.py for why google-vertex → google-cloud.
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)
