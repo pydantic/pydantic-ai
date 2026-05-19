@@ -5,7 +5,6 @@ from dataclasses import KW_ONLY, dataclass
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AgentToolset
 
 
@@ -28,15 +27,6 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     description: str | None = None
     """Human-readable description, surfaced in the `load_capability` catalog when `defer_loading=True`."""
-
-    def __post_init__(self) -> None:
-        if self.defer_loading is True and self.description is None:
-            raise UserError(
-                f'Capability {self.id!r} has defer_loading=True but no description. '
-                'Capabilities with defer_loading=True must provide a description '
-                '(via the `description` field or by overriding `get_description`) '
-                'so the model can decide whether to load them from the `load_capability` catalog.'
-            )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self.instructions
