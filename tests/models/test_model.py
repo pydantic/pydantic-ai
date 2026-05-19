@@ -59,7 +59,7 @@ TEST_CASES = [
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
         'gateway/gemini:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-cloud',
+        'google',
         'google',
         GoogleModel,
         id='gateway/gemini:gemini-1.5-flash',

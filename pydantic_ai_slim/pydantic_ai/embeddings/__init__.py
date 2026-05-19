@@ -96,9 +96,9 @@ def infer_embedding_model(
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import normalize_gateway_provider
+        from ..providers.gateway import _strip_gateway_prefix
 
-        model_kind = normalize_gateway_provider(model_kind)
+        model_kind = _strip_gateway_prefix(model_kind)
 
     if model_kind in (
         'openai',
@@ -118,7 +118,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
+    elif model_kind in ('google', 'gemini', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)

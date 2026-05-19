@@ -71,7 +71,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini', 'google-cloud'],
+    upstream_provider: Literal['google', 'gemini', 'google-cloud'],
     /,
     *,
     route: str | None = None,
@@ -150,11 +150,7 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        route = normalize_gateway_provider(upstream_provider)
-        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
-        # When the Gateway team renames their side, drop this remap.
-        if route == 'google-cloud':
-            route = 'google-vertex'
+        route = _gateway_route(_strip_gateway_prefix(upstream_provider))
 
     base_url = _merge_url_path(base_url, route)
 
@@ -201,7 +197,11 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google-cloud', 'gemini'):
+    elif upstream_provider in ('google', 'gemini'):
+        from .google import GoogleProvider
+
+        return _with_http_client(GoogleProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+    elif upstream_provider == 'google-cloud':
         from .google_cloud import GoogleCloudProvider
 
         return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
@@ -240,23 +240,36 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def normalize_gateway_provider(provider: str) -> str:
-    """Normalize a gateway provider name.
+# Wire-value remaps for the PAIG URL route. Defaults to identity; only canonical names
+# whose Gateway-side wire value differs from the user-facing prefix are listed.
+# Drop a row here once the Gateway team renames their side to match ours.
+_GATEWAY_ROUTE_REMAP: dict[str, str] = {
+    'openai-chat': 'openai',  # Gateway doesn't use the `-chat` suffix for the Chat Completions route
+    'google': 'gemini',  # GLA-style Gemini API is called `gemini` on Gateway
+    'google-cloud': 'google-vertex',  # Gateway still uses the old name; flip when they rename
+}
 
-    Args:
-        provider: The provider name to normalize.
+
+def _gateway_route(provider: str) -> str:
+    """Translate a canonical provider name into the Gateway URL route segment.
+
+    `provider` must already have its `gateway/` prefix stripped.
     """
-    provider = provider.removeprefix('gateway/')
+    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
 
-    if provider in ('openai', 'openai-chat', 'chat'):
-        return 'openai'
-    elif provider in ('openai-responses', 'responses'):
-        return 'openai-responses'
-    elif provider in ('gemini', 'google-cloud'):
-        return 'google-cloud'
-    elif provider in ('bedrock', 'converse'):
-        return 'bedrock'
-    return provider
+
+# API-flavor aliases that map to a canonical provider name for class lookup.
+_GATEWAY_FLAVOR_ALIASES: dict[str, str] = {
+    'chat': 'openai-chat',
+    'responses': 'openai-responses',
+    'converse': 'bedrock',
+}
+
+
+def _strip_gateway_prefix(provider: str) -> str:
+    """Strip the `gateway/` prefix and resolve API-flavor aliases to canonical provider names."""
+    provider = provider.removeprefix('gateway/')
+    return _GATEWAY_FLAVOR_ALIASES.get(provider, provider)
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.

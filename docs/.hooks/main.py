@@ -139,9 +139,9 @@ GATEWAY_MODEL_MAP = {
     'anthropic': 'anthropic',
     'openai': 'openai',
     'openai-responses': 'openai-responses',
-    'openai-chat': 'openai',
+    'openai-chat': 'openai-chat',
     'bedrock': 'bedrock',
-    'google': 'gemini',
+    'google': 'google',
     'google-cloud': 'google-cloud',
     'groq': 'groq',
 }
