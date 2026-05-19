@@ -633,12 +633,15 @@ async def test_comprehensive_toolset_composition():
 
 async def test_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
     async with toolset:
@@ -657,11 +660,13 @@ class InitializationError(Exception):
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
     server2.__aenter__.side_effect = InitializationError
 
@@ -841,7 +846,7 @@ async def test_toolset_max_retries_inherits_from_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
@@ -880,7 +885,7 @@ async def test_toolset_explicit_max_retries_overrides_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
@@ -905,7 +910,7 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
         raise ModelRetry('Always fails')
 
     toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
@@ -934,7 +939,7 @@ async def test_prepare_function_sees_agent_max_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=3, output_retries=3)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 3, 'output': 3})
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured_max_retries[0] == 3
@@ -993,7 +998,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 1, 'output': 5})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
@@ -1025,7 +1030,7 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 1, 'output': 5})
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1
@@ -2010,24 +2015,6 @@ async def test_no_input_raises_without_toolset_instructions():
         await agent.run()
 
 
-def test_tool_without_runctx_raises_warning():
-    toolset = FunctionToolset()
-    with pytest.warns(
-        DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'
-    ):
-
-        @toolset.tool  # type: ignore[arg-type]  # pragma: no cover
-        def add(x: int):
-            return x + 1
-
-        @toolset.tool(retries=2)  # type: ignore[arg-type]  # pragma: no cover
-        def sub(x: int):
-            return x - 1
-
-    assert 'add' in toolset.tools
-    assert 'sub' in toolset.tools
-
-
 class StatefulToolset(AbstractToolset[None]):
     """A custom stateful toolset for testing for_run/for_run_step."""
 
@@ -2635,3 +2622,15 @@ async def test_toolset_empty_instructions_filtered():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
+
+
+def test_apply_walks_combined_and_wrapper_toolsets():
+    """`apply()` walks through `CombinedToolset` children and unwraps `WrapperToolset` (e.g. `PrefixedToolset`)."""
+    inner1 = FunctionToolset[None]()
+    inner2 = FunctionToolset[None]()
+    combined = CombinedToolset([inner1, PrefixedToolset(inner2, 'p')])
+
+    visited: list[AbstractToolset[None]] = []
+    combined.apply(visited.append)
+    assert inner1 in visited
+    assert inner2 in visited

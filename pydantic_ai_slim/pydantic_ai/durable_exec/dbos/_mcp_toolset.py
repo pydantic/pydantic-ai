@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.mcp import MCPServer
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from ._mcp import DBOSMCPToolset
+from ._mcp import DBOSMCPToolsetBase
 from ._utils import StepConfig
 
 
-class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
-    """A wrapper for MCPServer that integrates with DBOS, turning call_tool and get_tools into DBOS steps.
+class DBOSMCPToolset(DBOSMCPToolsetBase[AgentDepsT]):
+    """A wrapper for `MCPToolset` that integrates with DBOS, turning `call_tool` and `get_tools` into DBOS steps.
 
     Tool definitions are cached across steps to avoid redundant MCP server round-trips,
-    respecting the wrapped server's `cache_tools` setting.
+    respecting the wrapped toolset's `cache_tools` setting.
     """
 
     def __init__(
         self,
-        wrapped: MCPServer,
+        wrapped: MCPToolset[AgentDepsT],
         *,
         step_name_prefix: str,
         step_config: StepConfig,
@@ -33,18 +33,18 @@ class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
         self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
-    def _server(self) -> MCPServer:
-        assert isinstance(self.wrapped, MCPServer)
+    def _toolset(self) -> MCPToolset[AgentDepsT]:
+        assert isinstance(self.wrapped, MCPToolset)
         return self.wrapped
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._server.tool_for_tool_def(tool_def)
+        return self._toolset.tool_for_tool_def(tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self._server.cache_tools and self._cached_tool_defs is not None:
+        if self._toolset.cache_tools and self._cached_tool_defs is not None:
             return {name: self.tool_for_tool_def(td) for name, td in self._cached_tool_defs.items()}
 
         result = await super().get_tools(ctx)
-        if self._server.cache_tools:
+        if self._toolset.cache_tools:  # pragma: no branch
             self._cached_tool_defs = {name: tool.tool_def for name, tool in result.items()}
         return result

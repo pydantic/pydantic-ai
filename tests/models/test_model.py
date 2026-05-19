@@ -199,14 +199,6 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
-        {'GROK_API_KEY': 'grok-api-key'},
-        'grok:grok-3',
-        'grok-3',
-        'grok',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
         'openai-responses:gpt-4o',
         'gpt-4o',
@@ -387,4 +379,4 @@ def test_custom_provider_instance_method_model_profile():
     assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
-    assert isinstance(profile, ModelProfile)
+    assert isinstance(profile, dict)

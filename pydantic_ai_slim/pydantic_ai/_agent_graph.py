@@ -1183,12 +1183,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
+                        # Text parts before a native tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text.
+                        # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
                         text = ''
-                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.NativeToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                        # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                        pass
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):

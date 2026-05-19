@@ -72,17 +72,6 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
-## Expose Agents as HTTP Servers (A2A)
-
-Use `agent.to_a2a()` when the agent should be exposed as an ASGI app that speaks the A2A protocol.
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.2')
-app = agent.to_a2a()
-```
-
 ## Use Durable Execution
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
@@ -111,10 +100,10 @@ Third-party integrations to reach for:
 
 - `tool_from_langchain`
 - `LangChainToolset`
-- `tool_from_aci`
-- `ACIToolset`
+- `tool_from_aci` (deprecated, removed in 2.0)
+- `ACIToolset` (deprecated, removed in 2.0)
 
-Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools.
+Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools. The ACI.dev wrappers are deprecated in 1.x and removed in 2.0; wrap ACI tools yourself with `Tool.from_schema` against `aci.ACI().functions.get_definition(...)`.
 
 ## Systematically Verify Agent Behavior with Evals
 

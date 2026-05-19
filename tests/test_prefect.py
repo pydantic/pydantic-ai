@@ -46,7 +46,7 @@ try:
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
         PrefectAgent,
         PrefectFunctionToolset,
-        PrefectMCPServer,
+        PrefectMCPToolset,
         PrefectModel,
         TaskConfig,
     )
@@ -61,7 +61,9 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -199,13 +201,13 @@ with warnings.catch_warnings():
     warnings.filterwarnings(
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
+    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportDeprecated]
         model,
         deps_type=Deps,
         output_type=Response,
         toolsets=[
             FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
             ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
         ],
         tools=[get_weather],
@@ -625,7 +627,7 @@ async def test_prefect_agent():
 
     # Find the wrapped toolsets (skip the internal output toolset)
     prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
-    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPServer)]
+    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPToolset)]
     external_toolsets = [ts for ts in toolsets if isinstance(ts, ExternalToolset)]
 
     # Verify we have the expected wrapped toolsets
@@ -633,13 +635,10 @@ async def test_prefect_agent():
     assert len(prefect_mcp_toolsets) == 1  # mcp toolset
     assert len(external_toolsets) == 1  # external toolset
 
-    # Verify MCP server is wrapped
+    # Verify MCP toolset is wrapped (complex_agent.toolsets[1] is the `MCPToolset` for mcp).
     mcp_toolset = prefect_mcp_toolsets[0]
     assert mcp_toolset.id == 'mcp'
-    # The wrapped toolset is the MCPServerStdio instance from the complex_agent
-    # complex_agent.toolsets[0] is FunctionToolset for get_country
-    # complex_agent.toolsets[1] is MCPServerStdio for mcp
-    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)
+    assert isinstance(mcp_toolset.wrapped, MCPToolset)
 
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
