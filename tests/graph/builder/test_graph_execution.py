@@ -418,4 +418,9 @@ def test_run_sync():
     )
 
     graph = g.build()
+    # First call infers the name from the calling frame.
     assert graph.run_sync(inputs=3) == 8
+    assert graph.name == 'graph'
+    # Second call skips name inference because the name is already set.
+    assert graph.run_sync(inputs=4) == 10
+    assert graph.name == 'graph'
