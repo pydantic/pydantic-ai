@@ -731,22 +731,42 @@ def test_messages_to_otel_message_parts_compaction_part():
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
 
 
-def test_messages_to_otel_messages_multimodal_v3():
+def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
     """Test that version 3 keeps the pre-v4 multimodal format."""
-    image_data = BinaryContent(data=b'fake image data', media_type='image/png')
     messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt2', AudioUrl('https://example.com/audio.mp3')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt3', DocumentUrl('https://example.com/document.pdf')])],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content=['user_prompt4', VideoUrl('https://example.com/video.mp4')])],
+            timestamp=IsDatetime(),
+        ),
         ModelRequest(
             parts=[
                 UserPromptPart(
                     content=[
-                        'Describe these files',
-                        ImageUrl('https://example.com/image.jpg', media_type='image/jpeg'),
-                        image_data,
+                        'user_prompt5',
+                        ImageUrl('https://example.com/image2.png'),
+                        AudioUrl('https://example.com/audio2.mp3'),
+                        DocumentUrl('https://example.com/document2.pdf'),
+                        VideoUrl('https://example.com/video2.mp4'),
                     ]
                 )
             ],
             timestamp=IsDatetime(),
         ),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(version=3)
     assert settings.messages_to_otel_messages(messages) == snapshot(
@@ -754,11 +774,63 @@ def test_messages_to_otel_messages_multimodal_v3():
             {
                 'role': 'user',
                 'parts': [
-                    {'type': 'text', 'content': 'Describe these files'},
-                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
-                    {'type': 'binary', 'media_type': 'image/png', 'content': image_data.base64},
+                    {'type': 'text', 'content': 'user_prompt'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.png'},
                 ],
-            }
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt2'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio.mp3'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document.pdf'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt4'},
+                    {'type': 'video-url', 'url': 'https://example.com/video.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt5'},
+                    {'type': 'image-url', 'url': 'https://example.com/image2.png'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document2.pdf'},
+                    {'type': 'video-url', 'url': 'https://example.com/video2.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt6'},
+                    {
+                        'type': 'binary',
+                        'media_type': 'application/pdf',
+                        'content': IsStr(),
+                    },
+                ],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'binary',
+                        'media_type': 'application/pdf',
+                        'content': IsStr(),
+                    }
+                ],
+            },
         ]
     )
     settings_without_binary = InstrumentationSettings(version=3, include_binary_content=False)
@@ -767,11 +839,55 @@ def test_messages_to_otel_messages_multimodal_v3():
             {
                 'role': 'user',
                 'parts': [
-                    {'type': 'text', 'content': 'Describe these files'},
-                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
-                    {'type': 'binary', 'media_type': 'image/png'},
+                    {'type': 'text', 'content': 'user_prompt'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.png'},
                 ],
-            }
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt2'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio.mp3'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document.pdf'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt4'},
+                    {'type': 'video-url', 'url': 'https://example.com/video.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt5'},
+                    {'type': 'image-url', 'url': 'https://example.com/image2.png'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document2.pdf'},
+                    {'type': 'video-url', 'url': 'https://example.com/video2.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt6'},
+                    {'type': 'binary', 'media_type': 'application/pdf'},
+                ],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'binary', 'media_type': 'application/pdf'},
+                ],
+            },
         ]
     )
 
