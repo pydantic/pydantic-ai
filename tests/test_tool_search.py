@@ -1078,14 +1078,13 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     # Step 1: cap deferred → both tools hidden; only `load_capability` and the search
     # facade reach the model.
     # Step 2: cap loaded → both tools visible regardless of tool-level defer flag;
-    # `load_capability` disappears (no remaining unloaded caps); facade stays for
-    # prompt-cache stability.
+    # `load_capability` and the search facade stay present for prompt-cache stability.
     # Step 3: same toolset; model returns final text.
     assert seen_tool_names == snapshot(
         [
             ['load_capability', 'search_tools'],
-            ['inherited_tool', 'also_deferred_tool', 'search_tools'],
-            ['inherited_tool', 'also_deferred_tool', 'search_tools'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
         ]
     )
 

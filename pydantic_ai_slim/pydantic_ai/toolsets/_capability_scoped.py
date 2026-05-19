@@ -25,11 +25,10 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
         cap = ctx.capabilities.get(self.capability_id)
-        assert cap is not None
         # Whether the owning capability declared `defer_loading=True`. The value is
         # independent of whether the capability is currently loaded so the tool_def
         # stays stable for prompt-caching purposes.
-        defer_loading = cap.defer_loading is True
+        defer_loading = cap.defer_loading is True if cap is not None else False
         return {
             name: replace(
                 tool,
@@ -48,8 +47,7 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         cap = ctx.capabilities.get(self.capability_id)
-        assert cap is not None
-        if cap.defer_loading is True:
+        if cap is not None and cap.defer_loading is True:
             return None
         return await self.wrapped.get_instructions(ctx)
 
