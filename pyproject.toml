@@ -56,9 +56,10 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
-# Opt-in extras for the non-default models / tools that used to ship with `pydantic-ai`
-# before the v2 default-deps narrowing. Exposed at the root so users (and CI's
-# `uv run --all-extras` matrix entry) can pull them through `pydantic-ai[<name>]`.
+# Opt-in extras forwarded from `pydantic-ai-slim` (some previously included in the
+# default `pydantic-ai` install, others newly exposed here for convenience).
+# Exposed at the root so users (and CI's `uv run --all-extras` matrix entry) can
+# pull them through `pydantic-ai[<name>]`.
 cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
 mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
 bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
