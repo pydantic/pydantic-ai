@@ -153,7 +153,7 @@ def gateway_provider(
     if route is None:
         # Use the implied providerId as the default route.
         canonical = normalize_gateway_provider(upstream_provider)
-        route = gateway_route(canonical)
+        route = _gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -242,11 +242,13 @@ def _merge_url_path(base_url: str, path: str) -> str:
 # Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
 # (the output of `normalize_gateway_provider`); defaults to identity. Only providers
 # whose Gateway wire value differs from the canonical name are listed.
+# PAIG's canonical OpenAI route is `openai` (per the gateway's own 404 list of
+# supported values). The Chat-vs-Responses API flavor is selected by the OpenAI
+# SDK appending `/chat/completions` or `/responses` on top of the base URL, so all
+# OpenAI flavors share the same wire route.
 _GATEWAY_ROUTE_REMAP: dict[str, str] = {
-    # Bare `openai` defaults to Responses in v2; Gateway needs the fully-qualified flavor on the wire.
-    'openai': 'openai-responses',
-    # Gateway collapses the chat flavor back to plain `openai` on the wire (no `-chat` suffix).
     'openai-chat': 'openai',
+    'openai-responses': 'openai',
     # GLA-style Gemini API is called `gemini` on Gateway.
     'google': 'gemini',
     # Gateway team still uses the old name; flip this entry when they rename their side.
@@ -254,7 +256,7 @@ _GATEWAY_ROUTE_REMAP: dict[str, str] = {
 }
 
 
-def gateway_route(provider: str) -> str:
+def _gateway_route(provider: str) -> str:
     """Translate a canonical provider name into the Gateway URL route segment."""
     return _GATEWAY_ROUTE_REMAP.get(provider, provider)
 
@@ -262,7 +264,7 @@ def gateway_route(provider: str) -> str:
 def normalize_gateway_provider(provider: str) -> str:
     """Strip the `gateway/` prefix and resolve user-facing aliases to a canonical class-lookup name.
 
-    Wire-value remapping for the Gateway URL belongs in `gateway_route`.
+    Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
     if provider == 'google-vertex':

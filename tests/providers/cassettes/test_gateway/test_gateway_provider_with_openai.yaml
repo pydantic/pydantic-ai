@@ -20,7 +20,7 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/openai-chat/chat/completions
+    uri: http://localhost:8787/openai/chat/completions
   response:
     headers:
       access-control-expose-headers:

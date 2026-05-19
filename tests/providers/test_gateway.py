@@ -36,10 +36,11 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
-        ('openai', OpenAIProvider, 'openai-responses'),
-        # Gateway collapses the chat flavor back to the plain `openai` wire route.
+        # PAIG exposes a single canonical `openai` route; Chat vs Responses is selected by the
+        # OpenAI SDK's sub-path (/chat/completions vs /responses), not by the URL prefix.
+        ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
     ],
 )
 def test_init_with_base_url(
@@ -89,9 +90,9 @@ def vcr_config():
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
-        ('openai', OpenAIProvider, 'openai-responses'),
+        ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
         ('groq', GroqProvider, 'groq'),
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
