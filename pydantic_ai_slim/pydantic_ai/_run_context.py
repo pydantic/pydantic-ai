@@ -120,10 +120,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """IDs of every capability that is currently loaded.
 
     Contains both always-loaded capabilities (`defer_loading=False`) and any
-    deferred capabilities the model has loaded via `load_capability`. Seeded by
-    `Agent.for_run` from the cap registry and message history; the
-    `load_capability` tool body adds to it when the model loads a deferred cap
-    in-step.
+    deferred capabilities the model has loaded via `load_capability`. Seeded
+    during run preparation from the capability registry and message history; the
+    `load_capability` tool body adds to it for in-step loads.
     """
 
     capability_loaded: bool | None = None

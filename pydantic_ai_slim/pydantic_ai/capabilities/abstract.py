@@ -162,22 +162,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     id: str = field(default_factory=lambda: str(uuid4()))
     """Identifier used to reference this capability within a run.
 
-    Required when `defer_loading=True` so the model can reference the capability
-    by id when calling `load_capability`.
+    Use an explicit, stable id when `defer_loading=True` so history replay can
+    match previous `load_capability` calls.
     """
 
     defer_loading: bool | None = None
-    """If True, the capability's contributions (instructions, tools, settings) are hidden
-    from the model until it explicitly loads them via `load_capability(id)`.
+    """If True, instructions, function tools, and model settings are hidden until
+    the model explicitly loads the capability via `load_capability(id)`.
 
-    Requires both [`id`][pydantic_ai.capabilities.AbstractCapability.id] and
+    Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] and
     [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
     to be set so the capability can be discovered in the load catalog.
     """
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Some capability subclasses override __init__ without calling super().__init__,
-        # so default-factory for `id` may not fire. Guarantee a stable uuid4 here.
+        # so the dataclass default factory for `id` may not fire.
         instance = super().__new__(cls)
         instance.id = str(uuid4())
         return instance

@@ -22,7 +22,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
         cap = ctx.capabilities.get(self.capability_id)
-        # Keep the declaration stable; visibility is resolved later by tool search.
+        # Keep the declaration stable; model-facing visibility is resolved later.
         defer_loading = cap.defer_loading is True if cap is not None else False
         return {
             name: replace(

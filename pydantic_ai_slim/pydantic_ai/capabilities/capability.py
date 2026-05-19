@@ -21,7 +21,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
 
     instructions: AgentInstructions[AgentDepsT] | None = None
-    """Instructions to include in the system prompt."""
+    """Instructions contributed by this capability."""
 
     toolset: AgentToolset[AgentDepsT] | None = None
     """Toolset to register with the agent."""

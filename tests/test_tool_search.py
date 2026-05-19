@@ -1086,7 +1086,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
 
 
 async def test_tool_search_ignores_malformed_loaded_capability_history():
-    """Malformed `load_capability` results must not unlock capability-scoped tools."""
+    """Malformed `load_capability` results must not unlock capability-owned tools."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain

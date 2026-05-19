@@ -17645,7 +17645,7 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
     def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')  # pragma: no cover
 
-    with pytest.raises(UserError, match='ignored on `DynamicCapability`'):
+    with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
         DynamicCapability(capability_func=factory, defer_loading=True)
 
 
