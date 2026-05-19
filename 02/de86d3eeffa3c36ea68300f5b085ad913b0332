@@ -1,0 +1,41 @@
+tests/models/test_fallback.py
+  s_ae45058a0235a7::t_677487da1f327c 229-230,353-354,1035-1036
+tests/test_logfire.py
+  s_ae45058a0235a7::t_60eba950f54f49 14,81-88,95-96
+  s_ae45058a0235a7::t_17c48e285cf81a 3223-3225
+  s_ae45058a0235a7::t_666491ced474b1 3226
+  s_ae45058a0235a7::t_b8aa6e88ffc332 940-941,951,992-1007
+  s_ae45058a0235a7::t_abb8f4a1fc5a03 1103-1104
+  s_ae45058a0235a7::t_bcdbc26b5329ff 262-263,486,499,512,566-567,661-662,739,784-785
+  s_ae45058a0235a7::t_40e6428a417a53 1314-1315,2270,2324-2325,2428,2494-2495,2590,2655-2656,2737,2788-2789,2844,2905
+pydantic_ai_slim/pydantic_ai/models/instrumented.py
+  s_ae45058a0235a7::t_b101575fcf5da9 5,25,67,77,92-93,108-109,125-130
+tests/models/test_instrumented.py
+  s_ae45058a0235a7::t_b1ac519d79f7f9 800,865,942,993,1029,1074,1104,1726,1755,1791,1821,1857,1877,1905,1926
+  s_ae45058a0235a7::t_253649a9063a2a 321-333
+  s_ae45058a0235a7::t_62e0108ef35e55 6,39,57-66
+docs/logfire.md
+  s_ae45058a0235a7::t_62e0ec5fc756d8 254,256,261-262,267
+  s_ae45058a0235a7::t_b013f19be76a0d 276
+  s_ae45058a0235a7::t_c1486da67913c5 278,286,288,300
+tests/test_mcp.py
+  s_ae45058a0235a7::t_668dbda48a0f17 310-322,324-340
+  s_ae45058a0235a7::t_a4dc62e7eacb65 323
+  s_ae45058a0235a7::t_52fabb33998244 12,22,55-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "02de86d3eeffa3c36ea68300f5b085ad913b0332",
+  "prompts": {},
+  "sessions": {
+    "s_ae45058a0235a7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3c60-161c-75d1-a526-dec43e666613",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
