@@ -49,10 +49,10 @@ If you want to pass parameters in code to the provider, you can programmatically
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -65,11 +65,11 @@ agent = Agent(model)
 from openai import AsyncOpenAI
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -100,14 +100,14 @@ agent = Agent(model)
 
 ## Model settings
 
-You can customize model behavior using [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings]:
+You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIChatModel('gpt-5.2')
-settings = OpenAIChatModelSettings(
+model = OpenAIResponsesModel('gpt-5.2')
+settings = OpenAIResponsesModelSettings(
     temperature=0.2,
     service_tier='flex',
 )
