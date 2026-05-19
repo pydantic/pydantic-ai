@@ -49,6 +49,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
@@ -2252,6 +2253,7 @@ def test_abstract_capability_get_model_settings_default():
 
     cap = PlainCap()
     assert cap.get_model_settings() is None
+    assert cap.get_description(None) is None
 
 
 def test_combined_capability_get_model_settings_merge():
@@ -2326,8 +2328,7 @@ def test_deferred_capability_catalog_entries_require_description() -> None:
     """Deferred capabilities must be discoverable before the model can load them."""
 
     with pytest.raises(UserError) as missing_description:
-        agent = Agent(TestModel(), capabilities=[Capability[None](id='billing', defer_loading=True)])
-        _ = agent.run_sync('Go.')
+        Agent(TestModel(), capabilities=[Capability[None](id='billing', defer_loading=True)])
 
     assert str(missing_description.value) == snapshot(
         "Capability 'billing' has defer_loading=True but no description. Capabilities with defer_loading=True must provide a description (via the `description` field or by overriding `get_description`) so the model can decide whether to load them from the `load_capability` catalog."
@@ -2395,6 +2396,20 @@ async def test_load_capability_tool_name_conflict_raises() -> None:
     )
 
 
+async def test_deferred_loader_is_inert_without_deferred_capabilities() -> None:
+    """The framework loader wrapper should not add `load_capability` when nothing can be loaded."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def visible_tool() -> str:
+        return 'visible'
+
+    agent = Agent(TestModel(), capabilities=[DeferredLoadingCapability(), Toolset(toolset)])
+    result = await agent.run('list tools')
+
+    assert result.output == snapshot('{"visible_tool":"visible"}')
+
+
 async def test_duplicate_capability_ids_raise() -> None:
     """Capability ids are used as a run registry, so duplicates must fail loudly."""
     with pytest.raises(UserError) as exc_info:
@@ -2439,6 +2454,31 @@ async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
         'For dynamic capabilities, ensure the factory is deterministic and the returned capability has a '
         'stable, explicitly-set `id=` (the auto-generated default changes every run).'
     )
+
+
+async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
+    """A partial/stale `load_capability` call in history must not load a capability on replay."""
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[
+            Capability[None](
+                id='reports',
+                description='Report tools.',
+                instructions='Report instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run(
+        'hi',
+        message_history=[
+            ModelResponse(parts=[LoadCapabilityCallPart(args='{"id":', tool_call_id='partial-load')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='partial-load')]),
+        ],
+    )
+
+    assert result.output == 'done'
 
 
 @pytest.mark.parametrize(
@@ -2997,6 +3037,21 @@ async def test_capability_for_run_default_returns_self():
     cap = SimpleCap()
     ctx = _build_run_context()
     assert await cap.for_run(ctx) is cap
+
+
+async def test_run_context_available_tools_empty_before_tool_manager_is_ready() -> None:
+    """Early capability hooks can ask for available tools before the tool manager is populated."""
+    seen_available_tools: list[set[str]] = []
+
+    @dataclass
+    class AvailableToolsCap(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            seen_available_tools.append(ctx.available_tools)
+
+    agent = Agent(TestModel(), capabilities=[AvailableToolsCap()])
+    await agent.run('hello')
+
+    assert seen_available_tools == [set()]
 
 
 async def test_combined_capability_for_run_propagates():
@@ -6059,6 +6114,11 @@ class TestMCPCapability:
         assert cap_sse.id == 'server1.example.com-sse'
         assert builtin_sse.id == 'server1.example.com-sse'
 
+        # Connector-style and opaque server names still get stable ids even when
+        # there is no hostname to use.
+        assert MCP(url='x-openai-connector:deepwiki', native=True, local=False).id == 'x-openai-connector-deepwiki'
+        assert MCP(url='local-mcp-server', native=True, local=False).id == 'local-mcp-server'
+
     async def test_mcp_explicit_native_id_marks_local_fallback(self):
         """An explicit native MCP tool keeps the local fallback tied to that server id."""
 
@@ -6074,6 +6134,21 @@ class TestMCPCapability:
         assert toolset is not None
         tools = await toolset.get_tools(_build_run_context())
         assert tools['local_tool'].tool_def.unless_native == 'mcp_server:custom-mcp'
+
+    async def test_mcp_dynamic_native_id_marks_local_fallback(self):
+        """A dynamic native MCP tool still marks the local fallback with the stable capability id."""
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        async def native_tool(ctx: RunContext[None]) -> MCPServerTool:
+            return MCPServerTool(id='dynamic-mcp', url='https://mcp.example.com/api')
+
+        cap = MCP(url='https://mcp.example.com/api', id='dynamic-mcp', native=native_tool, local=local_tool)
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert tools['local_tool'].tool_def.unless_native == 'mcp_server:dynamic-mcp'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""

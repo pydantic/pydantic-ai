@@ -7588,10 +7588,12 @@ def test_override_toolsets():
         return 'Hello from foo'
 
     available_tools: list[list[str]] = []
+    available_tools_property: list[set[str]] = []
 
     async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
+        available_tools_property.append(ctx.available_tools)
         return tool_defs
 
     agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
@@ -7602,6 +7604,7 @@ def test_override_toolsets():
 
     result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['baz', 'foo'])
+    assert available_tools_property[-1] == {'baz', 'foo'}
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
     bar_toolset = FunctionToolset()
