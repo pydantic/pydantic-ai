@@ -8,7 +8,6 @@ intersection between strict tools and `NativeOutput`.
 from __future__ import annotations as _annotations
 
 import pytest
-from pydantic import BaseModel
 
 from pydantic_ai import (
     ModelRequest,
@@ -26,6 +25,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, try_import
+from .conftest import CityInfo, PersonQuery
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -36,29 +36,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
-
-
-class CityInfo(BaseModel):
-    """Information about a city."""
-
-    model_config = {'extra': 'forbid'}
-    city: str
-    country: str
-    population: int
-
-
-class _Address(BaseModel):
-    """A street address (no extra='forbid' — additionalProperties: false not in native schema)."""
-
-    street: str
-    city: str
-
-
-class _PersonQuery(BaseModel):
-    """A person query with a nested Address object (no extra='forbid')."""
-
-    name: str
-    address: _Address
 
 
 def test_bedrock_strict_tool_definition_supported_model(
@@ -347,7 +324,7 @@ async def test_bedrock_strict_false_tool_with_nested_objects(
     agent = Agent(model)
 
     @agent.tool_plain(strict=False)
-    async def lookup_person(query: _PersonQuery) -> str:
+    async def lookup_person(query: PersonQuery) -> str:
         return f'{query.name} lives at {query.address.street}, {query.address.city}'
 
     result = await agent.run('Look up John who lives at 123 Main St, Springfield')

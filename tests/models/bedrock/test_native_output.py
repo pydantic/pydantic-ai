@@ -29,6 +29,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, try_import
+from .conftest import CityInfo, PersonQuery
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -39,29 +40,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
-
-
-class CityInfo(BaseModel):
-    """Information about a city."""
-
-    model_config = {'extra': 'forbid'}
-    city: str
-    country: str
-    population: int
-
-
-class _Address(BaseModel):
-    """A street address (no extra='forbid' — additionalProperties: false not in native schema)."""
-
-    street: str
-    city: str
-
-
-class _PersonQuery(BaseModel):
-    """A person query with a nested Address object (no extra='forbid')."""
-
-    name: str
-    address: _Address
 
 
 async def test_bedrock_native_output_supported_model(
@@ -379,10 +357,10 @@ async def test_bedrock_native_output_nested_objects_without_extra_forbid(
     even to nested objects that don't have extra='forbid' in their Pydantic config.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
-    agent = Agent(model, output_type=NativeOutput(_PersonQuery))
+    agent = Agent(model, output_type=NativeOutput(PersonQuery))
 
     result = await agent.run('Look up John who lives at 123 Main St, Springfield')
-    assert isinstance(result.output, _PersonQuery)
+    assert isinstance(result.output, PersonQuery)
 
 
 def test_bedrock_native_output_format_structure():

@@ -149,11 +149,16 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supports_tool_caching=True,
         bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         bedrock_thinking_variant='anthropic',
-        json_schema_transformer=BedrockJsonSchemaTransformer,
     ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
-    if model_name.startswith(bedrock_structured_output_unsupported):
-        profile = replace(profile, supports_json_schema_output=False)
-    return profile
+    return replace(
+        profile,
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        **(
+            {'supports_json_schema_output': False}
+            if model_name.startswith(bedrock_structured_output_unsupported)
+            else {}
+        ),
+    )
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
