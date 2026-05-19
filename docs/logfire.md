@@ -269,9 +269,28 @@ Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_name
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
-**The default is `version=5`**.
+**The default is `version=2`**, which provides a good balance between spec compliance and compatibility.
 
-#### Version 2
+#### Version 1 (Legacy, deprecated)
+
+Based on [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older. Messages are captured as individual events (logs) that are children of the request span. Use `event_mode='logs'` to emit events as OpenTelemetry log-based events:
+
+```python {title="instrumentation_settings_event_mode.py"}
+import logfire
+
+from pydantic_ai import Agent
+
+logfire.configure()
+logfire.instrument_pydantic_ai(version=1, event_mode='logs')
+agent = Agent('openai:gpt-5.2')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+This version won't look as good in the Logfire UI and will be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
+
+#### Version 2 (Default)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
 
@@ -299,12 +318,12 @@ Builds on version 3 with improved multimodal content handling to better align wi
 
 **URL-based media (ImageUrl, AudioUrl, VideoUrl):**
 
-- Old (v2-3): `{"type": "image-url", "url": "..."}`
+- Old (v1-3): `{"type": "image-url", "url": "..."}`
 - New (v4): `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
 
 **Inline binary content (BinaryContent, FilePart):**
 
-- Old (v2-3): `{"type": "binary", "media_type": "...", "content": "..."}`
+- Old (v1-3): `{"type": "binary", "media_type": "...", "content": "..."}`
 - New (v4): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
 
 Note: The `modality` field is only included for image, audio, and video content types as specified in the OTel spec. DocumentUrl and unsupported media types omit the `modality` field.
@@ -321,9 +340,10 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` is used. This is set automatically by `logfire.configure()`. It can also be set by the `set_tracer_provider` function in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
@@ -331,6 +351,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
+    logger_provider=LoggerProvider(),
 )
 
 agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])

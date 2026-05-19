@@ -260,7 +260,7 @@ async def test_parallel_agent_runs_produce_independent_span_trees():
     """Each parallel `agent.run()` sharing one MCPServer produces its own independent trace.
 
     Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: each agent
-    run's tool calls must remain children of that run's `invoke_agent` span and not leak
+    run's tool calls must remain children of that run's `agent run` span and not leak
     across sibling runs' traces.
     """
     exporter = TestExporter()
@@ -279,8 +279,8 @@ async def test_parallel_agent_runs_produce_independent_span_trees():
         for trace_id in trace_ids:
             trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
             names = [s.name for s in trace_spans]
-            assert names.count('invoke_agent agent') >= 1
-            assert 'execute_tool celsius_to_fahrenheit' in names
+            assert names.count('agent run') >= 1
+            assert 'running tool' in names
             # Every span in this trace must actually belong to it — no cross-trace parenting
             span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
             for s in trace_spans:

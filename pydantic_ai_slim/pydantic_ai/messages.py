@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
+from opentelemetry._logs import LogRecord
+from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, deprecated
 
@@ -167,6 +169,12 @@ class SystemPromptPart:
 
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.system.message'},
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
+        )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
@@ -996,6 +1004,19 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+        for part in content:
+            if part['kind'] == 'binary' and 'content' in part:
+                part['binary_content'] = part.pop('content')
+        content = [
+            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
+        ]
+
+        if content in ([{'kind': 'text'}], [self.content]):
+            content = content[0]
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
@@ -1269,6 +1290,20 @@ class BaseToolReturnPart:
         # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
         return tool_content_parts[0], file_content
 
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        body: AnyValue = {
+            'role': 'tool',
+            'id': self.tool_call_id,
+            'name': self.tool_name,
+        }
+        if settings.include_content:
+            body['content'] = self.content  # pyright: ignore[reportArgumentType]
+
+        return LogRecord(
+            body=body,
+            attributes={'event.name': 'gen_ai.tool.message'},
+        )
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(
             type='tool_call_response',
@@ -1425,6 +1460,23 @@ class RetryPromptPart:
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
         return f'{description}\n\nFix the errors and try again.'
+
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        if self.tool_name is None:
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.user.message'},
+                body={'content': self.model_response(), 'role': 'user'},
+            )
+        else:
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.tool.message'},
+                body={
+                    **({'content': self.model_response()} if settings.include_content else {}),
+                    'role': 'tool',
+                    'id': self.tool_call_id,
+                    'name': self.tool_name,
+                },
+            )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
@@ -2181,6 +2233,57 @@ class ModelResponse:
             provider_id=self.provider_name,
             genai_request_timestamp=self.timestamp,
         )
+
+    def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
+        """Return OpenTelemetry events for the response."""
+        result: list[LogRecord] = []
+
+        def new_event_body():
+            new_body: dict[str, Any] = {'role': 'assistant'}
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
+            result.append(ev)
+            return new_body
+
+        body = new_event_body()
+        for part in self.parts:
+            if isinstance(part, ToolCallPart):
+                body.setdefault('tool_calls', []).append(
+                    {
+                        'id': part.tool_call_id,
+                        'type': 'function',
+                        'function': {
+                            'name': part.tool_name,
+                            **({'arguments': part.args} if settings.include_content else {}),
+                        },
+                    }
+                )
+            elif isinstance(part, TextPart | ThinkingPart):
+                kind = part.part_kind
+                body.setdefault('content', []).append(
+                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
+                )
+            elif isinstance(part, CompactionPart):
+                # Compaction parts don't map to standard OTel GenAI convention types
+                pass
+            elif isinstance(part, FilePart):
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': part.content.base64}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
+
+        if content := body.get('content'):
+            text_content = content[0].get('text')
+            if content == [{'kind': 'text', 'text': text_content}]:
+                body['content'] = text_content
+
+        return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
