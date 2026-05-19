@@ -464,34 +464,27 @@ class BedrockConverseModel(Model[BaseClient]):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
-    @property
-    def _supports_strict_structured_output(self) -> bool:
-        """Whether this model accepts `strict: true` on tool definitions AND `outputConfig` for `NativeOutput`.
-
-        AWS Bedrock co-defines both capabilities on a single doc page:
-        https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-        so one profile flag is sufficient. If a model ever supports one without the other, split
-        into a dedicated `bedrock_supports_strict_tool_definition` flag on `BedrockModelProfile`.
-        """
-        return self.profile.supports_json_schema_output
-
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
         if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
             if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self._supports_strict_structured_output else 'prompted'
+                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
             elif (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
-                suggested_output_type = 'NativeOutput' if self._supports_strict_structured_output else 'PromptedOutput'
+                suggested_output_type = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+        # AWS Bedrock requires strict mode for NativeOutput so we force it here. AWS co-defines
+        # strict tool calls and structured output as one capability per model
+        # (https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html), so the
+        # same `supports_json_schema_output` flag also gates the strict tool path below.
         if (
-            self._supports_strict_structured_output
+            self.profile.supports_json_schema_output
             and model_request_parameters.output_mode == 'native'
             and model_request_parameters.output_object is not None
         ):
@@ -507,7 +500,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
-        if f.strict and self._supports_strict_structured_output:
+        if f.strict and self.profile.supports_json_schema_output:
             tool_spec['strict'] = f.strict
 
         return {'toolSpec': tool_spec}

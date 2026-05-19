@@ -320,11 +320,6 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
         )
 
 
-# =============================================================================
-# BedrockJsonSchemaTransformer Tests
-# =============================================================================
-
-
 def test_strict_true_simple_schema():
     """With strict=True, simple schemas are returned (no-op transform), is_strict_compatible=True."""
 
