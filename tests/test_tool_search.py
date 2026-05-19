@@ -24,8 +24,6 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
-from pydantic_ai._load_capability import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     parse_discovered_tools,
@@ -41,6 +39,8 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -69,6 +69,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
@@ -262,13 +263,8 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     model = infer_model(model_name)
     # Override the cached profile to drop ToolSearchTool — forces the local path
     # uniformly across providers with and without native tool-search support.
-    setattr(
-        model,
-        'profile',
-        replace(
-            model.profile,
-            supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
-        ),
+    model.profile = replace(
+        model.profile, supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool}
     )
     agent: Agent[None, str] = Agent(model=model)
 

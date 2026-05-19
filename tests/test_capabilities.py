@@ -16,8 +16,6 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
-from pydantic_ai._load_capability import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
@@ -65,6 +63,8 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
     FilePart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -94,6 +94,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
@@ -3481,7 +3482,7 @@ def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 class LoggingCapability(AbstractCapability[Any]):
     """A capability that logs all hook invocations for testing."""
 
-    log: list[str] = field(default_factory=lambda: [])
+    log: list[str] = field(default_factory=list)
 
     async def before_run(self, ctx: RunContext[Any]) -> None:
         self.log.append('before_run')
@@ -5202,7 +5203,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
+            nodes: list[str] = field(default_factory=list)
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5218,7 +5219,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
+            nodes: list[str] = field(default_factory=list)
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5248,7 +5249,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
+            nodes: list[str] = field(default_factory=list)
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -5288,7 +5289,7 @@ class TestWrapNodeRunHook:
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
+            nodes: list[str] = field(default_factory=list)
 
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
@@ -7777,7 +7778,7 @@ class TestRunErrorHooks:
     async def test_on_run_error_not_called_when_wrap_run_recovers(self):
         @dataclass
         class WrapRecoveryCap(AbstractCapability[Any]):
-            log: list[str] = field(default_factory=lambda: [])
+            log: list[str] = field(default_factory=list)
 
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
                 try:
@@ -8913,7 +8914,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+            seen: list[tuple[str, str | None]] = field(default_factory=list)
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -8952,7 +8953,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+            seen: list[tuple[str, str | None]] = field(default_factory=list)
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -9025,7 +9026,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+            seen: list[tuple[str, str | None]] = field(default_factory=list)
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -14667,7 +14668,6 @@ class TestErrorHookCoveragePaths:
         class BareCap(AbstractCapability[Any]):
             """Has no hook overrides — uses all defaults."""
 
-            pass
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[BareCap()])
         result = agent.run_sync('hello')

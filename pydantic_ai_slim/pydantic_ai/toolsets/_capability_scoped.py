@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
+
+if TYPE_CHECKING:
+    from ..tools import ToolDefinition
 
 
 @dataclass
@@ -52,9 +56,21 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
         return await self.wrapped.get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        # Visit self so capability-aware walks (e.g. `_load_capability`) can find
+        # Visit self so capability-aware walks (e.g. `_deferred_capabilities`) can find
         # us. The standard `WrapperToolset.apply` skips wrappers and visits only
         # leaves; we make an exception here because the cap-id binding lives on
         # this node.
         visitor(self)
         self.wrapped.apply(visitor)
+
+
+def tools_for_loaded_capabilities(ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]) -> set[str]:
+    """Return resolved function-tool names owned by loaded deferred capabilities."""
+    return {
+        tool_def.name
+        for tool_def in tool_defs
+        if (capability_id := tool_def.capability_id) is not None
+        and capability_id in ctx.loaded_capability_ids
+        and (cap := ctx.capabilities.get(capability_id)) is not None
+        and cap.defer_loading is True
+    }

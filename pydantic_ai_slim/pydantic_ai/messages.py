@@ -1982,7 +1982,7 @@ deserialized). Same population pattern.
 # module to keep this file focused on the base part shapes. Imported here so the
 # discriminator unions below can reference them and so import-time registration of
 # narrowers happens whenever `pydantic_ai.messages` is imported.
-from ._load_capability import (  # noqa: E402  (same late-import rationale as `_tool_search` above)
+from ._deferred_capabilities import (  # noqa: E402  (same late-import rationale as `_tool_search` above)
     LoadCapabilityArgs,
     LoadCapabilityCallPart,
     LoadCapabilityReturn,

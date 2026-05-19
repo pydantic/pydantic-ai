@@ -5,20 +5,17 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._deferred import (
-    LOAD_CAPABILITY_TOOL_NAME,
-    LoadCapabilityReturn,
-)
 from pydantic_ai._instructions import normalize_instructions
-from pydantic_ai._load_capability import LoadCapabilityArgs
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart, ToolReturn
+from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()

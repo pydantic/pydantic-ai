@@ -36,7 +36,6 @@ from typing import Annotated, Any
 
 from pydantic import Field
 
-from .._deferred import tools_for_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE, parse_discovered_tools  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
@@ -48,6 +47,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
+from ._capability_scoped import tools_for_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 

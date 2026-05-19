@@ -107,6 +107,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 continue
 
             if capability.defer_loading is True:
+                # Model settings are request options rather than prompt or tool-schema content,
+                # so they can be resolved lazily without affecting prompt-cache stability. Keep
+                # them in the chain to preserve capability merge order once the capability loads.
 
                 def deferred_settings(
                     ctx: RunContext[AgentDepsT],

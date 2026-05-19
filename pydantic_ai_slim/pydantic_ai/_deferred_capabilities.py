@@ -1,4 +1,4 @@
-"""Load-capability typed message parts.
+"""Deferred-capability typed message parts.
 
 `load_capability` is a framework-emitted function tool used by deferred capabilities
 to gate hidden tools behind an explicit load step. There is no native server-side
