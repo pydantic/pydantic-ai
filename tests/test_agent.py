@@ -7126,13 +7126,6 @@ async def test_agent_context_manager_no_model():
         pass
 
 
-def test_cached_async_http_client_deprecated():
-    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
-
-    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
-        cached_async_http_client()  # pyright: ignore[reportDeprecated]
-
-
 @requires_openai
 async def test_provider_lifecycle_closes_client():
     """Provider lifecycle closes owned HTTP client on exit.

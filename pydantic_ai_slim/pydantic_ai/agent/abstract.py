@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -11,7 +10,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Iterator,
-    Mapping,
     Sequence,
 )
 from concurrent.futures import Executor
@@ -21,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypedDict, TypeIs, TypeVar, deprecated
+from typing_extensions import Self, TypedDict, TypeIs, TypeVar
 
 from pydantic_graph import End
 
@@ -39,7 +37,6 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
@@ -55,16 +52,10 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from ..usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from starlette.middleware import Middleware
-    from starlette.routing import BaseRoute
-    from starlette.types import ExceptionHandler, Lifespan
-
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
-    from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 T = TypeVar('T')
@@ -1584,132 +1575,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @abstractmethod
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
-
-    @deprecated(
-        '`Agent.to_ag_ui()` is deprecated and will be removed in 2.0. Replace:\n'
-        '    app = agent.to_ag_ui()\n'
-        'with a Starlette/FastAPI route:\n'
-        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
-        '    @app.post("/")\n'
-        '    async def run_agent(request):\n'
-        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
-        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def to_ag_ui(
-        self,
-        *,
-        # Agent.iter parameters
-        output_type: OutputSpec[OutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[BaseRoute] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
-        on_startup: Sequence[Callable[[], Any]] | None = None,
-        on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
-    ) -> AGUIApp[AgentDepsT, OutputDataT]:
-        """Returns an ASGI application that handles every AG-UI request by running the agent.
-
-        Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
-        To provide different `deps` for each request (e.g. based on the authenticated user),
-        compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly via [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] instead.
-
-        Example:
-        ```python {test="skip"}
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-5.2')
-        app = agent.to_ag_ui()
-        ```
-
-        The `app` is an ASGI application that can be used with any ASGI server.
-
-        To run the application, you can use the following command:
-
-        ```bash
-        uvicorn app:app --host 0.0.0.0 --port 8000
-        ```
-
-        See [AG-UI docs](../ui/ag-ui.md) for more information.
-
-        Args:
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
-                no output validators since output validators would expect an argument that matches the agent's
-                output type.
-            message_history: History of the conversation so far.
-            deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
-            usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
-
-            debug: Boolean indicating if debug tracebacks should be returned on errors.
-            routes: A list of routes to serve incoming HTTP and WebSocket requests.
-            middleware: A list of middleware to run for every request. A starlette application will always
-                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
-                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
-                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
-                exception cases occurring in the routing or endpoints.
-            exception_handlers: A mapping of either integer status codes, or exception class types onto
-                callables which handle the exceptions. Exception handler callables should be of the form
-                `handler(request, exc) -> response` and may be either standard functions, or async functions.
-            on_startup: A list of callables to run on application startup. Startup handler callables do not
-                take any arguments, and may be either standard functions, or async functions.
-            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
-                not take any arguments, and may be either standard functions, or async functions.
-            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
-                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
-                the other, not both.
-
-        Returns:
-            An ASGI application for running Pydantic AI agents with AG-UI protocol support.
-        """
-        from pydantic_ai.ui.ag_ui.app import AGUIApp
-
-        # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
-        # one warning from `to_ag_ui()` itself, not a second one from internal construction.
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=PydanticAIDeprecationWarning)
-            return AGUIApp(  # pyright: ignore[reportDeprecated]
-                agent=self,
-                # Agent.iter parameters
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                conversation_id=conversation_id,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                # Starlette
-                debug=debug,
-                routes=routes,
-                middleware=middleware,
-                exception_handlers=exception_handlers,
-                on_startup=on_startup,
-                on_shutdown=on_shutdown,
-                lifespan=lifespan,
-            )
 
     async def to_cli(
         self: Self,
