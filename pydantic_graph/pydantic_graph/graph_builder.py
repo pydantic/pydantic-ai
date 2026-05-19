@@ -278,6 +278,39 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
                     assert isinstance(event, EndMarker), 'Graph run should end with an EndMarker.'
                     return cast(EndMarker[OutputT], event).value
 
+    def run_sync(
+        self,
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        inputs: InputT = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
+        infer_name: bool = True,
+    ) -> OutputT:
+        """Synchronously execute the graph and return the final output.
+
+        This is a convenience wrapper around [`run`][pydantic_graph.Graph.run] that runs the coroutine on the
+        current event loop via `loop.run_until_complete(...)`. As such, it cannot be called from inside async
+        code or when an event loop is already running.
+
+        Args:
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            span: Optional span for tracing/instrumentation
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The final output from the graph execution
+        """
+        if infer_name and self.name is None:
+            inferred_name = infer_obj_name(self, depth=2)
+            if inferred_name is not None:  # pragma: no branch
+                self.name = inferred_name
+        return _utils.get_event_loop().run_until_complete(
+            self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False)
+        )
+
     @asynccontextmanager
     async def iter(
         self,

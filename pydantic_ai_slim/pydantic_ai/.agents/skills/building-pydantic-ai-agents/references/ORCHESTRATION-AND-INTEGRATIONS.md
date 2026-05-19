@@ -29,8 +29,6 @@ Good split:
 Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop. Compose graphs with `GraphBuilder` and typed step functions:
 
 ```python
-import asyncio
-
 from pydantic_graph import GraphBuilder, StepContext
 
 
@@ -54,8 +52,10 @@ g.add(
 )
 
 graph = g.build()
-result = asyncio.run(graph.run(inputs=3))
+result = graph.run_sync(inputs=3)
 ```
+
+Use `await graph.run(inputs=...)` from async code.
 
 ## Call the Model Without Using an Agent
 

@@ -51,6 +51,14 @@ async def run_graph_returns_output_type() -> None:
     assert_type(result, str)
 
 
+def run_sync_returns_output_type() -> None:
+    graph = GraphBuilder(state_type=MyState, deps_type=MyDeps, input_type=int, output_type=str).build(
+        validate_graph_structure=False
+    )
+    result = graph.run_sync(state=MyState(x=1), deps=MyDeps(y='y'), inputs=5)
+    assert_type(result, str)
+
+
 async def run_graph_rejects_wrong_state() -> None:
     graph = GraphBuilder(state_type=MyState, output_type=str).build(validate_graph_structure=False)
     # state=... must match `state_type`; passing a `str` where `MyState` is expected should error.
