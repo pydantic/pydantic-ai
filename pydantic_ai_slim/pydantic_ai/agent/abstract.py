@@ -16,9 +16,8 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
@@ -128,42 +127,6 @@ class AgentRetries(TypedDict, total=False):
 
     tools: int
     output: int
-
-
-@dataclass(frozen=True)
-class _ResolvedAgentRetries:
-    """Fully resolved retry budgets used internally."""
-
-    tools: int
-    output: int
-
-
-def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
-    """Resolve normalized retry overrides into concrete retry budgets.
-
-    Missing keys in an `AgentRetries` dict fall back to `default`, so internal code can work with a
-    single concrete shape.
-    """
-    return _ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
-
-
-def _normalize_agent_retry_overrides(
-    retries: int | AgentRetries | None,
-    *,
-    int_means: Literal['both', 'output'] = 'both',
-) -> AgentRetries:
-    """Normalize retry input without filling missing keys.
-
-    This is used while merging layered configuration. At run/override time, `int_means='output'`
-    treats `retries=N` as an output-budget override only.
-    """
-    if retries is None:
-        return {}
-    if isinstance(retries, int):
-        if int_means == 'output':
-            return {'output': retries}
-        return {'tools': retries, 'output': retries}
-    return retries.copy()
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):

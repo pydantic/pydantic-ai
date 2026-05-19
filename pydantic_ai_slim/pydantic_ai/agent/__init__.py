@@ -90,8 +90,6 @@ from .abstract import (
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
-    _normalize_agent_retries,
-    _normalize_agent_retry_overrides,
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -125,6 +123,42 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
 )
+
+
+@dataclasses.dataclass(frozen=True)
+class _ResolvedAgentRetries:
+    """Fully resolved retry budgets used internally."""
+
+    tools: int
+    output: int
+
+
+def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
+    """Resolve normalized retry overrides into concrete retry budgets.
+
+    Missing keys in an `AgentRetries` dict fall back to `default`, so internal code can work with a
+    single concrete shape.
+    """
+    return _ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
+
+
+def _normalize_agent_retry_overrides(
+    retries: int | AgentRetries | None,
+    *,
+    int_means: Literal['both', 'output'] = 'both',
+) -> AgentRetries:
+    """Normalize retry input without filling missing keys.
+
+    This is used while merging layered configuration. At run/override time, `int_means='output'`
+    treats `retries=N` as an output-budget override only.
+    """
+    if retries is None:
+        return {}
+    if isinstance(retries, int):
+        if int_means == 'output':
+            return {'output': retries}
+        return {'tools': retries, 'output': retries}
+    return retries.copy()
 
 
 T = TypeVar('T')
