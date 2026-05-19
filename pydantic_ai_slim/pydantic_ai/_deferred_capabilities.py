@@ -1,21 +1,4 @@
-"""Deferred-capability typed message parts.
-
-`load_capability` is a framework-emitted function tool used by deferred capabilities
-to gate hidden tools behind an explicit load step. There is no native server-side
-counterpart — capability loading is always client-executed.
-
-This module follows the same leaf-module pattern as `_tool_search.py`: it is
-late-imported by `pydantic_ai.messages` after the base `ToolCallPart` /
-`ToolReturnPart` types are defined, registers its typed subclasses with the
-shared narrower and discriminator-tag tables, and is then re-exported via
-`messages.py` for public consumption.
-
-User code can match the typed
-[`LoadCapabilityCallPart`][pydantic_ai.messages.LoadCapabilityCallPart] /
-[`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart]
-subclasses via `isinstance` (e.g. for UI rendering) or synthesize them directly
-to inject loads mid-run.
-"""
+"""Typed message parts for deferred capability loading."""
 
 from __future__ import annotations
 
@@ -27,11 +10,8 @@ from typing_extensions import NotRequired, TypedDict
 
 from ._utils import copy_dataclass_fields
 
-# Mirror `_tool_search.py`'s late-binding pattern: bind only the base parts and
-# registration tables we need at class-definition time. The message-level types
-# (`ModelMessage`, `ModelRequest`, etc.) are not referenced here — capability
-# loading has no cross-provider history translation, so no synthesize/replay
-# helpers live in this module.
+# Imported late by `messages.py`; keep this module limited to base part classes
+# and registration tables to avoid circular imports.
 from .messages import (
     _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
@@ -43,12 +23,7 @@ from .messages import (
 
 
 class LoadCapabilityArgs(TypedDict):
-    """Typed arguments for a load-capability call.
-
-    Carried on
-    [`LoadCapabilityCallPart.args`][pydantic_ai.messages.LoadCapabilityCallPart.args]
-    as the canonical shape of the framework-emitted `load_capability` function tool.
-    """
+    """Typed arguments for a `load_capability` call."""
 
     id: Annotated[
         str,
@@ -60,15 +35,7 @@ class LoadCapabilityArgs(TypedDict):
 
 
 class LoadCapabilityReturn(TypedDict):
-    """Typed return value of the framework-managed `load_capability` builtin.
-
-    Carried on
-    [`LoadCapabilityReturnPart.content`][pydantic_ai.messages.LoadCapabilityReturnPart.content].
-
-    The loaded capability's id is not echoed here — it's already present on the paired
-    [`LoadCapabilityCallPart.args['id']`][pydantic_ai.messages.LoadCapabilityCallPart.args].
-    Match call and return by `tool_call_id`.
-    """
+    """Typed return value for `load_capability`."""
 
     instructions: NotRequired[str]
     """Instructions for the model to follow when using the loaded capability. Omitted when the capability declared none."""
@@ -76,16 +43,7 @@ class LoadCapabilityReturn(TypedDict):
 
 @dataclass(repr=False)
 class LoadCapabilityCallPart(ToolCallPart):
-    """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the framework-emitted `load_capability` function call.
-
-    Emitted when the model invokes `load_capability(id=...)` to load a deferred
-    capability. There is no native server-side counterpart — capability loading is
-    always client-executed.
-
-    Shadows `args` with the canonical typed shape. The `str` variant covers the
-    streaming / partial-args case before parsing completes; once parsed, `args` is
-    a [`LoadCapabilityArgs`][pydantic_ai.messages.LoadCapabilityArgs] `TypedDict`.
-    """
+    """Typed `ToolCallPart` for `load_capability`."""
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
@@ -103,16 +61,7 @@ class LoadCapabilityCallPart(ToolCallPart):
 
     @property
     def typed_args(self) -> LoadCapabilityArgs | None:
-        """Typed view of the validated load-capability arguments, or `None` if not yet parseable.
-
-        In non-streaming code (a typed call part on a finalized
-        [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-        populated — once a part is narrowed to this typed subclass, its `args`
-        have been parsed and validated.
-
-        Returns `None` only in streaming-partial state, where `args` is still an
-        in-progress JSON string the model hasn't finished emitting.
-        """
+        """Parsed load-capability arguments, or `None` for incomplete streaming args."""
         if self.args is None:
             return None
         try:
@@ -122,11 +71,7 @@ class LoadCapabilityCallPart(ToolCallPart):
 
     @property
     def capability_id(self) -> str | None:
-        """Subfield accessor for `typed_args['id']`.
-
-        Returns `None` if args haven't been parsed yet (streaming-partial,
-        i.e. `typed_args` is `None`).
-        """
+        """Capability id from the parsed args, if available."""
         typed = self.typed_args
         if typed is None:
             return None
@@ -135,14 +80,7 @@ class LoadCapabilityCallPart(ToolCallPart):
 
 @dataclass(repr=False)
 class LoadCapabilityReturnPart(ToolReturnPart):
-    """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the framework-emitted `load_capability` function return.
-
-    Carries any instructions the loaded capability declared. There is no native
-    server-side counterpart — capability loading is always client-executed.
-
-    Shadows `content` with a narrower
-    [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn] `TypedDict`.
-    """
+    """Typed `ToolReturnPart` for `load_capability`."""
 
     content: LoadCapabilityReturn = field(kw_only=True)
     """Load-capability return payload.
@@ -159,10 +97,7 @@ class LoadCapabilityReturnPart(ToolReturnPart):
 
     @property
     def instructions(self) -> str | None:
-        """Subfield accessor for `content['instructions']`.
-
-        `None` when the capability declared no instructions (the key is absent from `content`).
-        """
+        """Loaded capability instructions, if any."""
         return self.content.get('instructions')
 
 
@@ -188,16 +123,11 @@ def _narrow_load_capability_return(part: ToolReturnPart) -> LoadCapabilityReturn
     return copy_dataclass_fields(part, LoadCapabilityReturnPart, content=validated_content, tool_kind='capability-load')
 
 
-# `load_capability` has no native counterpart — capability loading is always client-executed,
-# so only the local-shape narrowers are registered. Narrowers dispatch on `tool_kind` (set by
-# the framework when it emits a typed call/return) so user tools that happen to share
-# `tool_name` with the typed subclass are not accidentally promoted.
+# Narrow on `tool_kind` so user tools named `load_capability` are not promoted.
 _TOOL_CALL_NARROWERS['capability-load'] = _narrow_load_capability_call
 _TOOL_RETURN_NARROWERS['capability-load'] = _narrow_load_capability_return
 
-# Register typed-part discriminator tags so `messages._model_request_part_discriminator` /
-# `_model_response_part_discriminator` can route serialized dicts and Python instances to
-# the right typed subclass without hard-coded if/elif chains.
+# Register discriminator tags for typed-part serialization.
 _TYPED_PART_TAGS[('tool-call', 'capability-load')] = 'capability-load-call'
 _TYPED_PART_TAGS[('tool-return', 'capability-load')] = 'capability-load-return'
 

@@ -14,24 +14,15 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
-    """Wraps a toolset contributed by a capability, binding it to that capability.
-
-    Stamps `capability_id` onto every emitted tool definition (so downstream
-    filters like Tool Search can hide tools whose owning capability isn't loaded
-    yet), and silences `get_instructions` for deferred-loading capabilities. The
-    suppressed instructions are re-emitted via the `load_capability` tool return
-    when the model loads the capability.
-    """
+class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
+    """Binds a contributed toolset to the capability that owns it."""
 
     capability_id: str
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
         cap = ctx.capabilities.get(self.capability_id)
-        # Whether the owning capability declared `defer_loading=True`. The value is
-        # independent of whether the capability is currently loaded so the tool_def
-        # stays stable for prompt-caching purposes.
+        # Keep the declaration stable; visibility is resolved later by tool search.
         defer_loading = cap.defer_loading is True if cap is not None else False
         return {
             name: replace(
@@ -56,10 +47,7 @@ class CapabilityScopedToolset(WrapperToolset[AgentDepsT]):
         return await self.wrapped.get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        # Visit self so capability-aware walks (e.g. `_deferred_capabilities`) can find
-        # us. The standard `WrapperToolset.apply` skips wrappers and visits only
-        # leaves; we make an exception here because the cap-id binding lives on
-        # this node.
+        # Visit self because the capability id binding lives on this wrapper.
         visitor(self)
         self.wrapped.apply(visitor)
 

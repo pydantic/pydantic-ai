@@ -2335,24 +2335,8 @@ def test_deferred_capability_catalog_entries_require_description() -> None:
     )
 
 
-def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
-    """Deferred loading currently supports instructions and function tools only."""
-
-    @dataclass
-    class SettingsCap(AbstractCapability[None]):
-        def get_model_settings(self) -> _ModelSettings | None:
-            return _ModelSettings(temperature=0.5)
-
-    with pytest.raises(UserError) as model_settings_exc:
-        CombinedCapability(
-            [
-                SettingsCap(
-                    id='settings',
-                    defer_loading=True,
-                )
-            ]
-        ).get_model_settings()
-
+def test_deferred_capability_rejects_unsupported_native_tools() -> None:
+    """Deferred loading does not currently support native tools."""
     native_cap = NativeTool[None](
         tool=WebSearchTool(),
         id='web-search',
@@ -2362,13 +2346,9 @@ def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
     with pytest.raises(UserError) as native_tools_exc:
         CombinedCapability([native_cap]).get_native_tools()
 
-    assert [str(model_settings_exc.value), str(native_tools_exc.value)] == snapshot(
-        [
-            "Deferred capability 'settings' provides model settings, but lazy-loading model settings is not supported yet. "
-            'Remove the model settings from this capability or set `defer_loading=False`.',
-            "Deferred capability 'web-search' provides native tools, but lazy-loading native tools is not supported yet. "
-            'Remove the native tools from this capability or set `defer_loading=False`.',
-        ]
+    assert str(native_tools_exc.value) == snapshot(
+        "Deferred capability 'web-search' provides native tools, but lazy-loading native tools is not supported yet. "
+        'Remove the native tools from this capability or set `defer_loading=False`.'
     )
 
 
@@ -2723,7 +2703,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 async def test_deferred_capability_load_includes_toolset_instructions() -> None:
     """Instructions declared on a deferred capability's toolset surface via the `load_capability` return.
 
-    The wrapping `CapabilityScopedToolset` silences `get_instructions` for deferred-loading
+    The wrapping `CapabilityOwnedToolset` silences `get_instructions` for deferred-loading
     capabilities (so toolset hints don't leak into the prompt), then re-emits them on load
     alongside the capability's own instructions.
     """

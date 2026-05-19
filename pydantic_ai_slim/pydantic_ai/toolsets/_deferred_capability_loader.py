@@ -11,7 +11,7 @@ from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn, ToolReturn
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
@@ -24,16 +24,7 @@ _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
 @dataclass
 class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
-    """Toolset that wraps an agent's tools and injects a `load_capability` discovery tool.
-
-    When deferred-loading capabilities exist, `get_tools` adds a `load_capability` tool.
-    The catalog of loadable capabilities is provided by the agent's internal
-    deferred-loading capability instructions.
-    When the model calls `load_capability(id)`, the matching capability's
-    instructions are returned as the tool result. The `load_capability` tool remains
-    present even after all deferred capabilities are loaded so the function-tool set
-    stays stable across turns.
-    """
+    """Adds the framework-managed `load_capability` tool."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
@@ -52,10 +43,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=('Load a capability to access its full instructions and tools.'),
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            # Flagging `tool_kind` here is what triggers `_agent_graph` to promote the return
-            # to the typed `LoadCapabilityReturnPart` via `ToolReturnPart.narrow_type` — so
-            # downstream history scans can use `isinstance(part, LoadCapabilityReturnPart)`
-            # instead of matching `tool_name` strings and re-validating `part.content`.
+            # Enables typed call/return promotion without matching on tool name.
             tool_kind='capability-load',
         )
 
@@ -102,16 +90,11 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         return ToolReturn(return_value=content)
 
     async def _collect_owned_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> str | None:
-        """Pull instructions from `CapabilityScopedToolset`s owned by this capability.
-
-        Bypasses each wrapper's own gate, which stays closed for deferred-loading
-        capabilities so toolset instructions do not re-enter the prompt after the
-        capability has been loaded.
-        """
-        owned: list[CapabilityScopedToolset[AgentDepsT]] = []
+        """Collect toolset instructions owned by the loaded capability."""
+        owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(ts, CapabilityScopedToolset) and ts.capability_id == capability_id:
+            if isinstance(ts, CapabilityOwnedToolset) and ts.capability_id == capability_id:
                 owned.append(ts)
 
         self.apply(collect)

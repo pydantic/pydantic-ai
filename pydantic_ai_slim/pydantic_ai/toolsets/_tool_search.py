@@ -47,7 +47,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
-from ._capability_scoped import tools_for_loaded_capabilities
+from ._capability_owned import tools_for_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
