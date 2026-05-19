@@ -1,0 +1,28 @@
+tests/models/test_instrumented.py
+  s_ae45058a0235a7::t_be0ced0f2aa186 38,42,1800,1804-1809,1811-1812
+  s_ae45058a0235a7::t_b3cfcf9c5992af 1810
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "a4ab313f160779b535dde03eadf14dc3d0765722",
+  "prompts": {},
+  "humans": {
+    "h_bc896295f46a8b": {
+      "author": "Alex Hall"
+    },
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_ae45058a0235a7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3c60-161c-75d1-a526-dec43e666613",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
