@@ -48,7 +48,7 @@ else:
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_ai.agent import AgentRetries, AgentRun, AgentRunResult
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages
@@ -883,6 +883,39 @@ def consume_deprecated_prepare_output_tools_as_capabilities(
         stacklevel=stacklevel,
     )
     return [PrepareOutputTools(legacy)]
+
+
+def consume_deprecated_output_retries(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    current_retries: int | AgentRetries | None = None,
+    stacklevel: int = 3,
+) -> int | AgentRetries | None:
+    """Pop a deprecated `output_retries=` kwarg, warn, and reconcile with the new `retries=` kwarg.
+
+    Returns a value suitable to pass as the new `retries` argument:
+    - If the caller already provided `retries=`, it wins and `output_retries=` is just warned about.
+    - Otherwise the legacy `output_retries=` value is returned wrapped as `{'output': value}`.
+    """
+    if 'output_retries' not in deprecated_kwargs:
+        return current_retries
+    legacy = deprecated_kwargs.pop('output_retries')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(output_retries=...)` is deprecated and will be removed in v2.0. '
+        "Use `retries={'output': ...}` (or `retries=<int>` to override the output budget) instead.",
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if current_retries is not None:
+        return current_retries
+    if legacy is None:
+        return None
+    return {'output': legacy}
 
 
 def consume_deprecated_event_stream_handler(
