@@ -143,7 +143,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/native_tools.md
           - api/capabilities.md

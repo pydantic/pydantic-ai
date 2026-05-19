@@ -384,7 +384,6 @@
       {
         "label": "pydantic_ai",
         "items": [
-          "api/ag_ui",
           "api/agent",
           "api/native_tools",
           "api/capabilities",
