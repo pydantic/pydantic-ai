@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
@@ -77,14 +78,22 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
     return get_summary
 
 
+def deprecated_instrumentation_settings(version: Literal[2, 3, 4], **kwargs: Any) -> InstrumentationSettings:
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'Instrumentation format versions 2, 3, and 4 are deprecated',
+    ):
+        return InstrumentationSettings(version=version, **kwargs)
+
+
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
     [
         True,
         False,
-        InstrumentationSettings(version=2),
-        InstrumentationSettings(version=3),
+        deprecated_instrumentation_settings(version=2),
+        deprecated_instrumentation_settings(version=3),
     ],
 )
 def test_logfire(
@@ -250,8 +259,8 @@ def test_logfire(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"my_ret":"1"}',
-            'gen_ai.usage.input_tokens': 103,
-            'gen_ai.usage.output_tokens': 12,
+            'gen_ai.aggregated_usage.input_tokens': 103,
+            'gen_ai.aggregated_usage.output_tokens': 12,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -474,7 +483,7 @@ def test_logfire_metadata_values(
 ) -> None:
     agent = Agent(
         model=TestModel(),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        capabilities=[Instrumentation(settings=deprecated_instrumentation_settings(version=2))],
         metadata=metadata,
     )
     agent.run_sync('Hello')
@@ -487,7 +496,7 @@ def test_logfire_metadata_values(
 def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     agent = Agent(
         model=TestModel(),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        capabilities=[Instrumentation(settings=deprecated_instrumentation_settings(version=2))],
         metadata={'env': 'base'},
     )
     with agent.override(metadata={'env': 'override'}):
@@ -500,7 +509,7 @@ def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSumm
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+    [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
 def test_instructions_with_structured_output(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -554,8 +563,8 @@ def test_instructions_with_structured_output(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -649,8 +658,8 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -727,7 +736,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
     class MyOutput:
         content: str
 
-    settings: InstrumentationSettings = InstrumentationSettings(include_content=False, version=version)
+    settings: InstrumentationSettings = deprecated_instrumentation_settings(include_content=False, version=version)
 
     my_agent = Agent(
         model=TestModel(), instructions='Here are some instructions', capabilities=[Instrumentation(settings=settings)]
@@ -772,8 +781,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -928,8 +937,8 @@ def test_instrument_all():
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
-async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None:
-    """Test that use_aggregated_usage_attribute_names changes attribute names on agent run spans."""
+async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire) -> None:
+    """Agent run spans use aggregated usage attribute names by default."""
 
     def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
         # Return a response with usage that includes extra details (cache tokens)
@@ -939,7 +948,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             usage=RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=2),
         )
 
-    settings = InstrumentationSettings(use_aggregated_usage_attribute_names=True)
+    settings = InstrumentationSettings()
     agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation(settings=settings)])
 
     await agent.run('Hello')
@@ -978,6 +987,24 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
     chat_span = next(s for s in spans if 'chat' in s['name'])
     assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 10
     assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 5
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_aggregated_usage_attribute_names_can_be_disabled(capfire: CaptureLogfire) -> None:
+    def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Hello!')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+
+    settings = InstrumentationSettings(use_aggregated_usage_attribute_names=False)
+    agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation(settings=settings)])
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    assert agent_run_span['attributes']['gen_ai.usage.input_tokens'] == 10
+    assert agent_run_span['attributes']['gen_ai.usage.output_tokens'] == 5
+    assert 'gen_ai.aggregated_usage.input_tokens' not in agent_run_span['attributes']
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1073,8 +1100,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'success (no tool calls)',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
@@ -1284,8 +1311,8 @@ def get_weather_info(city: str) -> WeatherInfo:
     [
         True,
         False,
-        InstrumentationSettings(version=2),
-        InstrumentationSettings(version=3),
+        deprecated_instrumentation_settings(version=2),
+        deprecated_instrumentation_settings(version=3),
     ],
 )
 def test_logfire_output_function_v2_v3(
@@ -2240,7 +2267,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+    [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
 def test_static_function_instructions_in_agent_run_span(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -2294,8 +2321,8 @@ def test_static_function_instructions_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2398,7 +2425,7 @@ def test_instructions_from_history_when_model_request_fails_before_instrumentati
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+    [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
 def test_dynamic_function_instructions_in_agent_run_span(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -2464,8 +2491,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 107,
-            'gen_ai.usage.output_tokens': 9,
+            'gen_ai.aggregated_usage.input_tokens': 107,
+            'gen_ai.aggregated_usage.output_tokens': 9,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2560,7 +2587,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+    [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
 def test_function_instructions_with_history_in_agent_run_span(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -2625,8 +2652,8 @@ def test_function_instructions_with_history_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 52,
-            'gen_ai.usage.output_tokens': 6,
+            'gen_ai.aggregated_usage.input_tokens': 52,
+            'gen_ai.aggregated_usage.output_tokens': 6,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2707,7 +2734,7 @@ def test_function_instructions_with_history_in_agent_run_span(
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+    [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
 )
 async def test_run_stream(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -2758,8 +2785,8 @@ async def test_run_stream(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': 'success (no tool calls)',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 4,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 4,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2814,7 +2841,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        capabilities=[Instrumentation(settings=deprecated_instrumentation_settings(version=2))],
     )
 
     @agent.tool_plain
@@ -2875,7 +2902,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        capabilities=[Instrumentation(settings=deprecated_instrumentation_settings(version=2))],
     )
 
     @agent.tool_plain
@@ -3193,7 +3220,10 @@ def test_instrumentation_capability_serialization() -> None:
 
     assert Instrumentation.get_serialization_name() == 'Instrumentation'
 
-    cap = Instrumentation.from_spec(version=2, include_content=False)
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'Instrumentation format versions 2, 3, and 4 are deprecated'
+    ):
+        cap = Instrumentation.from_spec(version=2, include_content=False)
     assert isinstance(cap, Instrumentation)
     assert isinstance(cap.settings, InstrumentationSettings)
     assert cap.settings.version == 2

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
@@ -35,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
@@ -50,6 +52,18 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
     pytest.mark.anyio,
 ]
+
+
+def deprecated_instrumentation_settings(
+    version: Literal[2, 3, 4], *, include_binary_content: bool = True, include_content: bool = True
+) -> InstrumentationSettings:
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'Instrumentation format versions 2, 3, and 4 are deprecated',
+    ):
+        return InstrumentationSettings(
+            version=version, include_binary_content=include_binary_content, include_content=include_content
+        )
 
 
 class MyModel(Model):
@@ -302,6 +316,19 @@ async def test_instrumented_model_not_recording():
 def test_instrumentation_settings_rejects_removed_version():
     with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('version', [2, 3, 4])
+def test_instrumentation_settings_warns_for_deprecated_versions(version: Literal[2, 3, 4]):
+    settings = deprecated_instrumentation_settings(version=version)
+    assert settings.version == version
+
+
+def test_instrumentation_settings_current_version_does_not_warn(recwarn: pytest.WarningsRecorder):
+    InstrumentationSettings()
+    InstrumentationSettings(version=5)
+    deprecation_warnings = [w for w in recwarn if issubclass(w.category, PydanticAIDeprecationWarning)]
+    assert deprecation_warnings == []
 
 
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
@@ -770,7 +797,7 @@ def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent
         ModelResponse(parts=[TextPart('text1')]),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=3)
+    settings = deprecated_instrumentation_settings(version=3)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -835,7 +862,7 @@ def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent
             },
         ]
     )
-    settings_without_binary = InstrumentationSettings(version=3, include_binary_content=False)
+    settings_without_binary = deprecated_instrumentation_settings(version=3, include_binary_content=False)
     assert settings_without_binary.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -912,7 +939,7 @@ def test_messages_to_otel_messages_multimodal_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -963,7 +990,7 @@ def test_messages_to_otel_messages_multimodal_v4_no_content():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -999,7 +1026,7 @@ def test_messages_to_otel_messages_binary_content_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1044,7 +1071,7 @@ def test_messages_to_otel_messages_binary_content_v4_no_content():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1074,7 +1101,7 @@ def test_messages_to_otel_messages_url_without_extension_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1696,7 +1723,7 @@ def test_messages_to_otel_messages_file_part_v4(document_content: BinaryContent)
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1725,7 +1752,7 @@ def test_messages_to_otel_messages_file_part_v4_no_content(document_content: Bin
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1761,7 +1788,7 @@ def test_messages_to_otel_messages_cache_point_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1791,7 +1818,7 @@ def test_messages_to_otel_messages_builtin_tool_v4():
             ]
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1827,7 +1854,7 @@ def test_messages_to_otel_messages_binary_content_v4_no_binary():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_binary_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1847,7 +1874,7 @@ def test_messages_to_otel_messages_file_part_v4_no_binary(document_content: Bina
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_binary_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1875,7 +1902,7 @@ def test_messages_to_otel_messages_binary_content_v4_unknown_modality():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1896,7 +1923,7 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
         ModelRequest(parts=[UserPromptPart(content='Process file')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=unknown_content)]),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from pydantic_ai._instrumentation import (
 
 from .. import _otel_messages
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -62,7 +64,7 @@ class InstrumentationSettings:
     include_binary_content: bool = True
     include_content: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
-    use_aggregated_usage_attribute_names: bool = False
+    use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
         self,
@@ -72,7 +74,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
-        use_aggregated_usage_attribute_names: bool = False,
+        use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
 
@@ -87,6 +89,8 @@ class InstrumentationSettings:
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
+                Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
+                and emit a `PydanticAIDeprecationWarning` when used.
                 Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
@@ -101,8 +105,8 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
-                Enable this to prevent double-counting in observability backends that aggregate span
-                attributes across parent and child spans. Defaults to False.
+                Defaults to True to prevent double-counting in observability backends that aggregate span
+                attributes across parent and child spans.
                 Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
                 Semantic Conventions. It may be updated if OTel introduces an official convention.
         """
@@ -118,6 +122,12 @@ class InstrumentationSettings:
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
+        if version in (2, 3, 4):
+            warnings.warn(
+                'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         self.version = version
         self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
 

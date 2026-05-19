@@ -251,18 +251,20 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ### Aggregated usage attribute names
 
-By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends (e.g., Datadog, New Relic, LangSmith, Opik) aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
+By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
 
-To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
+This avoids double-counting in observability backends (e.g., Datadog, New Relic, LangSmith, Opik) that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
+
+If you want agent run spans to use the standard `gen_ai.usage.*` attributes and handle double-counting in your backend, disable aggregated usage attribute names:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
-Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=True))
+Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
 ### Configuring data format
@@ -271,7 +273,9 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 
 **The default is `version=5`**.
 
-#### Version 2
+Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
+
+#### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
 
@@ -279,9 +283,9 @@ Uses the newer OpenTelemetry GenAI spec and stores messages in the following att
 - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans
 - `pydantic_ai.all_messages` on agent run spans
 
-Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 3 or 4 for better compliance.
+Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 5 for current telemetry.
 
-#### Version 3
+#### Version 3 (deprecated)
 
 Builds on version 2 with the following improvements:
 
@@ -293,7 +297,7 @@ Builds on version 2 with the following improvements:
     - `tool_response` becomes `gen_ai.tool.call.result`
 - **Thinking tokens support:** Captures thinking/reasoning tokens when available
 
-#### Version 4
+#### Version 4 (deprecated)
 
 Builds on version 3 with improved multimodal content handling to better align with the [GenAI semantic conventions for multimodal inputs](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example):
 
