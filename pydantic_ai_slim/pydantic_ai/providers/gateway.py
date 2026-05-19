@@ -150,7 +150,7 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        route = _gateway_route(_strip_gateway_prefix(upstream_provider))
+        route = _gateway_route(normalize_gateway_provider(upstream_provider))
 
     base_url = _merge_url_path(base_url, route)
 
@@ -240,36 +240,35 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-# Wire-value remaps for the PAIG URL route. Defaults to identity; only canonical names
-# whose Gateway-side wire value differs from the user-facing prefix are listed.
-# Drop a row here once the Gateway team renames their side to match ours.
-_GATEWAY_ROUTE_REMAP: dict[str, str] = {
-    'openai-chat': 'openai',  # Gateway doesn't use the `-chat` suffix for the Chat Completions route
-    'google': 'gemini',  # GLA-style Gemini API is called `gemini` on Gateway
-    'google-cloud': 'google-vertex',  # Gateway still uses the old name; flip when they rename
-}
-
-
 def _gateway_route(provider: str) -> str:
     """Translate a canonical provider name into the Gateway URL route segment.
 
-    `provider` must already have its `gateway/` prefix stripped.
+    `provider` must already have its `gateway/` prefix stripped. Only canonical names whose
+    Gateway-side wire value differs from the user-facing prefix are remapped; everything else
+    passes through unchanged. Drop a branch once the Gateway team renames their side.
     """
-    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+    if provider == 'openai-chat':
+        # Gateway doesn't use the `-chat` suffix for the Chat Completions route.
+        return 'openai'
+    elif provider == 'google':
+        # GLA-style Gemini API is called `gemini` on Gateway.
+        return 'gemini'
+    elif provider == 'google-cloud':
+        # Gateway still uses the old name; flip when they rename.
+        return 'google-vertex'
+    return provider
 
 
-# API-flavor aliases that map to a canonical provider name for class lookup.
-_GATEWAY_FLAVOR_ALIASES: dict[str, str] = {
-    'chat': 'openai-chat',
-    'responses': 'openai-responses',
-    'converse': 'bedrock',
-}
-
-
-def _strip_gateway_prefix(provider: str) -> str:
+def normalize_gateway_provider(provider: str) -> str:
     """Strip the `gateway/` prefix and resolve API-flavor aliases to canonical provider names."""
     provider = provider.removeprefix('gateway/')
-    return _GATEWAY_FLAVOR_ALIASES.get(provider, provider)
+    if provider == 'chat':
+        return 'openai-chat'
+    elif provider == 'responses':
+        return 'openai-responses'
+    elif provider == 'converse':
+        return 'bedrock'
+    return provider
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.

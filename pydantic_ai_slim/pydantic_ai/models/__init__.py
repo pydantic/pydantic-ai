@@ -1415,9 +1415,9 @@ def infer_model(  # noqa: C901
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import _strip_gateway_prefix
+        from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = _strip_gateway_prefix(model_kind)
+        model_kind = normalize_gateway_provider(model_kind)
 
     # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.

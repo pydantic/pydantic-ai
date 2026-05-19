@@ -96,9 +96,9 @@ def infer_embedding_model(
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import _strip_gateway_prefix
+        from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = _strip_gateway_prefix(model_kind)
+        model_kind = normalize_gateway_provider(model_kind)
 
     if model_kind in (
         'openai',

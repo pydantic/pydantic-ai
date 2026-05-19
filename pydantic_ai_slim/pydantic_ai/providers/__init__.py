@@ -112,9 +112,9 @@ class Provider(ABC, Generic[InterfaceClient]):
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
     if provider.startswith('gateway/'):
-        from .gateway import _strip_gateway_prefix
+        from .gateway import normalize_gateway_provider
 
-        provider = _strip_gateway_prefix(provider)
+        provider = normalize_gateway_provider(provider)
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
