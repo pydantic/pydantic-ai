@@ -15,10 +15,10 @@ from typing_inspection.introspection import get_literal_values
 from .. import __version__, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
+from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
 
@@ -56,7 +56,7 @@ This folder is used to store the prompt history and configuration.
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 SUPPORTED_CLI_TOOL_IDS = sorted(
-    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint not in BUILTIN_TOOLS_REQUIRING_CONFIG
+    bint.kind for bint in SUPPORTED_NATIVE_TOOLS if bint not in NATIVE_TOOLS_REQUIRING_CONFIG
 )
 
 
@@ -137,7 +137,9 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
+def cli(
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai-chat:gpt-5'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
@@ -280,7 +282,7 @@ def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
     """Handle the chat command."""
-    agent: Agent[None, str] = cli_agent
+    agent: Agent[object, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)
         if loaded is None:

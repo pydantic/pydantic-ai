@@ -45,17 +45,20 @@ Important distinctions:
 
 ## Manage Context Size
 
-Use `history_processors=[...]` to trim or rewrite message history before each model request.
+Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
+
+The legacy `Agent(history_processors=[fn])` kwarg is deprecated and remapped onto `ProcessHistory` capabilities; it will be removed in v2.
 
 ```python
 from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
 
 
 async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:] if len(messages) > 10 else messages
 
 
-agent = Agent('openai:gpt-5.2', history_processors=[keep_recent])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
 ```
 
 Good uses:

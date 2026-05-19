@@ -25,7 +25,8 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, InstructionPart
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -137,7 +138,7 @@ def test_first_failed() -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     result = agent.run_sync('hello')
     assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
@@ -175,7 +176,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -211,7 +212,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -225,8 +226,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 1,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 1,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]},
@@ -248,27 +249,30 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -277,6 +281,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -294,7 +299,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -330,7 +335,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -345,8 +350,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'hello world',
-                    'gen_ai.usage.input_tokens': 50,
-                    'gen_ai.usage.output_tokens': 2,
+                    'gen_ai.aggregated_usage.input_tokens': 50,
+                    'gen_ai.aggregated_usage.output_tokens': 2,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]},
@@ -389,7 +394,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -414,7 +419,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -450,7 +455,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -511,25 +516,28 @@ async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -538,6 +546,7 @@ async def test_first_success_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -548,25 +557,28 @@ async def test_first_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -575,6 +587,7 @@ async def test_first_failed_streaming() -> None:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -586,7 +599,7 @@ async def test_all_failed_streaming() -> None:
     agent = Agent(model=fallback_model)
     with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
+            [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
@@ -879,7 +892,12 @@ Don't include any text or Markdown fencing before or after.
         prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
     )
     fallback_model = FallbackModel(tool_model, prompted_model)
-    agent = Agent(model=fallback_model, instrument=True, output_type=Foo, instructions='Be kind')
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        output_type=Foo,
+        instructions='Be kind',
+    )
     result = await agent.run('hello')
     assert result.output == snapshot(Foo(bar='baz'))
     assert result.all_messages() == snapshot(
@@ -931,7 +949,7 @@ Don't include any text or Markdown fencing before or after.
                     ],
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1000,7 +1018,7 @@ Don't include any text or Markdown fencing before or after.
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -1014,8 +1032,8 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]},
@@ -1216,8 +1234,8 @@ async def test_web_fetch_scenario() -> None:
         # Include multiple items to cover loop iteration branch
         return ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
+                NativeToolReturnPart(
                     tool_name='web_fetch',
                     tool_call_id='1',
                     content=[
@@ -1237,7 +1255,7 @@ async def test_web_fetch_scenario() -> None:
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
-        for call, result in response.builtin_tool_calls:  # pragma: no branch
+        for call, result in response.native_tool_calls:  # pragma: no branch
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):

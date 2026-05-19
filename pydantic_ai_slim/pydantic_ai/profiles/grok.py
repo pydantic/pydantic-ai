@@ -1,23 +1,20 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
-
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
 
 
-@dataclass(kw_only=True)
-class GrokModelProfile(ModelProfile):
-    """Profile for Grok models (used with both GrokProvider and XaiProvider).
+class GrokModelProfile(ModelProfile, total=False):
+    """Profile for Grok models (used with XaiProvider and various OpenAI-compatible providers).
 
     ALL FIELDS MUST BE `grok_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    grok_supports_builtin_tools: bool = False
-    """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp)."""
+    grok_supports_builtin_tools: bool
+    """Whether the model supports builtin tools (web_search, x_search, code_execution, mcp). Default: `False`."""
 
-    grok_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+    grok_supports_tool_choice_required: bool
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
@@ -29,8 +26,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     # See https://docs.x.ai/docs/guides/reasoning
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
-    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
-        SUPPORTED_BUILTIN_TOOLS if grok_supports_builtin_tools else frozenset()
+    supported_native_tools: frozenset[type[AbstractNativeTool]] = (
+        SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
     )
 
     return GrokModelProfile(
@@ -39,5 +36,5 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=True,
         supports_thinking=supports_thinking_effort,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
-        supported_builtin_tools=supported_builtin_tools,
+        supported_native_tools=supported_native_tools,
     )

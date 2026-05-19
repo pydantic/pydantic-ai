@@ -11,8 +11,8 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -138,7 +138,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, builtin tools). The exception is
+    settings, toolsets, native tools). The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
@@ -239,8 +239,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return a toolset to register with the agent, or None."""
         return None
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        """Return builtin tools to register with the agent."""
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        """Return native tools to register with the agent."""
         return []
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
@@ -291,7 +291,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Receives only [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry` and
         `ctx.max_retries` reflect the **output** retry budget (agent-level
-        `max_result_retries`), matching the output hook lifecycle.
+        `max_output_retries`), matching the output hook lifecycle.
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
@@ -471,7 +471,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
-        so the model can see what it said. Retries count against `max_result_retries`.
+        so the model can see what it said. Retries count against the output side of the agent's retry budget.
         """
         return response
 

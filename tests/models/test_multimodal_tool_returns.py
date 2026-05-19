@@ -54,7 +54,8 @@ with try_import() as anthropic_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -73,9 +74,6 @@ with try_import() as xai_available:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
-    ),
 ]
 
 ProviderName = Literal[
@@ -516,7 +514,7 @@ def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) 
     if not project:
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
     location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
-    return GoogleProvider(project=project, location=cast(VertexAILocation, location))  # pragma: no cover
+    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))  # pragma: no cover
 
 
 @pytest.fixture
@@ -896,8 +894,8 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
     UploadedFileErrorCase(
         id='google_vertex_non_gcs_uri',
         provider='google_vertex',
-        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-vertex'),
-        match=r'UploadedFile for GoogleModel \(Vertex\) must use a GCS URI',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
+        match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
     ),
 ]
 
@@ -946,9 +944,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
 async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    file = UploadedFile(
-        file_id='gs://bucket/path/file.pdf', provider_name='google-vertex', media_type='application/pdf'
-    )
+    file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
     ]

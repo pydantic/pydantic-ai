@@ -1,9 +1,16 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai.native_tools._tool_search import (
+    ToolSearchFunc as ToolSearchFunc,
+    ToolSearchLocalStrategy as ToolSearchLocalStrategy,
+    ToolSearchNativeStrategy as ToolSearchNativeStrategy,
+    ToolSearchStrategy as ToolSearchStrategy,
+)
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -22,14 +29,15 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .builtin_or_local import BuiltinOrLocalTool
-from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
+from .instrumentation import Instrumentation
 from .mcp import MCP
+from .native_or_local import NativeOrLocalTool
+from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
@@ -57,9 +65,10 @@ Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.Dynami
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        BuiltinTool,
+        NativeTool,
         ImageGeneration,
         IncludeToolReturnSchemas,
+        Instrumentation,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -67,6 +76,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
+        ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
@@ -97,10 +107,11 @@ __all__ = [
     'RawOutput',
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
-    'BuiltinTool',
-    'BuiltinOrLocalTool',
+    'NativeTool',
+    'NativeOrLocalTool',
     'CAPABILITY_TYPES',
     'ImageGeneration',
+    'Instrumentation',
     'HistoryProcessor',
     'IncludeToolReturnSchemas',
     'MCP',
@@ -113,6 +124,11 @@ __all__ = [
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
+    'ToolSearch',
+    'ToolSearchFunc',
+    'ToolSearchLocalStrategy',
+    'ToolSearchNativeStrategy',
+    'ToolSearchStrategy',
     'Toolset',
     'WebFetch',
     'WebSearch',

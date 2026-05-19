@@ -100,7 +100,7 @@ The direct API is ideal when:
 2. You want to implement custom behavior around model requests
 3. You're building your own abstractions on top of model interactions
 
-For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as built-in tool execution, retrying, structured output parsing, and more.
+For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as native tool execution, retrying, structured output parsing, and more.
 
 ## OpenTelemetry or Logfire Instrumentation
 

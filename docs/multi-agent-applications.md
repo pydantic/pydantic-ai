@@ -20,7 +20,7 @@ Since agents are stateless and designed to be global, you do not need to include
 You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
+    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
@@ -33,12 +33,12 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-3-flash-preview', output_type=list[str]
+    'google:gemini-3-flash-preview', output_type=list[str]
 )
 
 
 @joke_selection_agent.tool
-async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
+async def joke_factory(ctx: RunContext[object], count: int) -> list[str]:
     r = await joke_generation_agent.run(  # (3)!
         f'Please generate {count} jokes.',
         usage=ctx.usage,  # (4)!
@@ -52,14 +52,14 @@ result = joke_selection_agent.run_sync(
 )
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
-print(result.usage())
+print(result.usage)
 #> RunUsage(input_tokens=165, output_tokens=24, requests=3, tool_calls=1)
 ```
 
 1. The "parent" or controlling agent.
 2. The "delegate" agent, which is called from within a tool of the parent agent.
 3. Call the delegate agent from within a tool of the parent agent.
-4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
+4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
 5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
@@ -106,7 +106,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     instructions=(
@@ -143,7 +143,7 @@ async def main():
         result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
-        print(result.usage())  # (6)!
+        print(result.usage)  # (6)!
         #> RunUsage(input_tokens=220, output_tokens=32, requests=4, tool_calls=2)
 ```
 
@@ -197,7 +197,7 @@ class Failed(BaseModel):
     """Unable to find a satisfactory choice."""
 
 
-flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
+flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
     'openai:gpt-5.2',
     output_type=FlightDetails | Failed,  # type: ignore
     instructions=(
@@ -209,7 +209,7 @@ flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
 
 @flight_search_agent.tool  # (2)!
 async def flight_search(
-    ctx: RunContext[None], origin: str, destination: str
+    ctx: RunContext[object], origin: str, destination: str
 ) -> FlightDetails | None:
     # in reality, this would call a flight search API or
     # use a browser to scrape a flight search website
@@ -245,7 +245,7 @@ class SeatPreference(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
+seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
     'openai:gpt-5.2',
     output_type=SeatPreference | Failed,  # type: ignore
     instructions=(
@@ -369,9 +369,9 @@ This is essential for understanding and optimizing complex agent workflows. When
 
 ### Full-Stack Visibility
 
-If your PydanticAI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
+If your Pydantic AI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
 
-PydanticAI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
+Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
 
 ## Examples
 

@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):
+class DivisibleBy5(BaseNode[object, object, int]):
     foo: int
 
     async def run(
@@ -49,8 +49,25 @@ class Increment(BaseNode):
         return DivisibleBy5(self.foo + 1)
 
 
-fives_graph = Graph(nodes=[DivisibleBy5, Increment])
-result = fives_graph.run_sync(DivisibleBy5(4))
-print(result.output)
-#> 5
+g = GraphBuilder(input_type=int, output_type=int)
+
+
+@g.step
+async def start(ctx: StepContext[None, None, int]) -> DivisibleBy5:
+    return DivisibleBy5(ctx.inputs)
+
+
+g.add(
+    g.node(DivisibleBy5),
+    g.node(Increment),
+    g.edge_from(g.start_node).to(start),
+)
+
+fives_graph = g.build()
+
+
+async def main():
+    result = await fives_graph.run(inputs=4)
+    print(result)
+    #> 5
 ```

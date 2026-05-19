@@ -14,7 +14,7 @@ To support these use cases, Pydantic AI provides the concept of deferred tools, 
 When the model calls a deferred tool, there are two ways to resolve it:
 
 - **Resolve it inline**, using a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities.md) with a handler that resolves some or all of the pending calls. The agent run continues in a single call without needing to end and restart — use this when the resolver (e.g. an approval gate, an external service client) lives in the same process as the agent. See [Resolving deferred calls with a handler](#resolving-deferred-calls-with-a-handler).
-- **End the run** with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls; the caller gathers approvals/results and then starts a new agent run with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object. Use this when the resolver lives outside the agent process — e.g. a UI adapter that surfaces pending calls to a user and starts a follow-up run once it has their response.
+- **End the run** with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object containing information about the deferred tool calls; the caller gathers approvals/results and then starts a new agent run with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object. Use this when the resolver lives outside the agent process — e.g. a UI adapter that surfaces pending calls to a user and starts a follow-up run once it has their response.
 
 The two flows compose: a handler can resolve a subset of calls and let the rest bubble up as `DeferredToolRequests` output for an outer caller to handle.
 
@@ -42,7 +42,7 @@ from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 
 async def handle_deferred(
-    ctx: RunContext[None], requests: DeferredToolRequests
+    ctx: RunContext[object], requests: DeferredToolRequests
 ) -> DeferredToolResults:
     approvals: dict[str, bool | ToolDenied] = {}
     for call in requests.approvals:
@@ -82,7 +82,7 @@ async def send_to_worker(task: str) -> str:
 1. Never reached here — the handler denies this call, so the model sees the denial message instead.
 2. The handler supplies the result for this external call, so the tool body just signals the deferral.
 
-If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), the next [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] (or any other capability that overrides the [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook) gets a chance, and any still-unresolved calls bubble up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output. To allow that bubble-up, include `DeferredToolRequests` in the agent's `output_type` — so you can combine inline handling with the stop-the-world flow when it makes sense.
+If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), the next [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] (or any other capability that overrides the [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook) gets a chance, and any still-unresolved calls bubble up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. To allow that bubble-up, include `DeferredToolRequests` in the agent's `output_type` — so you can combine inline handling with the stop-the-world flow when it makes sense.
 
 If you're [building a custom capability](capabilities.md#building-custom-capabilities) that needs to resolve approvals or external calls itself (e.g. a sandbox that exposes deferred tools), override the [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook directly on your capability instead of registering a separate `HandleDeferredToolCalls`. The same hook is also available via the [`Hooks`][pydantic_ai.capabilities.Hooks] capability — see [Hooks](hooks.md#deferred-tool-call-hook).
 
@@ -96,7 +96,7 @@ If whether a tool function requires approval depends on the tool call arguments 
 
 To require approval for calls to tools provided by a [toolset](toolsets.md) (like an [MCP server](mcp/client.md)), see the [`ApprovalRequiredToolset` documentation](toolsets.md#requiring-tool-approval).
 
-When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
+When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
 Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
@@ -313,7 +313,7 @@ If whether a tool call should be executed externally depends on the tool call ar
 
 If a tool is always executed externally and its definition is provided to your code along with a JSON schema for its arguments, you can use an [`ExternalToolset`](toolsets.md#external-toolset). If the external tools are known up front and you don't have the arguments JSON schema handy, you can also define a tool function with the appropriate signature that does nothing but raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception.
 
-When the model calls an external tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
+When the model calls an external tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
 Once the tool call results are ready, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 

@@ -24,7 +24,6 @@ from typing_extensions import Self, TypeVar
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BaseToolCallPart,
@@ -169,7 +168,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     Defaults to `{'http', 'https'}`. Parts whose URL scheme is not in this set are
     dropped with a warning before the messages are passed to the agent.
 
-    Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Vertex AI) cause the model
+    Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Google Cloud) cause the model
     provider to fetch the object using the server-side IAM role or service account,
     so a client that can supply arbitrary URLs can read anything that identity can
     reach. HTTPS URLs are safe to forward because the provider fetches them with
@@ -286,7 +285,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
-          [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] entries at
+          [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
           the end of the history that don't have a matching entry in
           `deferred_tool_results`. Tool calls are produced by the model on the server
           side, so an unresolved tool call at the end of client-supplied history doesn't
@@ -473,7 +472,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -493,7 +492,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -523,27 +523,33 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        capabilities: list[AbstractCapability[AgentDepsT]] = []
+        run_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if self.manage_system_prompt == 'server':
-            capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+        if capabilities:
+            run_capabilities.extend(capabilities)
 
-        return self.agent.run_stream_events(
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            instructions=instructions,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            capabilities=capabilities,
-        )
+        async def stream_events() -> AsyncIterator[NativeEvent]:
+            async with self.agent.run_stream_events(
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                instructions=instructions,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                capabilities=run_capabilities,
+            ) as stream:
+                async for event in stream:
+                    yield event
+
+        return stream_events()
 
     def run_stream(
         self,
@@ -561,7 +567,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
@@ -582,7 +588,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
@@ -601,7 +608,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                capabilities=capabilities,
             ),
             on_complete=on_complete,
         )
@@ -625,7 +632,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -654,7 +661,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+                Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
@@ -708,7 +716,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                capabilities=capabilities,
                 on_complete=on_complete,
             ),
         )

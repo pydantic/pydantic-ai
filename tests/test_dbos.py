@@ -5,6 +5,7 @@ import os
 import re
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -32,10 +33,13 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
@@ -45,8 +49,9 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
-    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSModel
+    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -58,14 +63,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
-
-try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-except ImportError:  # pragma: lax no cover
-    pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -106,10 +108,10 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _clear_mcp_tool_cache() -> None:
-    """Clear cached tool defs on module-level DBOSMCPServer instances between tests."""
+    """Clear cached tool defs on module-level DBOSMCPToolset instances between tests."""
     for agent in (complex_dbos_agent, seq_complex_dbos_agent):
         for toolset in agent.toolsets:
-            if isinstance(toolset, DBOSMCPServer):
+            if isinstance(toolset, DBOSMCPToolset):
                 toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
 
@@ -214,20 +216,27 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    event_stream_handler=event_stream_handler,
-    instrument=True,  # Enable instrumentation for testing
-    name='complex_agent',
-)
+# See note in `tests/test_temporal.py`: `DBOSAgent` reads `agent.event_stream_handler`,
+# which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
+# the handler through capabilities.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
+    )
+    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportDeprecated]
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        event_stream_handler=event_stream_handler,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
+        name='complex_agent',
+    )
 complex_dbos_agent = DBOSAgent(complex_agent)
 seq_complex_dbos_agent = DBOSAgent(complex_agent, parallel_execution_mode='sequential', name='seq_complex_agent')
 
@@ -266,6 +275,8 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'get_weather',
             'event_stream_handler',
             'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
         ]
     )
 
@@ -323,7 +334,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                 BasicSpan(
                     content='complex_agent run',
                     children=[
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
+                        BasicSpan(
+                            content='complex_agent__mcp_server__mcp.get_tools',
+                            children=[BasicSpan(content='tools/list')],
+                        ),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -332,22 +346,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -358,7 +372,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -367,21 +381,26 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
                         BasicSpan(content='running tool: get_country'),
                         BasicSpan(
                             content='running tool: get_product_name',
-                            children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
+                            children=[
+                                BasicSpan(
+                                    content='complex_agent__mcp_server__mcp.call_tool',
+                                    children=[BasicSpan(content='tools/call get_product_name')],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='event_stream_handler',
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"result": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -390,7 +409,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"result": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -402,7 +421,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -423,7 +442,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -434,7 +453,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -444,7 +463,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"result": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -456,7 +475,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -582,10 +601,28 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=3'),
+                                BasicSpan(
+                                    content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=3'),
+                                BasicSpan(
+                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                ),
                             ],
                         ),
                     ],
@@ -601,11 +638,11 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, db
     With caching disabled, every model request should be preceded by a get_tools step,
     rather than only the first one populating the cache.
     """
-    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPServer))
-    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPToolset))
+    wrapped = cast(MCPToolset[Deps], mcp_toolset.wrapped)
 
-    original_cache_tools = server.cache_tools
-    server.cache_tools = False
+    original_cache_tools = wrapped.cache_tools
+    wrapped.cache_tools = False
 
     try:
         wfid = str(uuid.uuid4())
@@ -628,7 +665,7 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, db
         # Without caching, get_tools should be called 3 times (once per model request)
         assert step_names.count('complex_agent__mcp_server__mcp.get_tools') == 3
     finally:
-        server.cache_tools = original_cache_tools
+        wrapped.cache_tools = original_cache_tools
 
 
 # Test sequential tool call works
@@ -666,6 +703,8 @@ async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbo
             'get_weather',
             'event_stream_handler',
             'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
         ]
     )
 
@@ -743,7 +782,7 @@ async def test_dbos_agent():
     assert toolsets[2].tools.keys() == {'get_country'}
 
     # Wrapped 'mcp' MCP server
-    assert isinstance(toolsets[3], DBOSMCPServer)
+    assert isinstance(toolsets[3], DBOSMCPToolset)
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
@@ -1575,27 +1614,13 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
-    FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
-)
-mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
-
-
-async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
-    """MCP instructions should propagate through DBOS wrapper toolsets."""
-    result = await mcp_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
-
-
-class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
+class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
 _uninit_instructions_toolset = _TestDBOSMCPToolset(
-    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
+    MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), include_instructions=True),
     step_name_prefix='coverage_test',
     step_config={},
 )
@@ -1606,46 +1631,72 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
     run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
 
     instructions = await _uninit_instructions_toolset.get_instructions(run_context)
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
-)
-
-fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
-
-
-async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
-    wfid = str(uuid.uuid4())
-    with SetWorkflowID(wfid):
-        result = await fastmcp_dbos_agent.run(
-            'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+# Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path with a real `MCPToolset`.
+mcptoolset_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
         )
-    assert result.output == snapshot(
-        'The `pydantic/pydantic-ai` repository is a Python agent framework designed for building production-grade Generative AI applications. It emphasizes type-safety, a model-agnostic design, and an ergonomic developer experience. Key features include type-safe agents using Pydantic, support for over 15 LLM providers, structured outputs with automatic validation, comprehensive observability, and production-ready tooling. The framework is structured as a UV workspace monorepo with core and supporting packages for defining and executing complex applications.'
-    )
+    ],
+)
+mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)
 
-    steps = await dbos.list_workflow_steps_async(wfid)
-    assert [step['function_name'] for step in steps] == snapshot(
-        [
-            'fastmcp_agent__mcp_server__deepwiki.get_tools',
-            'fastmcp_agent__model.request',
-            'fastmcp_agent__mcp_server__deepwiki.call_tool',
-            'fastmcp_agent__mcp_server__deepwiki.get_tools',
-            'fastmcp_agent__model.request',
-        ]
-    )
+
+async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
+    """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
+    result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
+    assert result.output == snapshot('Be a helpful assistant.')
+
+
+def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
+    """`DBOSAgent` wraps `MCPToolset` in `DBOSMCPToolset`."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    dbos_agent = DBOSAgent(agent)
+    wrapped = next(ts for ts in dbos_agent._toolsets if isinstance(ts, DBOSMCPToolset))  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.wrapped is toolset
+
+
+async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
+    """When `_cached_tool_defs` is populated, `DBOSMCPToolset.get_tools` skips the step and returns from cache."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
+    wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
+    wrapper._cached_tool_defs = {  # pyright: ignore[reportPrivateUsage]
+        'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
+    }
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    tools = await wrapper.get_tools(run_context)
+    assert list(tools.keys()) == ['foo']
+    # Returned ToolsetTool wraps the cached `ToolDefinition` via `tool_for_tool_def` on the wrapped MCPToolset.
+    assert tools['foo'].tool_def.name == 'foo'
+
+
+async def test_dbos_mcp_toolset_get_instructions_uses_local_when_initialized(dbos: DBOS):
+    """When the wrapped MCP toolset is already initialized, the DBOS wrapper short-circuits and returns the local instructions."""
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
+
+    # Entering the wrapped toolset populates `_instructions` so the local fast-path returns the part directly.
+    async with _uninit_instructions_toolset.wrapped:
+        instructions = await _uninit_instructions_toolset.get_instructions(run_context)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
 
 
 def test_dbos_mcp_wrapper_visit_and_replace():
     """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
-    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
-
-    toolsets = fastmcp_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
-    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSFastMCPToolset)]
+    toolsets = mcptoolset_instructions_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSMCPToolset)]
     assert len(dbos_mcp_toolsets) >= 1
 
     dbos_mcp_toolset = dbos_mcp_toolsets[0]

@@ -1,14 +1,13 @@
 from __future__ import annotations as _annotations
 
 import os
-import re
 from collections.abc import Callable
-from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -16,6 +15,11 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers._bedrock_model_names import (
+    BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
+    split_bedrock_model_id,
+)
 
 try:
     import boto3
@@ -31,41 +35,52 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@dataclass(kw_only=True)
-class BedrockModelProfile(ModelProfile):
+class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
     ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    bedrock_supports_tool_choice: bool = False
-    bedrock_tool_result_format: Literal['text', 'json'] = 'text'
-    bedrock_send_back_thinking_parts: bool = False
-    bedrock_supports_prompt_caching: bool = False
-    bedrock_supports_tool_caching: bool = False
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
+    bedrock_supports_tool_choice: bool
+    """Default: `False`."""
+    bedrock_tool_result_format: Literal['text', 'json']
+    """Default: `'text'`."""
+    bedrock_send_back_thinking_parts: bool
+    """Default: `False`."""
+    bedrock_supports_prompt_caching: bool
+    """Default: `False`."""
+    bedrock_supports_tool_caching: bool
+    """Default: `False`."""
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
+    """Default: `frozenset({'image'})`."""
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
+
+    Default: `None`.
     """
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = _without_builtin_tools(amazon_model_profile(model_name))
+    profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
-        profile = BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
-            bedrock_supports_prompt_caching=True,
-        ).update(profile)
+        # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        profile = merge_profile(
+            profile,
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_supports_prompt_caching=True,
+            ),
+        )
 
     if 'nova-2' in model_name:
-        profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+        profile = merge_profile(profile, ModelProfile(supported_native_tools=frozenset({CodeExecutionTool})))
 
     return profile
 
@@ -74,32 +89,13 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
     profile = deepseek_model_profile(model_name)
     if 'r1' in model_name:
-        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
+        # Bedrock-specific override applies on top of the upstream DeepSeek profile.
+        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
     return profile  # pragma: no cover
 
 
-# Known geo prefixes for cross-region inference profile IDs
-BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
-
-
-def remove_bedrock_geo_prefix(model_name: str) -> str:
-    """Remove inference geographic prefix from model ID if present.
-
-    Bedrock supports cross-region inference using geographic prefixes like
-    'us.', 'eu.', 'apac.', etc. This function strips those prefixes.
-
-    Example:
-        'us.amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-        'amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
-    """
-    for prefix in BEDROCK_GEO_PREFIXES:
-        if model_name.startswith(f'{prefix}.'):
-            return model_name.removeprefix(f'{prefix}.')
-    return model_name
-
-
-def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
+def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return merge_profile(profile, ModelProfile(supported_native_tools=frozenset()))
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -117,10 +113,21 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BaseClient:
         return self._client
 
+    @client.setter
+    def client(self, client: BaseClient) -> None:
+        """Replace the underlying boto3 client.
+
+        Useful for rotating short-lived credentials (e.g. temporary STS credentials) in a long-running service:
+        construct a fresh `bedrock-runtime` client and assign it here, and every [`BedrockConverseModel`]
+        [pydantic_ai.models.bedrock.BedrockConverseModel] using this provider will pick it up.
+        """
+        self._client = client
+
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
+            'anthropic': lambda model_name: merge_profile(
+                _strip_builtin_tools(anthropic_model_profile(model_name)),
                 BedrockModelProfile(
                     bedrock_supports_tool_choice=True,
                     bedrock_send_back_thinking_parts=True,
@@ -128,18 +135,19 @@ class BedrockProvider(Provider[BaseClient]):
                     bedrock_supports_tool_caching=True,
                     bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
                     bedrock_thinking_variant='anthropic',
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
+                    # We don't currently support native structured output with Bedrock.
+                    # See https://github.com/pydantic/pydantic-ai/issues/4209.
+                    supports_json_schema_output=False,
+                ),
             ),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                _without_builtin_tools(mistral_model_profile(model_name))
+            'mistral': lambda model_name: merge_profile(
+                _strip_builtin_tools(mistral_model_profile(model_name)),
+                BedrockModelProfile(bedrock_tool_result_format='json'),
             ),
-            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
+            'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
-            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
@@ -150,27 +158,9 @@ class BedrockProvider(Provider[BaseClient]):
             ),
         }
 
-        # Split the model name into parts
-        parts = model_name.split('.', 2)
-
-        # Handle regional prefixes
-        if len(parts) > 2 and parts[0] in BEDROCK_GEO_PREFIXES:
-            parts = parts[1:]
-
-        # required format is provider.model-name-with-version
-        if len(parts) < 2:
-            return None
-
-        provider = parts[0]
-        model_name_with_version = parts[1]
-
-        # Remove version suffix if it matches the format (e.g. "-v1:0" or "-v14")
-        version_match = re.match(r'(.+)-v\d+(?::\d+)?$', model_name_with_version)
-        if version_match:
-            model_name = version_match.group(1)
-        else:
-            model_name = model_name_with_version
-
+        # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a
+        # cross-region inference geo prefix (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
+        provider, model_name = split_bedrock_model_id(model_name)
         if provider in provider_to_profile:
             return provider_to_profile[provider](model_name)
 

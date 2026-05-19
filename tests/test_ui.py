@@ -12,12 +12,9 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AgentDepsT
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -27,6 +24,10 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -49,6 +50,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
@@ -67,12 +69,6 @@ from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -175,13 +171,13 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[str]:
         yield f'</tool-call name={part.tool_name!r}>'
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[str]:
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[str]:
         yield f'<builtin-tool-call name={part.tool_name!r}>{part.args}'
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[str]:
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[str]:
         yield f'</builtin-tool-call name={part.tool_name!r}>'
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[str]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[str]:
         yield f'<builtin-tool-return name={part.tool_name!r}>{part.content}</builtin-tool-return>'
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[str]:
@@ -194,7 +190,13 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
         yield f'<function-tool-call name={event.part.tool_name!r}>{event.part.args}</function-tool-call>'
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
-        yield f'<function-tool-result name={event.result.tool_name!r}>{event.result.content}</function-tool-result>'
+        yield f'<function-tool-result name={event.part.tool_name!r}>{event.part.content}</function-tool-result>'
+
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-call name={event.part.tool_name!r}>{event.part.args}</output-tool-call>'
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-result name={event.part.tool_name!r}>{event.part.content}</output-tool-result>'
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
@@ -297,7 +299,7 @@ async def test_run_stream_builtin_tool_call():
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -311,7 +313,7 @@ async def test_run_stream_builtin_tool_call():
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -502,7 +504,8 @@ async def test_run_stream_output_tool():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Final result processed.</function-tool-result>",
+            '<output-tool-call name=\'final_result\'>{"query":"Hello world"}</output-tool-call>',
+            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
             '</request>',
             "<run-result>{'results': [{'title': '\"Hello, World!\" program', 'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program'}]}</run-result>",
             '</stream>',
@@ -596,7 +599,9 @@ async def test_run_stream_output_tool_error():
     def bad_output(value: str) -> str:
         raise ValueError('Output validation failed')
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries={'tools': 0, 'output': 0}
+    )
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     adapter = DummyUIAdapter(agent, request)
@@ -611,7 +616,7 @@ async def test_run_stream_output_tool_error():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<output-tool-result name='final_result'>Tool execution was interrupted by an error.</output-tool-result>",
             "<error type='ValueError'>Output validation failed</error>",
             '</request>',
             '</stream>',
@@ -1117,8 +1122,8 @@ def test_sanitize_messages_drops_response_left_empty_after_stripping():
     assert isinstance(sanitized[0], ModelRequest)
 
 
-def test_sanitize_messages_strips_dangling_builtin_tool_calls():
-    """Builtin tool calls are also model-emitted, so a dangling `BuiltinToolCallPart` at
+def test_sanitize_messages_strips_dangling_native_tool_calls():
+    """Builtin tool calls are also model-emitted, so a dangling `NativeToolCallPart` at
     the end of client-supplied history is treated the same as a `ToolCallPart`.
     """
     adapter = _make_dummy_adapter(
@@ -1127,9 +1132,7 @@ def test_sanitize_messages_strips_dangling_builtin_tool_calls():
             ModelResponse(
                 parts=[
                     TextPart(content='Looking it up'),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution', args={'code': 'print(1)'}, tool_call_id='builtin-1'
-                    ),
+                    NativeToolCallPart(tool_name='code_execution', args={'code': 'print(1)'}, tool_call_id='builtin-1'),
                 ]
             ),
         ]

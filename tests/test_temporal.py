@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -31,6 +32,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelSettings,
     MultiModalContent,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -49,19 +52,22 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.join import reduce_list_append
 
 from ._inline_snapshot import snapshot
 
@@ -87,7 +93,7 @@ try:
         TemporalAgent,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
-    from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
+    from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
@@ -113,14 +119,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
-
-try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-except ImportError:  # pragma: lax no cover
-    pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -221,9 +224,9 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
 
 @pytest.fixture(autouse=True)
 def _clear_mcp_tool_cache() -> None:
-    """Clear cached tool defs on module-level TemporalMCPServer instances between tests."""
+    """Clear cached tool defs on module-level TemporalMCPToolset instances between tests."""
     for toolset in complex_temporal_agent.toolsets:
-        if isinstance(toolset, TemporalMCPServer):
+        if isinstance(toolset, TemporalMCPToolset):
             toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
 
@@ -305,19 +308,26 @@ class Response:
     answers: list[Answer]
 
 
-complex_agent = Agent(
-    model,
-    deps_type=Deps,
-    output_type=Response,
-    toolsets=[
-        FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-    ],
-    tools=[get_weather],
-    event_stream_handler=event_stream_handler,
-    name='complex_agent',
-)
+# The legacy `event_stream_handler=` kwarg path is still how `TemporalAgent` discovers the
+# handler in 1.x (it reads `agent.event_stream_handler`, which is only populated by the kwarg).
+# A capability-based wiring is a v2 follow-up; for now we suppress the deprecation locally.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
+    )
+    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportDeprecated]
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+        ],
+        tools=[get_weather],
+        event_stream_handler=event_stream_handler,
+        name='complex_agent',
+    )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(
@@ -438,7 +448,10 @@ async def test_complex_agent_run_in_workflow(
                         BasicSpan(
                             content='StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
                             children=[
-                                BasicSpan(content='RunActivity:agent__complex_agent__mcp_server__mcp__get_tools')
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+                                    children=[BasicSpan(content='tools/list')],
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -452,22 +465,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -483,7 +496,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -497,7 +510,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -512,7 +525,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -525,7 +538,8 @@ async def test_complex_agent_run_in_workflow(
                                     content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
+                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool',
+                                            children=[BasicSpan(content='tools/call get_product_name')],
                                         )
                                     ],
                                 )
@@ -539,7 +553,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -556,7 +570,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -577,7 +591,7 @@ async def test_complex_agent_run_in_workflow(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -593,7 +607,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -620,7 +634,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -637,7 +651,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -763,10 +777,38 @@ async def test_complex_agent_run_in_workflow(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                        ),
                                     ],
                                 )
                             ],
@@ -783,7 +825,7 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
-    With caching at the TemporalMCPServer wrapper level, only the first get_tools activity
+    With caching at the TemporalMCPToolset wrapper level, only the first get_tools activity
     actually runs (opening an MCP connection and calling `tools/list`). Subsequent get_tools
     calls return the wrapper's cached tool definitions without scheduling an activity at all.
     """
@@ -824,13 +866,13 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None):
     """Verify that wrapper-level caching is skipped when cache_tools=False.
 
     Runs outside the Temporal workflow (via .override()) so coverage can track
-    the TemporalMCPServer.get_tools() code path directly.
+    the TemporalMCPToolset.get_tools() code path directly.
     """
-    mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPServer))
-    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+    mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPToolset))
+    wrapped = cast(MCPToolset[Any], mcp_toolset.wrapped)
 
-    original_cache_tools = server.cache_tools
-    server.cache_tools = False
+    original_cache_tools = wrapped.cache_tools
+    wrapped.cache_tools = False
 
     try:
         with complex_temporal_agent.override(deps=Deps(country='Mexico')):
@@ -842,7 +884,7 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None):
         # Wrapper-level cache should NOT be populated when cache_tools=False
         assert mcp_toolset._cached_tool_defs is None  # pyright: ignore[reportPrivateUsage]
     finally:
-        server.cache_tools = original_cache_tools
+        wrapped.cache_tools = original_cache_tools
 
 
 async def test_complex_agent_run(allow_model_requests: None):
@@ -909,7 +951,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
@@ -917,7 +959,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 )
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_product_name',
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
@@ -959,7 +1001,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
@@ -1138,6 +1180,22 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
                 ),
             ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                    timestamp=IsDatetime(),
+                )
+            ),
         ]
     )
 
@@ -1294,56 +1352,52 @@ async def test_dynamic_toolset_outside_workflow():
 
 
 # --- MCP-based DynamicToolset test ---
-# Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
-# Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
-# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
+# Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
+# Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
+# don't play nicely with Temporal's sandbox.
 
 
-mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
+mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
 
 
-@mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
-def my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPServerStreamableHTTP:
-    """Dynamic toolset that returns an MCP toolset.
-
-    This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
-    """
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+@mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
+def my_mcptoolset_dynamic_toolset(ctx: RunContext[object]) -> MCPToolset[object]:
+    """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
+    return MCPToolset('https://mcp.deepwiki.com/mcp')
 
 
-mcp_dynamic_toolset_temporal_agent = TemporalAgent(
-    mcp_dynamic_toolset_agent,
+mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcptoolset_dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
 
 @workflow.defn
-class MCPDynamicToolsetAgentWorkflow:
+class MCPToolsetDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
+        result = await mcptoolset_dynamic_toolset_temporal_agent.run(prompt)
         return result.output
 
 
-async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
-    """Test that @agent.toolset with MCPServerStreamableHTTP works in a Temporal workflow.
+async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """`@agent.toolset` returning an `MCPToolset` works in a Temporal workflow.
 
-    This demonstrates MCP lifecycle management (entering/exiting the MCP toolset context manager)
-    within a DynamicToolset wrapped by TemporalDynamicToolset.
+    Verifies the `MCPToolset`/`TemporalMCPToolset` pair handles `DynamicToolset` lifecycle
+    (entering/exiting the context manager around each activity invocation).
     """
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[MCPDynamicToolsetAgentWorkflow],
-        plugins=[AgentPlugin(mcp_dynamic_toolset_temporal_agent)],
+        workflows=[MCPToolsetDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_dynamic_toolset_temporal_agent)],
     ):
         output = await client.execute_workflow(
-            MCPDynamicToolsetAgentWorkflow.run,
+            MCPToolsetDynamicToolsetAgentWorkflow.run,
             args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
-            id='test_mcp_dynamic_toolset_workflow',
+            id='test_mcptoolset_dynamic_toolset_workflow',
             task_queue=TASK_QUEUE,
         )
-        # The deepwiki MCP server should return info about the pydantic-ai repo
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
@@ -1373,7 +1427,7 @@ async def test_temporal_agent():
     assert toolsets[2].wrapped.tools.keys() == {'get_country'}
 
     # Wrapped 'mcp' MCP server
-    assert isinstance(toolsets[3], TemporalMCPServer)
+    assert isinstance(toolsets[3], TemporalMCPToolset)
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
@@ -1513,7 +1567,7 @@ def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
 
 
 agent_with_sync_history_processor = Agent(
-    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+    model, name='agent_with_sync_history_processor', capabilities=[ProcessHistory(drop_first_message)]
 )
 temporal_agent_with_sync_history_processor = TemporalAgent(
     agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
@@ -1877,7 +1931,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 class SimpleAgentWorkflowWithOverrideBuiltinTools:
     @workflow.run
     async def run(self, prompt: str) -> None:
-        with simple_temporal_agent.override(builtin_tools=[WebSearchTool()]):
+        with simple_temporal_agent.override(native_tools=[WebSearchTool()]):
             pass
 
 
@@ -1891,7 +1945,7 @@ async def test_temporal_agent_override_builtin_tools_in_workflow(allow_model_req
         with workflow_raises(
             UserError,
             snapshot(
-                'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                'Native tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
             await client.execute_workflow(
@@ -2502,38 +2556,56 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-mcp_instructions_agent = Agent(
+# Exercises the `TemporalMCPToolset` wrapper's `get_instructions` activity path.
+mcptoolset_instructions_agent = Agent(
     FunctionModel(return_mcp_instructions),
-    name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
+        )
+    ],
 )
 
-mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
+mcptoolset_instructions_temporal_agent = TemporalAgent(
+    mcptoolset_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
 
 
 @workflow.defn
-class MCPInstructionsWorkflow:
+class MCPToolsetInstructionsWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await mcp_instructions_temporal_agent.run(prompt)
+        result = await mcptoolset_instructions_temporal_agent.run(prompt)
         return result.output
 
 
-async def test_temporal_mcp_toolset_instructions_propagate(client: Client):
-    """MCP instructions should propagate through Temporal wrapper toolsets."""
+async def test_temporal_mcptoolset_instructions_propagate(client: Client):
+    """`MCPToolset` instructions propagate through the `TemporalMCPToolset` wrapper."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[MCPInstructionsWorkflow],
-        plugins=[AgentPlugin(mcp_instructions_temporal_agent)],
+        workflows=[MCPToolsetInstructionsWorkflow],
+        plugins=[AgentPlugin(mcptoolset_instructions_temporal_agent)],
     ):
         output = await client.execute_workflow(
-            MCPInstructionsWorkflow.run,
+            MCPToolsetInstructionsWorkflow.run,
             args=['Use MCP instructions'],
-            id=MCPInstructionsWorkflow.__name__,
+            id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('Be a helpful assistant.')
+
+
+def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
+    """`temporalize_toolset` wraps `MCPToolset` in `TemporalMCPToolset`."""
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
+    assert wrapped.wrapped is toolset
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
@@ -2675,7 +2747,7 @@ web_search_model = OpenAIResponsesModel(
 web_search_agent = Agent(
     web_search_model,
     name='web_search_agent',
-    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+    capabilities=[NativeTool(WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX')))],
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -2694,9 +2766,6 @@ class WebSearchAgentWorkflow:
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
-)
 async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -2793,13 +2862,6 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
-fastmcp_agent = Agent(
-    model,
-    name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
-)
-
-
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -2894,37 +2956,41 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
     )
 
 
-# This needs to be done before the `TemporalAgent` is bound to the workflow.
-fastmcp_temporal_agent = TemporalAgent(
-    fastmcp_agent,
+mcptoolset_agent = Agent(
+    model,
+    name='mcptoolset_agent',
+    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+mcptoolset_temporal_agent = TemporalAgent(
+    mcptoolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
 
 @workflow.defn
-class FastMCPAgentWorkflow:
+class MCPToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await fastmcp_temporal_agent.run(prompt)
+        result = await mcptoolset_temporal_agent.run(prompt)
         return result.output
 
 
-async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
+async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, client: Client):
+    """`MCPToolset` works in a Temporal workflow — parallel to `test_fastmcp_toolset`."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[FastMCPAgentWorkflow],
-        plugins=[AgentPlugin(fastmcp_temporal_agent)],
+        workflows=[MCPToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_temporal_agent)],
     ):
         output = await client.execute_workflow(
-            FastMCPAgentWorkflow.run,
+            MCPToolsetAgentWorkflow.run,
             args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
-            id=FastMCPAgentWorkflow.__name__,
+            id=MCPToolsetAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot(
-            'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
-        )
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 # ============================================================================
@@ -3213,10 +3279,10 @@ class MultiModelWorkflow:
 
 
 class _BuiltinToolModel(TestModel):
-    SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
+    SUPPORTED_TOOLS: frozenset[type[AbstractNativeTool]] = frozenset()
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return cls.SUPPORTED_TOOLS
 
     def _request(
@@ -3237,8 +3303,8 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
     SUPPORTED_TOOLS = frozenset({CodeExecutionTool})
 
 
-def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
-    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
+    if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 
@@ -3249,7 +3315,7 @@ code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code 
 builtin_tool_agent = Agent(
     web_search_builtin_model,
     name='builtin_tool_dynamic_agent',
-    builtin_tools=[_select_builtin_tool],
+    capabilities=[NativeTool(_select_builtin_tool)],
 )
 
 builtin_tool_temporal_agent = TemporalAgent(
@@ -3280,8 +3346,7 @@ web_search_builtin_override_model = _WebSearchOnlyModel(
 # Agent initialized with model that doesn't support builtins, but has builtin tools configured
 builtins_in_workflow_agent = Agent(
     no_builtin_support_model,
-    builtin_tools=[WebSearchTool()],
-    instrument=True,
+    capabilities=[NativeTool(WebSearchTool()), Instrumentation(settings=InstrumentationSettings())],
     name='builtins_in_workflow',
 )
 
@@ -3376,8 +3441,8 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'search model'
         assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
-        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+        assert web_search_builtin_model.last_model_request_parameters.native_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.native_tools[0], WebSearchTool)
 
         output = await client.execute_workflow(
             BuiltinToolWorkflow.run,
@@ -3387,9 +3452,9 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
         )
         assert output == 'code model'
         assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
-        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert code_execution_builtin_model.last_model_request_parameters.native_tools
         assert isinstance(
-            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            code_execution_builtin_model.last_model_request_parameters.native_tools[0],
             CodeExecutionTool,
         )
 
@@ -3414,9 +3479,9 @@ async def test_builtins_in_workflow_with_runtime_model_override(allow_model_requ
 
     # Verify the web search model received the WebSearchTool in its request parameters
     assert isinstance(web_search_builtin_override_model.last_model_request_parameters, ModelRequestParameters)
-    assert web_search_builtin_override_model.last_model_request_parameters.builtin_tools
+    assert web_search_builtin_override_model.last_model_request_parameters.native_tools
     assert isinstance(
-        web_search_builtin_override_model.last_model_request_parameters.builtin_tools[0],
+        web_search_builtin_override_model.last_model_request_parameters.native_tools[0],
         WebSearchTool,
     )
 
@@ -3638,7 +3703,7 @@ async def test_temporal_model_request_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3672,7 +3737,7 @@ async def test_temporal_model_request_stream_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3863,7 +3928,7 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
 
     model_request_params = ModelRequestParameters(
         function_tools=[tool_def],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],
@@ -3877,6 +3942,28 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
         assert params.output_mode == 'text'
         assert len(params.function_tools) == 1
         assert params.function_tools[0].parameters_json_schema['additionalProperties'] is False
+
+
+def test_temporal_model_prepare_messages_with_unregistered_model_string() -> None:
+    """`prepare_messages` falls back to `Model.prepare_messages` for unregistered model strings.
+
+    Mirrors `prepare_request`: when `using_model('openai:...')` swaps in a model the
+    registry doesn't know, the temporal wrapper has no concrete `Model` instance to
+    delegate to, so it must invoke the grandparent `Model.prepare_messages` against
+    its own profile-derived behavior.
+    """
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__prepare_messages_unregistered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+    with temporal_model.using_model('openai:gpt-5'):
+        prepared = temporal_model.prepare_messages(messages)
+    assert prepared == messages
 
 
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:

@@ -13,10 +13,9 @@ from .abstract import AbstractCapability
 class PrepareTools(AbstractCapability[AgentDepsT]):
     """Capability that filters or modifies function tool definitions using a callable.
 
-    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability —
-    sugar for the agent-level `prepare_tools=` constructor argument, which injects this
-    capability automatically. Filters/modifies **function** tools only; for output tools
-    use [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
+    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability.
+    Filters/modifies **function** tools only; for output tools use
+    [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
 
     ```python
     from pydantic_ai import Agent, RunContext
@@ -25,7 +24,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
 
 
     async def hide_admin_tools(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ctx: RunContext[object], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition] | None:
         return [td for td in tool_defs if not td.name.startswith('admin_')]
 
@@ -50,7 +49,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
     Mirrors [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] for
     [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry`/`ctx.max_retries` reflect
-    the **output** retry budget (`max_result_retries`), matching the output hook lifecycle.
+    the **output** retry budget (`max_output_retries`), matching the output hook lifecycle.
 
     ```python
     from pydantic_ai import Agent, RunContext
@@ -60,7 +59,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
 
     async def only_after_first_step(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ctx: RunContext[object], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition] | None:
         return tool_defs if ctx.run_step > 0 else []
 

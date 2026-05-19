@@ -218,10 +218,11 @@ def load_from_registry(
     Returns:
         An initialized instance.
     """
-    cls = registry.get(spec.name)
+    name = spec.name
+    cls = registry.get(name)
     if cls is None:
         raise ValueError(
-            f'{label.capitalize()} {spec.name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
+            f'{label.capitalize()} {name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
             f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
         )
     try:

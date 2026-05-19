@@ -2,6 +2,7 @@ import asyncio
 import functools
 import operator
 import re
+from collections.abc import AsyncIterator
 from datetime import timezone
 from decimal import Decimal
 
@@ -28,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ._inline_snapshot import snapshot, warns
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -135,7 +136,7 @@ async def test_streamed_text_limits() -> None:
                     ),
                 ]
             )
-            assert result.usage() == snapshot(
+            assert result.usage == snapshot(
                 RunUsage(
                     requests=2,
                     input_tokens=103,
@@ -144,8 +145,31 @@ async def test_streamed_text_limits() -> None:
                 )
             )
             succeeded = True
+            async for _ in result.stream_text(debounce_by=None):
+                pass
 
     assert succeeded
+
+
+async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
+    # Regression: `_stream_response_text` previously iterated `self._raw_stream_response`
+    # directly, bypassing the usage-checking wrapper in `AgentStream.__aiter__`, so
+    # `UsageLimitExceeded` would not raise during `stream_text()` even when the output
+    # token limit was exceeded mid-stream.
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'one'
+        yield 'two'
+        yield 'three'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    collected: list[str] = []
+    with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the output_tokens_limit of 2')):
+        async with agent.run_stream('hi', usage_limits=UsageLimits(output_tokens_limit=2)) as result:
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                collected.append(text)
+
+    assert 0 < len(collected) < 3
 
 
 def test_usage_so_far() -> None:
@@ -170,15 +194,15 @@ async def test_multi_agent_usage_no_incr():
     @controller_agent1.tool
     async def delegate_to_other_agent1(ctx: RunContext[object], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence)
-        delegate_usage = delegate_result.usage()
+        delegate_usage = delegate_result.usage
         run_1_usages.append(delegate_usage)
         assert delegate_usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         return delegate_result.output
 
     result1 = await controller_agent1.run('foobar')
     assert result1.output == snapshot('{"delegate_to_other_agent1":0}')
-    run_1_usages.append(result1.usage())
-    assert result1.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=13, tool_calls=1))
+    run_1_usages.append(result1.usage)
+    assert result1.usage == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=13, tool_calls=1))
     assert result1.all_messages() == snapshot(
         [
             ModelRequest(
@@ -230,13 +254,13 @@ async def test_multi_agent_usage_no_incr():
     @controller_agent2.tool
     async def delegate_to_other_agent2(ctx: RunContext[object], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
-        delegate_usage = delegate_result.usage()
+        delegate_usage = delegate_result.usage
         assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
         return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
     assert result2.output == snapshot('{"delegate_to_other_agent2":0}')
-    assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=1))
+    assert result2.usage == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=1))
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
@@ -284,9 +308,9 @@ async def test_multi_agent_usage_no_incr():
     )
 
     # confirm the usage from result2 is the sum of the usage from result1
-    assert result2.usage() == functools.reduce(operator.add, run_1_usages)
+    assert result2.usage == functools.reduce(operator.add, run_1_usages)
 
-    result1_usage = result1.usage()
+    result1_usage = result1.usage
     result1_usage.details = {'custom1': 10, 'custom2': 20, 'custom3': 0}
     assert result1_usage.opentelemetry_attributes() == {
         'gen_ai.usage.input_tokens': 103,
@@ -308,7 +332,7 @@ async def test_multi_agent_usage_sync():
 
     result = await controller_agent.run('foobar')
     assert result.output == snapshot('{"delegate_to_other_agent":0}')
-    assert result.usage() == snapshot(RunUsage(requests=7, input_tokens=105, output_tokens=16, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=7, input_tokens=105, output_tokens=16, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -453,7 +477,7 @@ def test_add_run_usages_does_not_mutate_original():
 def test_add_usage_repeated_calls_stable():
     """Test that repeated __add__ calls return consistent results (issue #4605).
 
-    This simulates AgentStream.usage() at result.py:169 being called multiple times:
+    This simulates AgentStream.usage at result.py:169 being read multiple times:
         return self._initial_run_ctx_usage + self._raw_stream_response.usage()
     """
     initial = RunUsage(requests=1, input_tokens=500, details={})
@@ -482,7 +506,7 @@ async def test_tool_call_limit() -> None:
         await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
 
     result = await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -536,7 +560,7 @@ async def test_output_tool_not_counted() -> None:
         result: str
 
     result_regular = await test_agent.run('test')
-    assert result_regular.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+    assert result_regular.usage == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
     assert result_regular.all_messages() == snapshot(
         [
             ModelRequest(
@@ -589,7 +613,7 @@ async def test_output_tool_not_counted() -> None:
 
     result_output = await test_agent_with_output.run('test')
 
-    assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
+    assert result_output.usage == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
     assert result_output.all_messages() == snapshot(
         [
             ModelRequest(
@@ -685,7 +709,7 @@ async def test_output_tool_allowed_at_limit() -> None:
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
 
     assert result.output.result == 'success'
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=20, output_tokens=10, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=2, input_tokens=20, output_tokens=10, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -756,7 +780,7 @@ async def test_failed_tool_calls_not_counted() -> None:
 
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -821,18 +845,6 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
         ]
     )
-
-
-def test_deprecated_usage_limits():
-    with warns(
-        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
-    ):
-        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
-
-    with warns(
-        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
-    ):
-        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
 
 
 async def test_parallel_tool_calls_limit_enforced():
@@ -903,28 +915,16 @@ def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
 
 
-def test_usage_limits_preserves_explicit_zero():
-    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
-    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
-    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
-    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+def test_usage_limits_explicit_zero():
+    """Explicit 0 token limits round-trip correctly (regression: zero is not coerced to None)."""
+    limits = UsageLimits(input_tokens_limit=0)
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    limits = UsageLimits(output_tokens_limit=0)
     assert limits.output_tokens_limit == 0
 
-    # When only deprecated arg is passed, should use it as fallback
-    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
-    assert limits.input_tokens_limit == 123
-
-    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
-    assert limits.output_tokens_limit == 456
-
-    # When neither is passed, should be None
     limits = UsageLimits()
     assert limits.input_tokens_limit is None
 
-    # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
