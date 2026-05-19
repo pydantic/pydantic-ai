@@ -3801,6 +3801,18 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
     )
 
 
+async def test_openai_responses_native_output_decimal_strict(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
+
+
 async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
