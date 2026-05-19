@@ -88,7 +88,6 @@ try:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
-    from fastmcp.server import FastMCP
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 except ImportError as _err:  # pragma: no cover
     _fastmcp_import_error = _err
