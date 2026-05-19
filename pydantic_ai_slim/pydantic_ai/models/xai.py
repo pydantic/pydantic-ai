@@ -112,6 +112,11 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 XaiModelName = str | ChatModel
 """Possible xAI model names."""
 
+# `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
+# `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
+# route their thinking and native-tool parts back to this provider.
+_XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
+
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',
     'length': 'length',
@@ -449,7 +454,7 @@ class XaiModel(Model[AsyncClient]):
                 self._append_tool_call(messages, client_side_tool_call)
             elif isinstance(item, NativeToolCallPart):
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if item.provider_name == self.system and builtin_call:
+                if item.provider_name in _XAI_PROVIDER_NAMES and builtin_call:
                     self._append_tool_call(messages, builtin_call)
                     # Track specific tool calls for status updates
                     # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
@@ -458,7 +463,7 @@ class XaiModel(Model[AsyncClient]):
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, NativeToolReturnPart):
                 if (
-                    item.provider_name == self.system
+                    item.provider_name in _XAI_PROVIDER_NAMES
                     and item.tool_call_id
                     and (details := item.provider_details) is not None
                     and details.get('status') == 'failed'
@@ -497,7 +502,7 @@ class XaiModel(Model[AsyncClient]):
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
         - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
         """
-        if item.provider_name == self.system and (item.content or item.signature):
+        if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
             if item.content:
                 msg.reasoning_content = item.content

@@ -12,6 +12,7 @@ from opentelemetry.trace import StatusCode
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
     get_agent_run_baggage_attributes,
     get_instructions,
@@ -75,7 +76,9 @@ class Instrumentation(AbstractCapability[Any]):
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
-        default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
+        default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
+        repr=False,
+        init=False,
     )
 
     def __post_init__(self) -> None:
