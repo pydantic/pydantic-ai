@@ -5315,7 +5315,7 @@ try:
 
     has_mcp = True
     del _mcp
-except ImportError:
+except ImportError:  # pragma: no cover
     has_mcp = False
 
 
@@ -5406,7 +5406,10 @@ class TestMCPCapability:
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
         """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
-        from fastmcp import FastMCP
+        try:
+            from fastmcp import FastMCP
+        except ImportError:  # pragma: lax no cover
+            pytest.skip('fastmcp server extras not installed (slim client)')
 
         from pydantic_ai.mcp import MCPToolset
 
