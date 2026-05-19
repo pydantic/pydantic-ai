@@ -471,7 +471,7 @@ async def test_match_node():
     in decision branches. Unlike match().to(), it doesn't require a .to() call
     since the destination is the BaseNode class itself.
 
-    This is only necessary if you have a step that might return a v1-style node _or_ an
+    This is only necessary if you have a step that might return a `BaseNode` _or_ an
     arbitrary output that you want to route to another node using the builder API.
     """
     g = GraphBuilder(state_type=DecisionState, input_type=int, output_type=str)

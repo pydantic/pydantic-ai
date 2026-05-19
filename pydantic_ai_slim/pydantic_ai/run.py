@@ -7,8 +7,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
-from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.graph_builder import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
 
 from . import (

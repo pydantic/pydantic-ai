@@ -890,18 +890,6 @@ def model(
 
 
 @pytest.fixture
-def mock_snapshot_id(mocker: MockerFixture):
-    i = 0
-
-    def generate_snapshot_id(node_id: str) -> str:
-        nonlocal i
-        i += 1
-        return f'{node_id}:{i}'
-
-    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
-
-
-@pytest.fixture
 def disable_ssrf_protection_for_vcr():
     """Disable SSRF protection for VCR compatibility.
 

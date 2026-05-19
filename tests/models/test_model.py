@@ -91,22 +91,6 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
-        {'OPENAI_API_KEY': 'openai-api-key'},
-        'gpt-3.5-turbo',
-        'gpt-3.5-turbo',
-        'openai',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
-        {'OPENAI_API_KEY': 'openai-api-key'},
-        'o1',
-        'o1',
-        'openai',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
         {
             'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
             'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
@@ -127,24 +111,8 @@ TEST_CASES = [
         GoogleModel,
     ),
     pytest.param(
-        {'GEMINI_API_KEY': 'gemini-api-key'},
-        'gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google',
-        'google',
-        GoogleModel,
-    ),
-    pytest.param(
         {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
         'anthropic:claude-haiku-4-5',
-        'claude-haiku-4-5',
-        'anthropic',
-        'anthropic',
-        AnthropicModel,
-    ),
-    pytest.param(
-        {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
-        'claude-haiku-4-5',
         'claude-haiku-4-5',
         'anthropic',
         'anthropic',
@@ -268,20 +236,14 @@ def test_infer_str_unknown():
     [
         pytest.param('openai:gpt-5', ('openai', 'gpt-5'), id='provider:model'),
         pytest.param('anthropic:claude-3', ('anthropic', 'claude-3'), id='anthropic:model'),
-        pytest.param('gpt-4', ('openai', 'gpt-4'), id='legacy-gpt'),
-        pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
-        pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
-        pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gpt-4', (None, 'gpt-4'), id='no-prefix'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
     ],
 )
 def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        assert parse_model_id(model_id) == expected
+    assert parse_model_id(model_id) == expected
 
 
 @pytest.mark.parametrize(
