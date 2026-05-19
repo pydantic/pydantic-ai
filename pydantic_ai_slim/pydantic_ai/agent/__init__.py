@@ -22,7 +22,7 @@ from typing_extensions import Self, TypeVar, deprecated
 from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
-from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
+from pydantic_ai.capabilities._deferred_loading import DeferredLoadingCapability
 
 from .. import (
     _agent_graph,

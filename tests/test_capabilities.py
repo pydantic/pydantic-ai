@@ -49,7 +49,6 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
@@ -2394,20 +2393,6 @@ async def test_load_capability_tool_name_conflict_raises() -> None:
     assert str(exc_info.value) == snapshot(
         "Tool name 'load_capability' is reserved for deferred capability loading. Rename your tool to avoid conflicts."
     )
-
-
-async def test_deferred_loader_is_inert_without_deferred_capabilities() -> None:
-    """The framework loader wrapper should not add `load_capability` when nothing can be loaded."""
-    toolset = FunctionToolset[None]()
-
-    @toolset.tool_plain
-    def visible_tool() -> str:
-        return 'visible'
-
-    agent = Agent(TestModel(), capabilities=[DeferredLoadingCapability(), Toolset(toolset)])
-    result = await agent.run('list tools')
-
-    assert result.output == snapshot('{"visible_tool":"visible"}')
 
 
 async def test_duplicate_capability_ids_raise() -> None:

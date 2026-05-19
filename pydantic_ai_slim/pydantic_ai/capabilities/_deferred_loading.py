@@ -14,13 +14,7 @@ from .instrumentation import Instrumentation
 
 @dataclass
 class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
-    """Framework capability that provides the `load_capability` tool for deferred capabilities.
-
-    Added by the agent for a run when any capability has `defer_loading=True`.
-    Its instructions include a stable catalog of deferred capabilities, while
-    [`DeferredCapabilityToolset`][pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset]
-    exposes the `load_capability(id)` tool that loads a selected capability.
-    """
+    """Internal capability that provides the `load_capability` tool for deferred capabilities."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def create_catalog(ctx: RunContext[AgentDepsT]) -> str:

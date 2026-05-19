@@ -30,9 +30,8 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a `load_capability` discovery tool.
 
     When deferred-loading capabilities exist, `get_tools` adds a `load_capability` tool.
-    The catalog of loadable capabilities is provided by
-    [`DeferredLoadingCapability`][pydantic_ai.capabilities.deferred.DeferredLoadingCapability]
-    instructions.
+    The catalog of loadable capabilities is provided by the agent's internal
+    deferred-loading capability instructions.
     When the model calls `load_capability(id)`, the matching capability's
     instructions are returned as the tool result. The `load_capability` tool remains
     present even after all deferred capabilities are loaded so the function-tool set
@@ -42,8 +41,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        if not any(entry.defer_loading is True for entry in ctx.capabilities.values()):
-            return all_tools
+        assert any(entry.defer_loading is True for entry in ctx.capabilities.values()), (
+            'DeferredCapabilityToolset should only be installed when deferred capabilities exist.'
+        )
 
         if LOAD_CAPABILITY_TOOL_NAME in all_tools:
             raise UserError(
