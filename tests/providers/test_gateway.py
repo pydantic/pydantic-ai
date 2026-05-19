@@ -37,7 +37,8 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
     'provider_name, provider_cls, route',
     [
         ('openai', OpenAIProvider, 'openai-responses'),
-        ('openai-chat', OpenAIProvider, 'openai-chat'),
+        # Gateway collapses the chat flavor back to the plain `openai` wire route.
+        ('openai-chat', OpenAIProvider, 'openai'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
     ],
 )
@@ -89,7 +90,7 @@ def vcr_config():
     'provider_name, provider_cls, route',
     [
         ('openai', OpenAIProvider, 'openai-responses'),
-        ('openai-chat', OpenAIProvider, 'openai-chat'),
+        ('openai-chat', OpenAIProvider, 'openai'),
         ('openai-responses', OpenAIProvider, 'openai-responses'),
         ('groq', GroqProvider, 'groq'),
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),

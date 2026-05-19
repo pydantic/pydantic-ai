@@ -117,9 +117,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     # Gateway URL route value (e.g. `openai-responses`, `google-vertex`) is a
     # separate concern handled by `gateway_route` in `providers/gateway.py`.
     if provider.startswith('gateway/'):
-        from .gateway import strip_gateway_prefix
+        from .gateway import normalize_gateway_provider
 
-        provider = strip_gateway_prefix(provider)
+        provider = normalize_gateway_provider(provider)
 
     # Normalize deprecated/alias provider names
     if provider == 'vertexai':
@@ -261,7 +261,7 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        # The `gateway/google-vertex` deprecation warning fires inside `strip_gateway_prefix`,
+        # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`,
         # which `gateway_provider` calls below.
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)

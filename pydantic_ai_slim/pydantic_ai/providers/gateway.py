@@ -152,7 +152,7 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        canonical = strip_gateway_prefix(upstream_provider)
+        canonical = normalize_gateway_provider(upstream_provider)
         route = gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
@@ -240,11 +240,13 @@ def _merge_url_path(base_url: str, path: str) -> str:
 
 
 # Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
-# (the output of `strip_gateway_prefix`); defaults to identity. Only providers whose
-# Gateway wire value differs from the canonical name are listed.
+# (the output of `normalize_gateway_provider`); defaults to identity. Only providers
+# whose Gateway wire value differs from the canonical name are listed.
 _GATEWAY_ROUTE_REMAP: dict[str, str] = {
     # Bare `openai` defaults to Responses in v2; Gateway needs the fully-qualified flavor on the wire.
     'openai': 'openai-responses',
+    # Gateway collapses the chat flavor back to plain `openai` on the wire (no `-chat` suffix).
+    'openai-chat': 'openai',
     # GLA-style Gemini API is called `gemini` on Gateway.
     'google': 'gemini',
     # Gateway team still uses the old name; flip this entry when they rename their side.
@@ -257,20 +259,9 @@ def gateway_route(provider: str) -> str:
     return _GATEWAY_ROUTE_REMAP.get(provider, provider)
 
 
-# API-flavor synonyms accepted as `gateway/<flavor>:` user input. These have no
-# non-gateway counterpart and must be mapped to a canonical class-lookup name.
-_GATEWAY_FLAVOR_ALIASES: dict[str, str] = {
-    'chat': 'openai-chat',
-    'responses': 'openai-responses',
-    'gemini': 'google',
-    'converse': 'bedrock',
-}
+def normalize_gateway_provider(provider: str) -> str:
+    """Strip the `gateway/` prefix and resolve user-facing aliases to a canonical class-lookup name.
 
-
-def strip_gateway_prefix(provider: str) -> str:
-    """Strip the `gateway/` prefix and emit the deprecation warning for legacy user-facing aliases.
-
-    Returns the canonical provider name used for class lookup (provider/model class selection).
     Wire-value remapping for the Gateway URL belongs in `gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
@@ -281,8 +272,16 @@ def strip_gateway_prefix(provider: str) -> str:
             PydanticAIDeprecationWarning,
             stacklevel=3,
         )
-        provider = 'google-cloud'
-    return _GATEWAY_FLAVOR_ALIASES.get(provider, provider)
+        return 'google-cloud'
+    if provider == 'chat':
+        return 'openai-chat'
+    if provider == 'responses':
+        return 'openai-responses'
+    if provider == 'gemini':
+        return 'google'
+    if provider == 'converse':
+        return 'bedrock'
+    return provider
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.
