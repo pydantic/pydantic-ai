@@ -887,38 +887,31 @@ def test_groq_deepseek():
 
 
 # =============================================================================
-# Grok (xAI's OpenAI-compat gateway) — three-layer merge
+# xAI (native, single-layer post-M4)
 # =============================================================================
 
 
-def test_grok_provider_grok_4():
-    """`openai_supports_strict_tool_definition=False` is gateway-level."""
-    from pydantic_ai.providers.grok import GrokProvider  # type: ignore[reportDeprecated]
-
-    profile = GrokProvider.model_profile('grok-4')  # type: ignore[reportDeprecated]
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_4():
+    profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
-            'openai_supports_strict_tool_definition': False,
         }
     )
 
 
-def test_grok_provider_grok_3_mini():
-    from pydantic_ai.providers.grok import GrokProvider  # type: ignore[reportDeprecated]
-
-    profile = GrokProvider.model_profile('grok-3-mini')  # type: ignore[reportDeprecated]
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_3_mini():
+    profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'supported_native_tools': frozenset(),
-            'openai_supports_strict_tool_definition': False,
         }
     )
 

@@ -91,7 +91,6 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -113,7 +112,6 @@ else:
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider
-        from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -126,7 +124,7 @@ else:
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = GrokProvider = HerokuProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
         TogetherProvider = VercelProvider = None  # type: ignore
@@ -7189,7 +7187,6 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
-@pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -7208,7 +7205,6 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
-        pytest.param(lambda: GrokProvider(api_key='t'), marks=[requires_openai], id='grok'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),

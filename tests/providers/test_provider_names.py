@@ -85,7 +85,6 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-@pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 @pytest.mark.filterwarnings(
     'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
