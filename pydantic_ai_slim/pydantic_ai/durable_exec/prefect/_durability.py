@@ -17,7 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
+from pydantic_ai.durable_exec._utils import StreamedActivityResult, call_model, open_model_stream, process_event_stream
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -141,15 +141,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            from pydantic_ai.durable_exec._utils import call_model
-
             request_context = ModelRequestContext(
                 model=model,
                 messages=messages,
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            return await call_model(model, request_context, run_context)
+            return await call_model(model, request_context=request_context, run_context=run_context)
 
         bound._request_task = request_task
 
@@ -160,21 +158,21 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            from pydantic_ai.durable_exec._utils import open_model_stream, process_event_stream
-
             request_context = ModelRequestContext(
                 model=model,
                 messages=messages,
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            async with open_model_stream(model, request_context, run_context) as streamed_response:
+            async with open_model_stream(
+                model, request_context=request_context, run_context=run_context
+            ) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
                 # the live stream inside the Prefect task.
                 await process_event_stream(
-                    run_context,
-                    request_context,
-                    streamed_response,
+                    run_context=run_context,
+                    request_context=request_context,
+                    stream=streamed_response,
                     handler=event_stream_handler,
                 )
             return StreamedActivityResult(
@@ -282,7 +280,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 request_context.model_request_parameters,
                 ctx,
             )
-            request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
+            request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
             request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
             return result.response
 

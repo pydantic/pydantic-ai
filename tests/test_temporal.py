@@ -162,10 +162,27 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsInt, IsStr
 
+# `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`, and
+# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. module-level construction of `TemporalAgent`).
+warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings(
+    'ignore',
+    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
+    category=DeprecationWarning,
+)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
+    pytest.mark.filterwarnings('ignore:`TemporalAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+    ),
 ]
 
 
@@ -5089,6 +5106,12 @@ def test_resolve_tool_activity_config_reads_metadata():
     # `False` in metadata also wins.
     tool.tool_def.metadata = {'temporal': False}
     assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
+
+    # Invalid metadata (e.g. a string from a misuse like `metadata={'temporal': '5s'}`)
+    # raises `UserError` instead of silently passing the wrong shape to Temporal.
+    tool.tool_def.metadata = {'temporal': '5s'}
+    with pytest.raises(UserError, match=r"Tool 'fn_tool' has invalid 'temporal' metadata"):
+        resolve_tool_activity_config(tool, 'fn_tool', {})
 
 
 async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):

@@ -165,7 +165,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
-    as a follow-up to this PR.
+    in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

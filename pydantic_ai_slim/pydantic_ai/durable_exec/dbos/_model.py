@@ -102,4 +102,4 @@ class DBOSModel(WrapperModel):
         response = await self._dbos_wrapped_request_stream_step(
             messages, model_settings, model_request_parameters, run_context
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)

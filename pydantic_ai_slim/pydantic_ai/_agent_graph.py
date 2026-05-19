@@ -543,15 +543,16 @@ async def _prepare_request_parameters(
 
 async def call_model(
     model: models.Model,
+    *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
 ) -> _messages.ModelResponse:
     """Run the innermost non-streaming model request.
 
-    Re-exported as `pydantic_ai.durable_exec.call_model` for use by capabilities
-    that route the model request through an external durable system (Temporal,
-    DBOS, Prefect, ...). Call this from inside the activity / step / task to
-    perform the actual provider request.
+    Used internally by `pydantic_ai.durable_exec._utils.call_model` so the bundled
+    durable-execution capabilities (Temporal/DBOS/Prefect) can perform the actual
+    provider request from inside their activity/step/task with the run context
+    correctly threaded through.
 
     Args:
         model: The model to call.
@@ -573,16 +574,16 @@ async def call_model(
 @asynccontextmanager
 async def open_model_stream(
     model: models.Model,
+    *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
 ) -> AsyncIterator[models.StreamedResponse]:
     """Open the innermost streaming model request.
 
-    Re-exported as `pydantic_ai.durable_exec.open_model_stream` for use by
-    capabilities that route the model stream through an external durable
-    system. Call from inside the activity / step / task to drain the
-    `StreamedResponse` and (optionally) fire `wrap_run_event_stream` hooks
-    against live events before returning the assembled `ModelResponse`.
+    Used internally by `pydantic_ai.durable_exec._utils.open_model_stream` so the
+    bundled durable-execution capabilities can drain the `StreamedResponse` and
+    (optionally) fire `wrap_run_event_stream` hooks against live events inside
+    the activity/step/task before returning the assembled `ModelResponse`.
 
     Args:
         model: The model to call.
@@ -649,7 +650,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
-            skip_sr = CompletedStreamedResponse(skip_mrp, e.response)
+            skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
             await self._finish_handling(ctx, e.response)
@@ -672,7 +673,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
-            async with open_model_stream(req_ctx.model, req_ctx, run_context) as sr:
+            async with open_model_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
                 ctx.state.usage.requests += 1
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
@@ -691,6 +692,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         # Signal to durability capabilities that the agent loop expects a real
         # event stream — they'll route through the streaming activity/step/task.
+        # Promoting this to a proper public field on `ModelRequestContext` is tracked
+        # alongside the runtime-capability rework in
+        # https://github.com/pydantic/pydantic-ai/issues/5477.
         wrap_request_context._streaming_requested = True  # pyright: ignore[reportPrivateUsage]
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
@@ -731,15 +735,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 run_context = build_run_context(ctx)
                 await self._build_retry_node(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
-                dummy_sr = CompletedStreamedResponse(model_request_parameters, _messages.ModelResponse(parts=[]))
+                dummy_sr = CompletedStreamedResponse(
+                    _messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters
+                )
                 yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
             replay_sr = _ReplayStreamedResponse(
-                model_request_parameters,
                 model_response,
-                capabilities_already_applied=wrap_request_context._capabilities_already_applied,  # pyright: ignore[reportPrivateUsage]
+                model_request_parameters=model_request_parameters,
+                hooks_already_applied=wrap_request_context._hooks_already_applied,  # pyright: ignore[reportPrivateUsage]
                 buffered_events=wrap_request_context._buffered_stream_events,  # pyright: ignore[reportPrivateUsage]
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
@@ -824,7 +830,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
-            response = await call_model(req_ctx.model, req_ctx, run_context)
+            response = await call_model(req_ctx.model, request_context=req_ctx, run_context=run_context)
             _handler_response = response
             return response
 

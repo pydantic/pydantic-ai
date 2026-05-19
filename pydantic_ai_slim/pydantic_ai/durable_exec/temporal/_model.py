@@ -209,7 +209,7 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:

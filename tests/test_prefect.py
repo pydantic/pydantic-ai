@@ -80,12 +80,29 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
+# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
+# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. module-level construction of `PrefectAgent`).
+warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings(
+    'ignore',
+    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
+    category=DeprecationWarning,
+)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
     pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
+    pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+    ),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically

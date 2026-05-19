@@ -13,20 +13,9 @@ from ..profiles import ModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import (
-    CompletedStreamedResponse,  # re-exported for backwards-compat; canonical home is `pydantic_ai.models`
-    KnownModelName,
-    Model,
-    ModelRequestContext,
-    ModelRequestParameters,
-    StreamedResponse,
-    infer_model,
-)
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse, infer_model
 
-__all__ = [
-    'CompletedStreamedResponse',
-    'WrapperModel',
-]
+__all__ = ['WrapperModel']
 
 
 @dataclass(init=False)

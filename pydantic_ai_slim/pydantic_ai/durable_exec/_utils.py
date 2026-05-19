@@ -5,9 +5,10 @@ build on is the wrapper hierarchy ([`WrapperAgent`][pydantic_ai.agent.WrapperAge
 / [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] /
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset]) plus the
 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] hooks.
-A first-class integration surface for runtimes is tracked as a follow-up;
-until then these helpers are reserved for the bundled `temporal`, `dbos`,
-and `prefect` integrations.
+A first-class integration surface for runtimes is tracked as
+[#5477](https://github.com/pydantic/pydantic-ai/issues/5477); until then these
+helpers are reserved for the bundled `temporal`, `dbos`, and `prefect`
+integrations.
 """
 
 from collections.abc import AsyncIterable, AsyncIterator
@@ -44,6 +45,7 @@ class StreamedActivityResult:
 
 
 async def process_event_stream(
+    *,
     run_context: RunContext[Any],
     request_context: ModelRequestContext,
     stream: AsyncIterable[AgentStreamEvent],
@@ -96,5 +98,5 @@ async def process_event_stream(
     # The model-request path only produces ModelResponseStreamEvent (the chain
     # wraps but doesn't change the type); cast at the boundary to satisfy the
     # typed buffer field on `ModelRequestContext`.
-    request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
+    request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
     request_context._buffered_stream_events = cast(list[ModelResponseStreamEvent], captured)  # pyright: ignore[reportPrivateUsage]

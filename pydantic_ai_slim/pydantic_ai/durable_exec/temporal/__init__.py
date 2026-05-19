@@ -127,6 +127,9 @@ class PydanticAIPlugin(SimplePlugin):
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
                 if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+                    # Deprecated path: `TemporalAgent` is being phased out in favor of
+                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
+                    # working so existing workers keep loading without changes.
                     activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 elif isinstance(agent, AbstractAgent):
                     durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]

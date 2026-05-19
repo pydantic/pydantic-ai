@@ -16,13 +16,20 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
+from pydantic_ai.durable_exec._utils import (
+    StreamedActivityResult,
+    call_model,
+    disable_threads,
+    open_model_stream,
+    process_event_stream,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, infer_model
@@ -267,8 +274,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # --- Model request activities ---
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            from pydantic_ai.durable_exec._utils import call_model
-
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -279,15 +284,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            return await call_model(model_for_request, request_context, run_context)
+            return await call_model(model_for_request, request_context=request_context, run_context=run_context)
 
         request_activity.__annotations__['deps'] = deps_type | None
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> StreamedActivityResult:
-            from pydantic_ai.durable_exec._utils import open_model_stream, process_event_stream
-
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -298,14 +301,16 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            async with open_model_stream(model_for_request, request_context, run_context) as streamed_response:
+            async with open_model_stream(
+                model_for_request, request_context=request_context, run_context=run_context
+            ) as streamed_response:
                 # Fire the capability chain's wrap_run_event_stream hooks against
                 # the live stream — ProcessEventStream and any other outer capability
                 # sees real events here, not synthetic ones replayed in the workflow.
                 await process_event_stream(
-                    run_context,
-                    request_context,
-                    streamed_response,
+                    run_context=run_context,
+                    request_context=request_context,
+                    stream=streamed_response,
                     handler=event_stream_handler,
                 )
             return StreamedActivityResult(
@@ -457,11 +462,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         Issue #5253 tracks proper end-to-end durable support for `DynamicCapability`
         toolsets; until that lands, the static class check is relaxed for any agent
         that uses dynamic capabilities.
-        """
-        from pydantic_ai.capabilities import DynamicCapability
 
-        if ctx.root_capability is None:  # pragma: no cover - always set inside an agent run
-            return
+        No equivalent check on DBOS/Prefect: their durable units (steps, tasks) are
+        plain decorated callables registered at first-use rather than worker boot, so
+        per-run capabilities can register on the fly without violating durability.
+        """
+        assert ctx.root_capability is not None
 
         if any(issubclass(cls, DynamicCapability) for cls in self._bound_capability_classes):
             return
@@ -537,7 +543,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             # propagate the buffered events so any per-run `event_stream_handler`
             # gets to see real granular events from inside the activity rather
             # than the synthetic chunks `ReplayStreamedResponse` would produce.
-            request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
+            request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
             request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
             return result.response
 

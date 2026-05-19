@@ -11,7 +11,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -183,8 +183,15 @@ def resolve_tool_activity_config(
     # SetToolMetadata capability) is the primary path.
     if tool is not None and tool.tool_def.metadata is not None:
         metadata_config = tool.tool_def.metadata.get('temporal')
+        if metadata_config is False:
+            return False
         if metadata_config is not None:
-            return cast('ActivityConfig | Literal[False]', metadata_config)
+            if not isinstance(metadata_config, dict):
+                raise UserError(
+                    f"Tool {tool_name!r} has invalid 'temporal' metadata: expected a dict "
+                    f'(`ActivityConfig`) or `False`, got {type(metadata_config).__name__}.'
+                )
+            return cast('ActivityConfig', metadata_config)
     # Fallback: per-tool dict passed to the durability capability / temporal agent.
     return tool_activity_config.get(tool_name, {})
 

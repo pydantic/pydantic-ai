@@ -89,10 +89,27 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 
 from ._inline_snapshot import snapshot
 
+# `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`, and the
+# legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. `simple_dbos_agent = DBOSAgent(...)`).
+warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings(
+    'ignore',
+    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
+    category=DeprecationWarning,
+)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
+    pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+    ),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically

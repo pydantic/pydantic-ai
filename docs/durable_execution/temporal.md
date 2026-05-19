@@ -283,14 +283,13 @@ Temporal activity configuration, like timeouts and retry policies, can be custom
 - `activity_config`: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
 - `model_activity_config`: The Temporal activity config to use for model request activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
-- `tool_activity_config` ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] only): The Temporal activity config to use for specific tool call activities identified by toolset ID and tool name.
-    This is merged with the base and toolset-specific activity configs. On the capability path, per-tool config moves onto the tool itself — see [Per-tool activity config](#per-tool-activity-config-on-the-capability-path) below.
+Per-tool activity config lives on the tool itself — see [Per-tool activity config](#per-tool-activity-config) below.
 
-    If a tool does not use I/O, you can specify `False` to disable using an activity. Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
+If a tool does not use I/O, you can mark it `False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
 
-### Per-tool activity config on the capability path
+### Per-tool activity config
 
-On the capability path, per-tool activity config moves onto the tool itself via the [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] looks for a `'temporal'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability:
+Per-tool activity config lives on the tool's [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] looks for a `'temporal'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability. See the [capabilities documentation][pydantic_ai.capabilities.SetToolMetadata] for the full selector vocabulary.
 
 ```python {title="temporal_per_tool_config.py" test="skip"}
 from datetime import timedelta
@@ -331,7 +330,10 @@ agent = Agent(
 
 1. Inline: declare the activity config alongside the tool definition. Per-tool config merges on top of the toolset and base configs.
 2. Set `'temporal': False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
-3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable). Useful when the config doesn't belong on the tool definition (e.g. tools defined in third-party packages) or when a group of tools shares the same timeout profile.
+3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
+
+!!! tip "Configuring third-party tools"
+    [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 
 ## Activity Retries
 

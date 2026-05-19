@@ -78,10 +78,10 @@ def deserialize_run_context(
     This is a helper used internally by the Temporal wrappers. It calls the
     (potentially user-overridden) `TemporalRunContext.deserialize_run_context`
     and then sets `agent` and `root_capability` on the result so custom subclasses
-    don't need to know about either parameter. Setting `root_capability` lets
-    `pydantic_ai.durable_exec.process_event_stream` fire the capability chain
-    against the live model stream inside the activity, which is required for
-    capabilities like `ProcessEventStream` to see real (non-replayed) events.
+    don't need to know about either parameter. Setting `root_capability` lets the
+    durability capability fire the capability chain against the live model stream
+    inside the activity, which is required for capabilities like
+    `ProcessEventStream` to see real (non-replayed) events.
     """
     ctx = run_context_type.deserialize_run_context(serialized, deps=deps)
     if agent is not None:

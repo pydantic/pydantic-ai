@@ -674,13 +674,12 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
-    _capabilities_already_applied: bool = field(default=False, init=False)
-    """Internal coordination flag set by `pydantic_ai.durable_exec.process_event_stream`
-    when a durable-execution capability has already run the capability chain's
-    `wrap_run_event_stream` hooks against the live model stream inside an
-    activity/step/task. Read by the outer agent loop (`_stream_and_advance`) to skip
-    re-wrapping the replayed stream (which would double-emit hook side effects).
-    Not user API — set via the helper, not directly.
+    _hooks_already_applied: bool = field(default=False, init=False)
+    """Internal coordination flag set by a durable-execution capability that has
+    already run the capability chain's `wrap_run_event_stream` hooks against the
+    live model stream inside its activity/step/task. Read by the outer agent loop
+    (`_stream_and_advance`) to skip re-wrapping the replayed stream (which would
+    double-emit hook side effects). Not user API.
     """
 
     _buffered_stream_events: list[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -1188,7 +1187,7 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    _capabilities_already_applied: bool = field(default=False, init=False)
+    _hooks_already_applied: bool = field(default=False, init=False)
     """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
     against the live stream (e.g. inside a durable execution activity) and the outer
     agent loop should not re-wrap this replayed stream."""
@@ -1416,7 +1415,7 @@ class CompletedStreamedResponse(StreamedResponse):
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] to the workflow.
     """
 
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
+    def __init__(self, response: ModelResponse, *, model_request_parameters: ModelRequestParameters):
         super().__init__(model_request_parameters)
         self.response = response
 
@@ -1469,15 +1468,15 @@ class _ReplayStreamedResponse(StreamedResponse):  # pyright: ignore[reportUnused
 
     def __init__(
         self,
-        model_request_parameters: ModelRequestParameters,
         response: ModelResponse,
         *,
-        capabilities_already_applied: bool = False,
+        model_request_parameters: ModelRequestParameters,
+        hooks_already_applied: bool = False,
         buffered_events: list[ModelResponseStreamEvent] | None = None,
     ):
         super().__init__(model_request_parameters)
         self.response = response
-        self._capabilities_already_applied = capabilities_already_applied
+        self._hooks_already_applied = hooks_already_applied
         self._buffered_events = buffered_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
