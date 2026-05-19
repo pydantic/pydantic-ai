@@ -13,7 +13,6 @@ from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     InstrumentationNames,
-    event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
@@ -62,8 +61,7 @@ class Instrumentation(AbstractCapability[Any]):
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
-    which uses the global `TracerProvider`/`LoggerProvider` (typically configured by
-    `logfire.configure()`)."""
+    which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
     # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
     # returns a shallow copy via `replace(self)` for per-run isolation. These fields
@@ -91,10 +89,10 @@ class Instrumentation(AbstractCapability[Any]):
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
         Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`, `event_mode`,
-        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider`, `meter_provider`,
-        and `logger_provider` fields can't be expressed in YAML and default to the global
-        providers (typically configured via `logfire.configure()`).
+        kwargs (`include_binary_content`, `include_content`, `version`,
+        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
+        fields can't be expressed in YAML and default to the global providers (typically configured
+        via `logfire.configure()`).
 
         YAML form:
 
@@ -191,27 +189,20 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         new_message_index = self._new_message_index
 
-        if settings.version == 1:
-            attrs: dict[str, Any] = {
-                'all_messages_events': to_json(
-                    [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                ).decode()
-            }
-        else:
-            last_instructions = get_instructions(message_history, self._last_model_request_parameters)
-            attrs = {
-                'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
-                **settings.system_instructions_attributes(last_instructions),
-            }
+        last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        attrs: dict[str, Any] = {
+            'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
+            **settings.system_instructions_attributes(last_instructions),
+        }
 
-            if new_message_index > 0:
-                attrs['pydantic_ai.new_message_index'] = new_message_index
+        if new_message_index > 0:
+            attrs['pydantic_ai.new_message_index'] = new_message_index
 
-            if any(
-                (isinstance(m, ModelRequest) and m.instructions is not None and m.instructions != last_instructions)
-                for m in message_history[new_message_index:]
-            ):
-                attrs['pydantic_ai.variable_instructions'] = True
+        if any(
+            (isinstance(m, ModelRequest) and m.instructions is not None and m.instructions != last_instructions)
+            for m in message_history[new_message_index:]
+        ):
+            attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
             attrs['metadata'] = to_json(serialize_any(metadata)).decode()

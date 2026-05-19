@@ -853,8 +853,7 @@ async def test_call_tool_wrong_name():
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
         output_type=tuple[str, int],
-        tool_retries=0,
-        output_retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     @agent.tool_plain
@@ -2559,7 +2558,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - model must succeed first try
+            retries={'output': 0},  # No retries - model must succeed first try
         )
 
         async with agent.run_stream('test valid first invalid second') as result:
@@ -2640,7 +2639,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=1,  # Allow 1 retry so ToolRetryError is raised
+            retries={'output': 1},  # Allow 1 retry so ToolRetryError is raised
         )
 
         async with agent.run_stream('test exhaustive with tool retry') as result:
@@ -3320,7 +3319,7 @@ async def test_output_function_model_retry_in_stream():
     agent = Agent(
         FunctionModel(stream_function=stream_final_result),
         output_type=ToolOutput(reject, name='final_result'),
-        output_retries=0,
+        retries={'output': 0},
     )
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:

@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import sys
-import warnings
 from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
@@ -498,7 +497,7 @@ def test_output_validator_retries():
         args_json = '{"a": 1, "b": "foo"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=Foo, retries={'output': target_retries})
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
@@ -535,7 +534,7 @@ def test_output_function_retries():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='sunny')])
 
-    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), retries={'output': target_retries})
 
     result = agent.run_sync('Hello')
     assert result.output == 'Weather: sunny'
@@ -564,7 +563,7 @@ def test_tool_output_function_retries():
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), output_type=get_weather, output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=get_weather, retries={'output': target_retries})
 
     result = agent.run_sync('Hello')
     assert result.output == 'Weather in Mexico City'
@@ -597,8 +596,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(get_weather, max_retries=target_retries),
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     result = agent.run_sync('Hello')
@@ -818,8 +816,7 @@ def test_tool_output_max_retries_per_tool():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        tool_retries=0,
-        output_retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     result = agent.run_sync('Hello')
@@ -3815,7 +3812,7 @@ def test_unknown_tool_multiple_retries():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), tool_retries=num_retries, output_retries=num_retries)
+    agent = Agent(FunctionModel(empty), retries={'tools': num_retries, 'output': num_retries})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
@@ -3888,7 +3885,7 @@ def test_unknown_tool_per_tool_retries_exceeded():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), tool_retries=1, output_retries=5)
+    agent = Agent(FunctionModel(empty), retries={'tools': 1, 'output': 5})
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
@@ -5384,7 +5381,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - model must succeed first try
+            retries={'output': 0},  # No retries - model must succeed first try
         )
 
         result = agent.run_sync('test valid first invalid second')
@@ -5468,7 +5465,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=1,  # Allow 1 retry so `ToolRetryError` is raised
+            retries={'output': 1},  # Allow 1 retry so `ToolRetryError` is raised
         )
 
         result = agent.run_sync('test exhaustive with tool retry')
@@ -5757,7 +5754,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,
+            retries={'output': 0},
         )
 
         result = agent.run_sync('test exhaustive with max retries exceeded')
@@ -5791,7 +5788,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='early',
-            output_retries=0,
+            retries={'output': 0},
         )
 
         result = agent.run_sync('test early with max retries exceeded')
@@ -7526,38 +7523,13 @@ def test_many_multimodal_tool_response():
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')  # type: ignore[call-arg]
+        Agent('test', usage_limits='invalid')  # pyright: ignore[reportCallIssue]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')  # type: ignore[call-arg]
+        Agent('test', invalid_kwarg='value')  # pyright: ignore[reportCallIssue]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
-
-
-def test_deprecated_kwargs_still_work():
-    """Test that valid deprecated kwargs still work with warnings."""
-    import warnings
-
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-
-            Agent(  # pyright: ignore[reportDeprecated]
-                'test',
-                mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],  # pyright: ignore[reportDeprecated]
-            )
-            mcp_servers_warnings = [
-                warning
-                for warning in w
-                if issubclass(warning.category, DeprecationWarning)
-                and '`mcp_servers` is deprecated' in str(warning.message)
-            ]
-            assert len(mcp_servers_warnings) == 1
-    except ImportError:
-        pass
+        Agent('test', foo='value1', bar='value2')  # pyright: ignore[reportCallIssue]
 
 
 def test_override_toolsets():
@@ -7912,8 +7884,8 @@ def test_prepare_output_tools_receives_output_max_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        output_retries=target_retries,
-        tool_retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
+        # tool retry budget — different from output, must NOT leak into prep ctx
+        retries={'output': target_retries, 'tools': 1},
         capabilities=[PrepareOutputTools(prep)],
     )
 
@@ -7936,7 +7908,7 @@ def test_prepare_output_tools_receives_output_max_retries():
 
 
 def test_prepare_output_tools_sees_run_level_output_retries_override():
-    """`prepare_output_tools` sees the run-level `output_retries` override on `ctx.max_retries`,
+    """`prepare_output_tools` sees the run-level output retry override on `ctx.max_retries`,
     not the agent-level default — so capability hooks observe the same budget the run will enforce.
 
     Regression for https://github.com/pydantic/pydantic-ai/pull/5075#discussion_r3170685538.
@@ -7954,25 +7926,71 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        output_retries=5,
+        retries={'output': 5},
         capabilities=[PrepareOutputTools(prep)],
     )
 
-    result = agent.run_sync('Hello', output_retries=2)
+    result = agent.run_sync('Hello', retries={'output': 2})
     assert isinstance(result.output, Foo)
     # Hook sees run-level override (2), not the agent-level default (5).
     assert seen_max_retries == [2]
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
-async def test_explicit_context_manager():
+def test_set_mcp_sampling_model():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    test_model = TestModel()
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport, sampling_model=test_model)
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent(None, toolsets=[toolset])
+
+    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+        agent.set_mcp_sampling_model()
+    assert server1.sampling_model is None
+    assert server2.sampling_model is test_model
+
+    def _callback(toolset: MCPToolset) -> Any:
+        # Probe fastmcp's private session-kwargs to confirm the client's sampling callback was
+        # rewired alongside the public `sampling_model` attribute.
+        return toolset.client._session_kwargs.get('sampling_callback')  # pyright: ignore[reportPrivateUsage]
+
+    agent.model = test_model
+    agent.set_mcp_sampling_model()
+    assert server1.sampling_model is test_model
+    assert server2.sampling_model is test_model
+    assert _callback(server1) is not None
+    assert _callback(server2) is not None
+
+    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
+    with agent.override(model=function_model):
+        agent.set_mcp_sampling_model()
+        assert server1.sampling_model is function_model
+        assert server2.sampling_model is function_model
+
+    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
+    agent.set_mcp_sampling_model(function_model2)
+    assert server1.sampling_model is function_model2
+    assert server2.sampling_model is function_model2
+
+
+async def test_explicit_context_manager():
+    try:
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -7985,15 +8003,17 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_implicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -8002,10 +8022,11 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_parallel_mcp_calls():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
@@ -8020,7 +8041,7 @@ def test_parallel_mcp_calls():
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
@@ -8279,41 +8300,6 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     assert integer_holder == 2
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
-def test_set_mcp_sampling_model():
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    test_model = TestModel()
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)  # pyright: ignore[reportDeprecated]
-    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
-    agent = Agent(None, toolsets=[toolset])
-
-    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
-        agent.set_mcp_sampling_model()
-    assert server1.sampling_model is None
-    assert server2.sampling_model is test_model
-
-    agent.model = test_model
-    agent.set_mcp_sampling_model()
-    assert server1.sampling_model is test_model
-    assert server2.sampling_model is test_model
-
-    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
-    with agent.override(model=function_model):
-        agent.set_mcp_sampling_model()
-        assert server1.sampling_model is function_model
-        assert server2.sampling_model is function_model
-
-    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
-    agent.set_mcp_sampling_model(function_model2)
-    assert server1.sampling_model is function_model2
-    assert server2.sampling_model is function_model2
-
-
 def test_toolsets():
     toolset = FunctionToolset()
 
@@ -8344,7 +8330,7 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(  # pyright: ignore[reportCallIssue]
+    agent = Agent(  # pyright: ignore[reportDeprecated]
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
@@ -10507,9 +10493,9 @@ def test_output_validator_retry_consistency_across_paths():
     but the tool-output path was using the per-tool counter, causing inconsistent
     ctx.retry and ctx.max_retries values in @agent.output_validator.
 
-    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
+    Using `ToolOutput(max_retries=5)` with `retries={'output': 2}` exposes the bug:
     without the fix, the validator would see max_retries=5 (per-tool value)
-    instead of max_retries=2 (global output_retries, matching the text path).
+    instead of max_retries=2 (global output retry budget, matching the text path).
     """
     retries_log: list[int] = []
     max_retries_log: list[int] = []
@@ -10522,7 +10508,7 @@ def test_output_validator_retry_consistency_across_paths():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(Foo, max_retries=5),
-        output_retries=2,
+        retries={'output': 2},
     )
 
     @agent.output_validator
@@ -10557,7 +10543,7 @@ def test_output_validator_exceeds_output_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(Foo),
-        output_retries=2,
+        retries={'output': 2},
     )
 
     @agent.output_validator
@@ -10591,7 +10577,7 @@ async def test_concurrent_runs_output_retry_isolation():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(Foo),
-        output_retries=3,
+        retries={'output': 3},
     )
 
     @agent.output_validator
@@ -10655,8 +10641,7 @@ def test_output_validator_retry_counter_with_tool_switch():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        tool_retries=0,
-        output_retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     @agent.output_validator
@@ -10700,7 +10685,7 @@ def test_output_tool_validation_vs_execution_retry_counting():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(Foo),
-        output_retries=5,
+        retries={'output': 5},
     )
 
     @agent.output_validator
@@ -10743,75 +10728,75 @@ class OutputRetryBudgetCase:
 OUTPUT_RETRY_BUDGET_CASES = [
     OutputRetryBudgetCase(
         id='run-arg-caps-agent-default',
-        init={'output_retries': 5},
+        init={'retries': {'output': 5}},
         override=None,
-        run={'output_retries': 2},
+        run={'retries': 2},
         expected_budget=2,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='run-arg-beats-spec',
-        init={'output_retries': 5},
+        init={'retries': {'output': 5}},
         override=None,
-        run={'output_retries': 2, 'spec': {'output_retries': 4}},
+        run={'retries': 2, 'spec': {'retries': {'output': 4}}},
         expected_budget=2,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='spec-only-beats-agent-default',
-        init={'output_retries': 5},
+        init={'retries': {'output': 5}},
         override=None,
-        run={'spec': {'output_retries': 2}},
+        run={'spec': {'retries': {'output': 2}}},
         expected_budget=2,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-kwarg-caps-agent-default',
-        init={'output_retries': 5},
-        override={'output_retries': 2},
+        init={'retries': {'output': 5}},
+        override={'retries': 2},
         run={},
         expected_budget=2,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-spec-honored',
-        init={'output_retries': 5},
-        override={'spec': {'output_retries': 2}},
+        init={'retries': {'output': 5}},
+        override={'spec': {'retries': {'output': 2}}},
         run={},
         expected_budget=2,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-beats-run-arg',
-        init={'output_retries': 5},
-        override={'output_retries': 1},
-        run={'output_retries': 10},
+        init={'retries': {'output': 5}},
+        override={'retries': 1},
+        run={'retries': 10},
         expected_budget=1,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
-        id='deprecated-retries-cascades',
+        id='int-retries-sets-both',
         init={'retries': 5},
         override=None,
         run={},
         expected_budget=5,
-        expects_deprecation_warning=True,
+        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
-        id='tool-retries-no-cascade',
-        init={'tool_retries': 5},
+        id='dict-tools-only-keeps-output-default',
+        init={'retries': {'tools': 5}},
         override=None,
         run={},
         expected_budget=1,
         expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
-        id='retries-cascades-even-when-tool-retries-set',
-        init={'retries': 5, 'tool_retries': 3},
+        id='dict-sets-both-independently',
+        init={'retries': {'tools': 3, 'output': 5}},
         override=None,
         run={},
         expected_budget=5,
-        expects_deprecation_warning=True,
+        expects_deprecation_warning=False,
     ),
 ]
 
@@ -10830,16 +10815,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    deprecation_ctx = (
-        pytest.warns(DeprecationWarning, match=r'`retries` is deprecated and will be removed in v2')
-        if case.expects_deprecation_warning
-        else nullcontext()
-    )
-    with warnings.catch_warnings():
-        if not case.expects_deprecation_warning:
-            warnings.simplefilter('error', DeprecationWarning)
-        with deprecation_ctx:
-            agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
 
     @agent.output_validator
     def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
@@ -10857,7 +10833,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
 
 
 def test_text_path_honors_output_retry_budget():
-    """Parity check: the text-output path enforces the run-level `output_retries` override too.
+    """Parity check: the text-output path enforces the run-level output retry override too.
 
     The matrix above runs on the tool-output path; this test verifies the same precedence applies
     when the model returns a `TextPart` and the agent's `output_type` is `str`.
@@ -10867,7 +10843,7 @@ def test_text_path_honors_output_retry_budget():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('hello')])
 
-    agent = Agent(FunctionModel(return_model), output_type=str, output_retries=5)
+    agent = Agent(FunctionModel(return_model), output_type=str, retries={'output': 5})
 
     @agent.output_validator
     def always_retry(ctx: RunContext[None], o: str) -> str:
@@ -10875,13 +10851,13 @@ def test_text_path_honors_output_retry_budget():
         raise ModelRetry(f'retry {ctx.retry}')
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
-        agent.run_sync('Hello', output_retries=2)
+        agent.run_sync('Hello', retries={'output': 2})
 
     assert retries_log == [0, 1, 2]
 
 
-def test_output_retries_run_override_without_validators():
-    """Run-level `output_retries` takes effect — and isolates from the shared agent-level toolset —
+def test_run_level_output_retry_override_without_validators():
+    """Run-level output retry override takes effect and isolates from the shared agent-level toolset
     even when no output_validator is registered.
 
     Exercises the shared-toolset clone branch: with `output_schema == self._output_schema` and no
@@ -10898,13 +10874,13 @@ def test_output_retries_run_override_without_validators():
         # Always return invalid args → output function raises ModelRetry via validation path
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
 
-    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=10)
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries={'output': 10})
     shared_toolset = agent._output_toolset  # pyright: ignore[reportPrivateUsage]
     assert shared_toolset is not None
     assert shared_toolset.max_retries == 10
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
-        agent.run_sync('Hello', output_retries=2)
+        agent.run_sync('Hello', retries={'output': 2})
 
     # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
     assert call_count == 3
@@ -10912,43 +10888,108 @@ def test_output_retries_run_override_without_validators():
     assert shared_toolset.max_retries == 10
 
 
+def test_from_spec_preserves_zero_retry_budgets():
+    output_call_count = 0
+
+    def output_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal output_call_count
+        output_call_count += 1
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    output_agent = Agent.from_spec(
+        {'model': 'test', 'retries': {'output': 0}},
+        model=FunctionModel(output_model),
+        output_type=ToolOutput(Foo),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        output_agent.run_sync('Hello')
+
+    assert output_call_count == 1
+
+    tool_call_count = 0
+
+    def tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal tool_call_count
+        tool_call_count += 1
+        if tool_call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('plain_tool', '{"bad_field": 1}')])
+        if tool_call_count == 2:
+            return ModelResponse(parts=[ToolCallPart('plain_tool', '{"x": 1}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    tool_agent = Agent.from_spec(
+        {'model': 'test', 'retries': {'tools': 0}},
+        model=FunctionModel(tool_model),
+    )
+
+    @tool_agent.tool_plain
+    def plain_tool(x: int) -> str:
+        return str(x)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'plain_tool' exceeded max retries count of 0"):
+        tool_agent.run_sync('Hello')
+
+    result = tool_agent.run_sync('Hello again')
+    assert result.output == 'done'
+    assert tool_call_count == 3
+
+
+def test_run_retries_cannot_override_tool_budget():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError, match=r'Per-run `retries` cannot set tool retries'):
+        agent.run_sync('Hello', retries={'tools': 1})
+
+
+def test_override_retries_cannot_override_tool_budget():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError, match=r'agent\.override\(retries=\.\.\.\)` cannot set tool retries'):
+        with agent.override(retries={'tools': 1}):
+            pass
+
+
+def test_wrapper_override_forwards_retries():
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries={'output': 3})
+    wrapped = WrapperAgent(agent)
+
+    with wrapped.override(retries=0):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+            wrapped.run_sync('Hello')
+
+    assert call_count == 1
+
+
 @pytest.mark.parametrize(
-    'kwargs, expected_warning',
+    'kwargs',
     [
-        ({}, None),
-        ({'tool_retries': 5}, None),
-        ({'output_retries': 5}, None),
-        ({'tool_retries': 5, 'output_retries': 5}, None),
-        ({'retries': 5}, r'`retries` is deprecated.*Use `tool_retries` instead'),
-        ({'retries': 5, 'output_retries': 3}, r'`retries` is deprecated.*Use `tool_retries` instead'),
-        (
-            {'retries': 5, 'tool_retries': 3},
-            r'`retries` is deprecated.*only setting `output_retries` via the legacy 1\.x cascade',
-        ),
+        {},
+        {'retries': 5},
+        {'retries': {'tools': 5}},
+        {'retries': {'output': 5}},
+        {'retries': {'tools': 5, 'output': 3}},
     ],
     ids=[
         'no-kwargs',
-        'tool_retries-only',
-        'output_retries-only',
-        'tool_retries-and-output_retries',
-        'retries-only-warns',
-        'retries-and-output_retries-warns-generic',
-        'retries-and-tool_retries-warns-cascade-callout',
+        'int-retries',
+        'dict-tools-only',
+        'dict-output-only',
+        'dict-both',
     ],
 )
-def test_agent_init_deprecation_warning(kwargs: dict[str, Any], expected_warning: str | None):
-    """Cover the `Agent.__init__` deprecation warning text for every kwarg combination.
-
-    The both-passed case (`retries=` + `tool_retries=`) gets a sharper message that calls out the
-    silent cascade to `output_retries`; everything else either warns generically or stays silent.
-    """
-    if expected_warning is None:
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', DeprecationWarning)
-            Agent('test', **kwargs)
-    else:
-        with pytest.warns(DeprecationWarning, match=expected_warning):
-            Agent('test', **kwargs)
+def test_agent_init_retries(kwargs: dict[str, Any]):
+    """The `retries: int | AgentRetries` API accepts shared and per-category budgets."""
+    Agent('test', **kwargs)
 
 
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
@@ -10959,10 +11000,10 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     downstream. The global retry counter should only reflect output validation
     retries, not unknown-tool retries, so valid tools keep working.
 
-    We set retries=2 (per-tool max for unknown tools) and output_retries=1
+    We set retries=2 (per-tool max for unknown tools) and retries={'output': 1}
     (global max for output validation) to isolate the bug: per-tool retries
     allow 2 rounds of the unknown tool, but the old code's global increment
-    would exhaust output_retries after just 2 rounds.
+    would exhaust the output retry budget after just 2 rounds.
     """
     call_count = 0
 
@@ -10978,7 +11019,7 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(model_function), tool_retries=2, output_retries=1)
+    agent = Agent(FunctionModel(model_function), retries={'tools': 2, 'output': 1})
 
     @agent.tool_plain
     def valid_tool(x: int) -> str:
