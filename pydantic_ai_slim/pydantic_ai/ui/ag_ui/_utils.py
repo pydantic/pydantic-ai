@@ -6,9 +6,10 @@ import importlib.metadata
 import re
 from typing import Any, Final
 
+import pydantic
 from typing_extensions import Required, TypedDict
 
-from ...messages import ThinkingPart
+from ...messages import MultiModalContent, ThinkingPart
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -26,6 +27,14 @@ FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
+
+TOOL_RETURN_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_return_file'
+"""Activity type for multimodal `ToolReturnPart` content stored as AG-UI ActivityMessages.
+
+The AG-UI protocol's `ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18; this
+sidecar lets multimodal tool returns round-trip until the protocol gains native support
+(tracked upstream in https://github.com/ag-ui-protocol/ag-ui/issues/126).
+"""
 
 
 class FileActivityContent(TypedDict, total=False):
@@ -46,6 +55,21 @@ class UploadedFileActivityContent(TypedDict, total=False):
     media_type: str
     identifier: str
     vendor_metadata: Any
+
+
+class ToolReturnFileActivityContent(TypedDict, total=False):
+    """Content schema for `ActivityMessage` with `activity_type=pydantic_ai_tool_return_file`.
+
+    Each item in `files` is a JSON-serialized `MultiModalContent` (with a `kind`
+    discriminator), matching the shape produced by `multi_modal_content_ta.dump_python`.
+    """
+
+    tool_call_id: Required[str]
+    files: Required[list[dict[str, Any]]]
+
+
+multi_modal_content_ta: pydantic.TypeAdapter[MultiModalContent] = pydantic.TypeAdapter(MultiModalContent)
+"""TypeAdapter for serializing/deserializing `MultiModalContent` items in tool-return activities."""
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

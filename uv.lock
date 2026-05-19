@@ -12,6 +12,10 @@ conflicts = [[
     { package = "pydantic-ai-slim", extra = "outlines-vllm-offline" },
 ]]
 
+[options]
+exclude-newer = "2026-05-10T19:54:55.835671Z"
+exclude-newer-span = "P3D"
+
 [manifest]
 members = [
     "clai",

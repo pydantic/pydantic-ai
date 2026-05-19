@@ -5,7 +5,6 @@ import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
-from unittest.mock import Mock
 
 import pytest
 
@@ -43,6 +42,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturn,
+    ToolReturnContent,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
@@ -3826,6 +3826,304 @@ async def test_adapter_dump_messages_with_tools():
                     {'type': 'text', 'text': 'Here are the results.', 'state': 'done', 'provider_metadata': None}
                 ],
             },
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('case_id', 'expected_output'),
+    [
+        pytest.param(
+            'single-image',
+            snapshot(
+                {
+                    'data': 'AAEC',
+                    'media_type': 'image/jpeg',
+                    'vendor_metadata': None,
+                    'kind': 'binary',
+                    'identifier': '0c7a62',
+                }
+            ),
+            id='single-image',
+        ),
+        pytest.param(
+            'text-then-audio',
+            snapshot(
+                [
+                    'the audio narration says...',
+                    {
+                        'data': 'EBES',
+                        'media_type': 'audio/mpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': 'c4c10d',
+                    },
+                ]
+            ),
+            id='text-then-audio',
+        ),
+        pytest.param(
+            'image-and-video',
+            snapshot(
+                [
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                    {
+                        'data': 'ICEi',
+                        'media_type': 'video/mp4',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': 'ddb5a7',
+                    },
+                ]
+            ),
+            id='image-and-video',
+        ),
+        pytest.param(
+            'document-url',
+            snapshot(
+                {
+                    'url': 'https://example.com/doc.pdf',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'document-url',
+                    'media_type': 'application/pdf',
+                    'identifier': 'e3337d',
+                }
+            ),
+            id='document-url',
+        ),
+        pytest.param(
+            'list-data-and-image',
+            snapshot(
+                [
+                    'hello',
+                    'world',
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                ]
+            ),
+            id='list-data-and-image',
+        ),
+        pytest.param(
+            'dict-with-nested-image',
+            snapshot(
+                {
+                    'caption': 'see image',
+                    'attachment': {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                }
+            ),
+            id='dict-with-nested-image',
+        ),
+    ],
+)
+async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    expected_output: Any,
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
+):
+    """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
+
+    The output field carries the dumped `ToolReturnContent` shape directly; on load,
+    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit
+    `Discriminator` lifted onto the recursive alias.
+    """
+    contents: dict[str, Any] = {
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'list-data-and-image': ['hello', 'world', tiny_image],
+        'dict-with-nested-image': {'caption': 'see image', 'attachment': tiny_image},
+    }
+    content = contents[case_id]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+    assert tool_part.output == expected_output
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'0': 0, '1': 1, '2': 2}, id='uint8array-numeric-keyed-dict'),
+        pytest.param({'type': 'Buffer', 'data': [0, 1, 2]}, id='node-buffer-shape'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_payload: Any):
+    """Frontends that JSON-stringify a `Uint8Array`/`Buffer` instead of base64-encoding it
+    still produce a usable `BinaryContent` after load.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5255 review comment from
+    sadra-barikbin: a deferred frontend-executed tool returned `data` as a numeric-keyed
+    dict (`JSON.stringify(uint8Array)`), and `tool_return_content_ta.validate_python`
+    raised `ValidationError: Input should be a valid bytes` because pydantic's bytes
+    validator does not accept dicts.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(
+            id='m1',
+            role='user',
+            parts=[TextUIPart(text='give me a file')],
+        ),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    content = tool_returns[0].content
+    assert isinstance(content, BinaryContent)
+    assert content.data == b'\x00\x01\x02'
+    assert content.media_type == 'application/pdf'
+
+
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'type': 'Buffer', 'data': 'not-a-list'}, id='buffer-envelope-non-list-data'),
+        pytest.param({'0': 1, '2': 3}, id='uint8array-non-contiguous-indices'),
+        pytest.param({'0': 'a'}, id='uint8array-non-int-values'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
+    """Unrecognized binary `data` shapes pass through `_js_binary_to_bytes` unchanged so
+    pydantic surfaces a clean `ValidationError` rather than the helper raising
+    `KeyError`/`TypeError` on malformed input."""
+    from pydantic import ValidationError
+
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+    with pytest.raises(ValidationError, match='Input should be a valid bytes'):
+        VercelAIAdapter.load_messages(ui_messages)
+
+
+async def test_adapter_tool_return_text_only_unchanged():
+    """Text-only tool returns serialize as the literal string and round-trip unchanged."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='search', tool_call_id='tc-1', content='just a string')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+
+    assert tool_part.output == 'just a string'
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns[0].content == 'just a string'
+
+
+async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
+    """Multimodal `NativeToolReturnPart.content` round-trips through the discriminated alias."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args={'q': 'test'},
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', tiny_image],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            NativeToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
         ]
     )
 
@@ -7788,46 +8086,42 @@ class TestSdkVersion:
 
 
 @pytest.mark.parametrize(
-    'model_response_object,files,expected',
+    ('case_id', 'expected'),
     [
         pytest.param(
-            {'return_value': 'hello'},
-            [BinaryContent(data=b'x', media_type='image/png')],
-            snapshot([{'return_value': 'hello'}, '[File: image/png]']),
+            'string_with_files',
+            snapshot([{'return_value': 'hello'}, '[File: image/jpeg]']),
             id='string_with_files',
         ),
         pytest.param(
-            {},
-            [BinaryContent(data=b'x', media_type='audio/wav')],
-            snapshot([{}, '[File: audio/wav]']),
+            'empty_with_files',
+            snapshot([{}, '[File: audio/mpeg]']),
             id='empty_with_files',
         ),
         pytest.param(
-            {'return_value': [1, 2]},
-            [BinaryContent(data=b'x', media_type='image/png')],
-            snapshot([{'return_value': [1, 2]}, '[File: image/png]']),
+            'list_with_files',
+            snapshot([{'return_value': [1, 2]}, '[File: image/jpeg]']),
             id='list_with_files',
         ),
-        pytest.param(
-            {},
-            [],
-            snapshot({}),
-            id='empty_no_files',
-        ),
+        pytest.param('empty_no_files', snapshot(''), id='empty_no_files'),
     ],
 )
-def test_tool_return_output_edge_cases(
-    model_response_object: dict[str, Any], files: list[BinaryContent], expected: str
-):
-    """Test `_tool_return_with_files` with files and various `model_response_object` values."""
+def test_tool_return_output_edge_cases(case_id: str, expected: Any, tiny_image: BinaryImage, tiny_audio: BinaryContent):
+    """`_tool_return_with_files` produces text-stream-friendly output for streaming chunks.
+
+    Multimodal cases collapse to `[model_response_object_dict, '[File: <media_type>]', ...]`;
+    text-only cases pass through `tool_return_output` (the dumped content).
+    """
     from pydantic_ai.ui.vercel_ai._event_stream import _tool_return_with_files  # pyright: ignore[reportPrivateUsage]
 
-    mock_part = Mock()
-    mock_part.model_response_object.return_value = model_response_object
-    mock_part.files = files
-
-    result = _tool_return_with_files(mock_part)
-    assert result == expected
+    contents: dict[str, ToolReturnContent] = {
+        'string_with_files': ['hello', tiny_image],
+        'empty_with_files': tiny_audio,
+        'list_with_files': [[1, 2], tiny_image],
+        'empty_no_files': '',
+    }
+    part = ToolReturnPart(tool_name='t', content=contents[case_id], tool_call_id='c')
+    assert _tool_return_with_files(part) == expected
 
 
 def test_describe_file_uploaded_file():

@@ -40,6 +40,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
@@ -397,7 +398,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    raw_output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     NativeToolReturnPart(
@@ -423,7 +425,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=_validate_tool_output(part.output),
+                                    )
                                 )
                             elif part.state == 'output-error':
                                 builder.add(
@@ -862,6 +868,67 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _validate_tool_output(output: Any) -> Any:
+    """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
+
+    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
+    """
+    validated = tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+    return _narrow_binary_images(validated)
+
+
+def _coerce_js_binary_data(value: Any) -> Any:
+    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+
+    `JSON.stringify` produces `{'0': N, '1': N, ...}` for `Uint8Array` and
+    `{'type': 'Buffer', 'data': [N, ...]}` for Node `Buffer`. Pydantic's bytes validator
+    rejects both. We normalize them at the wire boundary so deferred frontend tools that
+    return binary data via the documented `kind: 'binary'` shape work without requiring
+    callers to base64-encode manually.
+    """
+    if isinstance(value, list):
+        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if coerced.get('kind') == 'binary':
+        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
+    return coerced
+
+
+def _js_binary_to_bytes(data: Any) -> Any:
+    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values."""
+    if not isinstance(data, dict):
+        return data
+    mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
+    # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
+    if mapping.get('type') == 'Buffer':
+        buf_data: Any = mapping.get('data')
+        if isinstance(buf_data, list) and all(isinstance(b, int) for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
+            return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
+    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`
+    if mapping and all(k.isdigit() for k in mapping):
+        indices = sorted(int(k) for k in mapping)
+        if indices == list(range(len(indices))):
+            values: list[Any] = [mapping[str(i)] for i in indices]
+            if all(isinstance(v, int) for v in values):
+                return bytes(values)
+    return data  # pyright: ignore[reportUnknownVariableType]
+
+
+def _narrow_binary_images(value: Any) -> Any:
+    """Walk a validated `ToolReturnContent` value and narrow image `BinaryContent` to `BinaryImage`."""
+    if isinstance(value, BinaryContent):
+        return BinaryContent.narrow_type(value)
+    if isinstance(value, list):
+        return [_narrow_binary_images(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, dict):
+        return {k: _narrow_binary_images(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    return value
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

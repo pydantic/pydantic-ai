@@ -1079,16 +1079,56 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
+_MULTIMODAL_KINDS: frozenset[str] = frozenset(
+    {'binary', 'image-url', 'audio-url', 'document-url', 'video-url', 'uploaded-file'}
+)
+
+
+def _tool_return_content_discriminator(value: Any) -> str:
+    """Route a `ToolReturnContent` value to one of the tagged union branches.
+
+    Pydantic's smart-union resolution would otherwise pick `Mapping[str, ToolReturnContent]`
+    for a dumped `MultiModalContent` dict (e.g. `{'kind': 'binary', 'data': '...'}`) and skip
+    the discriminated `MultiModalContent` branch in `validate_python`, leaving multimodal
+    leaves as plain dicts.
+    """
+    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
+        return 'multimodal'
+    if isinstance(value, Mapping):
+        if 'kind' in value and value['kind'] in _MULTIMODAL_KINDS:
+            return 'multimodal'
+        return 'mapping'
+    if isinstance(value, (str, bytes, bytearray)):
+        return 'any'
+    if isinstance(value, Sequence):
+        return 'sequence'
+    return 'any'
+
+
 if TYPE_CHECKING:
     # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
     ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
 else:
     # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
-    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization.
+    # The explicit `Discriminator` is required because smart-union resolution otherwise picks
+    # `Mapping`/`Any` over the inner-discriminated `MultiModalContent` branch in python mode.
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
-        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+        Annotated[
+            Annotated[MultiModalContent, pydantic.Tag('multimodal')]
+            | Annotated[Mapping[str, 'ToolReturnContent'], pydantic.Tag('mapping')]
+            | Annotated[Sequence['ToolReturnContent'], pydantic.Tag('sequence')]
+            | Annotated[Any, pydantic.Tag('any')],
+            pydantic.Discriminator(_tool_return_content_discriminator),
+        ],
     )
+
+
+tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeAdapter(ToolReturnContent)
+"""TypeAdapter for `ToolReturnContent` — used by UI adapters to rehydrate multimodal items
+(`BinaryContent`, `ImageUrl`, etc.) from raw JSON/dict payloads carried in wire-protocol fields
+typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
 
 
 ToolPartKind: TypeAlias = Literal['tool-search']

@@ -34,7 +34,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    ToolReturnContent,
+    is_multi_modal_content,
+)
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1250,6 +1255,42 @@ def test_tool_return_part_binary_content_serialization():
     binary_content = BinaryContent(png_data, media_type='image/png')
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
     assert tool_return.model_response_object() == snapshot({})
+
+
+@pytest.mark.parametrize('case_id', ['scalar', 'list-with-binary', 'dict-with-nested-binary'])
+def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: BinaryContent):
+    """`ToolReturnPart.content` containing `BinaryContent` (scalar, in a list, or in a dict)
+    must round-trip via `ModelMessagesTypeAdapter` in both `validate_json` (the wire path)
+    and `validate_python` (the replay path used by UI adapters that already parsed JSON).
+
+    Without the explicit `Discriminator` on `ToolReturnContent`, smart-union resolution picks
+    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` branch in
+    `validate_python`, leaving binary leaves as plain dicts.
+
+    Uses `tiny_audio` (non-image `BinaryContent`) to focus on rehydration, not the
+    `BinaryImage` narrowing applied by UI adapters.
+    """
+    contents: dict[str, ToolReturnContent] = {
+        'scalar': tiny_audio,
+        'list-with-binary': ['hello', tiny_audio],
+        'dict-with-nested-binary': {'caption': 'see audio', 'attachment': tiny_audio},
+    }
+    content = contents[case_id]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    json_loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    json_part = json_loaded[0].parts[0]
+    assert isinstance(json_part, ToolReturnPart)
+    assert json_part.content == content
+
+    python_loaded = ModelMessagesTypeAdapter.validate_python(
+        ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    )
+    python_part = python_loaded[0].parts[0]
+    assert isinstance(python_part, ToolReturnPart)
+    assert python_part.content == content
 
 
 def test_tool_return_part_list_structure_preserved():
