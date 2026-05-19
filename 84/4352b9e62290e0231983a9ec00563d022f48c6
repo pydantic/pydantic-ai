@@ -1,0 +1,19 @@
+tests/test_mcp.py
+  s_ae45058a0235a7::t_3aed2a44e05734 56,309-311,320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "844352b9e62290e0231983a9ec00563d022f48c6",
+  "prompts": {},
+  "sessions": {
+    "s_ae45058a0235a7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3c60-161c-75d1-a526-dec43e666613",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
