@@ -5651,4 +5651,60 @@ async def test_xai_close_stream_only_suppresses_async_generator_race(error_messa
         await response.close_stream()
 
 
+async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
+    """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
+    response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    # Hardcoded `provider_name='grok'` simulates a history serialized in 1.x with the old `GrokProvider`.
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='legacy reasoning', signature='sig-legacy', provider_name='grok'),
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'legacy query'},
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content=None,
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                TextPart(content='first response'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='grok',
+        ),
+    ]
+    result = await agent.run('Second question', message_history=message_history)
+    assert result.output == 'second response'
+
+    sent_messages = get_mock_chat_create_kwargs(mock_client)[0]['messages']
+    assistant_msgs = [m for m in sent_messages if m['role'] == 'ROLE_ASSISTANT']
+    # The `ThinkingPart(provider_name='grok')` must surface as native `reasoning_content` + `encrypted_content`,
+    # NOT wrapped in `<think>` tags (which is the fallback for foreign providers).
+    native_thinking = [m for m in assistant_msgs if m.get('reasoning_content') or m.get('encrypted_content')]
+    assert len(native_thinking) == 1, (
+        f'Expected exactly one assistant message with native thinking content; got {assistant_msgs!r}'
+    )
+    assert native_thinking[0]['reasoning_content'] == 'legacy reasoning'
+    assert native_thinking[0]['encrypted_content'] == 'sig-legacy'
+    # The `NativeToolCallPart(provider_name='grok')` must be forwarded as a native xAI builtin tool call.
+    tool_call_msgs = [m for m in assistant_msgs if m.get('tool_calls')]
+    assert len(tool_call_msgs) == 1
+    tool_calls = tool_call_msgs[0]['tool_calls']
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['id'] == 'legacy-call-1'
+    # No `<think>...</think>` fallback text should appear in any assistant content.
+    for m in assistant_msgs:
+        for part in m.get('content', []):
+            assert '<think>' not in part.get('text', '')
+
+
 # End of tests

@@ -4,6 +4,7 @@ from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
+    AgentRetries,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -72,6 +73,7 @@ from .messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
+    ModelRequestState,
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
@@ -164,6 +166,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
@@ -230,6 +233,7 @@ __all__ = (
     'ModelMessagesTypeAdapter',
     'ModelRequest',
     'ModelRequestPart',
+    'ModelRequestState',
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
