@@ -85,10 +85,7 @@ class GoogleProvider(BaseGoogleProvider):
 
     @property
     def name(self) -> str:
-        # Returned value flows into ModelMessage.provider_name on every part.
-        # Thinking-tag detection and built-in-tool detection check this value when
-        # the model class loads history, so silently renaming breaks replay of any
-        # message history captured against the old name.
+        # Must not change: persisted in ModelMessage.provider_name and checked during history replay.
         return 'google'
 
     @overload

@@ -103,3 +103,12 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
         pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls
+
+
+def test_infer_provider_rejects_removed_google_vertex_prefix():
+    """M7 dropped the `google-vertex:` provider prefix; only the `gateway/`-internal wire value should still
+    map to `GoogleCloudProvider`. User-facing `'google-vertex'` must raise `Unknown provider`."""
+    with pytest.raises(ValueError, match='Unknown provider: google-vertex'):
+        infer_provider_class('google-vertex')
+    with pytest.raises(ValueError, match='Unknown provider: google-vertex'):
+        infer_provider('google-vertex')
