@@ -26,34 +26,35 @@ Good split:
 
 ## Build Multi-Step Workflows with Graphs
 
-Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop.
+Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop. Compose graphs with `GraphBuilder` and typed step functions:
 
 ```python
-from dataclasses import dataclass
+import asyncio
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
-
-
-@dataclass
-class FirstNode(BaseNode[None, None, int]):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> 'SecondNode | End[int]':
-        if self.value >= 5:
-            return End(self.value)
-        return SecondNode(self.value + 1)
+from pydantic_graph import GraphBuilder, StepContext
 
 
-@dataclass
-class SecondNode(BaseNode):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> FirstNode:
-        return FirstNode(self.value)
+g = GraphBuilder(input_type=int, output_type=int)
 
 
-graph = Graph(nodes=[FirstNode, SecondNode])
-result = graph.run_sync(FirstNode(0))
+@g.step
+async def increment(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs + 1
+
+
+@g.step
+async def double(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs * 2
+
+
+g.add(
+    g.edge_from(g.start_node).to(increment),
+    g.edge_from(increment).to(double),
+    g.edge_from(double).to(g.end_node),
+)
+
+graph = g.build()
+result = asyncio.run(graph.run(inputs=3))
 ```
 
 ## Call the Model Without Using an Agent
