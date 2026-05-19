@@ -408,7 +408,17 @@ Every on-demand capability needs:
 * a short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description]
 * `defer_loading=True`
 
-[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand. Use the `tools` constructor argument for existing functions, or register functions with `@capability.tool_plain` and `@capability.tool`. Pass `toolset=` when you already have an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], such as an MCP toolset.
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand.
+
+There are a number of ways to register function tools with a capability:
+
+* via the [`@capability.tool`][pydantic_ai.capabilities.Capability.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`@capability.tool_plain`][pydantic_ai.capabilities.Capability.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`tools`][pydantic_ai.capabilities.Capability] keyword argument to `Capability`, which can take either plain functions or [`Tool`][pydantic_ai.tools.Tool] instances
+
+Use `toolset=` instead when you already have an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], such as an MCP toolset.
+
+Here's an example using the decorator style:
 
 ```python {title="capability_on_demand.py"}
 from pydantic_ai import Agent
@@ -495,6 +505,28 @@ print(seen_tool_names)
 _(This example is complete, it can be run "as is")_
 
 The first turn only sees the `load_capability` entry point, so the refund-specific instructions and tool schema do not consume the initial context window. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible. `load_capability` stays visible so the function-tool set remains stable across turns.
+
+As well as using decorators, you can register existing functions via the `tools` argument. This is useful when you want to reuse the same functions across capabilities or construct the capability in one expression:
+
+```python {title="capability_tools_kwarg.py"}
+from pydantic_ai.capabilities import Capability
+
+
+def lookup_refund_policy(order_id: str) -> str:
+    """Look up whether an order is still eligible for a refund."""
+    return f'{order_id} is eligible for a refund for 30 days after purchase.'
+
+
+refunds = Capability(
+    id='refunds',
+    description='Refund policy tools and instructions.',
+    instructions='Use the refund policy before answering refund questions.',
+    tools=[lookup_refund_policy],
+    defer_loading=True,
+)
+```
+
+_(This example is complete, it can be run "as is")_
 
 For a complete multi-specialist example, see the [support specialist example](examples/support-specialist.md), where the same agent can load order or return handling on demand.
 
