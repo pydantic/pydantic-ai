@@ -361,7 +361,7 @@ async def test_stub_provider_properties():
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -593,8 +593,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         model=model,
         instructions='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
