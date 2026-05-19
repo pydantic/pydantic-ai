@@ -244,8 +244,10 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -256,8 +258,10 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -268,9 +272,11 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any
     output: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
     approval: ToolApproval | None = None
@@ -282,9 +288,11 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any
     error_text: str
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -295,8 +303,10 @@ class DynamicToolApprovalRequestedPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['approval-requested'] = 'approval-requested'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -307,8 +317,10 @@ class DynamicToolApprovalRespondedPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['approval-responded'] = 'approval-responded'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 
@@ -319,8 +331,10 @@ class DynamicToolOutputDeniedPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-denied'] = 'output-denied'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     approval: ToolApproval | None = None
 

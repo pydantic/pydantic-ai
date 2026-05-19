@@ -77,11 +77,13 @@ with try_import() as starlette_import_successful:
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
         DataUIPart,
+        DynamicToolApprovalRequestedPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
         DynamicToolOutputDeniedPart,
+        DynamicToolOutputErrorPart,
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
@@ -140,6 +142,63 @@ def test_build_run_input_allows_regenerate_without_message_id():
 
     assert isinstance(run_input, RegenerateMessage)
     assert run_input.message_id is None
+
+
+@pytest.mark.parametrize(
+    'part',
+    [
+        {'state': 'input-streaming', 'input': '{"query":'},
+        {'state': 'input-available', 'input': {'query': 'test'}},
+        {'state': 'output-available', 'input': {'query': 'test'}, 'output': {'ok': True}},
+        {'state': 'output-error', 'input': {'query': 'test'}, 'errorText': 'boom'},
+        {'state': 'approval-requested', 'input': {'query': 'test'}},
+        {
+            'state': 'approval-responded',
+            'input': {'query': 'test'},
+            'approval': {'id': 'approval_1', 'approved': True},
+        },
+        {'state': 'output-denied', 'input': {'query': 'test'}},
+    ],
+)
+def test_submit_message_accepts_dynamic_tool_parent_fields(part: dict[str, Any]):
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'toolName': 'web_search',
+                        'toolCallId': 'call_1',
+                        'title': 'Web Search',
+                        'providerExecuted': True,
+                        **part,
+                    }
+                ],
+            }
+        ],
+    }
+
+    request = SubmitMessage.model_validate(data)
+    parsed_part = request.messages[0].parts[0]
+
+    assert isinstance(
+        parsed_part,
+        (
+            DynamicToolInputStreamingPart,
+            DynamicToolInputAvailablePart,
+            DynamicToolOutputAvailablePart,
+            DynamicToolOutputErrorPart,
+            DynamicToolApprovalRequestedPart,
+            DynamicToolApprovalRespondedPart,
+            DynamicToolOutputDeniedPart,
+        ),
+    )
+    assert parsed_part.title == 'Web Search'
+    assert parsed_part.provider_executed is True
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
