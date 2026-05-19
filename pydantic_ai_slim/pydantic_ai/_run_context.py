@@ -13,13 +13,14 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_request
 
 if TYPE_CHECKING:
     from .agent import Agent
     from .models import Model
-    from .result import RunUsage
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+    from .usage import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -99,6 +100,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
+    pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage], repr=False)
+    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
+    """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
     """The tool manager for the current run step.
@@ -115,6 +121,37 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Safe to call from anywhere a `RunContext` is available — async tools,
+        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
+        capability hooks. The drain only iterates the queue between graph nodes
+        (in `before_model_request` and `after_node_run`), never concurrently
+        with the tool body, so `list.append` from a worker thread doesn't race
+        the drain.
+
+        Args:
+            *content: One or more items packed into a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+                at enqueue time. Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)`
+                accepts) is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Pass a single
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue it verbatim (preserving
+                `instructions`, `metadata`, etc.) — it cannot be mixed with other items. Calling with no
+                positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+        """
+        request = build_enqueue_request(content)
+        if request is None:
+            return
+        self.pending_messages.append(PendingMessage(request=request, priority=priority))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

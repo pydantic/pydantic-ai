@@ -24,6 +24,7 @@ from pydantic_ai._spec import load_from_registry
 
 from .. import (
     _agent_graph,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -50,6 +51,7 @@ from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
+from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -1332,6 +1334,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if instrumentation_settings
             else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
+            pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
         )
@@ -1997,6 +2000,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
+        pending_messages: list[_enqueue.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
@@ -2011,6 +2015,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             messages=list(message_history or []),
             model_settings=model_settings,
             run_step=1,
+            pending_messages=pending_messages if pending_messages is not None else [],
         )
         return await _system_prompt.resolve_system_prompts(
             self._system_prompts, self._system_prompt_functions, run_context
@@ -2894,7 +2899,10 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 `PydanticAIDeprecationWarning` raised by `AgentSpec._warn_retry_field_deprecations`.
 """
 
-_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
+    ToolSearchCap,
+    PendingMessageDrainCapability,
+)
 """Infrastructure capabilities auto-injected when not already present."""
 
 

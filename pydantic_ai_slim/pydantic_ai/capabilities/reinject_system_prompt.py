@@ -68,6 +68,7 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             prompt=ctx.prompt,
             usage=ctx.usage,
             model_settings=ctx.model_settings,
+            pending_messages=ctx.pending_messages,
         )
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)

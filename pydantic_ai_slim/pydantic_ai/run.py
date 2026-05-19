@@ -19,6 +19,7 @@ from . import (
     usage as _usage,
 )
 from ._deprecated_callable import deprecated_callable_property
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_request
 from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -410,6 +411,45 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def conversation_id(self) -> str:
         """The unique identifier for the conversation this run belongs to."""
         return self._graph_run.state.conversation_id
+
+    @property
+    def pending_messages(self) -> list[PendingMessage]:
+        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        """
+        return self._graph_run.state.pending_messages
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Designed to be called from the same event loop driving `agent.iter()`. If
+        you're forwarding events from a different thread (e.g. a webhook handler
+        running on its own loop or thread), marshal the call back onto the agent's
+        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
+        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
+        atomic against concurrent appends from a different thread.
+
+        Args:
+            *content: One or more items packed into a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+                at enqueue time. Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)`
+                accepts) is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Pass a single
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue it verbatim (preserving
+                `instructions`, `metadata`, etc.) — it cannot be mixed with other items. Calling with no
+                positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+        """
+        request = build_enqueue_request(content)
+        if request is None:
+            return
+        self._graph_run.state.pending_messages.append(PendingMessage(request=request, priority=priority))
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

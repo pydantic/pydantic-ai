@@ -7,7 +7,7 @@ import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +66,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -10875,6 +10876,1014 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# ===== Pending Message Queue Tests =====
+
+
+async def test_enqueue_asap_message_from_tool():
+    """`'asap'` messages enqueued from a tool are injected before the next model request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_msg',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_when_idle_message_prevents_end():
+    """`'when_idle'` messages prevent the agent from ending and are drained into a new ModelRequest."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            # Agent produces final result, but follow-up is pending
+            return ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # After follow-up is drained, agent produces real final result
+            return ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Follow-up context', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final answer after follow-up'
+    assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_from_agent_run():
+    """Messages can be enqueued from external code via AgentRun.enqueue."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(
+            parts=[TextPart(content=f'response {call_count}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        assert agent_run.pending_messages == []
+        # Enqueue a when_idle message from external code before iteration
+        agent_run.enqueue('External follow-up', priority='when_idle')
+        assert len(agent_run.pending_messages) == 1
+        # Use next() to drive iteration so after_node_run fires
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2  # First response triggers End, follow-up prevents it, second response is final
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='External follow-up', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 2')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_pending_messages_accessible_on_run_context():
+    """RunContext.pending_messages is accessible and initially empty."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='check_queue', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def check_queue(ctx: RunContext[None]) -> str:
+        # The queue must be live (mutations from inside a tool reach the drain).
+        assert len(ctx.pending_messages) == 0
+        ctx.enqueue('observed', priority='asap')
+        assert len(ctx.pending_messages) == 1
+        return 'done'
+
+    result = await agent.run('Test')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='check_queue',
+                        content='done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_with_no_args_is_a_noop():
+    """`ctx.enqueue()` and `agent_run.enqueue()` with no content are silent no-ops.
+
+    Producers that conditionally enqueue (e.g. "announce if new tools were discovered")
+    can call `enqueue(*maybe_items)` without guarding for the empty case — `enqueue`
+    simply doesn't append a `PendingMessage` when there's nothing to send.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        ctx.enqueue()  # no-op, no exception
+        assert ctx.pending_messages == []
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        agent_run.enqueue()  # no-op, no exception
+        assert agent_run.pending_messages == []
+        async for _ in agent_run:
+            pass
+
+
+async def test_enqueue_from_system_prompt_callback_with_reinject():
+    """`ctx.enqueue` from inside an `@agent.system_prompt` callback reaches the live queue.
+
+    `ReinjectSystemPrompt` re-resolves system-prompt callbacks on every model request via
+    `Agent.system_prompt_parts`, which builds a synthetic `RunContext`. The synthetic ctx
+    must share the live `pending_messages` list so enqueues from inside the callback
+    aren't silently dropped — using `when_idle` here so the drain (which runs after
+    end-of-run, by design after the current step's `before_model_request` has fired)
+    actually delivers what the callback enqueued.
+    """
+    enqueued = False
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='ok')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        system_prompt='base prompt',
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    @agent.system_prompt
+    def maybe_enqueue(ctx: RunContext[None]) -> str:
+        nonlocal enqueued
+        # ReinjectSystemPrompt only re-runs the callback when there's no existing
+        # SystemPromptPart in history; the first call adds 'extra prompt', so the
+        # second call's `before_model_request` finds it and skips the callback.
+        # That means we enqueue exactly once without needing an explicit guard.
+        ctx.enqueue('from system prompt callback', priority='when_idle')
+        enqueued = True
+        return 'extra prompt'
+
+    # Provide a message_history without an existing SystemPromptPart so
+    # ReinjectSystemPrompt actually fires.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelResponse(parts=[TextPart(content='earlier response')]),
+    ]
+    result = await agent.run('hi', message_history=history)
+
+    assert enqueued
+    # The enqueued when_idle message reaches the persisted history as its own
+    # ModelRequest before the redirect's response — proving the threading
+    # through Agent.system_prompt_parts → synthetic RunContext → live queue.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='base prompt', timestamp=IsDatetime()),
+                    SystemPromptPart(content='extra prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='earlier', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='earlier response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='ok')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='from system prompt callback', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='ok')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_coerces_string_to_user_prompt():
+    """A bare string passed to `enqueue` is wrapped in a `UserPromptPart`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('steering as plain string')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == 'steering as plain string'
+    ]
+    assert len(injected) == 1, 'string-coerced enqueue did not land as a UserPromptPart'
+
+
+async def test_enqueue_accepts_multimodal_user_content():
+    """A `Sequence[UserContent]` (matching `Agent.run(user_prompt=...)`) is wrapped in one `UserPromptPart`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue(['part one', 'part two'])
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == ['part one', 'part two']
+    ]
+    assert len(injected) == 1
+
+
+async def test_enqueue_accepts_model_request_passthrough():
+    """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
+
+    Two passthroughs cover both branches of the fill-in-if-unset stamping logic:
+    one with `timestamp`/`run_id` unset (drain stamps them); one with both set
+    (drain leaves them alone).
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    unstamped = ModelRequest(
+        parts=[UserPromptPart(content='wire-level payload')],
+        instructions='do this carefully',
+        metadata={'origin': 'webhook-42'},
+    )
+    preset_timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    prestamped = ModelRequest(
+        parts=[UserPromptPart(content='already stamped')],
+        instructions='preserve me',
+        timestamp=preset_timestamp,
+        run_id='caller-run-id',
+        conversation_id='caller-conv-id',
+    )
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue(unstamped)
+        ctx.enqueue(prestamped)
+        return 'ok'
+
+    result = await agent.run('Hello')
+
+    injected_unstamped = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and msg.instructions == 'do this carefully'
+    )
+    assert injected_unstamped.metadata == {'origin': 'webhook-42'}
+    # Drain should have stamped timestamp/run_id/conversation_id since the user didn't set them.
+    assert injected_unstamped.timestamp is not None
+    assert injected_unstamped.run_id is not None
+    assert injected_unstamped.conversation_id is not None
+
+    injected_prestamped = next(
+        msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
+    )
+    # Producer-supplied timestamp/run_id/conversation_id are preserved (drain doesn't overwrite).
+    assert injected_prestamped.timestamp == preset_timestamp
+    assert injected_prestamped.run_id == 'caller-run-id'
+    assert injected_prestamped.conversation_id == 'caller-conv-id'
+
+
+def test_pending_message_drain_capability_is_not_spec_constructible():
+    """`PendingMessageDrainCapability` is auto-injected only; can't be in an `AgentSpec`."""
+    from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
+
+    assert PendingMessageDrainCapability.get_serialization_name() is None
+
+
+def test_pending_message_allows_empty_request():
+    """`PendingMessage` doesn't validate its `request`; empty-parts requests are tolerated.
+
+    `enqueue()` already filters out the no-args case (no `PendingMessage` is appended).
+    An empty `ModelRequest` reaching the queue is harmless — the drain stamps and forwards
+    it, and downstream wire-merging absorbs zero-part messages as a natural no-op.
+    """
+    from pydantic_ai._enqueue import PendingMessage
+
+    msg = PendingMessage(request=ModelRequest(parts=[]))
+    assert msg.priority == 'asap'
+    assert msg.request.parts == []
+
+
+async def test_enqueue_parts_style_calls_produce_one_request_per_call():
+    """Each `enqueue` call produces its own `ModelRequest` in history.
+
+    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
+    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
+    history reflects per-call structure; wire-level `_clean_message_history` still merges
+    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
+    single message should pass a single `ModelRequest(parts=[...])` themselves.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('first hint')
+        ctx.enqueue('second hint')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
+    ]
+    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert [p.content for msg in drained for p in msg.parts if isinstance(p, UserPromptPart)] == [
+        'first hint',
+        'second hint',
+    ]
+
+
+async def test_enqueue_passthrough_stays_separate_from_parts_style():
+    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('before')
+        ctx.enqueue(
+            ModelRequest(parts=[UserPromptPart(content='passthrough')], instructions='careful'),
+        )
+        ctx.enqueue('after')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
+    ]
+    assert len(drained) == 3
+    contents = [
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
+        )
+        for r in drained
+    ]
+    assert contents == ['before', 'passthrough', 'after']
+    # Passthrough preserved its instructions.
+    assert drained[1].instructions == 'careful'
+    assert drained[0].instructions is None
+    assert drained[2].instructions is None
+
+
+async def test_enqueue_rejects_model_request_mixed_with_other_items():
+    """Mixing a `ModelRequest` with strings/`Sequence[UserContent]` in one `enqueue` call is rejected."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
+            ctx.enqueue('hint', ModelRequest(parts=[UserPromptPart(content='wire')]))
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
+            agent_run.enqueue(ModelRequest(parts=[UserPromptPart(content='wire')]), 'hint')
+        async for _ in agent_run:
+            pass
+
+
+async def test_enqueue_asap_with_rich_message_history_tail():
+    """`'asap'` enqueue lands as its own `ModelRequest` in history *and* gets wire-merged into the rich tail.
+
+    The history keeps the un-merged view (drain's request is a separate `ModelRequest`
+    after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
+    `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
+    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    enqueued content lands at the *end* of the merged turn (not interleaved between
+    existing parts). Captures the `messages` arg `FunctionModel` actually received to
+    validate the wire-level merge through the public path.
+    """
+    captured_wire_messages: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_wire_messages.append(messages)
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='original prompt')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+            model_name='function:model_fn:',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1'),
+                UserPromptPart(content='follow-up question'),
+            ],
+        ),
+    ]
+
+    async with agent.iter(message_history=history) as agent_run:
+        agent_run.enqueue('injected after rich tail')
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    # `all_messages()` keeps the un-merged view (drain's request is a separate
+    # `ModelRequest` after the rich tail).
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # And the wire-level view: the rich tail and the drained request merged into one
+    # `ModelRequest`, with `ToolReturnPart` first and the user-prompt parts in arrival
+    # order (so the enqueued content lands at the end, not interleaved).
+    assert len(captured_wire_messages) == 1
+    assert captured_wire_messages[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                    UserPromptPart(content='injected after rich tail', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
+    """`'asap'` arriving during the final step (after its `before_model_request` drain) still gets delivered.
+
+    Simulates the background-tools pattern: a long-running task completes *during* what
+    would have been the model's final response. The enqueue happens after the step's
+    `before_model_request` drain has already fired, so the message can only be picked up
+    by the end-of-run drain (matching pi-mono's drain-on-end). Without this fallback the
+    message would be lost. `'asap'` semantically means "deliver at the earliest opportunity"
+    — including redirecting if the agent would otherwise terminate before another call.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final after late asap')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class BackgroundTaskCap(AbstractCapability[Any]):
+        """Simulates a background task that completes mid-model-response on the first call only."""
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired:
+                ctx.enqueue('background task result', priority='asap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTaskCap()])
+
+    result = await agent.run('Hello')
+    assert result.output == 'final after late asap'
+    assert call_count == 2
+    # The 'asap' message landed in its own ModelRequest before the final response,
+    # not lost despite the agent producing a no-tool-call response.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='background task result', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final after late asap')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_when_idle_drains_after_leftover_asap():
+    """If both `'asap'` and `'when_idle'` are queued at end-of-run, `'asap'` drains first."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Only fire enqueues once.
+        already_enqueued = any(
+            isinstance(p, UserPromptPart) and p.content in ('A', 'B')
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for p in msg.parts
+        )
+        # If we've already seen our injected messages, just terminate.
+        if already_enqueued:
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('B', priority='when_idle')
+        ctx.enqueue('A', priority='asap')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Both A and B should appear in history. `'asap'` (A) drains in `before_model_request`
+    # before the second call. `'when_idle'` (B) drains at end-of-run when the second
+    # response has no tool calls.
+    requests_with_injected = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('A', 'B') for p in msg.parts)
+    ]
+    contents = [
+        [p.content for p in r.parts if isinstance(p, UserPromptPart) and p.content in ('A', 'B')]
+        for r in requests_with_injected
+    ]
+    assert contents == [['A'], ['B']], f'expected A before B in separate requests, got {contents}'
+
+
+async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
+    """When both `'asap'` and `'when_idle'` parts-style payloads drain together at end-of-run,
+    they land in separate `ModelRequest`s — the priority split stays visible in history.
+
+    Reaches the case Devin flagged: a tool enqueues `'when_idle'` (which sits until
+    end-of-run), and a capability `after_model_request` hook enqueues `'asap'` during the
+    final step (after that step's `before_model_request` drain has already fired). Both
+    arrive at `after_node_run`. Without the per-priority split they'd merge into one
+    synthesized request, blurring the priority distinction in the persisted history.
+    On the wire `_clean_message_history` still merges them for the model.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        if call_count == 2:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class LateAsapCap(AbstractCapability[Any]):
+        """Enqueues an `'asap'` message during `after_model_request` of the no-tool-call step.
+
+        Fires after the step's `before_model_request` drain, so the message can only be
+        delivered via the end-of-run drain in `after_node_run`.
+        """
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired and any(
+                isinstance(p, TextPart) and p.content == 'would-have-ended' for p in response.parts
+            ):
+                ctx.enqueue('asap-from-cap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[LateAsapCap()])
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('when-idle-from-tool', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final'
+
+    # Find the two end-of-run drained requests: one with the 'asap' content, one with 'when_idle'.
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(
+            isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool') for p in msg.parts
+        )
+    ]
+    contents = [
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool')
+        )
+        for r in drained
+    ]
+    assert contents == ['asap-from-cap', 'when-idle-from-tool'], (
+        f'asap and when_idle should land in separate ModelRequests with asap first, got {contents}'
+    )
+    # Each priority bucket got its own ModelRequest (not merged into one).
+    assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
 
 
 # --- Output hook tests ---
