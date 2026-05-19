@@ -49,7 +49,7 @@ AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRun, AgentRunResult
-    from pydantic_graph import GraphRun, GraphRunResult
+    from pydantic_graph import GraphRun
 
     from . import messages as _messages
     from .tools import ObjectJsonSchema
@@ -495,7 +495,7 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             await aclose()
 
 
-def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
+def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
 
 
