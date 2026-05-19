@@ -31,7 +31,6 @@ Use `pydantic_graph` when the workflow is a state machine rather than a single a
 ```python
 from pydantic_graph import GraphBuilder, StepContext
 
-
 g = GraphBuilder(input_type=int, output_type=int)
 
 
