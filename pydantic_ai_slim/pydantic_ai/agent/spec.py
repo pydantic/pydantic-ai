@@ -55,14 +55,7 @@ class AgentSpec(BaseModel):
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
     tool_retries: int | None = None
-    retries: int | None = Field(
-        default=None,
-        deprecated=(
-            '`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead. '
-            'In 1.x, setting `retries` on a spec still cascades to `output_retries` '
-            'when the latter is unset, matching `Agent(retries=...)` behavior.'
-        ),
-    )
+    retries: int | None = None
     output_retries: int | None = None
     end_strategy: EndStrategy = 'early'
     tool_timeout: float | None = None
@@ -234,10 +227,7 @@ class AgentSpec(BaseModel):
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
             tool_retries: int | None = None
-            retries: int | None = Field(
-                default=None,
-                deprecated='`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead.',
-            )
+            retries: int | None = None
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
             tool_timeout: float | None = None

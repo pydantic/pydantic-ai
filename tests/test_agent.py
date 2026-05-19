@@ -10741,7 +10741,6 @@ class OutputRetryBudgetCase:
     override: dict[str, Any] | None
     run: dict[str, Any]
     expected_budget: int
-    expects_deprecation_warning: bool
 
 
 OUTPUT_RETRY_BUDGET_CASES = [
@@ -10751,7 +10750,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override=None,
         run={'output_retries': 2},
         expected_budget=2,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='run-arg-beats-spec',
@@ -10759,7 +10757,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override=None,
         run={'output_retries': 2, 'spec': {'output_retries': 4}},
         expected_budget=2,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='spec-only-beats-agent-default',
@@ -10767,7 +10764,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override=None,
         run={'spec': {'output_retries': 2}},
         expected_budget=2,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-kwarg-caps-agent-default',
@@ -10775,7 +10771,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override={'output_retries': 2},
         run={},
         expected_budget=2,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-spec-honored',
@@ -10783,7 +10778,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override={'spec': {'output_retries': 2}},
         run={},
         expected_budget=2,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='override-beats-run-arg',
@@ -10791,15 +10785,13 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override={'output_retries': 1},
         run={'output_retries': 10},
         expected_budget=1,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
-        id='deprecated-retries-cascades',
+        id='retries-cascades',
         init={'retries': 5},
         override=None,
         run={},
         expected_budget=5,
-        expects_deprecation_warning=True,
     ),
     OutputRetryBudgetCase(
         id='tool-retries-no-cascade',
@@ -10807,7 +10799,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override=None,
         run={},
         expected_budget=1,
-        expects_deprecation_warning=False,
     ),
     OutputRetryBudgetCase(
         id='retries-cascades-even-when-tool-retries-set',
@@ -10815,7 +10806,6 @@ OUTPUT_RETRY_BUDGET_CASES = [
         override=None,
         run={},
         expected_budget=5,
-        expects_deprecation_warning=True,
     ),
 ]
 
@@ -10834,16 +10824,9 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    deprecation_ctx = (
-        pytest.warns(DeprecationWarning, match=r'`retries` is deprecated and will be removed in v2')
-        if case.expects_deprecation_warning
-        else nullcontext()
-    )
     with warnings.catch_warnings():
-        if not case.expects_deprecation_warning:
-            warnings.simplefilter('error', DeprecationWarning)
-        with deprecation_ctx:
-            agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
 
     @agent.output_validator
     def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
@@ -10914,45 +10897,6 @@ def test_output_retries_run_override_without_validators():
     assert call_count == 3
     # The shared agent-level toolset's `max_retries` was preserved — confirms the run cloned before mutating.
     assert shared_toolset.max_retries == 10
-
-
-@pytest.mark.parametrize(
-    'kwargs, expected_warning',
-    [
-        ({}, None),
-        ({'tool_retries': 5}, None),
-        ({'output_retries': 5}, None),
-        ({'tool_retries': 5, 'output_retries': 5}, None),
-        ({'retries': 5}, r'`retries` is deprecated.*Use `tool_retries` instead'),
-        ({'retries': 5, 'output_retries': 3}, r'`retries` is deprecated.*Use `tool_retries` instead'),
-        (
-            {'retries': 5, 'tool_retries': 3},
-            r'`retries` is deprecated.*only setting `output_retries` via the legacy 1\.x cascade',
-        ),
-    ],
-    ids=[
-        'no-kwargs',
-        'tool_retries-only',
-        'output_retries-only',
-        'tool_retries-and-output_retries',
-        'retries-only-warns',
-        'retries-and-output_retries-warns-generic',
-        'retries-and-tool_retries-warns-cascade-callout',
-    ],
-)
-def test_agent_init_deprecation_warning(kwargs: dict[str, Any], expected_warning: str | None):
-    """Cover the `Agent.__init__` deprecation warning text for every kwarg combination.
-
-    The both-passed case (`retries=` + `tool_retries=`) gets a sharper message that calls out the
-    silent cascade to `output_retries`; everything else either warns generically or stays silent.
-    """
-    if expected_warning is None:
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', DeprecationWarning)
-            Agent('test', **kwargs)
-    else:
-        with pytest.warns(DeprecationWarning, match=expected_warning):
-            Agent('test', **kwargs)
 
 
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():

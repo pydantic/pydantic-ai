@@ -327,10 +327,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can be a static `ModelSettings` dict or a callable that takes a
                 [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
                 Callables are called before each model request, allowing dynamic per-step settings.
-            retries: Deprecated alias for `tool_retries`. In 1.x this also still cascades to `output_retries`
-                (when `output_retries` is unset) for backward compatibility, with a `DeprecationWarning`.
-                In v2 it will be removed and the cascade will go away — pass `output_retries` explicitly
-                if you depend on the cascade. For model request retries, see the
+            retries: The default number of retries to allow. Sets both `tool_retries` and
+                `output_retries` (when not provided explicitly). For model request retries, see the
                 [HTTP Request Retries](../retries.md) documentation.
             tool_retries: The default number of retries to allow for tool calls before raising an error. Defaults to 1.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
@@ -434,31 +432,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        # `retries` is deprecated in 1.x and removed in v2. Until then it still cascades to
-        # `_max_output_retries` as a fallback (when `output_retries` isn't explicitly set) so
-        # existing callers keep their original behavior; we only warn so users can migrate.
-        # TODO(v2): drop `retries` entirely; default both `_max_tool_retries` and
-        # `_max_output_retries` to a constant 1 — no cascade.
-        if retries is not None:
-            if tool_retries is not None and output_retries is None:
-                # Combination case: `tool_retries=` already sets the tool budget, so `retries=`
-                # only ends up controlling the output budget via the legacy cascade. Call that out
-                # explicitly — passing `output_retries=` directly is the migration path.
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. You also passed `tool_retries=`, '
-                    'so `retries=` is now only setting `output_retries` via the legacy 1.x cascade — '
-                    'pass `output_retries=` explicitly instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. Use `tool_retries` instead. '
-                    'Note: in v2, `retries` will no longer also set `output_retries` as a fallback — '
-                    'pass `output_retries` explicitly if you rely on the cascade.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
+        # `retries` sets the default for both `_max_tool_retries` and `_max_output_retries`,
+        # which can each still be overridden by their dedicated kwargs.
         effective_retries = retries if retries is not None else 1
         self._max_tool_retries = tool_retries if tool_retries is not None else effective_retries
         self._max_output_retries = output_retries if output_retries is not None else effective_retries
@@ -1669,11 +1644,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
-        # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
-        # triggering the pydantic deprecation warning on the deprecated `retries` field.
+        # Warn for unsupported fields with non-default values.
         for field_name in _UNSUPPORTED_SPEC_FIELDS:
             field_info = type(validated_spec).model_fields[field_name]
-            if validated_spec.__dict__[field_name] != field_info.default:
+            if getattr(validated_spec, field_name) != field_info.default:
                 warnings.warn(
                     f'AgentSpec field {field_name!r} is not supported at run/override time and will be ignored',
                     UserWarning,
