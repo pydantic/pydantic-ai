@@ -2347,6 +2347,24 @@ def test_toolset_capability_get_toolset():
     cap = Toolset(toolset=ts)
     assert cap.get_toolset() is ts
 
+    convenience_cap = Capability[None](toolset=ts)
+    assert convenience_cap.get_toolset() is ts
+
+    def greet(name: str) -> str:
+        return f'Hello, {name}!'
+
+    with pytest.raises(UserError, match='Cannot use both `toolset` and `tools`'):
+        Capability[None](toolset=ts, tools=[greet])
+
+    with pytest.raises(UserError, match=r'`Capability\.tool_plain\(\)` cannot be used when `toolset=` is set\.'):
+        convenience_cap.tool_plain(greet)
+
+    def greet_with_context(_ctx: RunContext[None], name: str) -> str:
+        return f'Hello, {name}!'
+
+    with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolset=` is set\.'):
+        convenience_cap.tool(greet_with_context)
+
 
 async def test_toolset_capability_in_agent():
     """A Toolset capability's tools are available to the agent."""
@@ -17615,12 +17633,6 @@ async def test_dynamic_deferred_capability_requires_stable_returned_id() -> None
     class CustomInitDeferredCap(AbstractCapability[None]):
         def __init__(self) -> None:
             self.defer_loading = True
-
-        def get_description(self, ctx: RunContext[None] | None) -> str:
-            return 'Hidden instructions.'
-
-        def get_instructions(self) -> str:
-            return 'Hidden instructions.'
 
     def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
         return CustomInitDeferredCap()
