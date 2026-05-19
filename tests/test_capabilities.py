@@ -1652,7 +1652,6 @@ Supported by:
                             'title': 'Allowed Tools',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
