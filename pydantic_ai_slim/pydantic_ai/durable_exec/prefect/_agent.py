@@ -73,7 +73,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
             event_stream_handler_task_config: The Prefect task config to use for the event stream handler task. If no config is provided, use the default settings of Prefect.
             prefectify_toolset_func: Optional function to use to prepare toolsets for Prefect by wrapping them in a `PrefectWrapperToolset` that moves methods that require IO to Prefect tasks.
-                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Prefect.
+                If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Prefect.
                 The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
         """
         super().__init__(wrapped)
@@ -170,7 +170,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _prefect_overrides(self) -> Iterator[None]:
-        # Override with PrefectModel and PrefectMCPServer in the toolsets.
+        # Override with PrefectModel and PrefectMCPToolset in the toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
 

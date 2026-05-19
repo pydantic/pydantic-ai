@@ -110,7 +110,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
-                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
+                If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Temporal.
                 The function takes the toolset, the activity name prefix, the toolset-specific activity config, the tool-specific activity configs and the run context type.
         """
         super().__init__(wrapped)

@@ -112,7 +112,6 @@
         "slug": "mcp/overview"
       },
       "mcp/client",
-      "mcp/fastmcp-client",
       "mcp/server"
     ]
   },
