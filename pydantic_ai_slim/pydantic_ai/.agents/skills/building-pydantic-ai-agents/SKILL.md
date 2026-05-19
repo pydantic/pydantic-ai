@@ -181,7 +181,7 @@ hooks = Hooks()
 
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages')
     return request_context
 

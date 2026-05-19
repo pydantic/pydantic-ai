@@ -148,7 +148,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     raise ValueError(f'Unexpected message: {last}')
 
 
-weather_agent: Agent[object, str] = Agent(FunctionModel(weather_model))
+weather_agent = Agent(FunctionModel(weather_model))
 
 
 @weather_agent.tool_plain
@@ -161,7 +161,7 @@ async def get_location(location_description: str) -> str:
 
 
 @weather_agent.tool
-async def get_weather(_: RunContext[object], lat: int, lng: int):
+async def get_weather(_: RunContext, lat: int, lng: int):
     if (lat, lng) == (51, 0):
         # it always rains in London
         return 'Raining'
@@ -294,7 +294,7 @@ def test_deps_none():
     agent = Agent(FunctionModel(call_tool))
 
     @agent.tool
-    async def get_none(ctx: RunContext[object]):
+    async def get_none(ctx: RunContext):
         nonlocal called
 
         called = True
@@ -338,7 +338,7 @@ agent_all = Agent()
 
 
 @agent_all.tool
-async def foo(_: RunContext[object], x: int) -> str:
+async def foo(_: RunContext, x: int) -> str:
     return str(x + 1)
 
 

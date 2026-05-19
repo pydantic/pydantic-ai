@@ -38,7 +38,7 @@ joke_generation_agent = Agent(  # (2)!
 
 
 @joke_selection_agent.tool
-async def joke_factory(ctx: RunContext[object], count: int) -> list[str]:
+async def joke_factory(ctx: RunContext, count: int) -> list[str]:
     r = await joke_generation_agent.run(  # (3)!
         f'Please generate {count} jokes.',
         usage=ctx.usage,  # (4)!
@@ -209,7 +209,7 @@ flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
 
 @flight_search_agent.tool  # (2)!
 async def flight_search(
-    ctx: RunContext[object], origin: str, destination: str
+    ctx: RunContext, origin: str, destination: str
 ) -> FlightDetails | None:
     # in reality, this would call a flight search API or
     # use a browser to scrape a flight search website

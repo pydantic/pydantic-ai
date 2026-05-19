@@ -493,7 +493,7 @@ from pydantic_ai.capabilities import ProcessHistory
 
 
 def context_aware_processor(
-    ctx: RunContext[object],
+    ctx: RunContext,
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     # Access current usage

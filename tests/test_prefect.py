@@ -866,13 +866,13 @@ hitl_agent = Agent(
 
 @task(name='create_file')
 @hitl_agent.tool
-def create_file(ctx: RunContext[object], path: str) -> None:
+def create_file(ctx: RunContext, path: str) -> None:
     raise CallDeferred
 
 
 @task(name='delete_file')
 @hitl_agent.tool
-def delete_file(ctx: RunContext[object], path: str) -> bool:
+def delete_file(ctx: RunContext, path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
@@ -1002,7 +1002,7 @@ dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=Toggleab
 
 
 @dynamic_agent.toolset
-def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[object]:
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset:
     if ctx.deps.active == 'weather':
         return weather_toolset
     else:

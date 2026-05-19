@@ -7366,7 +7366,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[object]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt from Vercel'
 
     request = SubmitMessage(

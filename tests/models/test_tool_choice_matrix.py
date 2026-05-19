@@ -424,7 +424,7 @@ async def test_tool_choice_matrix(
     expected_tool_choice = EXPECTED_TOOL_CHOICE.get((provider, scenario))
 
     if scenario == 'auto':
-        agent: Agent[object, str] = Agent(model, tools=[get_weather])
+        agent = Agent(model, tools=[get_weather])
         settings: ModelSettings = {'tool_choice': 'auto'}
         await agent.run(
             "What's the weather in Paris?", model_settings=settings, usage_limits=UsageLimits(output_tokens_limit=5000)

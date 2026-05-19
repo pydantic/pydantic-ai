@@ -141,7 +141,7 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def turn_on_strict_if_openai(
-    ctx: RunContext[object], tool_defs: list[ToolDefinition]
+    ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]

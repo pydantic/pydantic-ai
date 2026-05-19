@@ -65,7 +65,7 @@ def test_tool_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_tool(ctx: RunContext[object]) -> str:  # pragma: no cover
+        async def invalid_tool(ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -102,7 +102,7 @@ def test_tool_ctx_second():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int, ctx: RunContext[object]) -> str:  # pragma: no cover
+        def invalid_tool(x: int, ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -689,7 +689,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -713,7 +713,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -1069,7 +1069,7 @@ def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], a: int, b: int = 1) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 1) -> int:
         raise NotImplementedError
 
     @agent.tool_plain
@@ -1150,7 +1150,7 @@ def test_call_tool_without_unrequired_parameters():
         return None
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], a: int, b: int = 2) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 2) -> int:
         return a + b
 
     @agent.tool_plain
@@ -1447,9 +1447,7 @@ def test_tool_retries():
     call_max_retries: list[int] = []
     call_last_attempt: list[bool] = []
 
-    async def prepare_tool_defs(
-        ctx: RunContext[object], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1457,7 +1455,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
-    async def prepare_tool_def(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         prepare_max_retries.append(ctx.max_retries)
@@ -1465,7 +1463,7 @@ def test_tool_retries():
         return tool_def
 
     @agent.tool(retries=5, prepare=prepare_tool_def)
-    def infinite_retry_tool(ctx: RunContext[object]) -> int:
+    def infinite_retry_tool(ctx: RunContext) -> int:
         nonlocal call_retries
         call_retries.append(ctx.retry)
         call_max_retries.append(ctx.max_retries)
@@ -1517,7 +1515,7 @@ def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1608,7 +1606,7 @@ def test_approval_required_with_user_prompt():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1669,7 +1667,7 @@ def test_approval_required_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -1734,7 +1732,7 @@ def test_approval_required_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired  # No metadata
         return x * 42
@@ -1773,17 +1771,17 @@ def test_mixed_deferred_tools_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def tool_a(ctx: RunContext[object], x: int) -> int:
+    def tool_a(ctx: RunContext, x: int) -> int:
         raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
 
     @agent.tool
-    def tool_b(ctx: RunContext[object], y: int) -> int:
+    def tool_b(ctx: RunContext, y: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
         return y * 10
 
     @agent.tool
-    def tool_c(ctx: RunContext[object], z: int) -> int:
+    def tool_c(ctx: RunContext, z: int) -> int:
         raise CallDeferred  # No metadata
 
     result = agent.run_sync('Hello')
@@ -2286,7 +2284,7 @@ def test_deferred_tool_call_approved_fails():
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
-    async def defer(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
@@ -2373,7 +2371,7 @@ async def test_approval_required_toolset():
                 ]
             )
 
-    toolset = FunctionToolset[object]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def foo(x: int) -> int:
@@ -2579,7 +2577,7 @@ def test_tool_metadata():
     """Test that metadata is properly set on tools."""
     metadata = {'category': 'test', 'version': '1.0'}
 
-    def simple_tool(ctx: RunContext[object], x: int) -> int:
+    def simple_tool(ctx: RunContext, x: int) -> int:
         return x * 2  # pragma: no cover
 
     tool = Tool(simple_tool, metadata=metadata)
@@ -2590,7 +2588,7 @@ def test_tool_metadata():
     agent = Agent('test')
 
     @agent.tool(metadata={'source': 'agent'})
-    def agent_tool(ctx: RunContext[object], y: int) -> int:
+    def agent_tool(ctx: RunContext, y: int) -> int:
         return y + 1  # pragma: no cover
 
     agent_tool_def = agent._function_toolset.tools['agent_tool']
@@ -2615,14 +2613,14 @@ def test_tool_metadata():
     assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
     @toolset.tool(metadata={'toolset': 'function'})
-    def toolset_tool(ctx: RunContext[object], a: str) -> str:
+    def toolset_tool(ctx: RunContext, a: str) -> str:
         return a.upper()  # pragma: no cover
 
     toolset_tool_def = toolset.tools['toolset_tool']
     assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
-    def standalone_func(ctx: RunContext[object], b: float) -> float:
+    def standalone_func(ctx: RunContext, b: float) -> float:
         return b / 2  # pragma: no cover
 
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
@@ -2635,7 +2633,7 @@ def test_retry_tool_until_last_attempt():
     agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
-    def always_fail(ctx: RunContext[object]) -> str:
+    def always_fail(ctx: RunContext) -> str:
         if ctx.last_attempt:
             return 'I guess you never learn'
         else:
@@ -3075,7 +3073,7 @@ def test_tool_approved_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -3130,7 +3128,7 @@ def test_tool_approved_with_metadata_and_override_args():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture both the metadata and the argument
@@ -3183,7 +3181,7 @@ def test_tool_approved_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture the tool_call_metadata from context
@@ -3213,7 +3211,7 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     agent = Agent(TestModel())
 
     @agent.tool
-    def my_tool(ctx: RunContext[object], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         # Capture the tool_call_metadata from context
         received_metadata.append(ctx.tool_call_metadata)
         return x * 42
@@ -3874,7 +3872,7 @@ def test_tool_ctx_agent():
     tool_output_types: list[Any] = []
 
     @agent.tool
-    def get_agent_info(ctx: RunContext[object]) -> str:
+    def get_agent_info(ctx: RunContext) -> str:
         assert ctx.agent is not None
         tool_agent_names.append(ctx.agent.name)
         tool_output_types.append(ctx.agent.output_type)
@@ -3944,7 +3942,7 @@ def test_tool_ctx_agent_in_output_validator():
     validator_agent_names: list[str | None] = []
 
     @agent.output_validator
-    def check_agent(ctx: RunContext[object], output: str) -> str:
+    def check_agent(ctx: RunContext, output: str) -> str:
         assert ctx.agent is not None
         validator_agent_names.append(ctx.agent.name)
         return output

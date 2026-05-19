@@ -132,7 +132,7 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepCon
 
 
 @dataclass
-class DivisibleBy5(BaseNode[object, None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
     foo: int
 
     async def run(
@@ -532,7 +532,7 @@ class GraphDeps:
 
 
 @dataclass
-class DivisibleBy5(BaseNode[object, GraphDeps, int]):
+class DivisibleBy5(BaseNode[None, GraphDeps, int]):
     foo: int
 
     async def run(
@@ -546,7 +546,7 @@ class DivisibleBy5(BaseNode[object, GraphDeps, int]):
 
 
 @dataclass
-class Increment(BaseNode[object, GraphDeps]):
+class Increment(BaseNode[None, GraphDeps]):
     foo: int
 
     async def run(self, ctx: GraphRunContext[None, GraphDeps]) -> DivisibleBy5:

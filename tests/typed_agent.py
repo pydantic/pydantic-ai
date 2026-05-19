@@ -331,7 +331,7 @@ else:
 Tool(foobar_ctx, takes_ctx=True)
 Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
-assert_type(Tool(foobar_plain), Tool[object])
+assert_type(Tool(foobar_plain), Tool)
 assert_type(Tool(foobar_plain), Tool)
 
 

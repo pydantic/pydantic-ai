@@ -28,7 +28,7 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepCon
 
 
 @dataclass
-class DivisibleBy5(BaseNode[object, object, int]):
+class DivisibleBy5(BaseNode[None, None, int]):
     foo: int
 
     async def run(

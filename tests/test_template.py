@@ -159,7 +159,7 @@ class TestValidateFromSpecArgs:
         """Capabilities without TemplateStr in from_spec hints are unchanged."""
 
         @dataclass
-        class PlainCap(AbstractCapability[object]):
+        class PlainCap(AbstractCapability):
             value: str = ''
 
             @classmethod

@@ -70,7 +70,7 @@ weather_agent = Agent(  # (1)!
 
 
 @weather_agent.tool()
-async def get_weather(_run_ctx: RunContext[object], city: str) -> dict:
+async def get_weather(_run_ctx: RunContext, city: str) -> dict:
     """Get the current weather for a given city."""
 
     # Do durable tool steps using the Restate context
