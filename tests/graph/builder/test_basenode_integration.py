@@ -70,7 +70,7 @@ async def test_step_to_basenode():
     """Test transitioning from a builder step to a BaseNode using StepNode."""
     g = GraphBuilder(state_type=IntegrationState, output_type=str)
 
-    # V1 style nodes
+    # `BaseNode` subclasses
     @dataclass
     class V1StartNode(BaseNode[IntegrationState, None, str]):
         value: int
@@ -144,7 +144,7 @@ async def test_basenode_returning_basenode():
 
 
 async def test_mixed_step_and_basenode_with_broadcast():
-    """Test broadcasting with mixed v1 and builder nodes."""
+    """Test broadcasting with mixed step and `BaseNode` nodes."""
     g = GraphBuilder(state_type=IntegrationState, output_type=list[int])
     collect = g.join(reduce_list_append, initial_factory=list[int])
 

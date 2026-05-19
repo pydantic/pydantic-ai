@@ -1546,17 +1546,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranch[SourceNodeT]:
-        """Create a decision branch for BaseNode subclasses.
+        """Create a decision branch for `BaseNode` subclasses.
 
-        This is similar to match() but specifically designed for matching
-        against BaseNode types from the v1 system.
+        This is similar to `match()` but specifically designed for matching against `BaseNode` types.
 
         Args:
-            source: The BaseNode subclass to match against
+            source: The `BaseNode` subclass to match against
             matches: Optional custom matching function
 
         Returns:
-            A DecisionBranch for the BaseNode type
+            A `DecisionBranch` for the `BaseNode` type
         """
         node = NodeStep(source)
         path = Path(items=[DestinationMarker(node.id)])
@@ -1566,16 +1565,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self,
         node_type: type[BaseNode[StateT, DepsT, GraphOutputT]],
     ) -> EdgePath[StateT, DepsT]:
-        """Create an edge path from a BaseNode class.
+        """Create an edge path from a `BaseNode` class.
 
-        This method integrates v1-style BaseNode classes into the v2 graph
-        system by analyzing their type hints and creating appropriate edges.
+        This method integrates a `BaseNode` subclass into the builder graph by
+        analyzing its `run` return type hints and creating appropriate edges.
 
         Args:
-            node_type: The BaseNode subclass to integrate
+            node_type: The `BaseNode` subclass to integrate
 
         Returns:
-            An EdgePath representing the node and its connections
+            An `EdgePath` representing the node and its connections
 
         Raises:
             GraphSetupError: If the node type is missing required type hints
@@ -2070,7 +2069,7 @@ def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[N
 
 def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
     # Note: it's a bit awkward that we mutate the provided nodes, but this is necessary to ensure that
-    # calls to `.as_node` reference the correct node_ids when relying on compatibility with the v1 API.
+    # calls to `.as_node` reference the correct node_ids when bridging from `BaseNode` subclasses.
     # We only mutate placeholder IDs so I _think_ this should generally be okay. I guess we can
     # rework it more carefully if it causes issues in the future..
     if isinstance(node, Step):
