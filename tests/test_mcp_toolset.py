@@ -12,10 +12,13 @@ class is validated against the same surface area as the legacy `FastMCPToolset`.
 from __future__ import annotations
 
 import base64
+import importlib
 import json
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -187,6 +190,14 @@ class TestMCPToolsetConstruction:
         toolset = MCPToolset('https://example.com/mcp', init_timeout=10, read_timeout=120)
         # Both kwargs flow into the FastMCP `Client`; verify the read timeout was forwarded.
         assert toolset.client._init_timeout is not None  # pyright: ignore[reportPrivateUsage]
+
+    def test_works_without_fastmcp_server(self):
+        """Regression: `MCPToolset` must work with `fastmcp-slim[client]` (no `fastmcp.server`). #5512."""
+        with patch.dict(sys.modules, {'fastmcp.server': None}):
+            sys.modules.pop('pydantic_ai.mcp', None)
+            mcp_mod = importlib.import_module('pydantic_ai.mcp')
+            toolset = mcp_mod.MCPToolset('https://example.com/mcp')
+            assert toolset.client is not None
 
 
 class TestResourceTypeMapping:
