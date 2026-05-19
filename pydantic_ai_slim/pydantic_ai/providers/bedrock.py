@@ -48,7 +48,8 @@ class BedrockModelProfile(ModelProfile):
     bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
     """Which thinking API shape to use for unified thinking translation.
 
-    - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
+    - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
+      or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
@@ -60,17 +61,27 @@ class BedrockModelProfile(ModelProfile):
     Mirrors `AnthropicModelProfile.anthropic_supports_adaptive_thinking` but tracks Bedrock's separate
     API surface (`additionalModelRequestFields.thinking` on Converse). When True, unified `thinking`
     translates to `{'type': 'adaptive'}` and `thinking=False` omits the field entirely, matching
-    direct-API adaptive semantics. Bedrock rejects the `effort` sub-parameter, so all truthy effort
-    levels collapse to the same plain `{'type': 'adaptive'}` request (depth defaults to 'high').
+    direct-API adaptive semantics.
+    """
+
+    bedrock_supports_effort: bool = False
+    """Whether Bedrock Converse accepts `output_config.effort` for this model.
+
+    Mirrors `AnthropicModelProfile.anthropic_supports_effort`. On Bedrock Converse, effort lives at
+    `additionalModelRequestFields.output_config.effort` — a sibling of `thinking`, not inside it
+    (AWS returns `ValidationException` if `effort` is placed inside `thinking`). When True and the
+    unified thinking level is a string, it is also mapped to `output_config.effort`.
     """
 
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
     downstream = anthropic_model_profile(model_name)
-    supports_adaptive = (
-        isinstance(downstream, AnthropicModelProfile) and downstream.anthropic_supports_adaptive_thinking
-    )
+    # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
+    # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
+    is_anthropic = isinstance(downstream, AnthropicModelProfile)
+    supports_adaptive = is_anthropic and downstream.anthropic_supports_adaptive_thinking
+    supports_effort = is_anthropic and downstream.anthropic_supports_effort
     profile = BedrockModelProfile(
         bedrock_supports_tool_choice=True,
         bedrock_send_back_thinking_parts=True,
@@ -79,6 +90,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         bedrock_thinking_variant='anthropic',
         bedrock_supports_adaptive_thinking=supports_adaptive,
+        bedrock_supports_effort=supports_effort,
     ).update(_without_builtin_tools(downstream))
     # We don't currently support native structured output with Bedrock.
     # See https://github.com/pydantic/pydantic-ai/issues/4209.

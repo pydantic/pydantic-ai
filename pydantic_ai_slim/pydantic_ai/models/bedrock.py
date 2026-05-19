@@ -61,7 +61,7 @@ from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -612,12 +612,22 @@ class BedrockConverseModel(Model[BaseClient]):
 
         if variant == 'anthropic' and 'thinking' not in existing:
             if profile.bedrock_supports_adaptive_thinking:
-                # Bedrock rejects 'effort' inside adaptive (ValidationException), so all truthy
-                # effort levels collapse to plain {'type': 'adaptive'} — depth defaults to 'high'.
-                # thinking=False omits the field entirely, matching direct Anthropic behavior;
-                # adaptive models have no documented `disabled` shape.
                 if thinking is not False:
                     existing['thinking'] = {'type': 'adaptive'}
+                    # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+                    if (
+                        profile.bedrock_supports_effort
+                        and isinstance(thinking, str)
+                        and 'output_config' not in existing
+                    ):
+                        effort_map: dict[ThinkingEffort, str] = {
+                            'minimal': 'low',
+                            'low': 'low',
+                            'medium': 'medium',
+                            'high': 'high',
+                            'xhigh': 'max',
+                        }
+                        existing['output_config'] = {'effort': effort_map[thinking]}
             elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:

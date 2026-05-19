@@ -1691,6 +1691,189 @@ Would you like detail on any specific method?\
     )
 
 
+async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sonnet 4.6 with `thinking='high'` — verifies output_config.effort lands on the wire.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive` (which covers bare
+    `thinking=True` and omits effort). Per AWS docs, `effort` must live in the sibling
+    `output_config` field inside `additionalModelRequestFields`, not inside `thinking`.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking='high'),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, everyday question about how to cross the street safely.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**, such as:
+   - A marked crosswalk
+   - An intersection with traffic signals
+   - A pedestrian crossing
+
+2. **Stop at the curb** before stepping into the street
+
+3. **Look both ways:**
+   - Look left
+   - Look right
+   - Look left again
+
+4. **Wait for traffic to clear** or for the walk signal if at a traffic light
+
+5. **Make eye contact** with any drivers to be sure they see you
+
+6. **Walk, don't run** across the street
+
+7. **Stay alert** - avoid looking at your phone while crossing
+
+8. **Cross in a straight line** and keep watching for traffic as you go
+
+**Additional tips:**
+- Use crosswalks and signals whenever possible
+- Be extra cautious at night or in bad weather
+- Watch for turning vehicles, even when you have the right of way
+- Be aware of cyclists as well as cars
+
+Would you like more detail on any specific situation, like crossing with children or crossing without a crosswalk?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=280),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking how to cross a river, using the analogy of crossing the street. They want me to apply similar principles/steps but adapted for crossing a river. Let me think about this carefully.
+
+Crossing a street involves:
+1. Finding a safe place to cross
+2. Stopping and assessing
+3. Looking both ways for hazards
+4. Waiting for the right moment
+5. Moving carefully and alertly
+6. Staying aware throughout
+
+Analogously, crossing a river would involve similar principles but adapted for the river context:
+
+1. Find a safe place to cross (shallow ford, bridge, stepping stones, etc.)
+2. Assess the conditions before entering
+
+
+3. Check upstream and downstream for potential dangers like debris or strong currents
+4. Wait for optimal conditions if the water is too turbulent
+5. Move across deliberately and with full attention
+6. Maintain awareness of changing water conditions the entire time\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross a river, using the same principles as crossing a street:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Find a **shallow ford** where the water is calm and slow
+- Look for **stepping stones**
+- Avoid deep, fast-moving, or narrow sections
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and speed** (like checking for traffic)
+- Look **upstream and downstream** for hazards (like looking left and right)
+- Watch for debris, rocks, or sudden drop-offs
+
+## 3. Wait for Safe Conditions
+- Avoid crossing during **floods or heavy rain**
+- Let fast currents settle, similar to waiting for traffic to clear
+
+## 4. Cross Carefully
+- **Unbuckle your pack** if carrying one, in case you fall
+- Use a **walking stick** for stability
+- Face **upstream** as you cross
+- Move **slowly and deliberately** (don't run)
+- Cross at an **angle** with the current rather than straight across
+
+## 5. Stay Alert Throughout
+- Keep watching for changing conditions
+- Don't look at distractions
+- Have an **exit plan** if you lose footing
+
+## Key Analogy Points:
+| Street | River |
+|--------|-------|
+| Crosswalk | Bridge/ford |
+| Traffic | Current/debris |
+| Walk signal | Calm water conditions |
+| Looking both ways | Checking upstream/downstream |
+
+Would you like more detail on any specific crossing method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=316, output_tokens=573),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel(
         'us.anthropic.claude-3-7-sonnet-20250219-v1:0',

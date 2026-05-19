@@ -748,55 +748,70 @@ class TestBedrockThinkingTranslation:
         result = model._translate_thinking(settings, params)
         assert result is None
 
+    def _adaptive_model(self, *, supports_effort: bool = True):
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            bedrock_supports_adaptive_thinking=True,
+            bedrock_supports_effort=supports_effort,
+            supports_thinking=True,
+        )
+        return model
+
     def test_anthropic_variant_adaptive_thinking_true(self):
-        """Adaptive-capable Claude (Sonnet 4.6+, Opus 4.6+) on Bedrock -> {'type': 'adaptive'}."""
-        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-        from pydantic_ai.providers.bedrock import BedrockModelProfile
+        """Bare thinking=True enables adaptive but doesn't set effort (matches AnthropicModel)."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
 
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            bedrock_supports_adaptive_thinking=True,
-            supports_thinking=True,
-        )
-
-        settings = BedrockModelSettings()
-        params = ModelRequestParameters(thinking=True)
-        result = model._translate_thinking(settings, params)
+        model = self._adaptive_model()
+        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=True))
         assert result == {'thinking': {'type': 'adaptive'}}
 
-    def test_anthropic_variant_adaptive_thinking_high_drops_effort(self):
-        """Bedrock rejects 'effort' inside adaptive — all truthy efforts collapse to plain adaptive."""
-        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-        from pydantic_ai.providers.bedrock import BedrockModelProfile
+    def test_anthropic_variant_adaptive_thinking_high_sets_effort(self):
+        """thinking='high' on adaptive model adds output_config.effort sibling per AWS docs."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
 
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            bedrock_supports_adaptive_thinking=True,
-            supports_thinking=True,
-        )
+        model = self._adaptive_model()
+        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking='high'))
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}}
 
-        settings = BedrockModelSettings()
-        params = ModelRequestParameters(thinking='high')
-        result = model._translate_thinking(settings, params)
+    @pytest.mark.parametrize(
+        'level,effort',
+        [('minimal', 'low'), ('low', 'low'), ('medium', 'medium'), ('high', 'high'), ('xhigh', 'max')],
+    )
+    def test_anthropic_variant_adaptive_effort_map(self, level: ThinkingLevel, effort: str):
+        """Effort map: minimal/low → low, medium → medium, high → high, xhigh → max (best-effort)."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
+
+        model = self._adaptive_model()
+        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=level))
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
+
+    def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
+        """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
+
+        model = self._adaptive_model(supports_effort=False)
+        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking='high'))
         assert result == {'thinking': {'type': 'adaptive'}}
+
+    def test_anthropic_variant_adaptive_user_output_config_wins(self):
+        """User-provided output_config in bedrock_additional_model_requests_fields is preserved."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
+
+        model = self._adaptive_model()
+        settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}})
+        result = model._translate_thinking(settings, ModelRequestParameters(thinking='high'))
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
 
     def test_anthropic_variant_adaptive_thinking_false_omits(self):
-        """thinking=False on adaptive model omits the field — matches direct Anthropic OMIT behavior."""
-        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-        from pydantic_ai.providers.bedrock import BedrockModelProfile
+        """thinking=False on adaptive model omits both thinking and output_config."""
+        from pydantic_ai.models.bedrock import BedrockModelSettings
 
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            bedrock_supports_adaptive_thinking=True,
-            supports_thinking=True,
-        )
-
-        settings = BedrockModelSettings()
-        params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
+        model = self._adaptive_model()
+        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=False))
         assert result is None
 
 

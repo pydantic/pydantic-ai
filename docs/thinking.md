@@ -48,7 +48,7 @@ The unified `thinking` setting maps to each provider's native format:
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
-| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `thinking.type='adaptive'` | Bedrock rejects the `effort` sub-parameter, so all truthy effort levels collapse to plain adaptive (depth defaults to `'high'`) |
+| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 
@@ -194,9 +194,6 @@ For older Claude models or to pin a specific `budget_tokens`, you can still use 
     agent = Agent(model=model, model_settings=model_settings)
 
     ```
-
-    !!! note "Effort levels on Bedrock"
-        Unlike the direct Anthropic provider, Bedrock Converse rejects the `effort` sub-parameter on adaptive thinking with a `ValidationException`. As a result, `thinking='low'`, `thinking='medium'`, and `thinking='high'` all produce identical Bedrock requests on Claude 4.6+ models — the underlying request is plain `{'type': 'adaptive'}` and depth defaults to `'high'`. To control depth on these models today, use the manual `bedrock_additional_model_requests_fields` override above.
 === "OpenAI"
 
 
