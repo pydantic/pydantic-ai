@@ -6,15 +6,15 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset
+from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
 
 from .abstract import AbstractCapability, CapabilityOrdering
 from .instrumentation import Instrumentation
 
 
 @dataclass
-class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
-    """Internal capability that provides the `load_capability` tool for deferred capabilities."""
+class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
+    """Internal capability that installs deferred capability catalog and loading support."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
@@ -34,4 +34,4 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        return DeferredCapabilityToolset(wrapped=toolset)
+        return DeferredCapabilityLoaderToolset(wrapped=toolset)

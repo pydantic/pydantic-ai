@@ -28,7 +28,7 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     `ToolDefinition.tool_kind` and calling `ToolReturnPart.narrow_type` /
     `ToolCallPart.narrow_type`) to surface load_capability call/return pairs as
     the typed subclasses — see the `tool_kind='capability-load'` stamp on
-    `DeferredCapabilityToolset`'s tool def.
+    `DeferredCapabilityLoaderToolset`'s tool def.
     """
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()

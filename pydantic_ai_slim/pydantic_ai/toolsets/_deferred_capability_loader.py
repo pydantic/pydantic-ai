@@ -26,7 +26,7 @@ _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
 
 @dataclass
-class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
+class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a `load_capability` discovery tool.
 
     When deferred-loading capabilities exist, `get_tools` adds a `load_capability` tool.
@@ -42,7 +42,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         all_tools = await self.wrapped.get_tools(ctx)
 
         assert any(entry.defer_loading is True for entry in ctx.capabilities.values()), (
-            'DeferredCapabilityToolset should only be installed when deferred capabilities exist.'
+            'DeferredCapabilityLoaderToolset should only be installed when deferred capabilities exist.'
         )
 
         if LOAD_CAPABILITY_TOOL_NAME in all_tools:

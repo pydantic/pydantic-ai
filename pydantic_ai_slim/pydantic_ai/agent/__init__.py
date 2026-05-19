@@ -22,7 +22,7 @@ from typing_extensions import Self, TypeVar, deprecated
 from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
-from pydantic_ai.capabilities._deferred_loading import DeferredLoadingCapability
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
 from .. import (
     _agent_graph,
@@ -1372,7 +1372,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
         if any(cap.defer_loading is True for cap in collect_leaves(run_capability)):
-            run_capability = CombinedCapability([run_capability, DeferredLoadingCapability()])
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
