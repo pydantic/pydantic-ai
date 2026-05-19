@@ -100,10 +100,10 @@ Third-party integrations to reach for:
 
 - `tool_from_langchain`
 - `LangChainToolset`
-- `tool_from_aci`
-- `ACIToolset`
+- `tool_from_aci` (deprecated, removed in 2.0)
+- `ACIToolset` (deprecated, removed in 2.0)
 
-Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools.
+Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools. The ACI.dev wrappers are deprecated in 1.x and removed in 2.0; wrap ACI tools yourself with `Tool.from_schema` against `aci.ACI().functions.get_definition(...)`.
 
 ## Systematically Verify Agent Behavior with Evals
 

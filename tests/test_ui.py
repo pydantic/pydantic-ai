@@ -69,12 +69,6 @@ from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -606,7 +600,7 @@ async def test_run_stream_output_tool_error():
         raise ValueError('Output validation failed')
 
     agent = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries={'tools': 0, 'output': 0}
     )
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])

@@ -2,7 +2,6 @@ import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -38,6 +37,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -46,16 +46,13 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
@@ -90,12 +87,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -1830,24 +1821,6 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -1951,7 +1924,9 @@ def test_model_profile_strict_not_supported():
     m = OpenAIResponsesModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+        profile=merge_profile(
+            openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
+        ),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -2854,7 +2829,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     response instead of re-sending the same static seed and duplicating stored state.
     """
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, tool_retries=3, output_retries=3)
+    agent = Agent(model=model, retries={'tools': 3, 'output': 3})
 
     attempts: list[str] = []
 
@@ -5530,57 +5505,6 @@ I\
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7468,23 +7392,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7791,28 +7698,6 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='image_generation',
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='image_generation',
-                    content={
-                        'status': 'completed',
-                        'background': 'opaque',
-                        'quality': 'high',
-                        'size': '1024x1536',
-                        'revised_prompt': IsStr(),
-                    },
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -9631,7 +9516,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(api_key=openai_api_key),
-        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'), OpenAIModelProfile(openai_responses_requires_function_call_status_none=True)
+        ),
     )
     agent = Agent(model)
 
@@ -10613,24 +10500,6 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=2,
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                 ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': ['What is the capital of France?']},
-                        tool_call_id=IsStr(),
-                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
-                        provider_name='openai',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    )
-                ),
             ]
         )
 
@@ -10867,38 +10736,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
     )
 
 
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
-async def test_openai_responses_system_prompt_role(
-    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
-) -> None:
-    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
-    c = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-    agent = Agent(model, system_prompt='some instructions')
-
-    result = await agent.run('hello')
-    assert result.output == 'world'
-
-    expected_role = system_prompt_role or 'system'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['input'] == [
-        {'content': 'some instructions', 'role': expected_role},
-        {'content': 'hello', 'role': 'user'},
-    ]
-
-
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, instructions='You are a helpful coding assistant.')
@@ -10913,6 +10750,99 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    result = await model.count_tokens(
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        OpenAIResponsesModelSettings(timeout=123.0),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == snapshot(16)
+
+
+async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
+        await model.count_tokens([], None, ModelRequestParameters())
+
+
+async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
+    )
+
+    assert result.input_tokens == snapshot(51)
+
+
+async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=r'The next request would exceed the input_tokens_limit of 9 \(input_tokens=18\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazy dog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazy dog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        "That's a classic pangram! It contains every letter of the English alphabet"
+        " at least once. It's commonly used for testing fonts, typewriters, and keyboards."
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='The quick brown fox jumps over the lazy dog.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsStr()),
+                conversation_id=(conversation_id := IsStr()),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="That's a classic pangram! It contains every letter of the English alphabet at least once. It's commonly used for testing fonts, typewriters, and keyboards.",
+                        id=IsStr(),
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=18, output_tokens=28, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-mini',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=run_id,
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
 
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
@@ -11966,10 +11896,10 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
-    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False
+    assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False

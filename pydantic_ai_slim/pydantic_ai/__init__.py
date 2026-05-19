@@ -4,6 +4,7 @@ from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
+    AgentRetries,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -113,7 +114,6 @@ from .native_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -165,6 +165,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
@@ -299,7 +300,6 @@ __all__ = (
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
-    'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
