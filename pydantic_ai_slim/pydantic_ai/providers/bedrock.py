@@ -153,10 +153,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return replace(
         profile,
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        **(
-            {'supports_json_schema_output': False}
-            if model_name.startswith(bedrock_structured_output_unsupported)
-            else {}
+        supports_json_schema_output=(
+            profile.supports_json_schema_output and not model_name.startswith(bedrock_structured_output_unsupported)
         ),
     )
 
@@ -228,7 +226,8 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 # MiniMax and NVIDIA don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
 # these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
 # upstream profile via `_without_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do.
+# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
+# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
 
 
 def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:

@@ -29,7 +29,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, try_import
-from .conftest import CityInfo, PersonQuery
+from .conftest import Address, CityInfo, PersonQuery
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -105,7 +105,7 @@ async def test_bedrock_native_output_qwen(
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
 
-    assert isinstance(result.output, CityInfo)
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2148000))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -155,7 +155,7 @@ async def test_bedrock_native_output_google(
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
 
-    assert isinstance(result.output, CityInfo)
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2141000))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -205,7 +205,7 @@ async def test_bedrock_native_output_minimax(
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
 
-    assert isinstance(result.output, CityInfo)
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2110000))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -266,7 +266,7 @@ async def test_bedrock_native_output_mistral(
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
 
-    assert isinstance(result.output, CityInfo)
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2102650))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -306,7 +306,7 @@ async def test_bedrock_native_output_nvidia(
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
 
-    assert isinstance(result.output, CityInfo)
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2148000))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -360,7 +360,9 @@ async def test_bedrock_native_output_nested_objects_without_extra_forbid(
     agent = Agent(model, output_type=NativeOutput(PersonQuery))
 
     result = await agent.run('Look up John who lives at 123 Main St, Springfield')
-    assert isinstance(result.output, PersonQuery)
+    assert result.output == snapshot(
+        PersonQuery(name='John', address=Address(street='123 Main St', city='Springfield'))
+    )
 
 
 def test_bedrock_native_output_format_structure():

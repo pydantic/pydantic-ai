@@ -328,7 +328,7 @@ async def test_bedrock_strict_false_tool_with_nested_objects(
         return f'{query.name} lives at {query.address.street}, {query.address.city}'
 
     result = await agent.run('Look up John who lives at 123 Main St, Springfield')
-    assert isinstance(result.output, str)
+    assert result.output == snapshot("I found John's record. He lives at 123 Main St, Springfield.")
 
 
 async def test_bedrock_strict_tool_with_native_output(
