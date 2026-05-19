@@ -1,19 +1,11 @@
 """Builder-based graph API: builder, graph runner, and mermaid rendering.
 
 This module is the canonical home for the builder-based graph API:
-[`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] for declaratively
-constructing executable graphs, [`Graph`][pydantic_graph.graph_builder.Graph]
-and [`GraphRun`][pydantic_graph.graph_builder.GraphRun] for executing them, and
-the mermaid rendering helpers used by `Graph.render()`.
-
-The same public symbols are re-exported from `pydantic_graph` directly. The
-deprecated `pydantic_graph.beta.*` namespace also forwards here.
-
-The contents of three previously-separate modules are bundled here because they
-co-occupy the names (`graph`, `mermaid`) that the legacy `BaseNode`-based
-runner currently holds at the top level. In v2, after the legacy runner is
-removed, `Graph` and the mermaid helpers are expected to move out of this file
-to `pydantic_graph.graph` and `pydantic_graph.mermaid` respectively.
+[`GraphBuilder`][pydantic_graph.GraphBuilder] for declaratively constructing
+executable graphs, [`Graph`][pydantic_graph.Graph] and
+[`GraphRun`][pydantic_graph.GraphRun] for executing them, and the mermaid
+rendering helpers used by `Graph.render()`. The same public symbols are
+re-exported from `pydantic_graph` directly.
 """
 
 from __future__ import annotations as _annotations

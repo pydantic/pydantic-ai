@@ -361,8 +361,7 @@
       {
         "label": "Complex Workflows",
         "items": [
-          "examples/flight-booking",
-          "examples/question-graph"
+          "examples/flight-booking"
         ]
       },
       {
@@ -460,23 +459,14 @@
       {
         "label": "pydantic_graph",
         "items": [
-          "api/pydantic_graph/graph",
-          "api/pydantic_graph/nodes",
-          "api/pydantic_graph/persistence",
-          "api/pydantic_graph/mermaid",
-          "api/pydantic_graph/exceptions",
-          {
-            "label": "Graph Builder",
-            "items": [
-              "api/pydantic_graph/graph_builder",
-              "api/pydantic_graph/graph_builder_graph",
-              "api/pydantic_graph/graph_builder_graph_builder",
-              "api/pydantic_graph/graph_builder_step",
-              "api/pydantic_graph/graph_builder_join",
-              "api/pydantic_graph/graph_builder_decision",
-              "api/pydantic_graph/graph_builder_node"
-            ]
-          }
+          "api/pydantic_graph/basenode",
+          "api/pydantic_graph/graph_builder",
+          "api/pydantic_graph/step",
+          "api/pydantic_graph/join",
+          "api/pydantic_graph/decision",
+          "api/pydantic_graph/node",
+          "api/pydantic_graph/util",
+          "api/pydantic_graph/exceptions"
         ]
       }
     ]
