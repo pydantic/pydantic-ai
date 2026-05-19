@@ -689,9 +689,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_spec'
         )
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'Agent.from_spec', current_retries=retries
-        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
@@ -852,9 +849,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
             _deprecated_kwargs, 'Agent.from_file'
-        )
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'Agent.from_file', current_retries=retries
         )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())

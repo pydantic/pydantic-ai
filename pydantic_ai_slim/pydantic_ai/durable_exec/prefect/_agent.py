@@ -315,7 +315,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         event_stream_handler=event_stream_handler,
                         capabilities=capabilities,
                         spec=spec,
-                        **_deprecated_kwargs,
                     )
                     return result
             finally:
@@ -465,7 +464,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             event_stream_handler=event_stream_handler,
                             capabilities=capabilities,
                             spec=spec,
-                            **_deprecated_kwargs,
                         )
                     )
                     return result
