@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import logfire
-from groq import BaseModel
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import (

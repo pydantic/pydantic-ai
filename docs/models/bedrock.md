@@ -121,8 +121,8 @@ result1 = agent.run_sync('What is the capital of France?')
 
 # Subsequent calls with similar conversation benefit from cache
 result2 = agent.run_sync('What is the capital of Germany?')
-print(f'Cache write: {result1.usage().cache_write_tokens}')
-print(f'Cache read: {result2.usage().cache_read_tokens}')
+print(f'Cache write: {result1.usage.cache_write_tokens}')
+print(f'Cache read: {result2.usage.cache_read_tokens}')
 ```
 
 ### Example 2: Comprehensive Caching Strategy
@@ -194,7 +194,7 @@ async def main():
             'What changed since last time?',
         ]
     )
-    usage = result.usage()
+    usage = result.usage
     print(f'Cache writes: {usage.cache_write_tokens}')
     print(f'Cache reads: {usage.cache_read_tokens}')
 ```

@@ -23,14 +23,14 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -132,6 +132,11 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated',
     'ignore:`BuiltinToolResultEvent` is deprecated',
+    # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
+    'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
+    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
+    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
+    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -599,6 +604,14 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'Write a long essay about Python': (
+        'Python is a versatile, high-level programming language known for its readability and simplicity. '
+        'Created by Guido van Rossum and first released in 1991, Python has grown to become one of the most '
+        'popular programming languages in the world, used in web development, data science, artificial intelligence, '
+        'automation, and countless other domains.'
+    ),
+    'Tell me about Python': 'Python is a versatile programming language.',
+    'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
@@ -813,25 +826,25 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-                        },
+                        args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                            'type': 'code_execution_result',
+                            'stdout': '1307674368000\n',
+                            'type': 'bash_code_execution_result',
                         },
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
                 ]
