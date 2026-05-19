@@ -2695,7 +2695,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelResponse(
                 parts=[
                     ToolSearchCallPart(
-                        args={'queries': ['<auto-discovered>']},
+                        args={'queries': ['refunds']},
                         tool_call_id='auto_load_0f10f8b659c3c105',
                     )
                 ],
@@ -2705,7 +2705,14 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
+                        content={
+                            'discovered_tools': [
+                                {
+                                    'name': 'lookup_refund_policy',
+                                    'description': 'Look up the refund policy for an order.',
+                                }
+                            ]
+                        },
                         tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
@@ -2720,7 +2727,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=80, output_tokens=16),
+                usage=RequestUsage(input_tokens=88, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2747,7 +2754,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=86, output_tokens=23),
+                usage=RequestUsage(input_tokens=94, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -17644,6 +17651,58 @@ async def test_dynamic_deferred_capability_requires_stable_returned_id() -> None
 
     assert 'stable explicit ids for message history replay' in str(exc_info.value)
     assert "'auto_capability_" in str(exc_info.value)
+
+
+async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_tools() -> None:
+    """A loaded dynamic deferred capability exposes tools from the resolved capability."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return Capability[None](
+            id='dynamic-refunds',
+            description='Refund policy tools.',
+            toolset=toolset,
+            defer_loading=True,
+        )
+
+    seen_tool_state: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+
+        if not any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'dynamic-refunds'},
+                        tool_call_id='load-dynamic-refunds',
+                    )
+                ]
+            )
+
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[factory])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    assert seen_tool_state == snapshot(
+        [
+            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False), ('lookup_refund_policy', False)],
+        ]
+    )
 
 
 async def test_dynamic_capability_in_run_call() -> None:

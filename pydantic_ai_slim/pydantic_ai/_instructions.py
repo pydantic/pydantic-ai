@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._template import TemplateStr
-from pydantic_ai.tools import AgentDepsT
 
 from . import _system_prompt
 
@@ -15,6 +15,8 @@ AgentInstructions = (
     | None
 )
 
+PreparedInstruction = str | _system_prompt.SystemPromptRunner[AgentDepsT]
+
 
 def normalize_instructions(
     instructions: AgentInstructions[AgentDepsT],
@@ -25,3 +27,33 @@ def normalize_instructions(
     if isinstance(instructions, str) or callable(instructions):
         return [instructions]
     return list(instructions)
+
+
+def prepare_instructions(
+    instructions: AgentInstructions[AgentDepsT],
+) -> list[PreparedInstruction[AgentDepsT]]:
+    prepared: list[PreparedInstruction[AgentDepsT]] = []
+    for instruction in normalize_instructions(instructions):
+        if isinstance(instruction, str):
+            prepared.append(instruction)
+        else:
+            # TemplateStr instances land here too: they are callable with a
+            # RunContext parameter, so SystemPromptRunner handles them like
+            # any other system prompt function.
+            prepared.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+    return prepared
+
+
+async def resolve_instructions(
+    instructions: AgentInstructions[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+) -> list[str]:
+    parts: list[str] = []
+    for instruction in prepare_instructions(instructions):
+        if isinstance(instruction, str):
+            parts.append(instruction)
+        else:
+            resolved = await instruction.run(run_context)
+            if resolved is not None:
+                parts.append(resolved)
+    return parts

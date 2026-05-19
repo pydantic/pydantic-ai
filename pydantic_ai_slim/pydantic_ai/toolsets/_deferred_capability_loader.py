@@ -5,9 +5,8 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._instructions import normalize_instructions
+from pydantic_ai._instructions import resolve_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn, ToolReturn
 from pydantic_ai.tools import ToolDefinition
@@ -72,13 +71,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         parts: list[str] = []
 
-        for instruction in normalize_instructions(ctx.capabilities[capability_id].get_instructions()):
-            if isinstance(instruction, str):
-                parts.append(instruction)
-            else:
-                resolved = await SystemPromptRunner[AgentDepsT](instruction).run(ctx)
-                if resolved is not None:
-                    parts.append(resolved)
+        parts.extend(await resolve_instructions(ctx.capabilities[capability_id].get_instructions(), ctx))
 
         if toolset_instructions := await self._collect_owned_toolset_instructions(capability_id, ctx):
             parts.append(toolset_instructions)

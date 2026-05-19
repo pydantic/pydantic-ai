@@ -33,7 +33,7 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._capability_owned import tools_for_loaded_capabilities
+from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -229,13 +229,18 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         names so reconstructing the same exchange produces stable provider-visible
         bytes.
         """
-        should_be = tools_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
+        loaded_tool_defs = tool_defs_for_loaded_capabilities(
+            ctx, request_context.model_request_parameters.function_tools
+        )
         in_history = parse_discovered_tools(ctx.messages)
-        newly_loaded = should_be - in_history
+        newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
         if not newly_loaded:
             return request_context
 
         newly_loaded_names = sorted(newly_loaded)
+        capability_ids = sorted(
+            {capability_id for name in newly_loaded_names if (capability_id := newly_loaded[name].capability_id)}
+        )
         # The synthetic exchange is persisted to message history, so this
         # should not be regenerated every turn. Keep the id deterministic anyway so
         # replay from a prefix or aborted request preparation reconstructs the same
@@ -248,7 +253,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             ModelResponse(
                 parts=[
                     ToolSearchCallPart(
-                        args={'queries': ['<auto-discovered>']},
+                        args={'queries': capability_ids},
                         tool_call_id=call_id,
                     ),
                 ]
@@ -259,7 +264,10 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                 parts=[
                     ToolSearchReturnPart(
                         content={
-                            'discovered_tools': [{'name': name, 'description': None} for name in newly_loaded_names]
+                            'discovered_tools': [
+                                {'name': name, 'description': newly_loaded[name].description}
+                                for name in newly_loaded_names
+                            ]
                         },
                         tool_call_id=call_id,
                     ),

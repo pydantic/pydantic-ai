@@ -2582,14 +2582,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
-        for instruction in instructions:
+        for instruction in _instructions.prepare_instructions(instructions):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             else:
-                # TemplateStr instances land here too: they are callable with a
-                # RunContext parameter, so SystemPromptRunner handles them like
-                # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                functions.append(instruction)
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions

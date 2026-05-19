@@ -151,7 +151,7 @@ interactions:
         - id: auto_load_0388c743
           input:
             queries:
-            - <auto-discovered>
+            - refunds
           name: search_tools
           type: tool_use
         role: assistant
@@ -278,7 +278,7 @@ interactions:
         - id: auto_load_0388c743
           input:
             queries:
-            - <auto-discovered>
+            - refunds
           name: search_tools
           type: tool_use
         role: assistant
@@ -412,7 +412,7 @@ interactions:
         - functionCall:
             args:
               queries:
-              - <auto-discovered>
+              - refunds
             id: auto_load_0388c743
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
@@ -576,7 +576,7 @@ interactions:
         - functionCall:
             args:
               queries:
-              - <auto-discovered>
+              - refunds
             id: auto_load_0388c743
             name: search_tools
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=

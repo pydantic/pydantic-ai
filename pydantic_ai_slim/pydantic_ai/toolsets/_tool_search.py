@@ -47,7 +47,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
-from ._capability_owned import tools_for_loaded_capabilities
+from ._capability_owned import tool_defs_for_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -228,12 +228,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        loaded_capability_tools = tools_for_loaded_capabilities(
+        loaded_capability_tool_defs = tool_defs_for_loaded_capabilities(
             ctx,
             (tool.tool_def for tool in all_tools.values()),
         )
 
-        discovered = parse_discovered_tools(ctx.messages) | loaded_capability_tools
+        discovered = parse_discovered_tools(ctx.messages) | set(loaded_capability_tool_defs)
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Single entry per deferred tool, keyed by its real name. `with_native`

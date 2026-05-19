@@ -52,10 +52,12 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
         self.wrapped.apply(visitor)
 
 
-def tools_for_loaded_capabilities(ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]) -> set[str]:
-    """Return resolved function-tool names owned by loaded deferred capabilities."""
+def tool_defs_for_loaded_capabilities(
+    ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
+) -> dict[str, ToolDefinition]:
+    """Return resolved function-tool definitions owned by loaded deferred capabilities, keyed by name."""
     return {
-        tool_def.name
+        tool_def.name: tool_def
         for tool_def in tool_defs
         if (capability_id := tool_def.capability_id) is not None
         and capability_id in ctx.loaded_capability_ids

@@ -502,7 +502,7 @@ def _build_run_context(
     `discovered_tools` from message history via `parse_discovered_tools`, so unit
     tests that exercise consumers of `ctx.discovered_tools` (e.g.
     `ToolSearchToolset.get_tools`) see the same set the agent loop would build.
-    The capability-load side of the union (`tools_for_loaded_capabilities`) is
+    The capability-load side of the union (`tool_defs_for_loaded_capabilities`) is
     not added here — tests that need that path build the ctx explicitly.
     """
     return RunContext(
@@ -2294,13 +2294,20 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolSearchCallPart(args={'queries': ['<auto-discovered>']}, tool_call_id=IsStr())],
+                parts=[ToolSearchCallPart(args={'queries': ['refunds']}, tool_call_id=IsStr())],
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'lookup_refund_policy', 'description': None}]},
+                        content={
+                            'discovered_tools': [
+                                {
+                                    'name': 'lookup_refund_policy',
+                                    'description': 'Look up the refund policy for an order.',
+                                }
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
