@@ -408,10 +408,10 @@ Every on-demand capability needs:
 * a short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description]
 * `defer_loading=True`
 
-[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and a [toolset](toolsets.md) available on demand:
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand. Use the `tools` constructor argument for existing functions, or register functions with `@capability.tool_plain` and `@capability.tool`. Pass `toolset=` when you already have an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], such as an MCP toolset.
 
 ```python {title="capability_on_demand.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -422,10 +422,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-refund_tools = FunctionToolset()
+refunds = Capability(
+    id='refunds',
+    description='Refund policy tools and instructions.',
+    instructions='Use the refund policy before answering refund questions.',
+    defer_loading=True,
+)
 
 
-@refund_tools.tool_plain
+@refunds.tool_plain
 def lookup_refund_policy(order_id: str) -> str:
     """Look up whether an order is still eligible for a refund."""
     return f'{order_id} is eligible for a refund for 30 days after purchase.'
@@ -470,13 +475,7 @@ agent = Agent(
     FunctionModel(support_model),
     instructions='Answer as a support assistant.',
     capabilities=[
-        Capability(
-            id='refunds',
-            description='Refund policy tools and instructions.',
-            instructions='Use the refund policy before answering refund questions.',
-            toolset=refund_tools,
-            defer_loading=True,
-        )
+        refunds,
     ],
 )
 

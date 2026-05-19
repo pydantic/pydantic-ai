@@ -2372,6 +2372,38 @@ async def test_toolset_capability_in_agent():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
+async def test_capability_function_tools_shortcuts_in_agent():
+    """A Capability can register function tools directly or with decorators."""
+
+    def greet(name: str) -> str:
+        """Greet someone by name."""
+        return f'Hello, {name}!'
+
+    cap = Capability[int](tools=[greet])
+
+    @cap.tool_plain(name='wave')
+    def wave(name: str) -> str:
+        """Wave to someone by name."""
+        return f'Waving to {name}!'
+
+    @cap.tool
+    def add_deps(ctx: RunContext[int], value: int) -> int:
+        """Add the run dependency to a value."""
+        return ctx.deps + value
+
+    agent = Agent(TestModel(call_tools=['greet', 'wave', 'add_deps']), capabilities=[cap], deps_type=int)
+    result = await agent.run('Use the capability tools', deps=10)
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
+
+
 def test_deferred_capability_catalog_entries_require_description() -> None:
     """Deferred capabilities must be discoverable before the model can load them."""
 
