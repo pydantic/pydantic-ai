@@ -38,13 +38,24 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_STRICT_INCOMPATIBLE_KEYS = (
-    'minimum',
-    'maximum',
-    'exclusiveMinimum',
-    'exclusiveMaximum',
-    'multipleOf',
-)
+# JSON Schema keys that Bedrock structured output rejects with a 400 under `strict=True`.
+# Source: empirically verified against `us.anthropic.claude-sonnet-4-5` on 2026-05-19; AWS docs
+# at https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html disagree in two
+# places so the wire response is the source of truth:
+#   - the doc lists string constraints (`minLength`, `maxLength`) as unsupported, but Bedrock
+#     accepts them — do NOT add them here.
+#   - the doc lists only `minimum`/`maximum`/`multipleOf` for numerical types, but Bedrock also
+#     rejects `exclusiveMinimum`/`exclusiveMaximum` — those are stripped too.
+# `array.minItems` is conditionally unsupported (Bedrock allows 0 or 1, rejects >1), so it's not
+# in this mapping — handled inline in `transform()`.
+# Repro: see `tests/providers/test_bedrock.py::test_bedrock_strict_unsupported_keys_*` cassettes.
+# Tuples (not sets) — iteration order shapes the synthesized description string and is asserted
+# by tests; keep the order matching the JSON Schema spec's listing of each keyword family.
+_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    'number': ('minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'),
+    'integer': ('minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'),
+    'array': ('maxItems',),
+}
 
 
 @dataclass(init=False)
@@ -56,26 +67,21 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     - `strict=True` is set on the `Tool`
 
     When `strict=None` (the default), simple schemas without incompatible constraints are
-    auto-promoted to `strict=True`. Schemas with incompatible numeric or array constraints
-    remain `strict=False`.
+    auto-promoted to `strict=True`. Schemas with any key listed in
+    `_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE` remain `strict=False`.
 
-    When `strict=True`:
-    - Strips numeric constraints (`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`)
-    - Strips `maxItems` and `minItems > 1` on arrays
-    - Appends stripped constraint info to the `description` field as a hint to the model
-
-    The following are preserved — Bedrock accepts them under strict validation:
-    - String constraints: `minLength`, `maxLength`, `pattern`
-    - String `format` (all values including `date-time`, `date`, `email`, `uri`, etc.)
-    - `enum`, `const`, `default`, `$defs`/`$ref`, `anyOf`
-    - `minItems` of 0 or 1 on arrays
+    When `strict=True`, keys Bedrock rejects (see the module-level constant for the
+    empirically-verified list) are popped off the schema and re-emitted into the field's
+    `description` so the model still has the hint.
     """
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
 
-        if schema.get('type') == 'object':
+        schema_type = schema.get('type')
+
+        if schema_type == 'object':
             if self.strict:
                 schema['additionalProperties'] = False
             elif self.strict is None:
@@ -84,18 +90,12 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 else:
                     schema['additionalProperties'] = False
 
-        # Track Bedrock-incompatible constraints
-        incompatible: dict[str, Any] = {}
-        schema_type = schema.get('type')
-
-        if schema_type in ('number', 'integer'):
-            for key in _STRICT_INCOMPATIBLE_KEYS:
+        incompatible: dict[str, object] = {}
+        if isinstance(schema_type, str):
+            for key in _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE.get(schema_type, ()):
                 if key in schema:
                     incompatible[key] = schema[key]
-        elif schema_type == 'array':
-            if 'maxItems' in schema:
-                incompatible['maxItems'] = schema['maxItems']
-            if 'minItems' in schema and schema['minItems'] > 1:
+            if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
 
         if incompatible:
@@ -107,7 +107,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 notes_str = ', '.join(notes)
                 desc = schema.get('description')
                 schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
-            elif self.strict is None:  # pragma: no branch
+            elif self.strict is None:
                 self.is_strict_compatible = False
 
         return schema
@@ -223,6 +223,12 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
         # Bedrock Converse API doesn't support tool return schemas natively
         supports_tool_return_schema=False,
     )
+
+
+# MiniMax and NVIDIA don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
+# upstream profile via `_without_builtin_tools(<upstream>_model_profile(model_name))` like the
+# other `bedrock_<vendor>_model_profile` fns do.
 
 
 def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
