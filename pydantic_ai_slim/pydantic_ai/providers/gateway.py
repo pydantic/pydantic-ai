@@ -71,7 +71,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['google', 'gemini', 'google-cloud'],
+    upstream_provider: Literal['google', 'google-cloud'],
     /,
     *,
     route: str | None = None,
@@ -108,7 +108,7 @@ APIFlavor = Literal[
     'chat',
     'responses',
     'converse',
-    'gemini',
+    'google',
 ]
 
 UpstreamProvider = ModelProvider | APIFlavor
