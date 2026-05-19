@@ -491,10 +491,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_toolset = self._root_capability.get_toolset()
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
-        # `_event_stream_handler` is set on the agent by durable-execution subclasses
-        # (Temporal, DBOS, Prefect) that wrap the underlying call with their own handler.
-        # Base agents leave it `None` — the runtime `event_stream_handler=` kwarg on
-        # `Agent.run()` / `Agent.iter()` is the user-facing entry point.
+        # Populated by durable-execution subclasses; base agents use the run-level kwarg.
         self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)

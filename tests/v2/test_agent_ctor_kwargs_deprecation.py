@@ -1,8 +1,14 @@
-"""1.x deprecation warnings for `Agent.__init__` kwargs whose migration target is a capability.
+"""1.x deprecation warnings for `Agent.__init__` kwargs whose migration target is a capability,
+plus regression guards for kwargs already removed in v2.
 
+Still-deprecated (warn + remap):
 - `prepare_output_tools=` -> `capabilities=[PrepareOutputTools(prepare_output_tools)]`
+- `history_processors=` (on `Agent.from_spec` / `Agent.from_file`) -> `ProcessHistory` capability
 
-`event_stream_handler=` and `prepare_tools=` were dropped in v2 and their tests removed.
+Removed in v2 (must raise `UserError`):
+- `event_stream_handler=` (run-level kwarg only)
+- `prepare_tools=` (use `PrepareTools` capability)
+
 `output_validators=` is not an `Agent.__init__` kwarg in 1.x (it's only set via decorator),
 so it's intentionally excluded.
 """
@@ -16,12 +22,29 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import PrepareOutputTools, ProcessHistory
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 pytestmark = [pytest.mark.anyio]
+
+
+# --- removed kwargs (regression guards) -------------------------------------------------
+
+
+def test_event_stream_handler_kwarg_raises_in_v2():
+    """`Agent(event_stream_handler=...)` was dropped in v2; passing it must now raise `UserError`
+    via the `**_deprecated_kwargs` -> `validate_empty_kwargs` path."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`event_stream_handler`'):
+        Agent(TestModel(), event_stream_handler=lambda *_a, **_k: None)  # pyright: ignore[reportCallIssue]
+
+
+def test_prepare_tools_kwarg_raises_in_v2():
+    """`Agent(prepare_tools=...)` was dropped in v2; users migrate to `capabilities=[PrepareTools(...)]`."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`prepare_tools`'):
+        Agent(TestModel(), prepare_tools=lambda *_a, **_k: None)  # pyright: ignore[reportCallIssue]
 
 
 # --- prepare_output_tools= ---------------------------------------------------------------
