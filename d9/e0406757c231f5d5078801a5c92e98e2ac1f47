@@ -1,0 +1,307 @@
+pydantic_ai_slim/pydantic_ai/models/cohere.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 139
+pydantic_ai_slim/pydantic_ai/models/mcp_sampling.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 90
+pydantic_ai_slim/pydantic_ai/_output.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 34
+docs/agent.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 600,610
+pydantic_ai_slim/pydantic_ai/providers/openrouter.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,91,134-149
+tests/providers/test_bedrock.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7,96-97,99-101,105-109,113,116,120-122,127-128,133,138-139,143-147,151-155,160-161
+pydantic_ai_slim/pydantic_ai/providers/huggingface.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 20
+pyproject.toml
+  s_ae45058a0235a7::t_3b0569f7a39a33 50,89,116-119
+pydantic_ai_slim/pydantic_ai/models/xai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 9,56,327,343-346,508,690,696,700,709,756,765
+tests/models/test_google.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 1402,1405
+pydantic_ai_slim/pydantic_ai/output.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,16
+tests/test_temporal.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 64,124,227,229,318,324,451-454,541-542,828,869,871-872,874-875,887,1355-1357,1386-1387,1430,2559,2586,3307
+pydantic_ai_slim/pydantic_ai/models/mistral.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 184
+tests/providers/test_groq.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,87-89,94-96,101-103,108,113,118,127,132-133,138-140,145-146,151-152
+docs/toolsets.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 523,525,651,887,912
+docs/api/profiles.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 3-11
+pydantic_ai_slim/pydantic_ai/agent/spec.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10
+pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 113
+pydantic_ai_slim/pydantic_ai/ui/_web/api.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 16,129
+tests/providers/test_heroku.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 8,61-62
+pydantic_ai_slim/pydantic_ai/models/bedrock.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 9,67,426,460-465,486,491-493,657-658,785,822,826,842,855-857,866,901-903,955,971,1034,1049,1501
+docs/capabilities.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 23-26,123,125-126,128-130,137,139,141,143-144,149-151,153-158,161-173,175-180,183,185,187-256,259-263,998
+pydantic_ai_slim/pydantic_ai/providers/bedrock.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,38,44-57,64-65,71,73-80,83,92-93,97-98,129-130,138-141,143-145,147,149-150
+docs/tools-advanced.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 619,650,652
+pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 109,111,267
+pydantic_ai_slim/pydantic_ai/capabilities/web_fetch.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 19-21
+pydantic_ai_slim/pyproject.toml
+  s_ae45058a0235a7::t_3b0569f7a39a33 100-101
+pydantic_ai_slim/pydantic_ai/_agent_graph.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 1187-1189,1192-1193
+pydantic_ai_slim/pydantic_ai/profiles/anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 33,39-40,45-46,52-53,59-60,65-66,72-73,78-79,81-82,84-85
+Makefile
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,18-21,25,60-63
+pydantic_ai_slim/pydantic_ai/durable_exec/dbos/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7
+tests/test_logfire.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 3304-3307
+pydantic_ai_slim/pydantic_ai/providers/ovhcloud.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,63
+pydantic_ai_slim/pydantic_ai/providers/sambanova.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,76
+pydantic_ai_slim/pydantic_ai/providers/together.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 12,64
+pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 76,173
+tests/models/test_ollama.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 55,66-68,80-82,91-92,102,136
+pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 55,57,61-62
+pydantic_ai_slim/pydantic_ai/models/anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 9,66,485,505-508,580,584,601,607-609,625,662-663,710,814,869,986,988-989,992,1335,1906,1929-1934,1940,1963-1964
+pydantic_ai_slim/pydantic_ai/models/google.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,460,488-490,507,667-669,683,741,808,810,813,843,849-851,860,866,927,929,933,936,940,942,944,950,957,961,969-970,983-984,1014,1096,1772-1773,1805-1806
+pydantic_ai_slim/pydantic_ai/models/groq.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 48,179,319,364-368,455,481,684-687,718-721
+pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/references/TOOLS-CORE.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 61,65,67-74,76,78-79,81-82,84-88,90
+tests/test_examples.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 120-133,187,348-353
+tests/test_toolsets.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 636-638,642-644,663-665,669,2643-2654
+pydantic_ai_slim/pydantic_ai/providers/ollama.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,64-76
+tests/test_usage_limits.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 32,918-920,923
+tests/v2/test_agent_retries_deprecation.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 1,3-5,12,17-23,26-32,35-39
+pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_mcp.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 115,118-120
+pydantic_ai_slim/pydantic_ai/models/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 19,52,55,586,677,759,794-797,809,822-825,827-830,840,842,844,867,900,1004-1009,1011-1030,1032,1034,1037,1039,1696
+pydantic_ai_slim/pydantic_ai/capabilities/mcp.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 17,20,30-38,41-44,63,67-68,75-84,114-115,124-125,139-140,142,150-158,166-168,170-177,191,202-206
+.github/workflows/gateway-model-health.yml
+  s_ae45058a0235a7::t_3b0569f7a39a33 38
+pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/references/ARCHITECTURE.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 163
+pydantic_ai_slim/pydantic_ai/providers/grok.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,70-77
+pydantic_ai_slim/pydantic_ai/providers/groq.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,33-35,42-44
+pydantic_ai_slim/pydantic_ai/models/huggingface.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 42,169,288-290,397,570-571
+tests/providers/test_moonshotai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7,66-69
+tests/providers/test_huggingface.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 183,188,193-194,203
+tests/test_tool_search.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 14,60,62,262,264-267,3190,3245
+pydantic_ai_slim/pydantic_ai/common_tools/image_generation.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 61,109
+pydantic_ai_slim/pydantic_ai/providers/litellm.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,84
+tests/models/test_model.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 390
+tests/providers/test_azure.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 117,122,127,132,137,142,147,152,157
+tests/test_agent.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7530,7533,7536,7943-7986,7989-7991,7995-7997,8012-8014,8018-8020,8031-8033,8048,8337
+pydantic_ai_slim/pydantic_ai/providers/moonshotai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 12,58-67
+tests/models/xai/test_search_tools.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 24,88-89,113-114,118-119
+tests/profiles/test_openai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 17,71-73,83-84,90-91
+docs/changelog.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 9-46
+pydantic_ai_slim/pydantic_ai/profiles/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 5,7,17-18,21,25-38,40-52,57-59,64-66,71-88,93-94,100-101,103-104,112-133,135-142,144-156
+pydantic_ai_slim/pydantic_ai/models/gemini.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 150,284,296,299,305-306,741,744,764-765,871
+tests/profiles/test_anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 281,288,295
+tests/profiles/test_resolution_matrix.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 1,3-6,8-13,15-28,32-42,44-46,49,51-52,54-55,57-58,60-61,63-64,66-67,69-70,72-73,75-79,81-99,101-190,193-230,233-246,249-250,252-268,271-285,288-289,291-306,309-331,334-344,346-352,356-365,367-392,394-411,415-438,442-457,460-475,479-484,487-497,500-603,605-625,627-659,661-799,801-943,945-986,988-1005,1007-1028,1030-1034,1038-1039,1041-1042,1045-1046,1048-1051,1054-1055,1057-1058,1061-1062,1064-1102,1104-1142,1144-1215,1217-1233,1235-1263,1265-1392
+pydantic_ai_slim/pydantic_ai/profiles/grok.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7,13-14,16-17
+pydantic_ai_slim/pydantic_ai/profiles/harmony.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 3,12-15
+tests/profiles/test_google.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 15,192-193,204-205,211-212,219-221
+tests/providers/test_vercel.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 79,85,91,97,103,109,115,121,134,142
+tests/models/test_openai_responses.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 52-53,1927-1929,9519-9521,11899-11905
+tests/providers/test_nebius.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 83,89,95,101,107,113,119,124,130
+pydantic_ai_slim/pydantic_ai/usage.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 14
+tests/providers/test_litellm.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,41,50-51,57,61-72,80-81,111-112
+tests/providers/test_anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,68-70,77-79
+tests/providers/test_ovhcloud.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 80,86,92,98,104,109
+docs/deferred-tools.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 17,85,99,316
+docs/nav.json
+  s_ae45058a0235a7::t_3b0569f7a39a33 59
+docs/mcp/overview.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 5,10,21-48
+pydantic_ai_slim/pydantic_ai/durable_exec/prefect/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 4,11
+pydantic_ai_slim/pydantic_ai/providers/azure.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,64,69-80
+pydantic_ai_slim/pydantic_ai/profiles/openai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 58,64-65,74-75,90-91,93-94,96-97,103-104,106,109-110,117-118,120-121,127-128,134-135,137-138,142-143,148-149,155-156,168-169,174-187
+tests/test_ui_web.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 15,319,329
+pydantic_ai_slim/pydantic_ai/providers/xai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 14
+tests/test_mcp.py
+  ai_agent 1-8,13,15,18,21-23,25,27,30-37,39-40,42,44,48,51,56,61-108,110-136,138-225,229-260,263-266,268-270,272-274,276,279-280,282,291-292,294-302,304-308,310-340,342-465,467,469-470,472-477,479-482,484-487,489-492,494,496-500,502,504-505,507,509-510,512-515,517-564,566,568-572,575-577,579-580,582-583,585-586,588-589,591-592,594-595,597-598,600-602,605-608,610-616,618-639,642-647,650-653,655-667,669-680,682-693,696-697,699-711,713-714,716-719,721-723,725,727-729,732-735,737,739-742,744-745,747-748,750,752-755,757-758,760-761,763,765-771,774-780,782-918
+pydantic_ai_slim/pydantic_ai/providers/deepseek.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 12,52-64,66
+tests/test_messages.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 10,39,514-548
+pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 218
+pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_mcp.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 124,127-138
+tests/providers/test_sambanova_provider.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 48,56,64,72,80,88
+tests/v2/test_agent_ctor_kwargs_deprecation.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 22,56,70,102,109,116,123,149,167,174,187,209,253-283
+docs/install.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 61
+tests/test_prefect.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 49,64-66,204,210,630,638,641
+pydantic_ai_slim/pydantic_ai/providers/github.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,72
+pydantic_ai_slim/pydantic_ai/native_tools/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,604-605
+pydantic_ai_slim/pydantic_ai/mcp.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 8-11,13,18-19,31,51-64,67-74,78-79,132,135-137,139,142-143,145-146,148-152,155,157,160-162,164-165,167-174,176-177,179-180,182,185-187,189,192-193,195-196,198-200,202-216,219-221,223,226-227,229-231,234,236-245,249-251,253-254,256-257,259-260,262-263,265-266,268-269,271-272,274-275,277-278,280,282-284,286-287,289-302,305-308,311-316,319-324,372,754-763,1246-1250,1253-1254,1256-1259,1262-1265
+pydantic_ai_slim/pydantic_ai/providers/nebius.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,70
+.github/workflows/ci.yml
+  s_ae45058a0235a7::t_3b0569f7a39a33 35,124,209,241
+tests/providers/test_grok.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,62-64
+docs/durable_execution/temporal.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 160
+tests/providers/test_fireworks.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 76,81,86,91,96,100,104
+pydantic_ai_slim/pydantic_ai/profiles/google.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 17,23-24,33-34,48-49,52-53
+uv.lock
+  ai_agent 20,71,199,225,292,295,313,346,379,576-577,630,831,1021,1175,1191-1192,1261,1268-1269,1271,1273,1285,1428,1552,1593,1683,1688,1690,1695,1705,1707,1998,2005,2038,2331-2332,2355-2364,2428,2453,2689,2696,2698,2718,2722-2724,2768,2865,3191,3196,3215,3278,3412,3414,3418-3419,3421-3427,3429,3479,3640,3643,3686,4344,4346,4348,4365-4366,4578,4594,4603,4781-4782,4791,4995,5030,5070,5076,5090,5170,5202,5223,5248,5268,5333,5559,5567,5570,5601,5653-5654,5659,5951,5965,6284,6433-6436,6482-6485,6535,6596,6760,6762-6765,6768,6856,6924,6969-6970,6998,7116,7211-7228,7230,7269,7281-7290,7431,7492,7521,7750
+pydantic_ai_slim/pydantic_ai/providers/alibaba.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 12,46-48,52
+tests/test_ag_ui.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 2511-2530
+tests/providers/test_together.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 76,81,86,91,96,100
+pydantic_ai_slim/pydantic_ai/models/openai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 69,84-91,446,456,475,806,809-814,840,846-849,854,864,955,964-965,1083-1085,1123-1124,1207,1345-1346,1352,1365,1368,1371,1433,1453,1472,1485,1493,1536,1551,1557,1573-1574,1585,1588,1604,1750,1770-1773,1916,2185,2202-2203,2211,2286,2289,2389,2536,2683,2685,2704,2760,2819,2968,2998,3032,3158,3247-3248,3291-3292,4141,4210
+tests/providers/test_openrouter.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 115,120,125,130,135,140,145,150,155,160,165,170,175,180-181,185
+pydantic_ai_slim/pydantic_ai/capabilities/web_search.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 22-30
+docs/output.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 887
+pydantic_ai_slim/pydantic_ai/providers/fireworks.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 12,67
+pydantic_ai_slim/pydantic_ai/providers/anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,66
+pydantic_ai_slim/pydantic_ai/messages.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 2722,2726-2727,2744
+pydantic_ai_slim/pydantic_ai/tools.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 382,875-876,878
+tests/providers/test_alibaba_provider.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 64-65,72-73
+docs/mcp/client.md
+  s_ae45058a0235a7::t_3b0569f7a39a33 3-6,18,20-24,26,28,30,32,35,37,52,56,58-59,67-68,83,90,92,95,97-99,101-102,105,107,109-110,112-113,115-116,119,121,123-124,127,129,131-136,139,141,144-146,148,152,154,178,180,182,201,203-204,213,215-216,218-219,228,230,233-234,236,250-253,257,267,293,298,300,302,304,306-307,309-311,314,316,320,322-323,328,332,334,336-338,340,359,361,364-366,370,372,374,380,393-395,401,406-407,409,411-412,415,417,426,429,431,440,442-443,445,447,449,473,475,477,517-519,521,523-524,538,540,542,544,546,552,556,558,560,596,601,605,608,643-645,648,661,667
+pydantic_ai_slim/pydantic_ai/result.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 35
+pydantic_ai_slim/pydantic_ai/profiles/groq.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 6,12-13
+pydantic_ai_slim/pydantic_ai/toolsets/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 9
+tests/test_dbos.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 52,54,68,111,114,226,232,337-340,391-396,641-642,644-645,668,785,1622-1626,1634,1637,1653,1686-1688,1690-1693,1698-1699
+pydantic_ai_slim/pydantic_ai/models/ollama.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 5,9,93
+tests/test_tools.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 4286-4310
+tests/v2/test_history_processors_kwarg_deprecation.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 51,81,104
+pydantic_ai_slim/pydantic_ai/_utils.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 51
+tests/providers/test_cerebras.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 13,75-76,82-83,89-90,96-97,102-103,107-113
+pydantic_ai_slim/pydantic_ai/agent/__init__.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 291,306,313-321,346,451,540-541,678,841,1364,1813,1863,2651,2678,2687,2690-2691,2774,2784-2785,2795
+tests/test_capabilities.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 4553-4555,4560-4561,4563-4570,4599-4603,4611-4617,4621,4637,4639,4693-4703,4705,4709-4711,4715-4717,4719-4726,4772-4776,4784-4790,4804,4855,4857,5305,5311-5318,5320-5323,5326-5333,5337-5339,5343-5345,5389-5392,5396-5399,6530-6531,6542-6543,6546-6547,6558-6559,6562-6571,6574-6576,6582-6583,6585-6586,6598-6607,6643-6644,6646-6650,6652,6654-6657,6659-6661,6664-6667,6669-6673,6676-6679,6682-6692,6695-6698,6701-6702,6704-6705,6707-6708
+tests/providers/test_ollama.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 15,86,91,96,101,106-108,113-116,121-124,129-130,135,140-141,145,151-154
+tests/models/test_openai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 55,1003-1005,2702-2703,3227,3236-3237,3244-3245,3248-3249,3251-3252,3254-3261,3273-3274,3277-3278,3308,4145-4147,4166-4168,4327-4334
+tests/providers/test_github.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 72,77,82,87,92,97,102,107,112
+pydantic_ai_slim/pydantic_ai/models/instrumented.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 54-55
+tests/models/test_anthropic.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 61-68,605-606
+tests/test_builtin_tools.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 16,24,33,41,51,60
+pydantic_ai_slim/pydantic_ai/capabilities/native_or_local.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 94-96,100-106
+pydantic_ai_slim/pydantic_ai/providers/vercel.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,70
+tests/providers/test_deepseek.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 7,55-57,65-68,75-77,85-87,94-97,105-106
+tests/providers/test_xai.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 46-47
+tests/test_thinking.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 21,1020-1021,1025,1029,1034-1035,1039-1043,1048-1049,1053-1054,1058,1063-1064,1068,1073,1077,1082,1087-1088
+pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_mcp_toolset.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 16,19-20,24,39
+pydantic_ai_slim/pydantic_ai/providers/cerebras.py
+  s_ae45058a0235a7::t_3b0569f7a39a33 11,74-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "d9e0406757c231f5d5078801a5c92e98e2ac1f47",
+  "prompts": {},
+  "sessions": {
+    "s_ae45058a0235a7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3c60-161c-75d1-a526-dec43e666613",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
