@@ -20,8 +20,11 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.wrapper import ReplayStreamedResponse
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    ModelRequestContext,
+    _ReplayStreamedResponse,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
@@ -46,8 +49,6 @@ from .tools import (
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
 
@@ -530,46 +531,6 @@ async def _prepare_request_parameters(
     )
 
 
-@dataclasses.dataclass
-class _SkipStreamedResponse(models.StreamedResponse):
-    """Minimal StreamedResponse for SkipModelRequest — yields no events.
-
-    These properties implement the StreamedResponse ABC but are never accessed:
-    the streaming skip path always resolves via the _run_result shortcut in
-    StreamedRunResult, so the AgentStream wrapping this response is discarded.
-    """
-
-    _response: _messages.ModelResponse = field(repr=False)
-
-    @property
-    def model_name(self) -> str:  # pragma: no cover
-        return self._response.model_name or ''
-
-    @property
-    def provider_name(self) -> str | None:  # pragma: no cover
-        return None
-
-    @property
-    def provider_url(self) -> str | None:  # pragma: no cover
-        return None
-
-    @property
-    def timestamp(self) -> datetime:  # pragma: no cover
-        return self._response.timestamp
-
-    async def close_stream(self) -> None:  # pragma: no cover
-        # _SkipStreamedResponse is produced by short-circuit paths that never
-        # open a connection; there is nothing to close.
-        pass
-
-    async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
-        return
-        yield  # pragma: no cover
-
-    def get(self) -> _messages.ModelResponse:  # pragma: no cover
-        return self._response
-
-
 # --- Innermost model-call helpers ---
 #
 # Both the agent graph (ModelRequestNode) and durable execution capabilities
@@ -688,7 +649,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
-            skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
+            skip_sr = CompletedStreamedResponse(skip_mrp, e.response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
             await self._finish_handling(ctx, e.response)
@@ -770,15 +731,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 run_context = build_run_context(ctx)
                 await self._build_retry_node(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
-                dummy_sr = _SkipStreamedResponse(
-                    model_request_parameters=model_request_parameters,
-                    _response=_messages.ModelResponse(parts=[]),
-                )
+                dummy_sr = CompletedStreamedResponse(model_request_parameters, _messages.ModelResponse(parts=[]))
                 yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
-            replay_sr = ReplayStreamedResponse(
+            replay_sr = _ReplayStreamedResponse(
                 model_request_parameters,
                 model_response,
                 capabilities_already_applied=wrap_request_context._capabilities_already_applied,  # pyright: ignore[reportPrivateUsage]

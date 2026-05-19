@@ -13,8 +13,15 @@ from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model_profile,
+    parse_model_id,
+)
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -27,7 +34,6 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 __all__ = [
-    'CompletedStreamedResponse',
     'TemporalModel',
     'TemporalProviderFactory',
 ]
