@@ -1295,6 +1295,61 @@ with capture_run_messages() as messages:  # (2)!
 
 _(This example is complete, it can be run "as is")_
 
+When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
+
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. Half-finished tool call parts are not turned into synthetic tool results; only completed tool returns are captured.
+
+In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
+
+```python {title="capture_interrupted_run.py"}
+from pydantic_ai import Agent, ModelRequest, capture_run_messages
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='get_volume', args={'size': 6}, tool_call_id='volume_call'),
+            ToolCallPart(tool_name='get_mass', args={'size': 6}, tool_call_id='mass_call'),
+        ]
+    )
+
+
+agent = Agent(FunctionModel(function=call_tools))
+
+
+@agent.tool_plain(sequential=True)
+def get_volume(size: int) -> int:
+    return size**3
+
+
+@agent.tool_plain(sequential=True)
+def get_mass(size: int) -> int:
+    raise RuntimeError('missing density')
+
+
+with capture_run_messages() as messages:
+    try:
+        agent.run_sync('Calculate volume and mass.')
+    except RuntimeError as exc:
+        print(f'Run failed: {exc}')
+        #> Run failed: missing density
+
+interrupted_request = next(
+    message for message in messages if isinstance(message, ModelRequest) and message.state == 'interrupted'
+)
+assert any(
+    isinstance(part, ToolReturnPart) and part.tool_name == 'get_volume' and part.content == 216
+    for part in interrupted_request.parts
+)
+```
+
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
 
