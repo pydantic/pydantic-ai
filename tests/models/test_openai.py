@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -2129,6 +2130,10 @@ def tool_with_datetime(x: datetime) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_decimal(x: Decimal) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -2233,6 +2238,52 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_decimal,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                    'type': 'string',
+                                },
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_decimal,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'type': 'string',
+                                    'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                },
+                            ]
+                        }
+                    },
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -2772,6 +2823,85 @@ def test_strict_schema():
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
             'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_schema_keeps_supported_patterns():
+    class MyModel(BaseModel):
+        simple_pattern: Annotated[str, Field(pattern='^my-pattern$')]
+
+    schema_transformer = OpenAIJsonSchemaTransformer(MyModel.model_json_schema(), strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {'simple_pattern': {'pattern': '^my-pattern$', 'type': 'string'}},
+            'required': ['simple_pattern'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is True
+
+    escaped_schema_transformer = OpenAIJsonSchemaTransformer(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+        },
+        strict=None,
+    )
+    assert escaped_schema_transformer.walk() == snapshot(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert escaped_schema_transformer.is_strict_compatible is True
+
+
+def test_strict_schema_removes_unsupported_regex_lookarounds():
+    json_schema: dict[str, Any] = {
+        'properties': {
+            'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+            'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+            'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+            'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+        },
+        'required': ['before', 'after', 'negative_before', 'negative_after'],
+        'type': 'object',
+    }
+
+    schema_transformer = OpenAIJsonSchemaTransformer(json_schema, strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {
+                'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+                'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+                'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+                'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is False
+
+    assert OpenAIJsonSchemaTransformer(json_schema, strict=True).walk() == snapshot(
+        {
+            'properties': {
+                'before': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'after': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_before': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
+                'negative_after': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
             'type': 'object',
             'additionalProperties': False,
         }
