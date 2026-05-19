@@ -34,7 +34,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import get_instructions, serialize_any
+from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1804,12 +1804,40 @@ def test_get_instructions_from_message_history():
     assert get_instructions(messages) == snapshot('Be kind')
 
 
-def test_serialize_any_handles_broken_str():
-    class BrokenStr:
-        def __str__(self) -> str:
-            raise RuntimeError('broken')
+def test_messages_to_otel_messages_serialization_errors():
+    class Foo:
+        def __repr__(self) -> str:
+            return 'Foo()'
 
-    assert serialize_any(BrokenStr()) == snapshot('Unable to serialize: broken')
+    class Bar:
+        def __repr__(self) -> str:
+            raise ValueError('error!')
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),
+    ]
+
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'return_tool_call_id',
+                        'name': 'tool',
+                        'result': 'Unable to serialize: error!',
+                    }
+                ],
+            },
+        ]
+    )
 
 
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
