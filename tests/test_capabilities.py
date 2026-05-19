@@ -17588,6 +17588,31 @@ async def test_dynamic_capability_returning_combined() -> None:
     assert fired == ['A', 'B']
 
 
+async def test_dynamic_deferred_capability_requires_stable_returned_id() -> None:
+    """Deferred capability ids are part of message history and must survive replay."""
+
+    class CustomInitDeferredCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.defer_loading = True
+
+        def get_description(self, ctx: RunContext[None] | None) -> str:
+            return 'Hidden instructions.'
+
+        def get_instructions(self) -> str:
+            return 'Hidden instructions.'
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return CustomInitDeferredCap()
+
+    agent = Agent(TestModel(), capabilities=[factory])
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert 'stable explicit ids for message history replay' in str(exc_info.value)
+    assert "'auto_capability_" in str(exc_info.value)
+
+
 async def test_dynamic_capability_in_run_call() -> None:
     """`agent.run(capabilities=[factory])` accepts callables as well."""
     calls = 0

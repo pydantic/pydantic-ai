@@ -88,6 +88,13 @@ CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[A
 """Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
 
 
+_AUTO_CAPABILITY_ID_PREFIX = 'auto_capability_'
+
+
+def _auto_capability_id() -> str:
+    return f'{_AUTO_CAPABILITY_ID_PREFIX}{uuid4()}'
+
+
 @dataclass
 class CapabilityOrdering:
     """Ordering constraints for a capability within a combined capability chain.
@@ -159,7 +166,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     _: KW_ONLY
 
-    id: str = field(default_factory=lambda: 'auto_capability_' + str(uuid4()))
+    id: str = field(default_factory=_auto_capability_id)
     """Identifier used to reference this capability within a run.
 
     Use an explicit, stable id when `defer_loading=True` so history replay can
@@ -179,7 +186,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         # Some capability subclasses override __init__ without calling super().__init__,
         # so the dataclass default factory for `id` may not fire.
         instance = super().__new__(cls)
-        instance.id = str(uuid4())
+        instance.id = _auto_capability_id()
         return instance
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
