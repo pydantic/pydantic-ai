@@ -388,72 +388,42 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_retries_override():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_no_retries_does_not_warn():
-    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
-
-    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
-    user-set value; only an explicit value is forwarded to the deprecated
-    `Agent(retries=...)` kwarg.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test'})
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
 
     assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_explicit_retries_warns():
-    """An explicit `retries` in the spec still triggers the deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_tool_retries():
-    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
-
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_spec_retries_deprecated_getter():
-    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
     spec = AgentSpec(model='test', retries=5)
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        assert spec.retries == 5
-
-
-def test_agent_spec_tool_retries_field():
-    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
-    spec = AgentSpec(model='test', tool_retries=5)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        assert spec.tool_retries == 5
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -518,6 +488,36 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'description': """\
+Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+
+`int` semantics differ by call site:
+
+- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
+  to `N`.
+- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
+  budget. Tool retries cannot be overridden per run or via `override()` — passing
+  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
+  manager is built once at agent construction.
+
+Keys:
+    tools: Default number of retries for tool calls before raising an error.
+    output: Maximum number of retries for output validation. On the text path
+        this is a global per-run budget; on the tool path it is the default
+        per-tool `max_retries` for each output tool, overridable via
+        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
+""",
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -833,22 +833,6 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
-                        'grok:grok-2-image-1212',
-                        'grok:grok-2-vision-1212',
-                        'grok:grok-3-fast',
-                        'grok:grok-3-mini-fast',
-                        'grok:grok-3-mini',
-                        'grok:grok-3',
-                        'grok:grok-4-0709',
-                        'grok:grok-4-latest',
-                        'grok:grok-4-1-fast-non-reasoning',
-                        'grok:grok-4-1-fast-reasoning',
-                        'grok:grok-4-1-fast',
-                        'grok:grok-4-fast-non-reasoning',
-                        'grok:grok-4-fast-reasoning',
-                        'grok:grok-4-fast',
-                        'grok:grok-4',
-                        'grok:grok-code-fast-1',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -1203,36 +1187,6 @@ All types must be serializable using Pydantic.\
                     'title': 'ToolSearchTool',
                     'type': 'object',
                 },
-                'UrlContextTool': {
-                    'deprecated': True,
-                    'properties': {
-                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
-                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
-                        'max_uses': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Uses',
-                        },
-                        'allowed_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Allowed Domains',
-                        },
-                        'blocked_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Blocked Domains',
-                        },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
-                        'max_content_tokens': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Content Tokens',
-                        },
-                    },
-                    'title': 'UrlContextTool',
-                    'type': 'object',
-                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
@@ -1368,7 +1322,6 @@ Supported by:
                                         {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
                                         {'$ref': '#/$defs/ImageGenerationTool'},
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
@@ -1732,21 +1685,10 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'tool_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Tool Retries',
-                },
                 'retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
-                    'deprecated': True,
                     'title': 'Retries',
-                },
-                'output_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Output Retries',
                 },
                 'end_strategy': {
                     'default': 'early',
@@ -1997,8 +1939,7 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -2061,14 +2002,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.tool_retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -4419,8 +4360,7 @@ class TestPrepareOutputToolsHook:
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            tool_retries=4,
-            output_retries=4,
+            retries={'tools': 4, 'output': 4},
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
@@ -4594,18 +4534,24 @@ class TestWrapNodeRunHook:
 
 
 class TestWebSearchCapability:
-    def test_websearch_default_with_supporting_model(self):
-        """WebSearch(local='duckduckgo') with a supporting model → native used, local removed."""
-        cap = WebSearch(local='duckduckgo')
+    def test_websearch_default_no_local(self):
+        """WebSearch() defaults to builtin-only — no local fallback unless explicitly requested."""
+        cap = WebSearch()
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
-        toolset = cap.get_toolset()
-        # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
-        assert toolset is not None
+        # No local fallback by default in v2
+        assert cap.get_toolset() is None
 
-    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
+
+    def test_websearch_local_string_strategy(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
         from unittest.mock import patch
 
@@ -4613,7 +4559,6 @@ class TestWebSearchCapability:
         from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # When called with tools, call the first one
             for msg in messages:
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart):
@@ -4633,8 +4578,12 @@ class TestWebSearchCapability:
         fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
         with patch.object(DDGS, 'text', return_value=fake_results):
             result = agent.run_sync('search for something')
-        # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
+
+    def test_websearch_unknown_strategy_raises(self):
+        """WebSearch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
@@ -4643,12 +4592,17 @@ class TestWebSearchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
-    def test_websearch_native_false(self):
-        """WebSearch(native=False, local='duckduckgo') → only local, no native tool registered."""
+    def test_websearch_native_false_without_local_raises(self):
+        """WebSearch(native=False) without an explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebSearch(native=False)
+
+    def test_websearch_native_false_with_local_string(self):
+        """WebSearch(native=False, local='duckduckgo') → only local, no native registered."""
         cap = WebSearch(native=False, local='duckduckgo')
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
-        # Should have a plain toolset (no PreparedToolset wrapping)
+        # Plain toolset (no PreparedToolset wrapping since native is disabled)
         assert toolset is not None
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
@@ -4664,9 +4618,9 @@ class TestWebSearchCapability:
             WebSearch(native=False, local=False)
 
     def test_websearch_native_false_with_constraints_raises(self):
-        """WebSearch(native=False, allowed_domains=...) → UserError at construction."""
+        """WebSearch(native=False, local='duckduckgo', allowed_domains=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebSearch(native=False, allowed_domains=['example.com'], local='duckduckgo')
+            WebSearch(native=False, local='duckduckgo', allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4720,24 +4674,40 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
             XSearch(native=False, local=False)
 
-    def test_xsearch_native_false_with_constraints_raises(self):
-        """XSearch(native=False, allowed_x_handles=...) → UserError."""
+    def test_xsearch_native_false_raises(self):
+        """XSearch(native=False) → UserError (no local fallback for X search)."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False)
+
+    def test_xsearch_native_false_with_local_constraints_raises(self):
+        """XSearch(native=False, local=callable, allowed_x_handles=...) → UserError (constraint requires native)."""
+
+        def local_x_search(query: str) -> str:
+            return query  # pragma: no cover
+
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            XSearch(native=False, allowed_x_handles=['handle1'])
+            XSearch(native=False, allowed_x_handles=['handle1'], local=local_x_search)
 
 
 class TestWebFetchCapability:
-    def test_webfetch_default(self):
-        """WebFetch(local=True) provides native and the default local fallback."""
-        cap = WebFetch(local=True)
+    def test_webfetch_default_no_local(self):
+        """WebFetch() defaults to builtin-only — no local fallback unless explicitly requested."""
+        cap = WebFetch()
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # Default local fallback is auto-detected (markdownify-based)
-        assert cap.local is not None
-        assert cap.get_toolset() is not None
+        # No local fallback by default in v2
+        assert cap.local is None
+        assert cap.get_toolset() is None
 
-    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
@@ -4773,7 +4743,6 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch something')
-        # Verify the web_fetch fallback tool was actually called
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4784,6 +4753,11 @@ class TestWebFetchCapability:
         assert len(tool_calls) == 1
         assert tool_calls[0].tool_name == 'web_fetch'
 
+    def test_webfetch_unknown_strategy_raises(self):
+        """WebFetch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebFetch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
@@ -4791,8 +4765,13 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_native_false(self):
-        """WebFetch(native=False, local=True) → only local, no native tool registered."""
+    def test_webfetch_native_false_without_local_raises(self):
+        """WebFetch(native=False) without explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebFetch(native=False)
+
+    def test_webfetch_native_false_with_local_string(self):
+        """WebFetch(native=False, local=True) → only local, no native registered."""
         cap = WebFetch(native=False, local=True)
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
@@ -4806,7 +4785,7 @@ class TestWebFetchCapability:
             agent.run_sync('fetch')
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
-        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4841,7 +4820,6 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch example.com')
-        # Verify the web_fetch fallback tool was actually called with domain filtering
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4858,9 +4836,9 @@ class TestWebFetchCapability:
             WebFetch(native=False, local=False)
 
     def test_webfetch_native_false_with_max_uses_raises(self):
-        """WebFetch(native=False, max_uses=...) → UserError at construction."""
+        """WebFetch(native=False, local=True, max_uses=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebFetch(native=False, max_uses=5, local=True)
+            WebFetch(native=False, local=True, max_uses=5)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -5155,8 +5133,6 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -5237,8 +5213,6 @@ class TestImageGenerationCapability:
         )
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
@@ -5312,33 +5286,47 @@ try:
 
     has_mcp = True
     del _mcp
-except ImportError:
+except ImportError:  # pragma: no cover
     has_mcp = False
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
-    def test_mcp_default(self):
-        """MCP(url=..., native=True) provides native + local fallback."""
-        cap = MCP(url='https://mcp.example.com/api', native=True)
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], MCPServerTool)
-        assert builtins[0].url == 'https://mcp.example.com/api'
+    def test_mcp_default_local_only(self):
+        """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
+        cap = MCP(url='https://mcp.example.com/api')
+        assert cap.get_native_tools() == []
         assert cap.get_toolset() is not None
+
+    def test_mcp_native_true_advertises_both(self):
+        """MCP(url=..., native=True) advertises native + keeps local as fallback."""
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
+        assert native_tools[0].url == 'https://mcp.example.com/api'
+        assert cap.get_toolset() is not None
+
+    def test_mcp_native_only(self):
+        """MCP(url=..., native=True, local=False) advertises only the native tool."""
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=False)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
+        assert cap.get_toolset() is None
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
         cap = MCP(url='https://mcp.example.com/api', native=True)
-        builtin = cap.get_native_tools()[0]
-        assert isinstance(builtin, MCPServerTool)
-        assert builtin.id == 'mcp.example.com-api'
+        native = cap.get_native_tools()[0]
+        assert isinstance(native, MCPServerTool)
+        assert native.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
         cap_sse = MCP(url='https://server1.example.com/sse', native=True)
-        builtin_sse = cap_sse.get_native_tools()[0]
-        assert isinstance(builtin_sse, MCPServerTool)
-        assert builtin_sse.id == 'server1.example.com-sse'
+        native_sse = cap_sse.get_native_tools()[0]
+        assert isinstance(native_sse, MCPServerTool)
+        assert native_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
@@ -5382,14 +5370,17 @@ class TestMCPCapability:
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
         assert isinstance(toolset, FilteredToolset)
 
-    def test_mcp_url_required(self):
-        """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
-            MCP()  # type: ignore[call-arg]
+    def test_mcp_no_url_no_local_raises(self):
+        """MCP() with neither `url=` nor `local=` raises — no way to construct a usable capability."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            MCP()
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
         """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
-        from fastmcp import FastMCP
+        try:
+            from fastmcp import FastMCP
+        except ImportError:  # pragma: lax no cover
+            pytest.skip('fastmcp server extras not installed (slim client)')
 
         from pydantic_ai.mcp import MCPToolset
 
@@ -6022,8 +6013,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
@@ -6507,8 +6511,8 @@ def test_web_search_with_constraints():
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch() silently produces a builtin-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
+def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch(local='duckduckgo') raises with install hint when [duckduckgo] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6519,17 +6523,12 @@ def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.Mon
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    # Defaults path with no DDG: no deprecation warning (auto-fallback can't run), but main's
-    # base-class still emits a `UserWarning` heads-up via `_default_local()` when the user explicitly
-    # disables the native tool. Here we leave the native default in place, so it's silent.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        cap = WebSearch()
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[duckduckgo\]'):
+        WebSearch(local='duckduckgo')
 
 
-def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch() silently produces a native-only capability when markdownify isn't installed — user isn't on the deprecated path, no warning."""
+def test_web_fetch_local_true_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch(local=True) raises with install hint when [web-fetch] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6540,30 +6539,35 @@ def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.Monk
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        cap = WebFetch()
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[web-fetch\]'):
+        WebFetch(local=True)
 
 
-def test_mcp_default_builtin():
-    """MCP capability constructs the default native MCPServerTool."""
+def test_mcp_default_local_only():
+    """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    cap = MCP(url='http://example.com/mcp', id='my-mcp')
+    assert cap.get_native_tools() == []
+    assert cap.get_toolset() is not None
+
+
+def test_mcp_native_true_default_construction():
+    """MCP(url=..., native=True) constructs MCPServerTool with id from url."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
-    builtin_tools = cap.get_native_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
 
 
-@pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
-def test_mcp_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
-    """`MCP(url=...)` must construct cleanly when the MCP extra isn't installed.
+def test_mcp_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=...)` raises a `UserError` with install hint when the MCP extra is missing.
 
-    The native tool always works; the local default just resolves to None. The user gets
-    a clear `UserError` at request time if the model doesn't support native MCP either.
+    MCP defaults to running the server locally, so the extra is required. To run without it,
+    the user must opt into native-only (`native=True, local=False`).
     """
     import builtins
 
@@ -6575,8 +6579,16 @@ def test_mcp_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = MCP(url='http://example.com/mcp')
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp')
+
+
+def test_mcp_native_only_constructs_without_mcp_extra():
+    """`MCP(url=..., native=True, local=False)` constructs cleanly — local resolution is skipped."""
+    # Note: no need to mock the import. `local=False` short-circuits before `_build_local()`,
+    # so the test exercises the same path whether or not the MCP extra is installed.
+    cap = MCP(url='http://example.com/mcp', native=True, local=False)
+    assert cap.local is False
     assert len(cap.get_native_tools()) == 1
 
 
@@ -6612,71 +6624,72 @@ def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: 
         MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
 
 
-@pytest.mark.filterwarnings(
-    'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
-def test_web_search_v2_deprecation_warning():
-    """WebSearch() with duckduckgo installed warns about v2 default change."""
-    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match='WebSearch will stop auto-selecting'):
-        WebSearch()
+def test_mcp_native_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., native=True)` (default `local`) now raises when `[mcp]` is missing.
 
-
-def test_web_search_v2_deprecation_silenced_with_explicit_local():
-    """WebSearch(local=False) does not emit the v2 deprecation warning."""
-
-    def noop_search(q: str) -> str:
-        return q  # pragma: no cover
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        WebSearch(local=False)
-        WebSearch(native=False, local=noop_search)
-
-
-def test_web_fetch_v2_deprecation_warning():
-    """WebFetch() with web-fetch extra installed warns about v2 default change."""
-    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match='WebFetch will stop auto-selecting'):
-        WebFetch()
-
-
-def test_web_fetch_v2_deprecation_silenced_with_explicit_local():
-    """WebFetch(local=False) does not emit the v2 deprecation warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        WebFetch(local=False)
-
-
-def test_mcp_v2_deprecation_warning():
-    """MCP(url=...) with no explicit native/local warns about v2 default change."""
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp')
-
-
-def test_mcp_v2_deprecation_silenced_with_explicit_native():
-    """MCP(url=..., native=...) does not emit the v2 deprecation warning.
-
-    `local=False` alone still warns since it relies on the v1 native default flipping in v2.
+    Previously `_default_local` swallowed `ImportError` and returned None, so
+    `MCP(url=..., native=True)` would silently work as native-only. Locking in the new
+    construction-time error so users get a clear migration to `native=True, local=False`.
     """
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
         MCP(url='http://example.com/mcp', native=True)
-        MCP(url='http://example.com/mcp', native=False)
-        MCP(url='http://example.com/mcp', native=True, local=False)
 
 
-def test_mcp_v2_deprecation_warns_for_local_false_alone():
-    """MCP(url=..., local=False) still warns because the user relies on the v1 default of native=True.
-
-    In v2, native defaults to False, so `MCP(url=..., local=False)` would raise "both can't be False"
-    without an explicit native=True. The warning surfaces this silent breaking change.
-    """
+def test_mcp_without_url_with_local_toolset():
+    """`MCP(local=MCPToolset(...))` constructs without `url=` — the primary path for non-URL clients."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp', local=False)
+    from pydantic_ai.mcp import MCPToolset
+
+    toolset = MCPToolset('http://example.com/mcp', include_instructions=True)
+    cap = MCP(local=toolset)
+    assert cap.url is None
+    assert cap.local is toolset
+    assert cap.get_native_tools() == []
+
+
+def test_mcp_without_url_with_native_true_raises():
+    """`MCP(native=True)` without `url=` raises — capability needs a URL to auto-construct an MCPServerTool."""
+    with pytest.raises(UserError, match=r'MCP\(native=True\) requires `url=`'):
+        MCP(native=True, local=False)
+
+
+def test_mcp_without_url_with_explicit_native_instance():
+    """`MCP(native=MCPServerTool(...))` constructs without capability `url=` — the instance carries the URL."""
+    cap = MCP(
+        native=MCPServerTool(id='my-mcp', url='http://example.com/mcp'),
+        local=False,
+    )
+    assert cap.url is None
+    natives = cap.get_native_tools()
+    assert len(natives) == 1
+    assert isinstance(natives[0], MCPServerTool)
+    assert natives[0].url == 'http://example.com/mcp'
+
+
+def test_mcp_without_url_local_true_raises():
+    """`MCP(local=True)` without `url=` raises — no URL to derive the local transport from."""
+    with pytest.raises(UserError, match=r'requires `url=`'):
+        MCP(local=True)
+
+
+def test_native_or_local_constraint_check_precedes_no_local_check():
+    """`WebSearch(native=False, allowed_domains=...)` raises the constraint error, not the no-local error.
+
+    Regression test for validation-order bug — the constraint case is unfixable by adding `local=`,
+    so it must fire before the `requires an explicit local tool` check.
+    """
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, allowed_domains=['example.com'])
 
 
 def test_web_search_local_string_strategy_silent():
@@ -8901,7 +8914,7 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
@@ -9229,7 +9242,9 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
@@ -9429,7 +9444,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9756,7 +9771,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9832,7 +9847,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9906,7 +9921,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9980,7 +9995,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10214,14 +10229,6 @@ class TestCompaction:
 
         with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
             OpenAICompaction(stateless=True)
-
-    def test_openai_compaction_instructions_deprecated(self):
-        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
-        pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction
-
-        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
-            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""

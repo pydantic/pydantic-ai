@@ -61,8 +61,6 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     InstructionPart,
     UploadedFile,
 )
@@ -70,7 +68,6 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
     ImageGenerationTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
 )
@@ -128,12 +125,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -198,7 +189,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -411,8 +402,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
         model=model,
         system_prompt='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -1409,19 +1399,10 @@ There is a high chance of rain throughout the day, with some reports stating a 6
     )
 
 
-@pytest.mark.parametrize('use_deprecated_url_context_tool', [False, True])
-async def test_google_model_web_fetch_tool(
-    allow_model_requests: None, google_provider: GoogleProvider, use_deprecated_url_context_tool: bool
-):
+async def test_google_model_web_fetch_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
-    if use_deprecated_url_context_tool:
-        with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
-            tool = UrlContextTool()  # pyright: ignore[reportDeprecated]
-    else:
-        tool = WebFetchTool()
-
-    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(tool)])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebFetchTool())])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -1620,28 +1601,6 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_fetch',
-                    args={'urls': ['https://ai.pydantic.dev']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_fetch',
-                    content=[
-                        {
-                            'retrieved_url': 'https://ai.pydantic.dev',
-                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
-                        }
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                )
-            ),
         ]
     )
 
@@ -4117,8 +4076,7 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
         m,
         output_type=TopModel,
         instructions='You are a helpful assistant that creates structured data.',
-        tool_retries=5,
-        output_retries=5,
+        retries={'tools': 5, 'output': 5},
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
@@ -4580,28 +4538,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
-                ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'query': 'Capital of France'},
-                        tool_call_id=IsStr(),
-                        provider_name='google',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content=[
-                            {
-                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
-                            }
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google',
-                    )
                 ),
             ]
         )

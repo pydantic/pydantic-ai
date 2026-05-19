@@ -7,13 +7,13 @@ from typing import Any, Generic, Literal
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
+from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -116,8 +116,8 @@ class ToolOutput(Generic[OutputDataT]):
     max_retries: int | None
     """Per-tool retry limit for this output tool.
 
-    Overrides the agent-level `output_retries` default (which itself acts as the per-tool default
-    for output tools that do not specify their own limit). If not set, the agent-level value is used.
+    Overrides the output side of the agent's retry budget, which itself acts as the per-tool default
+    for output tools that do not specify their own limit. If not set, the agent-level value is used.
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
@@ -422,16 +422,3 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
-
-
-@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
-class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
-    @property
-    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
-    def tool_calls(self) -> list[ToolCallPart]:
-        return self.calls
-
-    @property
-    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
-    def tool_defs(self) -> dict[str, ToolDefinition]:
-        return {}

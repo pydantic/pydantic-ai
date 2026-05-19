@@ -48,7 +48,7 @@ async def test_history_processors_kwarg_warns_and_remaps(
         r'Replace with `Agent\(capabilities=\[ProcessHistory\(fn\), \.\.\.\]\)`, or hook the '
         r'`before_model_request` lifecycle event directly via `Hooks\(before_model_request=fn\)`\.',
     ):
-        agent = Agent(function_model, history_processors=[drop_first])  # pyright: ignore[reportCallIssue]
+        agent = Agent(function_model, history_processors=[drop_first])  # pyright: ignore[reportDeprecated]
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='First')]),
@@ -78,7 +78,7 @@ async def test_history_processors_kwarg_equivalent_to_capabilities_path(function
         return ModelResponse(parts=[TextPart(content='Done')])
 
     with pytest.warns(PydanticAIDeprecationWarning):
-        legacy_agent = Agent(FunctionModel(legacy_llm), history_processors=[drop_first])  # pyright: ignore[reportCallIssue]
+        legacy_agent = Agent(FunctionModel(legacy_llm), history_processors=[drop_first])  # pyright: ignore[reportDeprecated]
     new_agent = Agent(FunctionModel(new_llm), capabilities=[ProcessHistory(drop_first)])
 
     message_history: list[ModelMessage] = [
@@ -101,6 +101,6 @@ async def test_history_processors_kwarg_exposed_on_agent_attribute(function_mode
         return messages[1:]  # pragma: no cover
 
     with pytest.warns(PydanticAIDeprecationWarning):
-        agent = Agent(function_model, history_processors=[drop_first])  # pyright: ignore[reportCallIssue]
+        agent = Agent(function_model, history_processors=[drop_first])  # pyright: ignore[reportDeprecated]
 
     assert agent.history_processors == [drop_first]
