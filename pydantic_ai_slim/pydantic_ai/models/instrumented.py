@@ -62,7 +62,7 @@ class InstrumentationSettings:
     include_binary_content: bool = True
     include_content: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
-    use_aggregated_usage_attribute_names: bool = False
+    use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
         self,
@@ -72,7 +72,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
-        use_aggregated_usage_attribute_names: bool = False,
+        use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
 
@@ -101,8 +101,8 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
-                Enable this to prevent double-counting in observability backends that aggregate span
-                attributes across parent and child spans. Defaults to False.
+                Defaults to True to prevent double-counting in observability backends that aggregate span
+                attributes across parent and child spans.
                 Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
                 Semantic Conventions. It may be updated if OTel introduces an official convention.
         """

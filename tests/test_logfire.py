@@ -250,8 +250,8 @@ def test_logfire(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"my_ret":"1"}',
-            'gen_ai.usage.input_tokens': 103,
-            'gen_ai.usage.output_tokens': 12,
+            'gen_ai.aggregated_usage.input_tokens': 103,
+            'gen_ai.aggregated_usage.output_tokens': 12,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -554,8 +554,8 @@ def test_instructions_with_structured_output(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -649,8 +649,8 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -772,8 +772,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -1073,8 +1073,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'success (no tool calls)',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
@@ -2294,8 +2294,8 @@ def test_static_function_instructions_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 5,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2464,8 +2464,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 107,
-            'gen_ai.usage.output_tokens': 9,
+            'gen_ai.aggregated_usage.input_tokens': 107,
+            'gen_ai.aggregated_usage.output_tokens': 9,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2625,8 +2625,8 @@ def test_function_instructions_with_history_in_agent_run_span(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': '{"content":"a"}',
-            'gen_ai.usage.input_tokens': 52,
-            'gen_ai.usage.output_tokens': 6,
+            'gen_ai.aggregated_usage.input_tokens': 52,
+            'gen_ai.aggregated_usage.output_tokens': 6,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
@@ -2758,8 +2758,8 @@ async def test_run_stream(
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'final_result': 'success (no tool calls)',
-            'gen_ai.usage.input_tokens': 51,
-            'gen_ai.usage.output_tokens': 4,
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 4,
             'pydantic_ai.all_messages': IsJson(
                 snapshot(
                     [
