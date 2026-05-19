@@ -130,6 +130,17 @@ class TestOpenAI:
         assert model.system == 'openai'
         assert 'gateway.pydantic.dev' in model.base_url
 
+    async def test_infer_model_gateway_openai_chat_collapses_to_openai(self):
+        # The gateway normalizer splits `openai` into chat/responses for completions, but the embeddings
+        # API has no such split — both `gateway/openai-chat:` and `gateway/openai-responses:` must route here.
+        with patch.dict(
+            os.environ,
+            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+        ):
+            model = infer_embedding_model('gateway/openai-chat:text-embedding-3-small')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'text-embedding-3-small'
+
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
