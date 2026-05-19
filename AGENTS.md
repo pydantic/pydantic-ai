@@ -68,6 +68,8 @@ All changes need to:
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
 
+PR titles feed directly into the release changelog — wrap code identifiers (class names, keyword arguments, module paths, CLI flags, env vars) in backticks, matching the style of recent release notes (e.g. `git log main --oneline -10`).
+
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
 
 ## Repository structure
@@ -99,6 +101,15 @@ The project uses:
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
+
+## When to verify
+
+Pre-commit runs `make lint`, `make format`, and `make typecheck` automatically on every commit; CI additionally runs the full test suite. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
+
+- typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
+- run a single test: `uv run pytest path/to/test.py::test_name`
+
+Avoid `make typecheck` and `make test` between edits — both are slow and the pre-commit/CI gates cover them at the right time.
 
 # Coding Guidelines
 

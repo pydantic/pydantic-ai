@@ -30,6 +30,7 @@ CLAUDE.local.md
 .claude/skills/*
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
+!.claude/skills/testing-skill
 .github/.review-context/
 /.cursor/
 /.devcontainer/
