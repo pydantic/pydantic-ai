@@ -219,35 +219,33 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         machinery unlocks the tools — without one, cap-loaded tools never reach the model
         on the native path.
 
-        We diff `tools_for_loaded_capabilities` (the source of truth for what every
-        loaded deferred cap exposes) against `parse_discovered_tools` (what tool-search
-        history already records). Anything in the former and not the latter gets a
-        framework-synthesized `ToolSearchCallPart` + `ToolSearchReturnPart` appended to
-        the message list — append-only so the cached prefix stays intact, idempotent
-        because the next turn's `parse_discovered_tools` picks the synthesized part up
-        and the diff collapses to empty. The synthetic call id is derived from the
-        discovered tool names so regenerating the same exchange does not change the
-        persisted message history.
+        We diff resolved function tools owned by loaded deferred capabilities against
+        `parse_discovered_tools` (what tool-search history already records). Anything
+        in the former and not the latter gets a framework-synthesized
+        `ToolSearchCallPart` + `ToolSearchReturnPart` appended to the message list —
+        append-only so the cached prefix stays intact, idempotent because the next
+        turn's `parse_discovered_tools` picks the synthesized part up and the diff
+        collapses to empty. The synthetic call id is derived from the discovered tool
+        names so reconstructing the same exchange produces stable provider-visible
+        bytes.
         """
-        # `ctx.tool_manager` is guaranteed populated in model-request hooks (see
-        # `RunContext.tool_manager` docstring), so walking its toolset here is safe.
-
-        if ctx.tool_manager is None:  # pragma: no cover
-            # This cannot happen because it is guaranteed to be populated in model-request hooks
-            return request_context
-
-        should_be = await tools_for_loaded_capabilities(ctx, ctx.tool_manager.toolset)
+        should_be = tools_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
         in_history = parse_discovered_tools(ctx.messages)
         newly_loaded = should_be - in_history
         if not newly_loaded:
             return request_context
 
         newly_loaded_names = sorted(newly_loaded)
+        # The synthetic exchange is normally persisted to message history, so this
+        # should not be regenerated every turn. Keep the id deterministic anyway so
+        # replay from a prefix or aborted request preparation reconstructs the same
+        # provider-visible bytes for the same logical discovery event.
         # BLAKE2s is stdlib and accepts `digest_size`, so the synthetic id stays
-        # deterministic, compact, and provider-safe even for many long tool names.
-        # Eight digest bytes keeps accidental per-conversation collisions negligible.
+        # compact and provider-safe even for many long tool names. Eight digest
+        # bytes keeps accidental per-conversation collisions negligible.
         call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
+
         request_context.messages.append(
             ModelResponse(
                 parts=[

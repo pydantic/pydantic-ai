@@ -228,7 +228,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered = parse_discovered_tools(ctx.messages) | await tools_for_loaded_capabilities(ctx, self.wrapped)
+        loaded_capability_tools = tools_for_loaded_capabilities(
+            ctx,
+            (tool.tool_def for tool in all_tools.values()),
+        )
+
+        discovered = parse_discovered_tools(ctx.messages) | loaded_capability_tools
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Single entry per deferred tool, keyed by its real name. `with_native`
