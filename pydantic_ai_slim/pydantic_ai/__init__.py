@@ -4,6 +4,7 @@ from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
+    AgentRetries,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -164,6 +165,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',

@@ -369,7 +369,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
-- Retries count against the agent's `output_retries` limit
+- Retries count against the output side of the agent's retry budget
 
 **Tool hooks** (`before/after_tool_validate`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
@@ -380,7 +380,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 - Converted to retry prompts, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
-- For text output, retries count against the agent's `output_retries` limit
+- For text output, retries count against the output side of the agent's retry budget
 
 `ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
 
