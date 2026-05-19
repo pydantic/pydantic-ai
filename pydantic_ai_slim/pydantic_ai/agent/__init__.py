@@ -1489,14 +1489,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         loaded_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
 
         parsed_loaded_capability_ids = _parse_loaded_capabilities(state.message_history)
-        unknown_loaded_capability_ids = parsed_loaded_capability_ids - capabilities_dict.keys()
-        if unknown_loaded_capability_ids:
-            unknown = ', '.join(repr(cap_id) for cap_id in sorted(unknown_loaded_capability_ids))
-            raise exceptions.UserError(
-                f'Message history contains loaded capability ids that are not available for this run: {unknown}. '
-                'For dynamic capabilities, ensure the factory is deterministic and the returned capability has a '
-                'stable, explicitly-set `id=` (the auto-generated default changes every run).'
-            )
         loaded_capability_ids.update(parsed_loaded_capability_ids)
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](

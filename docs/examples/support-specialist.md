@@ -1,16 +1,18 @@
-Customer-support agent that uses [capabilities on demand](../capabilities.md#deferred-capability-loading) to scale one agent across multiple support specialties without loading every specialty into every request.
+Customer-support agent that uses [capabilities on demand](../capabilities.md#deferred-capability-loading) as Python-native runbook skills. The agent can carry many specialist workflows without loading every policy, tool schema, and sensitive procedure into every request.
 
 Demonstrates:
 
 - [capabilities on demand](../capabilities.md#deferred-capability-loading)
-- [capabilities](../capabilities.md) bundling instructions and a [toolset](../toolsets.md)
+- [capabilities](../capabilities.md) bundling instructions, [toolsets](../toolsets.md), [model settings](../agent.md#model-run-settings), [hooks](../hooks.md), and [approval handling](../deferred-tools.md#human-in-the-loop-tool-approval)
 - [agent dependencies](../dependencies.md)
 
-The agent advertises two specialists — `orders` and `returns` — by `id` and `description` only. The model sees the catalog on its first request and calls `load_capability(id)` to unlock the specialist that matches the user's question; that specialist's instructions and tools then appear on the next model request. The specialist not loaded on a given run never enters the context window.
+The agent advertises runbooks like `orders`, `returns`, and `account-security` by `id` and `description` only. The model sees that compact catalog on its first request and calls `load_capability(id)` when the conversation needs a runbook. The matching runbook's instructions and tools appear on the next model request; runbooks not loaded for that conversation stay out of the context window.
 
-This is the same shape as skills-style progressive disclosure, but each specialist can bring both instructions and tools. The order specialist carries order lookup behavior, the returns specialist carries return-policy guidance and return-opening tools, and the model chooses which one to load at runtime.
+This follows the same progressive-disclosure shape as agent skills: small metadata is always visible, detailed instructions load only when relevant. Pydantic AI capabilities go further because the loaded unit can also bring typed Python tools, per-run model settings, lifecycle hooks, and deferred-tool approval behavior.
 
-Contrast with the [bank support example](./bank-support.md), where a single toolset is always loaded: this example shows the same support-agent pattern scaled to multiple specialist modes without bloating every request. As the number of specialties grows, the first request still only needs the compact catalog.
+The `account-security` runbook shows why this matters. A normal order-status question should not spend context on account-takeover procedures, session-revocation tools, high-reasoning settings, or security workflow guardrails. If the user reports a suspicious login, the model can load that runbook and get all of those pieces together. The runbook's hook keeps `revoke_all_sessions` hidden until the model has first inspected recent logins, then still requires approval before executing it.
+
+Contrast with the [bank support example](./bank-support.md), where a single toolset is always loaded: this example shows the same support-agent pattern scaled to many specialist modes without bloating every request.
 
 ## Running the Example
 

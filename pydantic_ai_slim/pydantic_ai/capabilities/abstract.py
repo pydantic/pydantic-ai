@@ -159,7 +159,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     _: KW_ONLY
 
-    id: str = field(default_factory=lambda: str(uuid4()))
+    id: str = field(default_factory=lambda: 'auto_capability_' + str(uuid4()))
     """Identifier used to reference this capability within a run.
 
     Use an explicit, stable id when `defer_loading=True` so history replay can
