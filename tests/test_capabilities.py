@@ -1701,22 +1701,10 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'tool_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'deprecated': True,
-                    'title': 'Tool Retries',
-                },
                 'retries': {
                     'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Retries',
-                },
-                'output_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'deprecated': True,
-                    'title': 'Output Retries',
                 },
                 'end_strategy': {
                     'default': 'early',
