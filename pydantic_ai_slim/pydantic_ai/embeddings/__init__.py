@@ -96,15 +96,14 @@ def infer_embedding_model(
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import normalize_gateway_provider
+        from ..providers.gateway import strip_gateway_prefix
 
-        # The gateway normalizer routes `openai`/`openai-chat`/`openai-responses` to the chat/responses
-        # split used by completions, but the embeddings API has no such split — collapse back to `openai`.
-        model_kind = normalize_gateway_provider(model_kind)
-        model_kind = {'openai-chat': 'openai', 'openai-responses': 'openai'}.get(model_kind, model_kind)
+        model_kind = strip_gateway_prefix(model_kind)
 
     if model_kind in (
         'openai',
+        'openai-chat',
+        'openai-responses',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
         *get_args(OpenAIChatCompatibleProvider.__value__),

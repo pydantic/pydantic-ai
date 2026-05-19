@@ -131,9 +131,9 @@ class TestOpenAI:
         assert 'gateway.pydantic.dev' in model.base_url
 
     @pytest.mark.parametrize('prefix', ['gateway/openai-chat', 'gateway/openai-responses'])
-    async def test_infer_model_gateway_openai_chat_collapses_to_openai(self, prefix: str):
-        # The gateway normalizer splits `openai` into chat/responses for completions, but the embeddings
-        # API has no such split — both `gateway/openai-chat:` and `gateway/openai-responses:` must route here.
+    async def test_infer_model_gateway_openai_chat_and_responses_both_route_to_openai_embeddings(self, prefix: str):
+        # Embeddings have no chat/responses split — both `gateway/openai-chat:` and
+        # `gateway/openai-responses:` strip to canonical names accepted by the OpenAI embeddings branch.
         with patch.dict(
             os.environ,
             {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},

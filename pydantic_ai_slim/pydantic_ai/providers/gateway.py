@@ -152,7 +152,8 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        route = normalize_gateway_provider(upstream_provider)
+        canonical = strip_gateway_prefix(upstream_provider)
+        route = gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -238,33 +239,50 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def normalize_gateway_provider(provider: str) -> str:
-    """Normalize a gateway provider name.
+# Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
+# (the output of `strip_gateway_prefix`); defaults to identity. Only providers whose
+# Gateway wire value differs from the canonical name are listed.
+_GATEWAY_ROUTE_REMAP: dict[str, str] = {
+    # Bare `openai` defaults to Responses in v2; Gateway needs the fully-qualified flavor on the wire.
+    'openai': 'openai-responses',
+    # GLA-style Gemini API is called `gemini` on Gateway.
+    'google': 'gemini',
+    # Gateway team still uses the old name; flip this entry when they rename their side.
+    'google-cloud': 'google-vertex',
+}
 
-    Args:
-        provider: The provider name to normalize.
+
+def gateway_route(provider: str) -> str:
+    """Translate a canonical provider name into the Gateway URL route segment."""
+    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+
+
+# API-flavor synonyms accepted as `gateway/<flavor>:` user input. These have no
+# non-gateway counterpart and must be mapped to a canonical class-lookup name.
+_GATEWAY_FLAVOR_ALIASES: dict[str, str] = {
+    'chat': 'openai-chat',
+    'responses': 'openai-responses',
+    'gemini': 'google',
+    'converse': 'bedrock',
+}
+
+
+def strip_gateway_prefix(provider: str) -> str:
+    """Strip the `gateway/` prefix and emit the deprecation warning for legacy user-facing aliases.
+
+    Returns the canonical provider name used for class lookup (provider/model class selection).
+    Wire-value remapping for the Gateway URL belongs in `gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
-
     if provider == 'google-vertex':
         warnings.warn(
             "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
             "Use 'gateway/google-cloud:' instead.",
             PydanticAIDeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
-
-    if provider in ('openai-chat', 'chat'):
-        return 'openai-chat'
-    elif provider in ('openai', 'openai-responses', 'responses'):
-        return 'openai-responses'
-    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
-        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
-        # When the Gateway team renames their side, flip this to `google-cloud`.
-        return 'google-vertex'
-    elif provider in ('bedrock', 'converse'):
-        return 'bedrock'
-    return provider
+        provider = 'google-cloud'
+    return _GATEWAY_FLAVOR_ALIASES.get(provider, provider)
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.

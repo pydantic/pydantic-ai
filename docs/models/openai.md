@@ -20,7 +20,7 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the modern [Responses API](https://platform.openai.com/docs/api-reference/responses)). Use `'openai-chat:'` to pin to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] (the Chat Completions API).
+The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses).
 
 ```python
 from pydantic_ai import Agent
@@ -28,6 +28,8 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5.2')
 ...
 ```
+
+To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
 
 Or initialise the model directly with just the model name:
 

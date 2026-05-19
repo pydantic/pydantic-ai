@@ -134,15 +134,18 @@ def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     )
 
 
-# Mapping of provider names to their canonical gateway form
+# Mapping of user-facing provider prefixes in docs to the form shown in the Gateway tab.
+# 1-to-1 identity: the toggle shows `Agent('openai:')` ↔ `Agent('gateway/openai:')`.
+# Wire-value translation (e.g. `openai` -> `openai-responses` on the Gateway URL) is the
+# runtime's concern and lives in `providers/gateway.py::_GATEWAY_ROUTE_REMAP`.
 GATEWAY_MODEL_MAP = {
     'anthropic': 'anthropic',
-    'openai': 'openai-responses',
+    'openai': 'openai',
     'openai-responses': 'openai-responses',
     'openai-chat': 'openai-chat',
     'bedrock': 'bedrock',
-    'google-gla': 'gemini',
-    'google-vertex': 'google-vertex',
+    'google': 'google',
+    'google-cloud': 'google-cloud',
     'groq': 'groq',
 }
 # Models that should get gateway transformation
