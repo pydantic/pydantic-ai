@@ -1404,7 +1404,6 @@ class StreamedResponse(ABC):
         return self._cancelled
 
 
-@dataclass(init=False)
 class CompletedStreamedResponse(StreamedResponse):
     """A `StreamedResponse` that wraps an already-completed `ModelResponse` and yields no events.
 
@@ -1416,8 +1415,6 @@ class CompletedStreamedResponse(StreamedResponse):
     the real stream inside an activity/step/task and only surfaces the final
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] to the workflow.
     """
-
-    response: ModelResponse
 
     def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
         super().__init__(model_request_parameters)
@@ -1455,7 +1452,6 @@ class CompletedStreamedResponse(StreamedResponse):
         return self.response.timestamp
 
 
-@dataclass(init=False)
 class _ReplayStreamedResponse(StreamedResponse):  # pyright: ignore[reportUnusedClass]
     """A `StreamedResponse` that replays a completed `ModelResponse` as synthetic stream events.
 
@@ -1470,8 +1466,6 @@ class _ReplayStreamedResponse(StreamedResponse):  # pyright: ignore[reportUnused
     integrations consume the live stream inside the activity/step/task and pass the captured
     events through here so the workflow side replays them through any per-run handler.
     """
-
-    response: ModelResponse
 
     def __init__(
         self,

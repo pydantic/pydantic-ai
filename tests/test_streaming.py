@@ -4624,6 +4624,32 @@ async def test_completed_streamed_response_cancel_noop():
     assert response.state == 'complete'
 
 
+async def test_completed_streamed_response_metadata():
+    """`CompletedStreamedResponse` forwards `model_name`/`provider_name`/`provider_url`/`timestamp`/`usage` to the response."""
+    ts = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    response = ModelResponse(
+        parts=[TextPart(content='done')],
+        model_name='test-model',
+        provider_name='test-provider',
+        provider_url='https://test.example.com',
+        timestamp=ts,
+        usage=RequestUsage(input_tokens=10, output_tokens=20),
+    )
+    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+
+    assert streamed_response.model_name == 'test-model'
+    assert streamed_response.provider_name == 'test-provider'
+    assert streamed_response.provider_url == 'https://test.example.com'
+    assert streamed_response.timestamp == ts
+    assert streamed_response.usage() == RequestUsage(input_tokens=10, output_tokens=20)
+
+    # `model_name` falls back to `''` when the response has none — matches the abstract `str` return type.
+    empty = CompletedStreamedResponse(models.ModelRequestParameters(), ModelResponse(parts=[TextPart(content='hi')]))
+    assert empty.model_name == ''
+    assert empty.provider_name is None
+    assert empty.provider_url is None
+
+
 @pytest.fixture
 def replay_mrp() -> models.ModelRequestParameters:
     return models.ModelRequestParameters(
