@@ -1983,19 +1983,19 @@ deserialized). Same population pattern.
 # discriminator unions below can reference them and so import-time registration of
 # narrowers happens whenever `pydantic_ai.messages` is imported.
 from ._load_capability import (  # noqa: E402  (same late-import rationale as `_tool_search` above)
-    LoadCapabilityArgs as LoadCapabilityArgs,
-    LoadCapabilityCallPart as LoadCapabilityCallPart,
-    LoadCapabilityReturn as LoadCapabilityReturn,
-    LoadCapabilityReturnPart as LoadCapabilityReturnPart,
+    LoadCapabilityArgs,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturn,
+    LoadCapabilityReturnPart,
 )
 from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
-    NativeToolSearchCallPart as NativeToolSearchCallPart,
-    NativeToolSearchReturnPart as NativeToolSearchReturnPart,
-    ToolSearchArgs as ToolSearchArgs,
-    ToolSearchCallPart as ToolSearchCallPart,
-    ToolSearchMatch as ToolSearchMatch,
-    ToolSearchReturnContent as ToolSearchReturnContent,
-    ToolSearchReturnPart as ToolSearchReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+    ToolSearchArgs,
+    ToolSearchCallPart,
+    ToolSearchMatch,
+    ToolSearchReturnContent,
+    ToolSearchReturnPart,
 )
 
 

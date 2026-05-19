@@ -543,7 +543,7 @@ The description is visible before loading. Dynamic instructions run when `load_c
 
 `load_capability` is reserved when any on-demand capability is present. `search_tools` is reserved when [tool search](tools-advanced.md#tool-search) is active.
 
-On-demand capabilities currently support instructions and function tools. Model settings and [builtin tools](builtin-tools.md) must stay in always-on capabilities.
+On-demand capabilities currently support instructions and function tools. Model settings and [native tools](native-tools.md) must stay in always-on capabilities.
 
 Tools in an on-demand capability are hidden until the capability is loaded. Set a tool's `defer_loading=True` to keep it behind `search_tools` after loading, or `False` to expose it before loading.
 

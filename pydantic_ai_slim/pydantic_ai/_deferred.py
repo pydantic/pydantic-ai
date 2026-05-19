@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 # so existing `from pydantic_ai._deferred import LoadCapabilityReturn` paths keep working.
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
-    LoadCapabilityReturn as LoadCapabilityReturn,
     LoadCapabilityReturnPart,
 )
 
