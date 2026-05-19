@@ -80,7 +80,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from google.genai import errors
+    from google.genai import Client, errors
     from google.genai.types import (
         BlockedReason,
         Candidate,
@@ -136,6 +136,13 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
 def test_google_client_property_delegates_to_provider(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.client is google_provider.client
+
+
+def test_google_cloud_provider_accepts_prebuilt_client():
+    """`GoogleCloudProvider(client=...)` short-circuits construction and stores the supplied client."""
+    client = Client(vertexai=False, api_key='mock-api-key')
+    provider = GoogleCloudProvider(client=client)
+    assert provider.client is client
 
 
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
