@@ -117,6 +117,20 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
+    """Patch MCP-related symbols only if the underlying modules are importable in this env."""
+    try:
+        import pydantic_ai.mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass
+    else:
+        mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
+    try:
+        mocker.patch('mcp.server.fastmcp.FastMCP')
+    except (ImportError, AttributeError):
+        pass
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -132,9 +146,6 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
     'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
-    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
-    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
-    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -172,10 +183,7 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
-    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
-    mocker.patch('mcp.server.fastmcp.FastMCP')
+    _patch_optional_mcp_modules(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -336,6 +344,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    """Stand-in for `MCPToolset` used as a fixture in doc-example tests.
+
+    Doc examples rarely exercise every method; the unused bodies carry coverage-skip markers so
+    coverage reflects only paths actual examples reach.
+    """
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
