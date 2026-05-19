@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -2359,6 +2360,38 @@ def test_static_function_instructions_in_agent_run_span(
                 }
             ]
         )
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instructions_from_history_when_model_request_fails_before_instrumentation(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    class FailBeforeModelRequest(AbstractCapability[Any]):
+        async def before_model_request(self, ctx: RunContext[Any], request_context: Any) -> Any:
+            raise RuntimeError('boom')
+
+    my_agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeModelRequest()],
+    )
+
+    with pytest.raises(RuntimeError, match='boom'):
+        my_agent.run_sync(
+            'Hello',
+            message_history=[
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hi')],
+                    instructions='Instructions from history',
+                    timestamp=IsDatetime(),
+                ),
+                ModelResponse(parts=[TextPart(content='Hello')]),
+            ],
+        )
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['gen_ai.system_instructions'] == snapshot(
+        '[{"type": "text", "content": "Instructions from history"}]'
     )
 
 
