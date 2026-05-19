@@ -2293,6 +2293,54 @@ def test_combined_capability_get_model_settings_none():
     assert caps.get_model_settings() is None
 
 
+def test_combined_capability_get_model_settings_deferred():
+    """Deferred capability model settings resolve only after the capability is loaded."""
+
+    @dataclass
+    class StaticSettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings:
+            return _ModelSettings(max_tokens=123)
+
+    @dataclass
+    class DynamicSettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> Callable[[RunContext[None]], _ModelSettings]:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                return _ModelSettings(temperature=0.2)
+
+            return settings
+
+    resolver = CombinedCapability(
+        [
+            StaticSettingsCap(id='static-settings', defer_loading=True),
+            DynamicSettingsCap(id='dynamic-settings', defer_loading=True),
+        ]
+    ).get_model_settings()
+
+    assert callable(resolver)
+
+    def resolve(loaded_capability_ids: set[str]) -> _ModelSettings:
+        return resolver(
+            RunContext(
+                deps=None,
+                model=TestModel(),
+                usage=RunUsage(),
+                loaded_capability_ids=loaded_capability_ids,
+            )
+        )
+
+    assert [
+        resolve(set()),
+        resolve({'static-settings'}),
+        resolve({'static-settings', 'dynamic-settings'}),
+    ] == snapshot(
+        [
+            {},
+            {'max_tokens': 123},
+            {'max_tokens': 123, 'temperature': 0.2},
+        ]
+    )
+
+
 def test_toolset_capability_get_toolset():
     """Toolset capability returns its toolset."""
     ts = FunctionToolset[None]()
