@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypedDict, TypeIs, TypeVar, deprecated
+from typing_extensions import Self, TypedDict, TypeIs, TypeVar
 
 from pydantic_graph import End
 
