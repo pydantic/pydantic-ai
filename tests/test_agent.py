@@ -5971,6 +5971,123 @@ def test_capture_run_messages_with_user_exception_does_not_contain_internal_erro
         assert e.__context__ is None
 
 
+async def test_tool_exception_captures_partial_request() -> None:
+    """When one tool raises mid-loop, completed tool returns are captured in a
+    `ModelRequest` with `state='interrupted'` so `capture_run_messages` reflects
+    the partial state.
+    """
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    # `sequential=True` makes tool execution deterministic: good_tool runs and
+    # completes before bad_tool raises, so the captured partial reliably includes
+    # good_tool's return.
+    @agent.tool_plain(sequential=True)
+    def good_tool(x: int) -> int:
+        return x * 10
+
+    @agent.tool_plain(sequential=True)
+    def bad_tool(x: int) -> int:
+        raise RuntimeError('tool-failure')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='tool-failure'):
+            await agent.run('Hello')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                    ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='good_tool',
+                        content=10,
+                        tool_call_id='call_good',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_tool_execution_cancellation_captures_partial_request() -> None:
+    """Cancellation mid-tool-execution captures the completed tool returns as a partial
+    `ModelRequest` with `state='interrupted'`.
+    """
+    first_done = asyncio.Event()
+    never = asyncio.Event()
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_tool', args='{"x": 1}', tool_call_id='call_fast'),
+                ToolCallPart(tool_name='slow_tool', args='{"x": 2}', tool_call_id='call_slow'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    @agent.tool_plain
+    async def fast_tool(x: int) -> int:
+        first_done.set()
+        return x * 10
+
+    @agent.tool_plain
+    async def slow_tool(x: int) -> int:
+        await never.wait()
+        return x  # pragma: no cover
+
+    captured: list[ModelMessage] = []
+
+    async def consume() -> None:
+        nonlocal captured
+        with capture_run_messages() as messages:
+            try:
+                await agent.run('Hello')
+            finally:
+                captured = list(messages)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_done.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    partial_requests = [m for m in captured if isinstance(m, ModelRequest) and m.state == 'interrupted']
+    assert len(partial_requests) == 1
+    parts = partial_requests[0].parts
+    assert any(isinstance(p, ToolReturnPart) and p.tool_name == 'fast_tool' and p.content == 10 for p in parts)
+
+
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
@@ -6355,6 +6472,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6428,6 +6546,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6508,6 +6627,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -7283,6 +7403,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'run_id': IsStr(),
             'conversation_id': IsStr(),
             'metadata': None,
+            'state': 'complete',
         }
     )
 
