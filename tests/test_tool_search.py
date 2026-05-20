@@ -26,7 +26,6 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
-    parse_discovered_tools,
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
@@ -74,6 +73,7 @@ from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
     keywords_search_fn,
+    parse_discovered_tools,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 

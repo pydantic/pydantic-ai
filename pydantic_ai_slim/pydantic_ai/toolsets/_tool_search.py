@@ -34,11 +34,13 @@ from dataclasses import dataclass, replace
 from functools import cache
 from typing import Annotated, Any
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE, parse_discovered_tools  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
+from ..messages import ModelMessage, ModelRequest, NativeToolSearchReturnPart, ToolReturnPart, ToolSearchReturnPart
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
@@ -55,6 +57,15 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+
+
+class _LegacyDiscoveryMetadata(TypedDict):
+    """Pre-typed-content metadata sideband shape."""
+
+    discovered_tools: list[str]
+
+
+_LEGACY_METADATA_TA = TypeAdapter(_LegacyDiscoveryMetadata)
 
 
 _MAX_SEARCH_RESULTS = 10
@@ -132,6 +143,35 @@ def _search_tools_signature(
 _SEARCH_TOOL_FN_SCHEMA = Tool(_search_tools_signature).function_schema
 _SEARCH_TOOL_SCHEMA: dict[str, Any] = _SEARCH_TOOL_FN_SCHEMA.json_schema
 _SEARCH_TOOL_VALIDATOR = _SEARCH_TOOL_FN_SCHEMA.validator
+
+
+def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
+    """Scan message history for previously-discovered tool names."""
+    discovered: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolSearchReturnPart):
+                    _collect_typed(part.content, discovered)
+                elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+                    _collect_legacy(part.metadata, discovered)
+        else:  # ModelResponse — the only other variant of ModelMessage.
+            for part in msg.parts:
+                if isinstance(part, NativeToolSearchReturnPart):
+                    _collect_typed(part.content, discovered)
+    return discovered
+
+
+def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
+    discovered.update(match['name'] for match in content['discovered_tools'])
+
+
+def _collect_legacy(metadata: Any, discovered: set[str]) -> None:
+    try:
+        validated = _LEGACY_METADATA_TA.validate_python(metadata)
+    except ValidationError:
+        return
+    discovered.update(validated['discovered_tools'])
 
 
 @cache

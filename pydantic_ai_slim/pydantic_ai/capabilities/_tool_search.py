@@ -7,8 +7,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pydantic_ai._tool_search import parse_discovered_tools
-
 from .._run_context import AgentDepsT, RunContext
 from ..messages import (
     ModelRequest,
@@ -34,7 +32,7 @@ from ..tools import (
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
-from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn, parse_discovered_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
 if TYPE_CHECKING:
@@ -211,30 +209,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Append a synthetic tool-search exchange for tools unlocked by a capability load.
-
-        `load_capability` and tool search are separate signals: a `LoadCapabilityReturnPart`
-        means "this capability is loaded," and a `ToolSearchReturnPart` means "these names
-        are in the discovered corpus." Native providers (Anthropic) emit `tool_reference`
-        blocks from `ToolSearchReturnPart` on the wire so the server-side tool-search
-        machinery unlocks the tools — without one, cap-loaded tools never reach the model
-        on the native path.
-
-        We diff resolved function tools owned by loaded deferred capabilities against
-        `parse_discovered_tools` (what tool-search history already records). Anything
-        in the former and not the latter gets a framework-synthesized
-        `ToolSearchCallPart` + `ToolSearchReturnPart` appended to the message list —
-        append-only so the cached prefix stays intact, idempotent because the next
-        turn's `parse_discovered_tools` picks the synthesized part up and the diff
-        collapses to empty. The synthetic call id is derived from the discovered tool
-        names so reconstructing the same exchange produces stable provider-visible
-        bytes.
-        """
+        """Append a synthetic tool-search exchange for tools unlocked by a capability load."""
         loaded_tool_defs = tool_defs_for_loaded_capabilities(
             ctx, request_context.model_request_parameters.function_tools
         )
 
-        # TODO: I don't want to be parsing it again here
         in_history = parse_discovered_tools(ctx.messages)
         newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
         if not newly_loaded:
@@ -244,11 +223,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         capability_ids = sorted(
             {capability_id for name in newly_loaded_names if (capability_id := newly_loaded[name].capability_id)}
         )
-        # The synthetic exchange is persisted to message history, so this
-        # should not be regenerated every turn. Keep the id deterministic anyway so
-        # replay from a prefix or aborted request preparation reconstructs the same
-        # provider-visible bytes for the same logical discovery event.
-
         call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 
