@@ -41,6 +41,7 @@ from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
+    ModelMessage,
     ModelRequest,
     NativeToolSearchReturnPart,
     ToolReturnPart,
@@ -54,6 +55,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
+from ._capability_owned import tool_defs_for_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -249,7 +251,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered = self._parse_discovered_tools(ctx)
+        loaded_capability_tool_names = set(
+            tool_defs_for_loaded_capabilities(
+                ctx,
+                (tool.tool_def for tool in all_tools.values()),
+            )
+        )
+
+        # Well available tools at the moment only know the tools that were revealed based on the message history
+        discovered_tool_names = ctx.available_tools | loaded_capability_tool_names
+        # So the tools provided by the last load_capability are not present at the moment?
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
@@ -263,7 +274,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             managed_def = replace(
                 tool.tool_def,
                 with_native=_TOOL_SEARCH_BUILTIN_ID,
-                defer_loading=name not in discovered,
+                defer_loading=name not in discovered_tool_names,
             )
             result[name] = replace(tool, tool_def=managed_def)
 
@@ -280,21 +291,28 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, discovered_tool_names)
 
+        ctx.available_tools = set(result.keys())
         return result
 
     def _build_search_tool(
         self,
+        ctx: RunContext[AgentDepsT],
         deferred: dict[str, ToolsetTool[AgentDepsT]],
-        discovered: set[str],
+        discovered_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
 
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
         # search function sees, and what the local keywords search indexes.
-        corpus = [tool.tool_def for name, tool in deferred.items() if name not in discovered]
+        corpus = [
+            tool.tool_def
+            for name, tool in deferred.items()
+            if name not in discovered_tool_names
+            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.available_capability_ids)
+        ]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the
@@ -323,7 +341,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             corpus=corpus,
         )
 
-    def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
+    @staticmethod
+    def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
         """Scan message history for previously-discovered tool names.
 
         Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
@@ -338,21 +357,21 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         to surface previously-discovered tools.
         """
         discovered: set[str] = set()
-        for msg in ctx.messages:
+        for msg in messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if isinstance(part, ToolSearchReturnPart):
-                        self._collect_typed(part.content, discovered)
+                        ToolSearchToolset._collect_typed(part.content, discovered)
                     elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         # Legacy histories carry discoveries on `metadata['discovered_tools']`
                         # rather than typed content. Narrowing tool_name + metadata shape avoids
                         # surfacing a user-defined `search_tools` whose metadata has no legacy
                         # shape.
-                        self._collect_legacy(part.metadata, discovered)
+                        ToolSearchToolset._collect_legacy(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
                     if isinstance(part, NativeToolSearchReturnPart):
-                        self._collect_typed(part.content, discovered)
+                        ToolSearchToolset._collect_typed(part.content, discovered)
         return discovered
 
     @staticmethod

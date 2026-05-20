@@ -10,10 +10,10 @@ from pydantic_ai.tools import ToolDefinition, ToolSelector, matches_tool_selecto
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, auto_capability_id
 
 
-@dataclass
+@dataclass(init=False)
 class SetToolMetadata(AbstractCapability[AgentDepsT]):
     """Capability that merges metadata key-value pairs onto selected tools.
 
@@ -26,11 +26,20 @@ class SetToolMetadata(AbstractCapability[AgentDepsT]):
     """
 
     tools: ToolSelector[AgentDepsT] = 'all'
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any], init=False)
 
-    def __init__(self, *, tools: ToolSelector[AgentDepsT] = 'all', **metadata: Any) -> None:
+    def __init__(
+        self,
+        *,
+        tools: ToolSelector[AgentDepsT] = 'all',
+        **metadata: Any,
+    ) -> None:
+        self.id = auto_capability_id()
+        self.description = None
+        self.defer_loading = False
         self.tools = tools
         self.metadata = metadata
+        self.__post_init__()
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

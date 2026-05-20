@@ -12,6 +12,7 @@ from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 WebSearchLocalStrategy = Literal['duckduckgo']
@@ -53,7 +54,13 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        id: str | None = None,
+        defer_loading: bool = False,
+        description: str | None = None,
     ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.search_context_size = search_context_size

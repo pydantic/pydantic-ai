@@ -48,6 +48,7 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    auto_capability_id,
 )
 
 if TYPE_CHECKING:
@@ -710,6 +711,7 @@ class _HookRegistration(Generic[AgentDepsT]):
 # --- The Hooks capability ---
 
 
+@dataclass(init=False)
 class Hooks(AbstractCapability[AgentDepsT]):
     """Register hook functions via decorators or constructor kwargs.
 
@@ -790,7 +792,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
         # Ordering
         ordering: CapabilityOrdering | None = None,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ):
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
         self._ordering = ordering
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
@@ -832,6 +840,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         for key, func in _kwargs.items():
             if func is not None:
                 self._registry.setdefault(key, []).append(_HookEntry(func))
+        self.__post_init__()
 
     @cached_property
     def on(self) -> _HookRegistration[AgentDepsT]:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -14,6 +13,7 @@ from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -30,6 +30,20 @@ else:
         FastMCPToolset = Any
 
 
+def _mcp_id_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip('/')
+    slug = path.split('/')[-1] if path else ''
+
+    if parsed.hostname:
+        return f'{parsed.hostname}-{slug}' if slug else parsed.hostname
+
+    if parsed.scheme and slug:
+        return f'{parsed.scheme}-{slug}'
+
+    return url
+
+
 @dataclass(init=False)
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
@@ -41,9 +55,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     url: str
     """The URL of the MCP server."""
 
-    id: str | None
-    """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
-
     authorization_token: str | None
     """Authorization header value for MCP server requests. Passed to both native and local."""
 
@@ -53,7 +64,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both native and local."""
 
-    description: str | None
+    description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
 
     def __init__(
@@ -76,7 +87,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
     ) -> None:
+        self.description = description
+        self.defer_loading = defer_loading
         # In v2, MCP's `native` default flips from True to False. Warn whenever the user is
         # relying on the default — passing only `local=False` today gives native-only behavior,
         # but in v2 that combo will raise "both can't be False" without an explicit `native=True`.
@@ -109,27 +123,20 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         ):
             local = MCPToolset(local, include_instructions=True)
         self.local = local
-        self.id = id
+        if id is not None:
+            self.id = id
+        elif isinstance(native, MCPServerTool):
+            self.id = native.id
+        else:
+            self.id = _mcp_id_from_url(url) or auto_capability_id()
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
-        self.description = description
         self.__post_init__()
-
-    @cached_property
-    def _resolved_id(self) -> str:
-        if self.id:
-            return self.id
-        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(self.url)
-        path = parsed.path.rstrip('/')
-        slug = path.split('/')[-1] if path else ''
-        host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or self.url
 
     def _default_native(self) -> MCPServerTool:
         return MCPServerTool(
-            id=self._resolved_id,
+            id=self.id,
             url=self.url,
             authorization_token=self.authorization_token,
             headers=self.headers,
@@ -138,7 +145,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _native_unique_id(self) -> str:
-        return f'mcp_server:{self._resolved_id}'
+        if isinstance(self.native, MCPServerTool):
+            return self.native.unique_id
+        return f'mcp_server:{self.id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         # The MCP extra may not be installed, in which case the capability still constructs cleanly
@@ -192,6 +201,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
         """Construct an `MCP` capability from spec-serializable args.
 
@@ -209,6 +219,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             headers=headers,
             allowed_tools=allowed_tools,
             description=description,
+            defer_loading=defer_loading,
         )
 
 

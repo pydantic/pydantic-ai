@@ -16,10 +16,12 @@ from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .capabilities.abstract import AbstractCapability
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -111,10 +113,39 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
+    """The capabilities that are available for the current run."""
+
+    available_capability_ids: set[str] = field(default_factory=set[str])
+    """IDs of every capability that is currently available.
+
+    Contains both non-deferred capabilities (`defer_loading=False`) and any
+    deferred capabilities the model has loaded via `load_capability`. Seeded
+    during run preparation from the capability registry and message history; the
+    `load_capability` tool body adds to it for in-step loads.
+    """
+
+    capability_loaded: bool | None = None
+    """Whether the capability whose hook is currently running is loaded.
+
+    This is `None` outside capability hook dispatch, where there is no current capability.
+    """
+
+    available_tools: set[str] = field(default_factory=set[str])
+    """Tools that are available to be called on the current turn."""
+
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    # @property
+    # def available_tools(self) -> set[str]:
+    #     """Tools that are available to be called on the current turn."""
+    #     if self.tool_manager is None or self.tool_manager.tools is None:
+    #         return set()
+
+    #     return {tool.tool_def.name for tool in self.tool_manager.tools.values() if not tool.tool_def.defer_loading}
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

@@ -394,16 +394,18 @@ result = agent.run_sync(
 To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
 
 ```python {title="force_first_call.py"}
+from dataclasses import dataclass
+
 from pydantic_ai import Agent, ModelSettings, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
 
+@dataclass
 class RequireFirstCall(AbstractCapability[None]):
     """Force `tool_name` to be called successfully before anything else."""
 
-    def __init__(self, tool_name: str) -> None:
-        self.tool_name = tool_name
+    tool_name: str
 
     def get_model_settings(self):
         def settings(ctx: RunContext[None]) -> ModelSettings:

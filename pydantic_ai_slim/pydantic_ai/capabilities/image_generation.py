@@ -11,6 +11,7 @@ from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName,
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -132,7 +133,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
+        id: str | None = None,
+        defer_loading: bool = False,
+        description: str | None = None,
     ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
         if fallback_model is not None and local is not None:
             raise UserError(
                 'ImageGeneration: cannot specify both `fallback_model` and `local` — '

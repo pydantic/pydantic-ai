@@ -21,6 +21,7 @@ from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
 from .. import (
     _agent_graph,
@@ -1369,6 +1370,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
+        deferred_caps: list[AbstractCapability[AgentDepsT]] = []
+
+        def _collect_deferred(cap: AbstractCapability[AgentDepsT]) -> None:
+            if cap.defer_loading is True:
+                deferred_caps.append(cap)
+
+        run_capability.apply(_collect_deferred)
+        if deferred_caps:
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1459,6 +1469,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
+        capabilities_dict: dict[str, AbstractCapability[AgentDepsT]] = {}
+
+        def _register(cap: AbstractCapability[AgentDepsT]) -> None:
+            capabilities_dict.setdefault(cap.id, cap)
+
+        run_capability.apply(_register)
+
+        available_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1474,6 +1493,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
+            capabilities=capabilities_dict,
+            available_capability_ids=available_capability_ids,
+            available_tools=set(),
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -2549,14 +2571,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
-        for instruction in instructions:
+        for instruction in _instructions.prepare_instructions(instructions):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             else:
-                # TemplateStr instances land here too: they are callable with a
-                # RunContext parameter, so SystemPromptRunner handles them like
-                # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                functions.append(instruction)
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions

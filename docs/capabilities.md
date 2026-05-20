@@ -29,6 +29,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`NativeTool`][pydantic_ai.capabilities.NativeTool] | Registers a [native tool](native-tools.md) with the agent | Yes |
+| [`Capability`][pydantic_ai.capabilities.Capability] | Bundles instructions and a toolset without subclassing | — |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
@@ -389,9 +390,262 @@ _(This example is complete, it can be run "as is")_
 
 The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
 
+## Capabilities on demand {#deferred-capability-loading}
+
+Use capabilities on demand when your agent has more capabilities than most requests need. The model first sees only a compact catalog of capability `id`s, with `description`s when provided. When it needs one, it calls `load_capability(id)`; Pydantic AI then returns that capability's instructions and makes its function tools available.
+
+The result is smaller prompts, less irrelevant context, and lower token use without removing capabilities from the agent. It is skills-style progressive disclosure, but for Pydantic AI capability bundles: instructions plus the tools that make those instructions actionable.
+
+On models with native [tool search](tools-advanced.md#tool-search) support, capability tools are unlocked through an append-only discovery path. The provider-visible tool definitions stay stable, so prompt caching can be preserved across capability loads. On models using the local fallback, Pydantic AI still keeps the context window smaller, but local function-tool visibility can change between requests.
+
+For large flat tool collections, use [tool search](tools-advanced.md#tool-search) instead. Tool search discovers individual tools; capabilities on demand unlock a named bundle of instructions and tools.
+
+### Adding an on-demand capability
+
+Every on-demand capability needs:
+
+* a stable, unique [`id`][pydantic_ai.capabilities.AbstractCapability.id]
+* `defer_loading=True`
+
+A short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description], is optional. Add one when the `id` alone is not enough for the model to choose the right capability.
+
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand.
+
+There are a number of ways to register function tools with a capability:
+
+* via the [`@capability.tool`][pydantic_ai.capabilities.Capability.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`@capability.tool_plain`][pydantic_ai.capabilities.Capability.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`tools`][pydantic_ai.capabilities.Capability] keyword argument to `Capability`, which can take either plain functions or [`Tool`][pydantic_ai.tools.Tool] instances
+
+Use `toolset=` instead when you already have an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], such as an MCP toolset.
+
+Here's an example using the decorator style:
+
+```python {title="capability_on_demand.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+refunds = Capability(
+    id='refunds',
+    description='Refund policy tools and instructions.',
+    instructions='Use the refund policy before answering refund questions.',
+    defer_loading=True,
+)
+
+
+@refunds.tool_plain
+def lookup_refund_policy(order_id: str) -> str:
+    """Look up whether an order is still eligible for a refund."""
+    return f'{order_id} is eligible for a refund for 30 days after purchase.'
+
+
+seen_tool_names: list[list[str]] = []
+
+
+def support_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # `defer_loading=True` is how the framework signals "deferred, not yet callable" to
+    # the model on the wire — filter the printed list and the visibility check on it.
+    visible_tools = [tool for tool in info.function_tools if not tool.defer_loading]
+    seen_tool_names.append([tool.name for tool in visible_tools])
+    last_part = messages[-1].parts[-1]
+
+    if isinstance(last_part, ToolReturnPart) and last_part.tool_name == 'lookup_refund_policy':
+        return ModelResponse(parts=[TextPart(str(last_part.content))])
+
+    if any(tool.name == 'lookup_refund_policy' for tool in visible_tools):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='lookup_refund_policy',
+                    args={'order_id': 'order-123'},
+                    tool_call_id='lookup-refund',
+                )
+            ]
+        )
+
+    return ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name='load_capability',
+                args={'id': 'refunds'},
+                tool_call_id='load-refunds',
+            )
+        ]
+    )
+
+
+agent = Agent(
+    FunctionModel(support_model),
+    instructions='Answer as a support assistant.',
+    capabilities=[
+        refunds,
+    ],
+)
+
+result = agent.run_sync('Can I get a refund for order-123?')
+print(result.output)
+#> order-123 is eligible for a refund for 30 days after purchase.
+print(seen_tool_names)
+"""
+[
+    ['load_capability'],
+    ['load_capability', 'lookup_refund_policy'],
+    ['load_capability', 'lookup_refund_policy'],
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+The first turn only sees the `load_capability` entry point, so the refund-specific instructions and tool schema do not consume the initial context window. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool becomes visible. `load_capability` stays visible so the function-tool set remains stable across turns.
+
+As well as using decorators, you can register existing functions via the `tools` argument. This is useful when you want to reuse the same functions across capabilities or construct the capability in one expression:
+
+```python {title="capability_tools_kwarg.py"}
+from pydantic_ai.capabilities import Capability
+
+
+def lookup_refund_policy(order_id: str) -> str:
+    """Look up whether an order is still eligible for a refund."""
+    return f'{order_id} is eligible for a refund for 30 days after purchase.'
+
+
+refunds = Capability(
+    id='refunds',
+    description='Refund policy tools and instructions.',
+    instructions='Use the refund policy before answering refund questions.',
+    tools=[lookup_refund_policy],
+    defer_loading=True,
+)
+```
+
+_(This example is complete, it can be run "as is")_
+
+For a complete multi-specialist example, see the [support specialist example](examples/support-specialist.md), where the same agent can load order or return handling on demand.
+
+### Dynamic descriptions and load-time instructions
+
+Subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] when the catalog entry or load-time instructions depend on the current run:
+
+```python {title="dynamic_capability_on_demand.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class SupportDeps:
+    plan: str
+    account_id: str
+
+
+@dataclass
+class AccountCapability(AbstractCapability[SupportDeps]):
+    def get_description(self, ctx: RunContext[SupportDeps] | None) -> str:
+        plan = ctx.deps.plan if ctx else 'the current'
+        return f'Account-management tools for {plan} plan customers.'
+
+    def get_instructions(self):
+        def load_instructions(ctx: RunContext[SupportDeps]) -> str:
+            return f'Use account ID {ctx.deps.account_id} for account-management tools.'
+
+        return load_instructions
+
+
+account_capability = AccountCapability(
+    id='account-management',
+    defer_loading=True,
+)
+```
+
+The description is visible before loading. Dynamic instructions run when `load_capability` is called, so they can use the current [`RunContext`][pydantic_ai.tools.RunContext] without bloating the first request.
+
+### Gotchas
+
+[`id`][pydantic_ai.capabilities.AbstractCapability.id] values must be unique across all capabilities in a run, not just on-demand ones.
+
+`load_capability` is reserved when any on-demand capability is present. `search_tools` is reserved when [tool search](tools-advanced.md#tool-search) is active.
+
+On-demand capabilities currently support instructions, model settings, and function tools. [Native tools](native-tools.md) must stay in always-on capabilities.
+
+Tools in an on-demand capability are hidden until the capability is loaded. Capability-level `defer_loading=True` gates the bundle as a unit, so individual tool `defer_loading` values do not expose tools before loading or keep them behind `search_tools` after loading.
+
+Loaded capability state comes from the [message history](message-history.md) before each model-request step. If you pass in history that already contains a completed `load_capability` call and return, the capability is treated as loaded for the next model request. By the time a [history processor](message-history.md#processing-message-history) or [`before_model_request` hook](hooks.md#model-request-hooks) runs, Pydantic AI has already prepared the tool definitions for the current model request. Inserting or removing `load_capability` parts at that point does not change the current request's tool definitions; the updated history is used when the agent loops into a later model request or the next run. If you synthesize capability-load parts yourself, include both the call and return parts so replay can identify the loaded capability.
+
+[Deferred tool calls](deferred-tools.md#deferred-tools) are separate: they control when a tool call is executed, not whether the model can see a capability.
+
 ## Building custom capabilities
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
+
+Custom capability classes should be dataclasses. This lets Pydantic AI expose the shared capability fields — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — consistently, and it is required when custom capabilities are used in agent specs.
+
+```python {title="custom_capability_dataclass.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class MyCapability(AbstractCapability[Any]):
+    """A custom capability."""
+```
+
+If you define a custom `__post_init__`, call `super().__post_init__()` so base validation still runs:
+
+```python {title="custom_capability_post_init.py"}
+from dataclasses import dataclass
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class MyCapability(AbstractCapability[None]):
+    label: str
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.label = self.label.strip()
+```
+
+If you define a custom `__init__`, use `@dataclass(init=False)` and initialize the base metadata before calling `__post_init__()`. Only expose `defer_loading` if the capability should support lazy loading; otherwise set `self.defer_loading = False`.
+
+```python {title="custom_capability_init.py"}
+from dataclasses import dataclass
+
+from pydantic_ai.capabilities import AbstractCapability, auto_capability_id
+
+
+@dataclass(init=False)
+class MyCapability(AbstractCapability[None]):
+    label: str
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
+        self.label = label
+        self.__post_init__()
+```
+
+When [`defer_loading=True`](#deferred-capability-loading), the capability must have a stable explicit `id`; auto-generated ids are rejected because they cannot be replayed from message history.
 
 ### Providing tools
 

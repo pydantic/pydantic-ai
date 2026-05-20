@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from .._run_context import AgentDepsT
+from .._run_context import AgentDepsT, RunContext
+from ..messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
@@ -23,8 +31,12 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
+from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
+
+if TYPE_CHECKING:
+    from ..models import ModelRequestContext
 
 
 @dataclass
@@ -127,6 +139,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         # `'keywords'` and a callable strategy both run their algorithm on our side and
         # both engage the provider's "client-executed" native mode where supported, so
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
@@ -192,3 +205,50 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
         )
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Append a synthetic tool-search exchange for tools unlocked by a capability load."""
+        loaded_tool_defs = tool_defs_for_loaded_capabilities(
+            ctx, request_context.model_request_parameters.function_tools
+        )
+
+        in_history = ToolSearchToolset.parse_discovered_tools(ctx.messages)
+        newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
+        if not newly_loaded:
+            return request_context
+
+        newly_loaded_names = sorted(newly_loaded)
+        capability_ids = sorted(
+            {capability_id for name in newly_loaded_names if (capability_id := newly_loaded[name].capability_id)}
+        )
+        call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
+        call_id = f'auto_load_{call_id_digest}'
+
+        request_context.messages.append(
+            ModelResponse(
+                parts=[
+                    ToolSearchCallPart(
+                        args={'queries': capability_ids},
+                        tool_call_id=call_id,
+                    ),
+                ]
+            )
+        )
+        request_context.messages.append(
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={
+                            'discovered_tools': [
+                                {'name': name, 'description': newly_loaded[name].description}
+                                for name in newly_loaded_names
+                            ]
+                        },
+                        tool_call_id=call_id,
+                    ),
+                ]
+            )
+        )
+        return request_context
