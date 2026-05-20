@@ -25,7 +25,9 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
 
                 catalog.append((cap_id, cap.get_description(ctx) or ''))
 
-            entries = '\n'.join(f'- {cap_id}: {description}' for cap_id, description in catalog)
+            entries = '\n'.join(
+                f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog
+            )
             return f'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n{entries}'
 
         return create_catalog

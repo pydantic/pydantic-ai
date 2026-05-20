@@ -130,7 +130,7 @@ class AccountSecurityRunbook(AbstractCapability[Store]):
     """Deferred runbook skill for sensitive account-security workflows."""
 
     id: str = 'account-security'
-    description: str = (
+    description: str | None = (
         'Use for suspicious logins, stolen credentials, account takeover, session revocation, '
         'or urgent account lock requests.'
     )

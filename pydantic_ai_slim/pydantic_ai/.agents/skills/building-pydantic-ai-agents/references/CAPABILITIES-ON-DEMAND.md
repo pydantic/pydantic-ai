@@ -4,7 +4,7 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 ## Mental Model
 
-Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` and `description` values, plus the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions and makes its function tools available.
+Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions and makes its function tools available.
 
 Be opinionated: every capability should be reviewed for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default. Suggest capabilities on demand for named bundles, tool search for long-tail tools, or a narrower always-on instruction if the behavior really is universal.
 
@@ -30,7 +30,7 @@ Do not wait for the user to say "progressive disclosure." Raise it during design
 
 ## Minimal Pattern
 
-Every deferred capability needs a stable explicit `id`, a concise `description`, and `defer_loading=True`.
+Every deferred capability needs a stable explicit `id` and `defer_loading=True`. A concise `description` is optional; add one when the `id` alone is not enough for routing.
 
 ```python
 from pydantic_ai import Agent
@@ -118,7 +118,7 @@ account_capability = AccountCapability(id='account-management', defer_loading=Tr
 - `load_capability` is reserved when any deferred capability exists.
 - Deferred capability instructions and model settings activate only after the capability is loaded.
 - Function tools are supported. Native tools are not currently lazy-loaded; keep native tools always on or set `defer_loading=False`.
-- Tool-level `defer_loading=True` inside a loaded deferred capability can keep a tool behind `search_tools` after the capability is loaded.
+- Capability-level `defer_loading=True` gates the bundle as a unit. Individual tool `defer_loading` values inside that capability do not expose tools before loading or keep them behind `search_tools` after loading.
 
 ## Choosing Between Deferral Mechanisms
 

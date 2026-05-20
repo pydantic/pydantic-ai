@@ -180,9 +180,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """If True, instructions, function tools, and model settings are hidden until
     the model explicitly loads the capability via `load_capability(id)`.
 
-    Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] and
+    Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] so
+    message history replay can identify the capability. A
+    [`description`][pydantic_ai.capabilities.AbstractCapability.description] or
     [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
-    to be set so the capability can be discovered in the load catalog.
+    override is optional and only adds routing context to the load catalog.
     """
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:

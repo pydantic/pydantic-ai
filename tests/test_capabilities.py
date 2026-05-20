@@ -2256,6 +2256,34 @@ def test_abstract_capability_get_model_settings_default():
     assert cap.get_description(None) is None
 
 
+async def test_abstract_capability_description_field_is_optional_in_deferred_catalog() -> None:
+    """Deferred capability catalog entries can include a description but do not require one."""
+
+    @dataclass
+    class AccountSecurityRunbook(AbstractCapability[None]):
+        id: str = 'account-security'
+        description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
+        defer_loading: bool | None = True
+
+    @dataclass
+    class RefundsRunbook(AbstractCapability[None]):
+        id: str = 'refunds'
+        defer_loading: bool | None = True
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[AccountSecurityRunbook(), RefundsRunbook()])
+    result = await agent.run('hi')
+    request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+
+    assert request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- account-security: Use for suspicious logins, account takeover, or session revocation.\n'
+        '- refunds'
+    )
+
+
 def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
 

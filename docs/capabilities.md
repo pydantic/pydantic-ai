@@ -392,7 +392,7 @@ The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capabil
 
 ## Capabilities on demand {#deferred-capability-loading}
 
-Use capabilities on demand when your agent has more capabilities than most requests need. The model first sees only a compact catalog of capability `id`s and `description`s. When it needs one, it calls `load_capability(id)`; Pydantic AI then returns that capability's instructions and makes its function tools available.
+Use capabilities on demand when your agent has more capabilities than most requests need. The model first sees only a compact catalog of capability `id`s, with `description`s when provided. When it needs one, it calls `load_capability(id)`; Pydantic AI then returns that capability's instructions and makes its function tools available.
 
 The result is smaller prompts, less irrelevant context, and lower token use without removing capabilities from the agent. It is skills-style progressive disclosure, but for Pydantic AI capability bundles: instructions plus the tools that make those instructions actionable.
 
@@ -405,8 +405,9 @@ For large flat tool collections, use [tool search](tools-advanced.md#tool-search
 Every on-demand capability needs:
 
 * a stable, unique [`id`][pydantic_ai.capabilities.AbstractCapability.id]
-* a short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description]
 * `defer_loading=True`
+
+A short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description], is optional. Add one when the `id` alone is not enough for the model to choose the right capability.
 
 [`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand.
 
@@ -576,7 +577,7 @@ The description is visible before loading. Dynamic instructions run when `load_c
 
 On-demand capabilities currently support instructions, model settings, and function tools. [Native tools](native-tools.md) must stay in always-on capabilities.
 
-Tools in an on-demand capability are hidden until the capability is loaded. Set a tool's `defer_loading=True` to keep it behind `search_tools` after loading, or `False` to expose it before loading.
+Tools in an on-demand capability are hidden until the capability is loaded. Capability-level `defer_loading=True` gates the bundle as a unit, so individual tool `defer_loading` values do not expose tools before loading or keep them behind `search_tools` after loading.
 
 Loaded capability state comes from the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) removes the `load_capability` tool return, the model may need to load the capability again.
 
