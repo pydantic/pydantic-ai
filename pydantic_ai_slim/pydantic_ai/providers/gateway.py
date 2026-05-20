@@ -280,18 +280,11 @@ def normalize_gateway_provider(provider: str) -> str:
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 
-# TODO(Marcelo): We should deprecate this, and remove it in v2.
-GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
-
 _PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')
 
 
 def _infer_base_url(api_key: str) -> str:
-    """Infer the gateway base URL from the API key.
-
-    The region is extracted to determine the appropriate gateway URL.
-    Defaults to the old gateway base URL if the region is not found.
-    """
+    """Infer the Gateway base URL from the region encoded in the API key."""
     if match := _PYDANTIC_TOKEN_PATTERN.match(api_key):
         region = match.group('region')
         assert isinstance(region, str)
@@ -300,4 +293,8 @@ def _infer_base_url(api_key: str) -> str:
             return 'https://gateway.pydantic.info/proxy'
         return f'https://gateway-{region}.pydantic.dev/proxy'
 
-    return GATEWAY_BASE_URL
+    raise UserError(
+        'Could not infer the Pydantic AI Gateway base URL: the API key does not encode a region. '
+        'Generate a new key from the Pydantic AI Gateway, or set the `PYDANTIC_AI_GATEWAY_BASE_URL` '
+        'environment variable explicitly.'
+    )

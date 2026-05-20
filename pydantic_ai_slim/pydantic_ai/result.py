@@ -196,7 +196,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._initial_run_ctx_usage + self._raw_stream_response.usage()
+        return self._initial_run_ctx_usage + self._raw_stream_response.usage
 
     @property
     def timestamp(self) -> datetime:

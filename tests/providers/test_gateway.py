@@ -9,7 +9,7 @@ import pytest
 
 from pydantic_ai import Agent, UserError
 
-from .._inline_snapshot import snapshot
+from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -31,6 +31,9 @@ if not imports_successful():
     pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+
+# Any URL works here — these tests exercise the explicit `PYDANTIC_AI_GATEWAY_BASE_URL` override path.
+GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 
 @pytest.mark.parametrize(
@@ -65,7 +68,7 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
-        provider = gateway_provider('openai', http_client=http_client, api_key='foobar')
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
         assert provider.client._client == http_client  # type: ignore
 
 
@@ -108,7 +111,9 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
     assert provider.base_url in (f'{GATEWAY_BASE_URL}/{route}/', f'{GATEWAY_BASE_URL}/{route}')
 
 
-@patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
 @pytest.mark.parametrize('removed_alias', ['foo', 'google-vertex', 'gemini'])
 def test_gateway_provider_unknown(removed_alias: str):
     # `google-vertex` and `gemini` were removed in v2 alongside their bare-prefix counterparts —
@@ -197,7 +202,7 @@ async def test_model_provider_argument():
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):
-    provider = gateway_provider('openai', route='potato', api_key=gateway_api_key)
+    provider = gateway_provider('openai', route='potato', api_key=gateway_api_key, base_url=GATEWAY_BASE_URL)
     assert provider.client.base_url.path.endswith('/potato/')
 
 
@@ -208,9 +213,21 @@ async def test_gateway_provider_routing_group(gateway_api_key: str):
         pytest.param('pylf_v1_eu_abc123', 'gateway-eu.pydantic.dev', id='eu-region'),
         pytest.param('pylf_v1_stagingus_abc123', 'gateway.pydantic.info', id='staging'),
         pytest.param('pylf_v1_ap_abc123', 'gateway-ap.pydantic.dev', id='any-region'),
-        pytest.param('not-a-pylf-token', 'gateway.pydantic.dev', id='default-base-url'),
     ],
 )
 def test_infer_base_url(api_key: str, expected_base_url: str):
     provider = gateway_provider('openai', api_key=api_key)
     assert urlparse(provider.base_url).netloc == expected_base_url
+
+
+def test_infer_base_url_no_region():
+    """An API key that doesn't encode a region used to fall back to a shared Gateway URL; that URL
+    is dead, so it now raises instead of silently routing to a dead host."""
+    with raises(
+        snapshot(
+            'UserError: Could not infer the Pydantic AI Gateway base URL: the API key does not encode a region. '
+            'Generate a new key from the Pydantic AI Gateway, or set the `PYDANTIC_AI_GATEWAY_BASE_URL` '
+            'environment variable explicitly.'
+        )
+    ):
+        gateway_provider('openai', api_key='not-a-pylf-token')
