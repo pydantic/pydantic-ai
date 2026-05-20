@@ -5586,6 +5586,90 @@ async def test_adapter_load_messages_text_with_provider_metadata():
     )
 
 
+
+async def test_adapter_load_messages_reasoning_streaming_omits_signature():
+    """Test that ReasoningUIPart with state='streaming' omits signature to avoid Anthropic 400 errors."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Partial reasoning',
+                    state='streaming',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_123',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Partial reasoning',
+                        id='reasoning_123',
+                        signature=None,
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_reasoning_done_preserves_signature():
+    """Test that ReasoningUIPart with state='done' preserves signature."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Complete reasoning',
+                    state='done',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_456',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Complete reasoning',
+                        id='reasoning_456',
+                        signature='abc123signature',
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
 async def test_adapter_tool_call_part_with_provider_metadata():
     """Test ToolCallPart with provider_name and provider_details preserves metadata and roundtrips."""
     messages: list[ModelMessage] = [
