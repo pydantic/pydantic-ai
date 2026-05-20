@@ -606,7 +606,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
-        else:  # pragma: no cover
+        else:  # pragma: lax no cover
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
