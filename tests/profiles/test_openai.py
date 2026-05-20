@@ -8,14 +8,22 @@ Tests verify model profile detection for different OpenAI models, particularly:
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel, Field
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.exceptions import UserError
-    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, validate_openai_profile
+    from pydantic_ai.profiles.openai import (
+        OpenAIJsonSchemaTransformer,
+        OpenAIModelProfile,
+        openai_model_profile,
+        validate_openai_profile,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -98,3 +106,82 @@ def test_send_back_thinking_parts_field_requires_thinking_field():
         match='If `openai_chat_send_back_thinking_parts` is "field", `openai_chat_thinking_field` must be set to a non-None value.',
     ):
         validate_openai_profile(OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'))
+
+
+def test_json_schema_transformer_keeps_supported_patterns():
+    class MyModel(BaseModel):
+        simple_pattern: Annotated[str, Field(pattern='^my-pattern$')]
+
+    schema_transformer = OpenAIJsonSchemaTransformer(MyModel.model_json_schema(), strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {'simple_pattern': {'pattern': '^my-pattern$', 'type': 'string'}},
+            'required': ['simple_pattern'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is True
+
+    escaped_schema_transformer = OpenAIJsonSchemaTransformer(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+        },
+        strict=None,
+    )
+    assert escaped_schema_transformer.walk() == snapshot(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert escaped_schema_transformer.is_strict_compatible is True
+
+
+def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
+    json_schema: dict[str, Any] = {
+        'properties': {
+            'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+            'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+            'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+            'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+        },
+        'required': ['before', 'after', 'negative_before', 'negative_after'],
+        'type': 'object',
+    }
+
+    schema_transformer = OpenAIJsonSchemaTransformer(json_schema, strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {
+                'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+                'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+                'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+                'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is False
+
+    assert OpenAIJsonSchemaTransformer(json_schema, strict=True).walk() == snapshot(
+        {
+            'properties': {
+                'before': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'after': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_before': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
+                'negative_after': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )

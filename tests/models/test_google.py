@@ -8,6 +8,7 @@ import random
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -80,7 +81,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from google.genai import errors
+    from google.genai import Client, errors
     from google.genai.types import (
         BlockedReason,
         Candidate,
@@ -104,9 +105,9 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
+        GoogleCloudServiceTier,
         GoogleModel,
         GoogleModelSettings,
-        GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -136,6 +137,13 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
 def test_google_client_property_delegates_to_provider(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.client is google_provider.client
+
+
+def test_google_cloud_provider_accepts_prebuilt_client():
+    """`GoogleCloudProvider(client=...)` short-circuits construction and stores the supplied client."""
+    client = Client(vertexai=False, api_key='mock-api-key')
+    provider = GoogleCloudProvider(client=client)
+    assert provider.client is client
 
 
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3605,7 +3613,7 @@ async def test_google_image_generation_tool_output_format(
 ) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3618,7 +3626,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
@@ -3631,7 +3639,7 @@ async def test_google_image_generation_tool_output_compression(
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -3650,7 +3658,7 @@ async def test_google_image_generation_tool_compression_validation(
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -3678,7 +3686,7 @@ async def test_google_image_generation_tool_compression_validation(
 
 
 async def test_google_image_generation_silently_ignored_by_gemini_api(google_provider: GoogleProvider) -> None:
-    """Test that output_format and compression are silently ignored by Gemini API (google-gla)."""
+    """Test that output_format and compression are silently ignored by the Gemini API (google)."""
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
 
     # Test output_format ignored
@@ -3715,7 +3723,7 @@ async def test_google_vertexai_image_generation_with_output_format(
 async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -3936,6 +3944,18 @@ async def test_google_optional_fields_native_output_gemini_2_0(
     # Test with optional fields as None
     result2 = await agent.run('Just tell me a city: Paris')
     assert result2.output.city == snapshot('Paris')
+
+
+async def test_google_decimal_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 async def test_google_integer_enum_native_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -4611,7 +4631,7 @@ async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
 async def test_uploaded_file_vertex_requires_gs_uri(mocker: MockerFixture):
     """Vertex `UploadedFile` must use a gs:// URI (not Files API https URLs)."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     https_files_api = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
     with pytest.raises(UserError, match='must use a GCS URI'):
@@ -4661,23 +4681,23 @@ async def test_youtube_video_url_without_vendor_metadata():
 
 
 # =============================================================================
-# GCS VideoUrl tests for google-vertex
+# GCS VideoUrl tests for google-cloud (Vertex)
 #
 # GCS URIs (gs://...) with vendor_metadata (video offsets) only work on
-# google-vertex because Vertex AI can access GCS buckets directly.
+# google-cloud because Vertex AI can access GCS buckets directly.
 #
 # Regression test for https://github.com/pydantic/pydantic-ai/issues/3805
 # =============================================================================
 
 
-async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: MockerFixture):
-    """GCS URIs use file_uri with video_metadata on google-vertex.
+async def test_gcs_video_url_with_vendor_metadata_on_google_cloud(mocker: MockerFixture):
+    """GCS URIs use file_uri with video_metadata on google-cloud (Vertex).
 
     This is the main fix - GCS URIs were previously falling through to FileUrl
     handling which doesn't pass vendor_metadata as video_metadata.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     video = VideoUrl(
         url='gs://bucket/video.mp4',
@@ -4692,15 +4712,15 @@ async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: Mocke
     }
 
 
-async def test_gcs_video_url_raises_error_on_google_gla():
-    """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
+async def test_gcs_video_url_raises_error_on_google():
+    """GCS URIs on the Gemini API (google) fall through to FileUrl and raise a clear error.
 
-    google-gla cannot access GCS buckets, so attempting to use gs:// URLs
+    The Gemini API cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
     SSRF protection now catches non-http(s) protocols first.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    # google-gla is the default for GoogleProvider with api_key, but be explicit
+    # GoogleProvider with api_key targets the Gemini API; assert it explicitly.
     assert model.system == 'google'
 
     video = VideoUrl(url='gs://bucket/video.mp4')
@@ -4713,13 +4733,13 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 # HTTP VideoUrl fallback tests (not YouTube, not GCS)
 #
 # HTTP VideoUrls fall through to FileUrl handling, which is provider-specific:
-# - google-gla: downloads the video and sends inline_data
-# - google-vertex: uses file_uri directly (no download)
+# - google (Gemini API): downloads the video and sends inline_data
+# - google-cloud (Vertex): uses file_uri directly (no download)
 # =============================================================================
 
 
-async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
-    """HTTP VideoUrls are downloaded on google-gla with video_metadata preserved."""
+async def test_http_video_url_downloads_on_google(mocker: MockerFixture):
+    """HTTP VideoUrls are downloaded on the Gemini API (google) with video_metadata preserved."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     mock_download = mocker.patch(
@@ -4741,10 +4761,10 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
     assert content[0].get('video_metadata') == {'start_offset': '10s', 'end_offset': '20s'}
 
 
-async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
-    """HTTP VideoUrls use file_uri directly on google-vertex with video_metadata."""
+async def test_http_video_url_uses_file_uri_on_google_cloud(mocker: MockerFixture):
+    """HTTP VideoUrls use file_uri directly on google-cloud (Vertex) with video_metadata."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     video = VideoUrl(
         url='https://example.com/video.mp4',
@@ -4763,7 +4783,7 @@ async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixtu
 # _map_file_to_function_response_part tests for tool returns on Vertex
 #
 # These tests cover the FunctionResponsePartDict mapping for Gemini 3+ native
-# tool returns on google-vertex, which uses file_data for URLs instead of
+# tool returns on google-cloud (Vertex), which uses file_data for URLs instead of
 # downloading (unlike _map_file_to_part which is for user prompts).
 # =============================================================================
 
@@ -4793,7 +4813,7 @@ async def test_file_url_in_tool_return_on_vertex(
 ):
     """Test file URLs use file_data (not download) in tool returns on Vertex."""
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
 
     result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
 
@@ -4803,7 +4823,7 @@ async def test_file_url_in_tool_return_on_vertex(
 async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
     """Test that _map_user_prompt correctly handles a mix of text content and str."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-gla')
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google')
 
     user_prompt_part = UserPromptPart(
         content=['Hi', TextContent(content='This is some context', metadata={'source': 'user'})]
@@ -6265,7 +6285,7 @@ async def test_google_cloud_service_tier_auto_maps_to_default(allow_model_reques
 )
 async def test_google_service_tier_vertex_headers(
     allow_model_requests: None,
-    service_tier: GoogleVertexServiceTier,
+    service_tier: GoogleCloudServiceTier,
     expected_headers: dict[str, str],
 ):
     """Test that Google Cloud `google_cloud_service_tier` values set the expected HTTP headers."""
@@ -6306,22 +6326,6 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
     assert 'service_tier' not in config_dict
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
-
-
-async def test_google_service_tier_deprecation_warning(allow_model_requests: None):
-    """Reading the deprecated `google_service_tier` field emits a `DeprecationWarning`."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(project='test-project'))
-    model_settings = GoogleModelSettings(google_service_tier='pt_then_flex')
-
-    with pytest.warns(DeprecationWarning, match=r'`google_service_tier` is deprecated'):
-        _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
-            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
-            model_settings=model_settings,
-            model_request_parameters=ModelRequestParameters(),
-        )
-
-    headers = cast(dict[str, Any], config)['http_options']['headers']
-    assert headers.get('X-Vertex-AI-LLM-Shared-Request-Type') == 'flex'
 
 
 @pytest.mark.vcr()

@@ -52,7 +52,6 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -308,14 +307,9 @@ class Response:
     answers: list[Answer]
 
 
-# The legacy `event_stream_handler=` kwarg path is still how `TemporalAgent` discovers the
-# handler in 1.x (it reads `agent.event_stream_handler`, which is only populated by the kwarg).
-# A capability-based wiring is a v2 follow-up; for now we suppress the deprecation locally.
 with warnings.catch_warnings():
-    warnings.filterwarnings(
-        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
-    )
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportDeprecated]
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    complex_agent = Agent(
         model,
         deps_type=Deps,
         output_type=Response,
@@ -325,13 +319,13 @@ with warnings.catch_warnings():
             ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
         ],
         tools=[get_weather],
-        event_stream_handler=event_stream_handler,
         name='complex_agent',
     )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(
     complex_agent,
+    event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={

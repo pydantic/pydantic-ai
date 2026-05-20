@@ -104,7 +104,7 @@ See [#2441](https://github.com/pydantic/pydantic-ai/pull/2441) - The `result_ret
 See [#2443](https://github.com/pydantic/pydantic-ai/pull/2443) - The `data` property was removed from the `FinalResult` class. Use `output` instead.
 
 See [#2445](https://github.com/pydantic/pydantic-ai/pull/2445) - The `get_data` and `validate_structured_result` methods were removed from the
-`StreamedRunResult` class. Use `get_output` and `validate_structured_output` instead.
+`StreamedRunResult` class. Use `get_output` and `validate_response_output` instead.
 
 See [#2446](https://github.com/pydantic/pydantic-ai/pull/2446) - The `format_as_xml` function was moved to the `pydantic_ai.format_as_xml` module.
 Import it via `from pydantic_ai import format_as_xml` instead.

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
 from ._deprecated_callable import deprecated_callable_property
@@ -23,7 +23,6 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
 from .messages import ModelResponseStreamEvent
 from .output import (
     OutputDataT,
@@ -120,17 +119,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield self.response  # state='incomplete' during streaming
 
         yield self.response  # final state='complete' (or 'interrupted')
-
-    @deprecated(
-        '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `async for r in stream.stream_responses(...)` with '
-        '`async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots: '
-        "`state='incomplete'` while streaming and a final `state='complete'` (or `'interrupted'`) snapshot.",
-        category=PydanticAIDeprecationWarning,
-    )
-    async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
-        async for response in self.stream_response(debounce_by=debounce_by):
-            yield response
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -527,11 +515,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    @deprecated('`StreamedRunResult.stream` is deprecated, use `stream_output` instead.')
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
-        async for output in self.stream_output(debounce_by=debounce_by):
-            yield output
-
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Stream the output as an async iterable.
 
@@ -585,13 +568,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_response` instead.')
-    async def stream_structured(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
-
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Stream the response as an async iterable of `ModelResponse` snapshots.
 
@@ -622,19 +598,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(last_msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated(
-        '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `async for msg, is_last in result.stream_responses(...)` with '
-        "`async for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
-        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
-        category=PydanticAIDeprecationWarning,
-    )
-    async def stream_responses(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -716,12 +679,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.conversation_id
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
-    async def validate_structured_output(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> OutputDataT:
-        return await self.validate_response_output(message, allow_partial=allow_partial)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -887,17 +844,6 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             An iterable of `ModelResponse` snapshots.
         """
         return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
-
-    @deprecated(
-        '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `for msg, is_last in result.stream_responses(...)` with '
-        "`for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
-        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
-        for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""

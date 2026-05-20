@@ -313,11 +313,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # equivalent capabilities (see `_utils.consume_deprecated_*`) before the impl runs.
         # Typed as loose `Callable[..., Any]` since the consumer helpers handle the actual
         # signature variations.
-        event_stream_handler: Callable[..., Any] | None = None,
         history_processors: Sequence[Any] = (),
-        prepare_tools: Callable[..., Any] | None = None,
         prepare_output_tools: Callable[..., Any] | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
     ) -> None: ...
 
     def __init__(
@@ -431,14 +428,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
         capabilities.extend(legacy_history_processor_capabilities)
 
-        capabilities.extend(_utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
         capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-        # `event_stream_handler` is NOT auto-remapped to a `ProcessEventStream` capability: the
-        # legacy `_event_stream_handler` path in `abstract.py` invokes the handler directly after
-        # the capability chain runs, so remapping would call it twice. Forwarded into the instance
-        # attribute below so the legacy path keeps working in 1.x; warning steers users to
-        # `capabilities=[ProcessEventStream(...)]`, the only path in v2.
-        event_stream_handler = _utils.consume_deprecated_event_stream_handler(_deprecated_kwargs, 'Agent')
 
         _inject_auto_capabilities(capabilities)
 
@@ -499,7 +489,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_toolset = self._root_capability.get_toolset()
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
-        self._event_stream_handler = event_stream_handler
+        # Populated by durable-execution subclasses; base agents use the run-level kwarg.
+        self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
@@ -650,19 +641,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        extra_capabilities = _utils.consume_deprecated_prepare_tools_as_capabilities(
+        extra_capabilities = _utils.consume_deprecated_prepare_output_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
         )
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
-        )
-        # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
-        # already fired in the consume helper.
-        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
-            _deprecated_kwargs, 'Agent.from_spec'
         )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -717,8 +700,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
-        if legacy_event_stream_handler is not None:
-            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @overload
@@ -813,17 +794,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
-        extra_capabilities = _utils.consume_deprecated_prepare_tools_as_capabilities(
+        extra_capabilities = _utils.consume_deprecated_prepare_output_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
         )
         extra_capabilities.extend(
             _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
-        )
-        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
-            _deprecated_kwargs, 'Agent.from_file'
         )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
@@ -853,8 +828,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
-        if legacy_event_stream_handler is not None:
-            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @staticmethod

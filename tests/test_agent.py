@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -18,7 +18,6 @@ from typing_extensions import Self
 from pydantic_ai import (
     AbstractToolset,
     Agent,
-    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -89,8 +88,6 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -145,16 +142,6 @@ else:
         GoogleProvider = None
 
     try:
-        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleGLAProvider = None
-
-    try:
-        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleVertexProvider = None
-
-    try:
         from pydantic_ai.providers.groq import GroqProvider
     except ImportError:  # pragma: lax no cover
         GroqProvider = None
@@ -178,8 +165,6 @@ requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not 
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-genai not installed')  # pyright: ignore[reportUnnecessaryComparison]
-requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
-requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -7773,50 +7758,6 @@ async def test_provider_reentry_after_close():
     assert second_client.is_closed
 
 
-@requires_google_gla
-@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
-async def test_google_gla_provider_reentry_after_close():
-    """GoogleGLAProvider restores base_url and API key header on re-entry."""
-    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert second_client.is_closed
-
-
-@requires_google_vertex
-@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
-async def test_google_vertex_provider_reentry_after_close():
-    """GoogleVertexProvider restores auth and base_url on re-entry."""
-    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert first_client.auth is not None
-        assert 'us-central1' in str(first_client.base_url)
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert second_client.auth is not None
-        assert 'us-central1' in str(second_client.base_url)
-    assert second_client.is_closed
-
-
 @requires_openai
 async def test_gateway_provider_reentry_after_close():
     """Gateway provider restores event_hooks on re-entry."""
@@ -8988,13 +8929,7 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
-@pytest.mark.filterwarnings(
-    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
 async def test_wrapper_agent():
-    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
-        pass  # pragma: no cover
-
     foo_toolset = FunctionToolset()
 
     @foo_toolset.tool_plain
@@ -9002,12 +8937,11 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(  # pyright: ignore[reportDeprecated]
+    agent = Agent(
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
-        event_stream_handler=event_stream_handler,
     )
     wrapper_agent = WrapperAgent(agent)
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
