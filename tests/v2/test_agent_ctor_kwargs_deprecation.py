@@ -76,6 +76,16 @@ def test_from_file_event_stream_handler_kwarg_raises_in_v2(tmp_path: Any):
         Agent.from_file(spec_file, event_stream_handler=_noop)  # pyright: ignore[reportCallIssue]
 
 
+def test_from_file_prepare_tools_kwarg_raises_in_v2(tmp_path: Any):
+    """`Agent.from_file` has its own `**_deprecated_kwargs` + `validate_empty_kwargs` path
+    (it runs validation before forwarding to `from_spec`), so the regression guard must cover
+    it independently."""
+    spec_file = tmp_path / 'agent.json'
+    spec_file.write_text('{"model": "test"}')
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`prepare_tools`'):
+        Agent.from_file(spec_file, prepare_tools=_noop)  # pyright: ignore[reportCallIssue]
+
+
 # --- prepare_output_tools= ---------------------------------------------------------------
 
 
