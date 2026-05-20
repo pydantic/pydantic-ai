@@ -2877,6 +2877,177 @@ class TestMultipleToolCalls:
 
         assert pending_cancelled.is_set()
 
+    async def test_graceful_runs_function_tools_before_output(self):
+        """Streaming commits the output as it streams, but `graceful` still runs the function tools
+        the model emitted alongside it (their side effects happen)."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall(name='tool_b')}
+            yield {2: DeltaToolCall('final_result', '{"value": "done"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_graceful_interleaved_outputs_and_function_tools(self):
+        """Graceful streaming with outputs and function tools interleaved: the first streamed output
+        wins, later outputs are skipped, and the function tools still run."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {2: DeltaToolCall(name='tool_b')}
+            yield {3: DeltaToolCall('second_output', '{"value": "b"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_exhaustive_tool_output_sequential_barrier(self):
+        """`ToolOutput(sequential=True)` under streaming: the output is committed as it streams, so
+        (unlike the non-streaming path) it isn't held behind the function tool; the function tool
+        still runs."""
+        events: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('do_output', '{"value": "done"}')}
+
+        def do_output(output: OutputType) -> OutputType:
+            events.append('output')
+            return output
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(do_output, name='do_output', sequential=True),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            await asyncio.sleep(0.02)
+            events.append('tool_a')
+            return 'a'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert 'tool_a' in events
+
+    async def test_early_output_failure_raises_when_streaming(self):
+        """The non-streaming `early` fallback (run function tools when every output fails) has no
+        streaming equivalent: a streamed output that fails validation raises, since `run_stream()`
+        can't retry outputs."""
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('bad_output', '{"value": "x"}')}
+
+        def bad_output(output: OutputType) -> OutputType:
+            if output.value == 'x':
+                raise ModelRetry('bad')
+            return output  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(bad_output, name='bad_output'),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream\\(\\)`'):
+            async with agent.run_stream('test') as result:
+                await result.get_output()
+
+    async def test_graceful_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins doesn't apply when streaming: the output is committed as it streams, so a
+        function tool's `ModelRetry` in the same response can't revoke it (`graceful`)."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        # The streamed output is committed and not suppressed, so the run ends in a single round.
+        assert output.value == 'committed'
+        assert rounds == 1
+
+    async def test_exhaustive_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins is also exempt under `exhaustive` streaming: the committed output stands."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'committed'
+        assert rounds == 1
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
