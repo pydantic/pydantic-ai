@@ -159,7 +159,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -371,7 +371,7 @@ async def test_stub_provider_properties():
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -393,7 +393,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -560,7 +560,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -603,8 +603,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         model=model,
         instructions='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -2328,7 +2327,7 @@ async def test_bedrock_cache_point_adds_cache_control(
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
-    usage = result.usage()
+    usage = result.usage
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
     assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
 
@@ -2344,7 +2343,7 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()
@@ -2380,12 +2379,12 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
 
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
-    first_usage = first.usage()
+    first_usage = first.usage
     assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
-    second_usage = second.usage()
+    second_usage = second.usage
     assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
@@ -2434,7 +2433,7 @@ Both documents appear to be test files with minimal content. The main distinctio
 Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2458,7 +2457,7 @@ Both documents are very short - just single sentences. If you're asking about ch
 - Document 2: 49 characters (including spaces)\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2512,7 +2511,7 @@ This is a close-up photograph of a **kiwi fruit cross-section**. Here are the ke
 This type of image is commonly used in food photography, nutritional content, or botanical documentation.\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2527,7 +2526,7 @@ The image dimensions are **597 × 597 pixels** (a perfect square).
 This is a relatively small to medium-sized image by modern standards, suitable for web use, thumbnails, or social media posts, but not high-resolution enough for large-format printing.\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2560,7 +2559,7 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
         'The video depicts a camera mounted on a tripod, capturing a scenic view of a landscape featuring mountains and a road. The camera remains stationary throughout the video, focusing on the picturesque scenery.'
     )
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0

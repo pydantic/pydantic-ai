@@ -4,11 +4,11 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.mcp import MCPServer
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from ._mcp import DBOSMCPToolset
+from ._mcp import DBOSMCPToolsetBase
 from ._utils import StepConfig
 
 
-class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
+class DBOSMCPServer(DBOSMCPToolsetBase[AgentDepsT]):
     """A wrapper for MCPServer that integrates with DBOS, turning call_tool and get_tools into DBOS steps.
 
     Tool definitions are cached across steps to avoid redundant MCP server round-trips,

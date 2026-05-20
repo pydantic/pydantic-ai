@@ -1,7 +1,16 @@
+# pyright: reportDeprecated = false
+
 import pytest
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.outlines import OutlinesProvider
+
+pytestmark = [
+    pytest.mark.filterwarnings(
+        'ignore:`OutlinesProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
+]
 
 
 def test_outlines_provider() -> None:
@@ -35,3 +44,8 @@ def test_outlines_provider() -> None:
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
     )
+
+
+def test_outlines_provider_deprecation_warning() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`OutlinesProvider` is deprecated'):
+        OutlinesProvider()

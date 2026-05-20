@@ -147,6 +147,44 @@ def test_dataset_name_deprecation_warning(
         Dataset(cases=example_cases)
 
 
+async def test_evaluate_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Passing positional args to `Dataset.evaluate` warns and still binds correctly ahead of v2 kw-only."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = await example_dataset.evaluate(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+def test_evaluate_sync_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """`Dataset.evaluate_sync` mirrors the same positional deprecation."""
+
+    def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = example_dataset.evaluate_sync(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+async def test_evaluate_too_many_positional_args_raises(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """More positionals than legacy slots should still be a TypeError."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        raise AssertionError('task should not be called when evaluate() rejects bad positional args')
+
+    with pytest.raises(TypeError, match='takes at most'):
+        await example_dataset.evaluate(task, 'n', None, True, None, None, 'extra')
+
+
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
     """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'

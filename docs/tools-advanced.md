@@ -265,6 +265,7 @@ Here's an example that makes all tools strict if the model is an OpenAI model:
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.models.test import TestModel
 
 
@@ -277,7 +278,7 @@ async def turn_on_strict_if_openai(
 
 
 test_model = TestModel()
-agent = Agent(test_model, prepare_tools=turn_on_strict_if_openai)
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
 
 
 @agent.tool_plain
@@ -302,6 +303,7 @@ Here's another example that conditionally filters out the tools by name if the d
 ```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai.capabilities import PrepareTools
 
 
 def launch_potato(target: str) -> str:
@@ -319,7 +321,7 @@ async def filter_out_tools_by_name(
 agent = Agent(
     'test',
     tools=[Tool(launch_potato)],
-    prepare_tools=filter_out_tools_by_name,
+    capabilities=[PrepareTools(filter_out_tools_by_name)],
     deps_type=bool,
 )
 
@@ -482,9 +484,9 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 
-Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(tool_retries=N)`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
+Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
 
-Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(tool_retries=...)` as their default when no per-toolset value is set.
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(retries={'tools': ...})` as their default when no per-toolset value is set.
 
 ### Tool Timeout
 

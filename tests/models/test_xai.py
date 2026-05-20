@@ -156,11 +156,11 @@ async def test_xai_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -212,7 +212,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 async def test_xai_cost_calculation(allow_model_requests: None):
@@ -702,7 +702,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             cache_read_tokens=749,
@@ -748,7 +748,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
 
     result = await agent.run('Get data for KEY_1 and process data returning the output')
     assert result.output == 'the result is: 5'
-    assert result.usage() == snapshot(RunUsage(requests=3, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=3, tool_calls=2))
     assert tool_was_called_get
     assert tool_was_called_process
 
@@ -944,7 +944,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -964,20 +964,19 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name=XAI_NON_REASONING_MODEL,
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                        provider_url='https://api.x.ai/v1',
-                        provider_response_id='grok-123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=2, output_tokens=1),
+                    model_name=XAI_NON_REASONING_MODEL,
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id='grok-123',
+                    finish_reason='stop',
                 )
+            )
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -1017,7 +1016,7 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1125,7 +1124,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1142,7 +1141,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -3294,9 +3293,8 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         assert result.is_complete
         # Ensure the final accumulated response contains the expected ThinkingPart (reasoning + signature).
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                final_response = response
+        async for response in result.stream_response(debounce_by=None):
+            final_response = response
         assert final_response is not None
         assert any(
             isinstance(p, ThinkingPart) and p.content == '...' and p.signature == 'sig' and p.provider_name == 'xai'
@@ -3447,7 +3445,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
 
     result = await agent.run('What is the meaning of life? Keep it very short.')
     assert result.output == '42'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=10,
             output_tokens=2,
@@ -3472,7 +3470,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.output == 'Simple answer'
 
     # Verify usage without details (empty dict when no additional usage info)
-    assert result.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
 
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
@@ -3516,7 +3514,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     assert result.output == 'The answer based on web search'
 
     # Verify usage includes server_side_tools_used in details
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
     )
 
@@ -4517,8 +4515,8 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4562,8 +4560,8 @@ async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4594,8 +4592,8 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4646,8 +4644,8 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4682,8 +4680,8 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4946,7 +4944,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
 
 async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):

@@ -21,7 +21,6 @@ from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
 from .. import (
     _agent_graph,
@@ -47,13 +46,12 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
-from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
-from ..capabilities.process_history import ProcessHistory
-from ..models.instrumented import InstrumentationSettings, InstrumentedModel  # pyright: ignore[reportDeprecated]
+from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -88,6 +86,7 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRetries,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -107,6 +106,7 @@ __all__ = (
     'AbstractAgent',
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentRun',
     'AgentRunResult',
     'NativeToolFunc',
@@ -120,7 +120,45 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'PydanticAIDeprecationWarning',
+    'ToolsPrepareFunc',
 )
+
+
+@dataclasses.dataclass(frozen=True)
+class _ResolvedAgentRetries:
+    """Fully resolved retry budgets used internally."""
+
+    tools: int
+    output: int
+
+
+def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
+    """Resolve normalized retry overrides into concrete retry budgets.
+
+    Missing keys in an `AgentRetries` dict fall back to `default`, so internal code can work with a
+    single concrete shape.
+    """
+    return _ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
+
+
+def _normalize_agent_retry_overrides(
+    retries: int | AgentRetries | None,
+    *,
+    int_means: Literal['both', 'output'] = 'both',
+) -> AgentRetries:
+    """Normalize retry input without filling missing keys.
+
+    This is used while merging layered configuration. At run/override time, `int_means='output'`
+    treats `retries=N` as an output-budget override only.
+    """
+    if retries is None:
+        return {}
+    if isinstance(retries, int):
+        if int_means == 'output':
+            return {'output': retries}
+        return {'tools': retries, 'output': retries}
+    return retries.copy()
 
 
 T = TypeVar('T')
@@ -188,9 +226,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _output_type: OutputSpec[OutputDataT]
 
     _instrument: InstrumentationSettings | bool | None
-    """Backing store for the deprecated `instrument` attribute. Read internally by
-    `_resolve_instrumentation_settings()`; reads/writes through `agent.instrument` go through
-    the deprecated property below."""
+    """Backing store for the `instrument` attribute. Read internally by
+    `_resolve_instrumentation_settings()`; the public `agent.instrument` property reads/writes
+    this field directly."""
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
     _metadata: AgentMetadata[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -238,19 +276,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -269,19 +301,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -298,19 +324,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | None = None,
-        tool_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -339,26 +359,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can be a static `ModelSettings` dict or a callable that takes a
                 [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
                 Callables are called before each model request, allowing dynamic per-step settings.
-            retries: Deprecated alias for `tool_retries`. In 1.x this also still cascades to `output_retries`
-                (when `output_retries` is unset) for backward compatibility, with a `DeprecationWarning`.
-                In v2 it will be removed and the cascade will go away — pass `output_retries` explicitly
-                if you depend on the cascade. For model request retries, see the
-                [HTTP Request Retries](../retries.md) documentation.
-            tool_retries: The default number of retries to allow for tool calls before raising an error. Defaults to 1.
+            retries: Per-category retry budgets for tools and output validation. Pass an `int` to set the same
+                budget for both, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to set them
+                individually (e.g. `retries={'tools': 3, 'output': 1}`). Defaults to 1 for both.
+                On the text path, `output` is a global budget shared across all output-validation retries
+                in a run; on the tool path it is the default per-tool `max_retries` for each output tool,
+                overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
+                The `output` budget can be overridden per run via `agent.run(retries=...)` (and friends).
+                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
-            output_retries: Maximum number of retries for output validation. Defaults to 1.
-                On the text path this is a global budget shared across all output-validation retries
-                in a run; on the tool path this is the default per-tool `max_retries` for each output
-                tool, overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
-                Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
-            prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
-                This is useful if you want to customize the definition of multiple tools or you want to register
-                a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
-                This is useful if you want to customize the definition of multiple output tools or you want to register
-                a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
                 and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -378,10 +389,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
                 [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
                 and is attached to the agent run span when instrumentation is enabled.
-            history_processors: Optional list of callables to process the message history before sending it to the model.
-                Each processor takes a list of messages and returns a modified list of messages.
-                Processors can be sync or async and are applied in sequence.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
@@ -405,29 +412,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
-        self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
+        legacy_history_processor_capabilities = _utils.consume_deprecated_history_processors_as_capabilities(
+            _deprecated_kwargs, 'Agent'
+        )
+        # `self.history_processors` stays for 1.x users who read it back off the agent (still
+        # part of the public surface even though the kwarg is gone from `__init__`); v2 drops it.
+        self.history_processors: list[HistoryProcessor[AgentDepsT]] = [
+            cap.processor for cap in legacy_history_processor_capabilities
+        ]
 
         capabilities = wrap_capability_funcs(capabilities)
-        for history_processor in self.history_processors:
-            capabilities.append(ProcessHistory(history_processor))
+        capabilities.extend(legacy_history_processor_capabilities)
 
         capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-
-        # Bridge the deprecated `instrument=` kwarg into an `Instrumentation` capability so the
-        # rest of the flow goes through the same capability path.
-        legacy_instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
-        if legacy_instrument:
-            legacy_settings = (
-                legacy_instrument
-                if isinstance(legacy_instrument, InstrumentationSettings)
-                else InstrumentationSettings()
-            )
-            capabilities.append(InstrumentationCap(settings=legacy_settings))
-
-        if prepare_tools is not None:
-            capabilities.append(PrepareTools(prepare_tools))
-        if prepare_output_tools is not None:
-            capabilities.append(PrepareOutputTools(prepare_output_tools))
+        capabilities.extend(_utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
+        capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
+        # `event_stream_handler` is NOT auto-remapped to a `ProcessEventStream` capability: the
+        # legacy `_event_stream_handler` path in `abstract.py` invokes the handler directly after
+        # the capability chain runs, so remapping would call it twice. Forwarded into the instance
+        # attribute below so the legacy path keeps working in 1.x; warning steers users to
+        # `capabilities=[ProcessEventStream(...)]`, the only path in v2.
+        event_stream_handler = _utils.consume_deprecated_event_stream_handler(_deprecated_kwargs, 'Agent')
 
         _inject_auto_capabilities(capabilities)
 
@@ -436,7 +441,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = None
+        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
         self._metadata = metadata
         self._deps_type = deps_type
 
@@ -445,6 +450,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
             warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
             toolsets = mcp_servers
+
+        # Deprecated split retry kwargs are still accepted in 1.x and folded into `retries`.
+        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', _utils.UNSET)
+        legacy_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
+        if _utils.is_set(legacy_tool_retries):
+            warnings.warn(
+                '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+        if _utils.is_set(legacy_output_retries):
+            warnings.warn(
+                '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
@@ -458,34 +481,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        # `retries` is deprecated in 1.x and removed in v2. Until then it still cascades to
-        # `_max_output_retries` as a fallback (when `output_retries` isn't explicitly set) so
-        # existing callers keep their original behavior; we only warn so users can migrate.
-        # TODO(v2): drop `retries` entirely; default both `_max_tool_retries` and
-        # `_max_output_retries` to a constant 1 — no cascade.
-        if retries is not None:
-            if tool_retries is not None and output_retries is None:
-                # Combination case: `tool_retries=` already sets the tool budget, so `retries=`
-                # only ends up controlling the output budget via the legacy cascade. Call that out
-                # explicitly — passing `output_retries=` directly is the migration path.
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. You also passed `tool_retries=`, '
-                    'so `retries=` is now only setting `output_retries` via the legacy 1.x cascade — '
-                    'pass `output_retries=` explicitly instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    '`retries` is deprecated and will be removed in v2. Use `tool_retries` instead. '
-                    'Note: in v2, `retries` will no longer also set `output_retries` as a fallback — '
-                    'pass `output_retries` explicitly if you rely on the cascade.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-        effective_retries = retries if retries is not None else 1
-        self._max_tool_retries = tool_retries if tool_retries is not None else effective_retries
-        self._max_output_retries = output_retries if output_retries is not None else effective_retries
+        retry_overrides = _normalize_agent_retry_overrides(retries)
+        # Explicit kwargs win over `retries` (matches the legacy precedence where
+        # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
+        if _utils.is_set(legacy_tool_retries) and legacy_tool_retries is not None:
+            retry_overrides['tools'] = legacy_tool_retries
+        if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
+            retry_overrides['output'] = legacy_output_retries
+        resolved_retries = _normalize_agent_retries(retry_overrides)
+        self._max_tool_retries = resolved_retries.tools
+        self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
@@ -566,18 +571,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -598,18 +598,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -629,18 +624,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -667,18 +657,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The agent name, overrides spec `name` if provided.
             description: The agent description, overrides spec `description` if provided.
             model_settings: Model request settings.
-            retries: Default retries for tool calls and output validation, overrides spec `retries` if provided.
+            retries: Retry budgets for tools and output validation. Pass an `int` to set the same budget
+                for both, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to set them individually.
+                Overrides spec `retries` if provided.
             validation_context: Pydantic validation context for tool arguments and outputs.
-            output_retries: Max retries for output validation, overrides spec `output_retries` if provided.
             tools: Tools to register with the agent.
-            prepare_tools: Custom function to prepare tool definitions.
-            prepare_output_tools: Custom function to prepare output tool definitions.
             toolsets: Toolsets to register with the agent.
             defer_model_check: Defer model evaluation until first run.
             end_strategy: Strategy for tool calls alongside a final result, overrides spec `end_strategy` if provided.
             metadata: Metadata to store with each run, overrides spec `metadata` if provided.
-            history_processors: Processors for message history.
-            event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
 
             max_concurrency: Limit on concurrent agent runs.
@@ -690,7 +677,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_spec'
         )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
+        )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
+        # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
+        # already fired in the consume helper.
+        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
+            _deprecated_kwargs, 'Agent.from_spec'
+        )
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'Agent.from_spec', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         validated_spec, template_context = _validate_spec(spec, deps_type)
@@ -715,22 +719,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if extra_capabilities:
             all_capabilities.extend(extra_capabilities)
 
-        # Bridge the deprecated `instrument=` kwarg and the deprecated `spec.instrument` field
-        # into an `Instrumentation` capability so the rest of the flow goes through the same
-        # capability path. Read the spec field only when set so we don't trigger its
-        # deprecation warning for users who didn't opt in.
+        # Read the deprecated spec field only when set so we don't trigger its warning
+        # for users who didn't opt in. The kwarg takes precedence over the spec field.
         legacy_instrument = (
             instrument
             if instrument is not None
             else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
         )
-        if legacy_instrument:
-            legacy_settings = (
-                legacy_instrument
-                if isinstance(legacy_instrument, InstrumentationSettings)
-                else InstrumentationSettings()
-            )
-            all_capabilities.append(InstrumentationCap(settings=legacy_settings))
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -750,25 +745,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 cast(ModelSettings, validated_spec.model_settings) if validated_spec.model_settings else None,
                 model_settings,
             ),
-            retries=retries
-            if retries is not None
-            else (validated_spec.retries if 'retries' in validated_spec.model_fields_set else None),
-            tool_retries=validated_spec.tool_retries,
+            retries=_merge_retries_with_spec(retries, validated_spec),
             validation_context=validation_context,
-            output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
             tools=tools,
-            prepare_tools=prepare_tools,
-            prepare_output_tools=prepare_output_tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy if end_strategy is not None else validated_spec.end_strategy,
             metadata=metadata if metadata is not None else validated_spec.metadata,
-            history_processors=history_processors,
-            event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
+        agent._instrument = legacy_instrument
+        if legacy_event_stream_handler is not None:
+            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @overload
@@ -786,18 +776,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -819,18 +804,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -851,18 +831,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
-        retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         validation_context: Any = None,
-        output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        prepare_tools: ToolsPrepareFunc[Any] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         metadata: AgentMetadata[Any] | None = None,
-        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
@@ -881,19 +856,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'
         )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
+        )
+        extra_capabilities.extend(
+            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
+        )
         instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
+        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
+            _deprecated_kwargs, 'Agent.from_file'
+        )
+        retries = _utils.consume_deprecated_output_retries(
+            _deprecated_kwargs, 'Agent.from_file', current_retries=retries
+        )
         _utils.validate_empty_kwargs(_deprecated_kwargs)
         merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
         if extra_capabilities:
             merged_capabilities.extend(extra_capabilities)
-        if instrument:
-            legacy_settings = (
-                instrument if isinstance(instrument, InstrumentationSettings) else InstrumentationSettings()
-            )
-            merged_capabilities.append(InstrumentationCap(settings=legacy_settings))
 
         spec = AgentSpec.from_file(path, fmt=fmt)
-        return cls.from_spec(
+        agent = cls.from_spec(
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
@@ -906,20 +891,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             retries=retries,
             validation_context=validation_context,
-            output_retries=output_retries,
             tools=tools,
-            prepare_tools=prepare_tools,
-            prepare_output_tools=prepare_output_tools,
             toolsets=toolsets,
             defer_model_check=defer_model_check,
             end_strategy=end_strategy,
             metadata=metadata,
-            history_processors=history_processors,
-            event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
             capabilities=merged_capabilities or None,
         )
+        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
+        if instrument is not None:
+            agent._instrument = instrument
+        if legacy_event_stream_handler is not None:
+            agent._event_stream_handler = legacy_event_stream_handler
+        return agent
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -928,21 +914,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def instrument(self) -> InstrumentationSettings | bool | None:
-        """Deprecated: use `capabilities=[Instrumentation(...)]` instead."""
-        warnings.warn(
-            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
+        """Instrumentation settings applied to this agent."""
         return self._instrument
 
     @instrument.setter
     def instrument(self, value: InstrumentationSettings | bool | None) -> None:
-        warnings.warn(
-            '`Agent.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
         self._instrument = value
 
     @property
@@ -1030,7 +1006,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1053,7 +1029,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1076,7 +1052,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
-        output_retries: int | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -1163,7 +1139,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            output_retries: Override the agent-level `output_retries` for this run. See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget (`AgentRetries(output=...)` equivalent), or an
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
+                be overridden per run. See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1176,14 +1155,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
         if extra_capabilities:
             capabilities = [*(capabilities or ()), *extra_capabilities]
+        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.iter', current_retries=retries)
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
+        # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
+        retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
+        if 'tools' in retry_overrides:
+            raise exceptions.UserError(
+                'Per-run `retries` cannot set tool retries: tool retries can only be configured at agent '
+                "construction time. Use `retries={'output': ...}` (or `retries=<int>` to override the output "
+                'budget) here, and `Agent(retries=...)` for tool retries.'
+            )
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
-        effective_output_retries = output_retries
+        effective_output_retries = retry_overrides.get('output')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
@@ -1221,10 +1211,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else:
                     metadata = resolved.metadata
 
-        # `override(output_retries=...)` wins over the run kwarg + spec, matching the precedence
+        # `override(retries=...)` wins over the run kwarg + spec, matching the precedence
         # of `model`/`deps`/`instructions`/etc. (see `Agent._get_model`). This keeps testing
-        # fixtures that wrap call sites in `agent.override(output_retries=N)` effective even when
-        # production code passes its own `run(output_retries=...)`.
+        # fixtures that wrap call sites in `agent.override(retries=N)` effective even when
+        # production code passes its own `run(retries=...)`.
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
@@ -1307,16 +1297,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        # TODO(v2): drop this whole detect-and-unwrap-and-reinject block. In v2 we'll only
-        # support `capabilities=[Instrumentation(...)]` as the way to enable instrumentation,
-        # so all the legacy bridges below — `model=InstrumentedModel(...)`,
-        # `Agent.instrument_all(...)` (via `_resolve_instrumentation_settings`) — go away.
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
-        # to `Agent(model=...)`) wins, then `Agent.instrument_all()` / the legacy
-        # `agent.instrument = ...` setter (read via `_resolve_instrumentation_settings`).
-        # When detected, unwrap so the rest of the run uses the plain model — the
-        # `Instrumentation` capability injected below provides the spans.
-        if isinstance(model_used, InstrumentedModel):  # pyright: ignore[reportDeprecated]
+        # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
+        # then `Agent.instrument_all()` / `agent.instrument = ...` (read via
+        # `_resolve_instrumentation_settings`). When detected, unwrap so the rest of the
+        # run uses the plain model — the `Instrumentation` capability injected below
+        # provides the spans.
+        if isinstance(model_used, InstrumentedModel):
             instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
             model_used = model_used.wrapped
         else:
@@ -1721,8 +1708,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
+        retry_overrides = _retry_overrides_from_spec(validated_spec)
+        if 'tools' in retry_overrides:
+            warnings.warn(
+                "AgentSpec retry field 'tools' is not supported at run/override time and will be ignored",
+                UserWarning,
+                stacklevel=3,
+            )
+
         # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
-        # triggering the pydantic deprecation warning on the deprecated `retries` field.
+        # triggering pydantic deprecation warnings on deprecated spec fields.
         for field_name in _UNSUPPORTED_SPEC_FIELDS:
             field_info = type(validated_spec).model_fields[field_name]
             if validated_spec.__dict__[field_name] != field_info.default:
@@ -1743,7 +1738,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             else None,
             metadata=validated_spec.metadata,
             name=validated_spec.name,
-            output_retries=validated_spec.output_retries,
+            output_retries=retry_overrides.get('output'),
         )
 
     @contextmanager
@@ -1759,7 +1754,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        output_retries: int | _utils.Unset = _utils.UNSET,
+        retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
@@ -1782,15 +1777,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
-            output_retries: The output-retry budget to use instead of the agent-level `output_retries`. When set,
-                any per-run `output_retries` argument is ignored.
+            retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
+                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
+                cannot be overridden via `override()`.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
         native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        # Deprecated `output_retries=` is still accepted on `override()`. Translate it into the new
+        # `retries` value, with the explicit `retries=` kwarg winning if both are passed.
+        legacy_override_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
+        if _utils.is_set(legacy_override_output_retries):
+            warnings.warn(
+                '`agent.override(output_retries=...)` is deprecated and will be removed in v2.0. '
+                "Use `agent.override(retries={'output': ...})` (or `retries=<int>` to override the output "
+                'budget) instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=3,
+            )
+            if not _utils.is_set(retries):
+                retries = {'output': legacy_override_output_retries}
         _utils.validate_empty_kwargs(_deprecated_kwargs)
+
+        # Tool retries cannot be overridden via `override()`. An int means "override output only".
+        override_output_retries: int | _utils.Unset
+        if _utils.is_set(retries):
+            retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
+            if 'tools' in retry_overrides:
+                raise exceptions.UserError(
+                    '`agent.override(retries=...)` cannot set tool retries: tool retries can only be '
+                    "configured at agent construction time. Use `retries={'output': ...}` (or "
+                    '`retries=<int>` to override the output budget) here.'
+                )
+            override_output_retries = retry_overrides.get('output', _utils.UNSET)
+        else:
+            override_output_retries = _utils.UNSET
 
         resolved = self._resolve_spec(spec)
 
@@ -1806,8 +1830,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_settings = resolved.model_settings
             if not _utils.is_set(metadata) and resolved.metadata is not None:
                 metadata = resolved.metadata
-            if not _utils.is_set(output_retries) and resolved.output_retries is not None:
-                output_retries = resolved.output_retries
+            if not _utils.is_set(override_output_retries) and resolved.output_retries is not None:
+                override_output_retries = resolved.output_retries
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -1855,8 +1879,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        if _utils.is_set(output_retries):
-            output_retries_token = self._override_output_retries.set(_utils.Some(output_retries))
+        if _utils.is_set(override_output_retries):
+            output_retries_token = self._override_output_retries.set(_utils.Some(override_output_retries))
         else:
             output_retries_token = None
 
@@ -2476,9 +2500,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return model_
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
-        """Resolve effective `InstrumentationSettings` for the legacy `Agent.instrument_all` path."""
-        # Reads the private `_instrument` backing field directly so this internal access
-        # doesn't trigger the deprecated property's warning.
+        """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
         instrument = self._instrument if self._instrument is not None else self._instrument_default
         if not instrument:
             return None
@@ -2824,17 +2846,53 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             yield
 
 
+def _merge_retries_with_spec(
+    explicit: int | AgentRetries | None,
+    spec: AgentSpec,
+) -> AgentRetries | None:
+    """Merge an explicit `retries=` value with the retry fields on an `AgentSpec`.
+
+    Explicit kwarg keys win over spec keys. The spec's canonical `retries` field contributes
+    both budgets, while deprecated `tool_retries` / `output_retries` fields remain as
+    compatibility shims for any category not already set via canonical `retries`.
+    """
+    merged = _retry_overrides_from_spec(spec)
+    merged.update(_normalize_agent_retry_overrides(explicit))
+    if not merged:
+        return None
+    return merged
+
+
+def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
+    """Return retry fields explicitly configured on an `AgentSpec`.
+
+    Canonical `retries` takes precedence over deprecated `tool_retries` / `output_retries`
+    when both are set on the same spec — the deprecated fields only fill in categories
+    not provided by `retries`.
+    """
+    retries: AgentRetries = _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
+    if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None and 'tools' not in retries:
+        retries['tools'] = spec.tool_retries
+    if 'output_retries' in spec.model_fields_set and spec.output_retries is not None and 'output' not in retries:
+        retries['output'] = spec.output_retries
+    return retries
+
+
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'description',
     'end_strategy',
-    'retries',
-    'tool_retries',
     'tool_timeout',
     'instrument',
     'output_schema',
     'deps_schema',
 )
-"""AgentSpec fields that are not supported at run/override time."""
+"""AgentSpec fields that are not supported at run/override time.
+
+`tool_retries` is intentionally excluded: its run/override-time handling is covered by
+`_retry_overrides_from_spec` and the explicit `'tools' in retry_overrides` check in
+`_resolve_spec`, so listing it here would emit a duplicate `UserWarning` on top of the
+`PydanticAIDeprecationWarning` raised by `AgentSpec._warn_retry_field_deprecations`.
+"""
 
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
 """Infrastructure capabilities auto-injected when not already present."""
@@ -2843,7 +2901,7 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (Tool
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
     """Ensure all auto-injected infrastructure capabilities are present.
 
-    Each capability's own ``CapabilityOrdering`` (e.g. ``position='outermost'``)
+    Each capability's own `CapabilityOrdering` (e.g. `position='outermost'`)
     determines its final placement, so insertion order here doesn't matter.
     """
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:

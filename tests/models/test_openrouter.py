@@ -500,7 +500,7 @@ async def test_openrouter_binary_content_video_public_api(
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', tool_retries=1, output_retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
@@ -511,11 +511,11 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', tool_retries=1, output_retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
 
     result = await agent.run('Tell me about Venus')
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
     )
 
@@ -523,7 +523,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Mars', model_settings=settings)
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=17,
             output_tokens=2177,

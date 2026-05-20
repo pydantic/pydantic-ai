@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     NativeTool,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
@@ -42,7 +43,6 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities._ordering import has_capability_type
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -122,6 +122,14 @@ def test_capability_types() -> None:
             'WebSearch': WebSearch,
         }
     )
+
+
+def test_instrumentation_default_settings() -> None:
+    """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    instr = Instrumentation()
+    assert isinstance(instr.settings, InstrumentationSettings)
 
 
 def test_agent_from_spec_basic():
@@ -380,72 +388,42 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_retries_override():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_no_retries_does_not_warn():
-    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
-
-    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
-    user-set value; only an explicit value is forwarded to the deprecated
-    `Agent(retries=...)` kwarg.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test'})
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
 
     assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_explicit_retries_warns():
-    """An explicit `retries` in the spec still triggers the deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_tool_retries():
-    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
-
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_spec_retries_deprecated_getter():
-    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
     spec = AgentSpec(model='test', retries=5)
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        assert spec.retries == 5
-
-
-def test_agent_spec_tool_retries_field():
-    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
-    spec = AgentSpec(model='test', tool_retries=5)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        assert spec.tool_retries == 5
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -468,22 +446,18 @@ def test_agent_from_spec_tool_timeout_override():
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
 
 
-def _has_instrumentation_capability(agent: Agent[Any, Any]) -> bool:
-    return has_capability_type([agent._root_capability], Instrumentation)  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field bridges to an `Instrumentation` capability."""
+    """The deprecated spec `instrument` field configures `agent.instrument`."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
         agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert _has_instrumentation_capability(agent)
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
@@ -492,25 +466,14 @@ def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
     spec_path.write_text('model: test\n')
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)  # pyright: ignore[reportUnknownArgumentType]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_init_instrument_kwarg_deprecated():
     """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
         agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert _has_instrumentation_capability(agent)
-
-
-def test_agent_instrument_reader_deprecated():
-    """Reading/writing `agent.instrument` is deprecated."""
-    agent = Agent(model='test')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        _ = agent.instrument
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        agent.instrument = True
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.instrument` is deprecated'):
-        assert agent.instrument is True
+    assert agent.instrument is True
 
 
 def test_agent_from_spec_metadata():
@@ -555,6 +518,36 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'description': """\
+Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+
+`int` semantics differ by call site:
+
+- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
+  to `N`.
+- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
+  budget. Tool retries cannot be overridden per run or via `override()` — passing
+  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
+  manager is built once at agent construction.
+
+Keys:
+    tools: Default number of retries for tool calls before raising an error.
+    output: Maximum number of retries for output validation. On the text path
+        this is a global per-run budget; on the tool path it is the default
+        per-tool `max_retries` for each output tool, overridable via
+        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
+""",
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -771,16 +764,17 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/google-vertex:gemini-2.5-flash-image',
-                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash',
-                        'gateway/google-vertex:gemini-2.5-pro',
-                        'gateway/google-vertex:gemini-3-flash-preview',
-                        'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-2.5-flash-image',
+                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-cloud:gemini-2.5-flash-lite',
+                        'gateway/google-cloud:gemini-2.5-flash',
+                        'gateway/google-cloud:gemini-2.5-pro',
+                        'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -838,38 +832,40 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
                         'gateway/openai:o4-mini',
-                        'google-gla:gemini-2.0-flash-lite',
-                        'google-gla:gemini-2.0-flash',
-                        'google-gla:gemini-2.5-flash-image',
-                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-gla:gemini-2.5-flash-lite',
-                        'google-gla:gemini-2.5-flash-preview-09-2025',
-                        'google-gla:gemini-2.5-flash',
-                        'google-gla:gemini-2.5-pro',
-                        'google-gla:gemini-3-flash-preview',
-                        'google-gla:gemini-3-pro-image-preview',
-                        'google-gla:gemini-3-pro-preview',
-                        'google-gla:gemini-3.1-flash-image-preview',
-                        'google-gla:gemini-3.1-flash-lite-preview',
-                        'google-gla:gemini-3.1-pro-preview',
-                        'google-gla:gemini-flash-latest',
-                        'google-gla:gemini-flash-lite-latest',
-                        'google-vertex:gemini-2.0-flash-lite',
-                        'google-vertex:gemini-2.0-flash',
-                        'google-vertex:gemini-2.5-flash-image',
-                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash-lite',
-                        'google-vertex:gemini-2.5-flash-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash',
-                        'google-vertex:gemini-2.5-pro',
-                        'google-vertex:gemini-3-flash-preview',
-                        'google-vertex:gemini-3-pro-image-preview',
-                        'google-vertex:gemini-3-pro-preview',
-                        'google-vertex:gemini-3.1-flash-image-preview',
-                        'google-vertex:gemini-3.1-flash-lite-preview',
-                        'google-vertex:gemini-3.1-pro-preview',
-                        'google-vertex:gemini-flash-latest',
-                        'google-vertex:gemini-flash-lite-latest',
+                        'google-cloud:gemini-2.0-flash-lite',
+                        'google-cloud:gemini-2.0-flash',
+                        'google-cloud:gemini-2.5-flash-image',
+                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash-lite',
+                        'google-cloud:gemini-2.5-flash-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash',
+                        'google-cloud:gemini-2.5-pro',
+                        'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image-preview',
+                        'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image-preview',
+                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-pro-preview',
+                        'google-cloud:gemini-3.5-flash',
+                        'google-cloud:gemini-flash-latest',
+                        'google-cloud:gemini-flash-lite-latest',
+                        'google:gemini-2.0-flash-lite',
+                        'google:gemini-2.0-flash',
+                        'google:gemini-2.5-flash-image',
+                        'google:gemini-2.5-flash-lite-preview-09-2025',
+                        'google:gemini-2.5-flash-lite',
+                        'google:gemini-2.5-flash-preview-09-2025',
+                        'google:gemini-2.5-flash',
+                        'google:gemini-2.5-pro',
+                        'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image-preview',
+                        'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image-preview',
+                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-pro-preview',
+                        'google:gemini-3.5-flash',
+                        'google:gemini-flash-latest',
+                        'google:gemini-flash-lite-latest',
                         'grok:grok-2-image-1212',
                         'grok:grok-2-vision-1212',
                         'grok:grok-3-fast',
@@ -1044,6 +1040,83 @@ def test_model_json_schema_with_capabilities():
                         'openai:o4-mini-deep-research-2025-06-26',
                         'openai:o4-mini-deep-research',
                         'openai:o4-mini',
+                        'openai-chat:computer-use-preview-2025-03-11',
+                        'openai-chat:computer-use-preview',
+                        'openai-chat:gpt-3.5-turbo-0125',
+                        'openai-chat:gpt-3.5-turbo-0301',
+                        'openai-chat:gpt-3.5-turbo-0613',
+                        'openai-chat:gpt-3.5-turbo-1106',
+                        'openai-chat:gpt-3.5-turbo-16k-0613',
+                        'openai-chat:gpt-3.5-turbo-16k',
+                        'openai-chat:gpt-3.5-turbo',
+                        'openai-chat:gpt-4-0314',
+                        'openai-chat:gpt-4-0613',
+                        'openai-chat:gpt-4-turbo-2024-04-09',
+                        'openai-chat:gpt-4-turbo',
+                        'openai-chat:gpt-4.1-2025-04-14',
+                        'openai-chat:gpt-4.1-mini-2025-04-14',
+                        'openai-chat:gpt-4.1-mini',
+                        'openai-chat:gpt-4.1-nano-2025-04-14',
+                        'openai-chat:gpt-4.1-nano',
+                        'openai-chat:gpt-4.1',
+                        'openai-chat:gpt-4',
+                        'openai-chat:gpt-4o-2024-05-13',
+                        'openai-chat:gpt-4o-2024-08-06',
+                        'openai-chat:gpt-4o-2024-11-20',
+                        'openai-chat:gpt-4o-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-audio-preview-2025-06-03',
+                        'openai-chat:gpt-4o-audio-preview',
+                        'openai-chat:gpt-4o-mini-2024-07-18',
+                        'openai-chat:gpt-4o-mini-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-mini-audio-preview',
+                        'openai-chat:gpt-4o-mini-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-mini-search-preview',
+                        'openai-chat:gpt-4o-mini',
+                        'openai-chat:gpt-4o-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-search-preview',
+                        'openai-chat:gpt-4o',
+                        'openai-chat:gpt-5-2025-08-07',
+                        'openai-chat:gpt-5-chat-latest',
+                        'openai-chat:gpt-5-codex',
+                        'openai-chat:gpt-5-mini-2025-08-07',
+                        'openai-chat:gpt-5-mini',
+                        'openai-chat:gpt-5-nano-2025-08-07',
+                        'openai-chat:gpt-5-nano',
+                        'openai-chat:gpt-5-pro-2025-10-06',
+                        'openai-chat:gpt-5-pro',
+                        'openai-chat:gpt-5.1-2025-11-13',
+                        'openai-chat:gpt-5.1-chat-latest',
+                        'openai-chat:gpt-5.1-codex-max',
+                        'openai-chat:gpt-5.1-codex',
+                        'openai-chat:gpt-5.1',
+                        'openai-chat:gpt-5.2-2025-12-11',
+                        'openai-chat:gpt-5.2-chat-latest',
+                        'openai-chat:gpt-5.2-pro-2025-12-11',
+                        'openai-chat:gpt-5.2-pro',
+                        'openai-chat:gpt-5.2',
+                        'openai-chat:gpt-5.3-chat-latest',
+                        'openai-chat:gpt-5.4-mini-2026-03-17',
+                        'openai-chat:gpt-5.4-mini',
+                        'openai-chat:gpt-5.4-nano-2026-03-17',
+                        'openai-chat:gpt-5.4-nano',
+                        'openai-chat:gpt-5.4',
+                        'openai-chat:gpt-5',
+                        'openai-chat:o1-2024-12-17',
+                        'openai-chat:o1-pro-2025-03-19',
+                        'openai-chat:o1-pro',
+                        'openai-chat:o1',
+                        'openai-chat:o3-2025-04-16',
+                        'openai-chat:o3-deep-research-2025-06-26',
+                        'openai-chat:o3-deep-research',
+                        'openai-chat:o3-mini-2025-01-31',
+                        'openai-chat:o3-mini',
+                        'openai-chat:o3-pro-2025-06-10',
+                        'openai-chat:o3-pro',
+                        'openai-chat:o3',
+                        'openai-chat:o4-mini-2025-04-16',
+                        'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-chat:o4-mini-deep-research',
+                        'openai-chat:o4-mini',
                         'test',
                     ],
                     'type': 'string',
@@ -1523,10 +1596,13 @@ Supported by:
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
                         'native': {
-                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -1692,17 +1768,18 @@ Supported by:
                 'tool_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Tool Retries',
                 },
                 'retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
-                    'deprecated': True,
                     'title': 'Retries',
                 },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Output Retries',
                 },
                 'end_strategy': {
@@ -1959,8 +2036,7 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -2023,14 +2099,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.tool_retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -4381,8 +4457,7 @@ class TestPrepareOutputToolsHook:
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            tool_retries=4,
-            output_retries=4,
+            retries={'tools': 4, 'output': 4},
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
@@ -4569,6 +4644,10 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
+        from unittest.mock import patch
+
+        pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+        from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4586,7 +4665,11 @@ class TestWebSearchCapability:
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
-        result = agent.run_sync('search for something')
+        # `ddgs` calls Bing/DuckDuckGo via the Rust `primp` HTTP client, so VCR can't intercept it.
+        # Mock the result at the library boundary to keep the test hermetic.
+        fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
+        with patch.object(DDGS, 'text', return_value=fake_results):
+            result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
 
@@ -5307,26 +5390,36 @@ class TestMCPCapability:
         assert builtin_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
-        """MCP with /sse URL uses MCPServerSSE for local."""
-        from pydantic_ai.mcp import MCPServerSSE
+        """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
+        from fastmcp.client.transports import SSETransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/sse', native=True)
-        assert isinstance(cap.local, MCPServerSSE)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_streamable_transport(self):
-        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_authorization_token_in_local_headers(self):
-        """MCP passes authorization_token as Authorization header to local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP passes authorization_token as Authorization header through to the transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
-        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+        assert isinstance(cap.local, MCPToolset)
+        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'Authorization': 'Bearer xyz'}
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
@@ -5342,6 +5435,15 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+    def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
+        """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        from fastmcp import FastMCP
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
+        assert isinstance(cap.local, MCPToolset)
 
 
 class TestNamedSpecDictRoundTrip:
@@ -5598,38 +5700,6 @@ class TestPrepareOutputToolsCapability:
         from pydantic_ai.capabilities import PrepareOutputTools
 
         assert PrepareOutputTools.get_serialization_name() is None
-
-
-class TestAgentPrepareArgInjection:
-    """The Agent `prepare_tools` / `prepare_output_tools` constructor args are
-    sugar for `PrepareTools` / `PrepareOutputTools` capabilities — verify they
-    show up in `root_capability` and apply the same way."""
-
-    def test_prepare_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', prepare_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-    def test_prepare_output_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareOutputTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', output_type=str, prepare_output_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareOutputTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
 
 
 class TestOverrideWithSpec:
@@ -6001,8 +6071,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
@@ -6255,7 +6338,7 @@ class TestGetWrapperToolsetHook:
             descs = [t.description for t in info.function_tools]
             return make_text_response(f'tools: {tool_names}, descs: {descs}')
 
-        agent = Agent(FunctionModel(model_fn), prepare_tools=agent_prepare, capabilities=[PrefixCap()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(agent_prepare), PrefixCap()])
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -6575,9 +6658,25 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
         MCP(url='http://example.com/mcp', local=True, native=True)
 
 
+def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
 @pytest.mark.filterwarnings(
     'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
+)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
 def test_web_search_v2_deprecation_warning():
     """WebSearch() with duckduckgo installed warns about v2 default change."""
     pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
@@ -6799,11 +6898,25 @@ def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
         WebFetch(local=True)
 
 
-def test_mcp_unknown_strategy_raises():
-    """MCP(url=..., local='not_a_real_strategy') → UserError naming the unknown strategy."""
+def test_mcp_local_string_must_be_url_raises_user_error():
+    """`MCP(url=..., local='not-a-url')` raises a `UserError` directing the user to `local=MCPToolset(...)`."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.raises(UserError, match='not a known strategy'):
-        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match=r"MCP\(local='not_a_real_strategy'\) must be an `http\(s\)://` URL"):
+        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)
+
+
+def test_mcp_local_url_string_override_uses_provided_url():
+    """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+    from pydantic_ai.mcp import MCPToolset
+
+    cap = MCP(
+        url='http://primary.example.com/mcp',
+        local='https://override.example.com/mcp',
+        native=True,
+    )
+    assert isinstance(cap.local, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():
@@ -8850,7 +8963,7 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
@@ -9178,7 +9291,9 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
@@ -9378,7 +9493,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9705,7 +9820,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9781,7 +9896,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9855,7 +9970,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9929,7 +10044,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:

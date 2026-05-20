@@ -48,7 +48,7 @@ else:
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_ai.agent import AgentRetries, AgentRun, AgentRunResult
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages
@@ -891,6 +891,162 @@ def consume_deprecated_instrument(
 
     warnings.warn(
         f'`{owner}(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return legacy
+
+
+def consume_deprecated_history_processors_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `history_processors=` kwarg, warn, and return `ProcessHistory` capability wrappers.
+
+    Returns a list of [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    `ProcessHistory` is itself a thin wrapper over the `before_model_request` lifecycle hook;
+    new code should prefer either `capabilities=[ProcessHistory(fn)]` or, for richer control,
+    `capabilities=[Hooks(before_model_request=fn)]` directly.
+    """
+    if 'history_processors' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('history_processors')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import ProcessHistory
+
+    warnings.warn(
+        f'`{owner}(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
+        f'Replace with `{owner}(capabilities=[ProcessHistory(fn), ...])`, or hook the '
+        '`before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [ProcessHistory(p) for p in legacy]
+
+
+def consume_deprecated_prepare_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `prepare_tools=` kwarg, warn, and return a `PrepareTools` capability wrapper.
+
+    Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
+    if no legacy kwarg was passed. The warning also reminds users that `prepare_tools` runs only
+    on function tools — to prepare output tools, they should pair it with `PrepareOutputTools`.
+    """
+    if 'prepare_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('prepare_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities.prepare_tools import PrepareTools
+
+    warnings.warn(
+        f'`{owner}(prepare_tools=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[PrepareTools(prepare_tools)]` instead. '
+        'Note: `prepare_tools` runs only on function tools — to prepare output tools, '
+        'also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [PrepareTools(legacy)]
+
+
+def consume_deprecated_prepare_output_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `prepare_output_tools=` kwarg, warn, and return a `PrepareOutputTools` capability wrapper.
+
+    Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
+    if no legacy kwarg was passed.
+    """
+    if 'prepare_output_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('prepare_output_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities.prepare_tools import PrepareOutputTools
+
+    warnings.warn(
+        f'`{owner}(prepare_output_tools=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [PrepareOutputTools(legacy)]
+
+
+def consume_deprecated_output_retries(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    current_retries: int | AgentRetries | None = None,
+    stacklevel: int = 3,
+) -> int | AgentRetries | None:
+    """Pop a deprecated `output_retries=` kwarg, warn, and reconcile with the new `retries=` kwarg.
+
+    Returns a value suitable to pass as the new `retries` argument:
+    - If the caller already provided `retries=`, it wins and `output_retries=` is just warned about.
+    - Otherwise the legacy `output_retries=` value is returned wrapped as `{'output': value}`.
+    """
+    if 'output_retries' not in deprecated_kwargs:
+        return current_retries
+    legacy = deprecated_kwargs.pop('output_retries')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(output_retries=...)` is deprecated and will be removed in v2.0. '
+        "Use `retries={'output': ...}` (or `retries=<int>` to override the output budget) instead.",
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if current_retries is not None:
+        return current_retries
+    if legacy is None:
+        return None
+    return {'output': legacy}
+
+
+def consume_deprecated_event_stream_handler(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> Any:
+    """Pop a deprecated `event_stream_handler=` kwarg and warn.
+
+    Returns the legacy handler (or `None` if the kwarg was not passed) for the caller to
+    forward into the legacy `_event_stream_handler` path. The handler is NOT auto-remapped
+    to a `ProcessEventStream(...)` capability because the legacy path in `abstract.py`
+    invokes the handler directly after the capability chain has run, which would cause
+    a double invocation. Users see the warning and migrate manually to
+    `capabilities=[ProcessEventStream(handler)]`, which is the only path in v2.
+    """
+    if 'event_stream_handler' not in deprecated_kwargs:
+        return None
+    legacy = deprecated_kwargs.pop('event_stream_handler')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(event_stream_handler=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[ProcessEventStream(handler)]` instead.',
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
