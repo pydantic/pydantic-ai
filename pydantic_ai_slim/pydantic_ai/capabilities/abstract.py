@@ -173,6 +173,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     match previous `load_capability` calls.
     """
 
+    description: str | None = None
+    """Description of the capability."""
+
     defer_loading: bool | None = None
     """If True, instructions, function tools, and model settings are hidden until
     the model explicitly loads the capability via `load_capability(id)`.
@@ -296,8 +299,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Surfaced to the model in the `load_capability` catalog when
         [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
         Override to compute the description dynamically.
+        Default: return the `description` field.
         """
-        return None
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
