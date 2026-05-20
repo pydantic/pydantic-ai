@@ -2207,6 +2207,10 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             trace.append((type(message).__name__, part_trace))
         return trace
 
+    assert trace_messages([ModelResponse(parts=[NativeToolCallPart(tool_name='native_tool')])]) == [
+        ('ModelResponse', [{'type': 'NativeToolCallPart'}])
+    ]
+
     anthropic_agent: Agent[None, str] = Agent(
         model='anthropic:claude-sonnet-4-5',
         capabilities=[make_refunds_cap()],
