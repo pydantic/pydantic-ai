@@ -22,8 +22,6 @@ AgentToolset = Union[AbstractToolset[AgentDepsT], ToolsetFunc[AgentDepsT]]  # no
 __all__ = (
     'AbstractToolset',
     'AgentToolset',
-    'ToolsetFunc',
-    'ToolsetTool',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
@@ -36,5 +34,7 @@ __all__ = (
     'PreparedToolset',
     'RenamedToolset',
     'SetMetadataToolset',
+    'ToolsetFunc',
+    'ToolsetTool',
     'WrapperToolset',
 )

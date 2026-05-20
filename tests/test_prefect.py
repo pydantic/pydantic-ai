@@ -1,3 +1,8 @@
+# pyright: reportDeprecated=false
+# `PrefectAgent` (the wrapper-agent path) is deprecated in favor of the
+# `PrefectDurability` capability, but this file still exercises both paths in
+# parallel for parity. Silenced at file level rather than annotating every
+# individual usage.
 from __future__ import annotations
 
 import os
@@ -45,6 +50,7 @@ try:
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
         PrefectAgent,
+        PrefectDurability,
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
@@ -61,7 +67,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.mcp import MCPServerStdio
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -74,12 +80,29 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
+# `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
+# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
+# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
+# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# at module import time (e.g. module-level construction of `PrefectAgent`).
+warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', category=DeprecationWarning)
+warnings.filterwarnings(
+    'ignore',
+    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
+    category=DeprecationWarning,
+)
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
     pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
+    pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
+    ),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -206,7 +229,7 @@ with warnings.catch_warnings():
         output_type=Response,
         toolsets=[
             FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
             ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
         ],
         tools=[get_weather],
@@ -640,7 +663,7 @@ async def test_prefect_agent():
     # The wrapped toolset is the MCPServerStdio instance from the complex_agent
     # complex_agent.toolsets[0] is FunctionToolset for get_country
     # complex_agent.toolsets[1] is MCPServerStdio for mcp
-    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)  # pyright: ignore[reportDeprecated]
+    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)
 
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
@@ -1275,3 +1298,59 @@ async def test_disabled_tool():
     flow_result = await test_flow()
     flow_messages = flow_result.all_messages()
     assert any('my_tool' in str(msg) for msg in flow_messages)
+
+
+# ==========================================
+# PrefectDurability capability tests
+# ==========================================
+
+
+def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Simple model function for durability tests."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_durability_fn_model = FunctionModel(_durability_model_fn)
+
+
+async def test_prefect_durability_simple_agent(prefect_harness: None) -> None:
+    """PrefectDurability routes model requests through Prefect tasks."""
+    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello Prefect')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Echo: Hello Prefect'
+
+
+async def test_prefect_durability_auto_wraps_run_as_flow(prefect_harness: None) -> None:
+    """`agent.run` outside an active flow auto-wraps in one.
+
+    The capability hooks `agent.run` so callers don't need a manual `@flow`. Inside an
+    existing flow the wrapper short-circuits to avoid creating a redundant nested flow.
+    """
+    agent = Agent(_durability_fn_model, name='durability_auto', capabilities=[PrefectDurability()])
+
+    result = await agent.run('Auto-wrapped')
+    assert result.output == 'Echo: Auto-wrapped'
+
+
+def test_prefect_durability_idempotent_for_agent() -> None:
+    """Binding a second `PrefectDurability` to the same agent doesn't re-wrap `agent.run`.
+
+    Without the idempotency guard, re-binding would stack flow decorators on top
+    of each other.
+    """
+    agent = Agent(_durability_fn_model, name='prefect_idempotent_test', capabilities=[PrefectDurability()])
+    first_run = agent.run
+
+    # Re-binding another PrefectDurability should leave agent.run untouched.
+    PrefectDurability().for_agent(agent)
+    assert agent.run is first_run

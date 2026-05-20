@@ -4,7 +4,7 @@ import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -24,9 +24,9 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -155,6 +155,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    _safe_at_runtime: ClassVar[bool] = False
+    """Whether this capability can be added per-run when a durability capability is bound.
+
+    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
+    integrations read it to allow `Instrumentation` to attach per-run despite the
+    blanket restriction on runtime capability additions.
+
+    A first-class extension point that derives this from a capability's overridden
+    hooks (so third-party capabilities don't need to set a flag manually) is tracked
+    in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    """
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # If a subclass overrides only the deprecated `get_builtin_tools()` method (and not
@@ -209,6 +222,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides resolve_model_id."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -236,6 +254,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         these to topologically sort its children at construction time.
         """
         return None
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with this agent.
+
+        Called once at agent construction time. The agent's model, name, and
+        user-registered toolsets are available; toolsets contributed by other
+        capabilities are not yet (this hook runs before any capability's
+        `get_toolset()` / `get_instructions()` / `get_native_tools()` /
+        `get_model_settings()`, so the returned instance's own contributions
+        feed into the agent's initial configuration on equal footing).
+
+        Override to discover agent configuration and return a bound instance.
+        Default: return `self` (no agent-specific setup needed).
+        """
+        return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -303,6 +336,47 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def resolve_model_id(
+        self,
+        model_id: KnownModelName | str,
+        *,
+        agent: AbstractAgent[AgentDepsT, Any],
+    ) -> Model | None:
+        """Resolve a model-name string to a `Model` instance, or return `None` to defer.
+
+        Called whenever the user supplies a model-name string for the agent's model:
+        at construction (`Agent('openai:gpt-5.2', capabilities=[...])`), per-run via
+        `agent.run(model=...)`, or via `agent.override(model=...)`. Pre-built `Model`
+        instances and `None` skip this hook entirely.
+
+        Use this to:
+
+        - Map known names to pre-configured `Model` instances (e.g. a shared client
+          registry).
+        - Build a `Model` via a custom [`Provider`][pydantic_ai.providers.Provider]
+          factory (forwarding to [`infer_model`][pydantic_ai.models.infer_model]
+          with `provider_factory=...`).
+        - Defer (`return None`) so the next capability — or the default
+          [`infer_model`][pydantic_ai.models.infer_model] flow — handles it.
+
+        Per-request *swapping* of an already-resolved `Model` is a separate concern
+        and lives in [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
+        which receives a [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]
+        whose `.model` field can be reassigned.
+
+        Composition follows first-non-None-wins in user-supplied order, so the
+        first capability in the `capabilities=[...]` list gets first crack at a
+        string and any later capability only fires if every capability before it
+        returned `None`. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        handles the chaining.
+
+        The hook is synchronous (matching `get_toolset` / `get_wrapper_toolset`) and
+        runs outside of any agent run, so it doesn't receive a `RunContext`.
+        Per-run capabilities can't influence model resolution because resolution
+        happens before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run].
         """
         return None
 

@@ -43,11 +43,15 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool
@@ -673,6 +677,31 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
+    _hooks_already_applied: bool = field(default=False, init=False)
+    """Internal coordination flag set by a durable-execution capability that has
+    already run the capability chain's `wrap_run_event_stream` hooks against the
+    live model stream inside its activity/step/task. Read by the outer agent loop
+    (`_stream_and_advance`) to skip re-wrapping the replayed stream (which would
+    double-emit hook side effects). Not user API.
+    """
+
+    _buffered_stream_events: list[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    """Internal buffer of events captured during chain consumption inside an
+    activity/step/task. The outer agent loop replays these through any per-run
+    `event_stream_handler` so it sees real (granular) events even though the live
+    stream was consumed at the durable-execution boundary. `None` when no buffer is
+    available (chain didn't run, or events weren't captured). Not user API.
+    """
+
+    _streaming_requested: bool = field(default=False, init=False)
+    """Set by the agent loop when it expects to iterate the model response as a
+    stream (i.e. an `event_stream_handler` was passed or the capability chain
+    overrides `wrap_run_event_stream`). Durable-execution capabilities read this
+    to decide whether to route through the streaming activity/step/task (which
+    fires the chain inside the boundary and buffers events for replay) or the
+    non-streaming one. Not user API.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
@@ -1161,6 +1190,11 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
+    _hooks_already_applied: bool = field(default=False, init=False)
+    """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
+    against the live stream (e.g. inside a durable execution activity) and the outer
+    agent loop should not re-wrap this replayed stream."""
+
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
@@ -1370,6 +1404,155 @@ class StreamedResponse(ABC):
     def cancelled(self) -> bool:
         """Whether the stream has been cancelled via `cancel()`."""
         return self._cancelled
+
+
+class CompletedStreamedResponse(StreamedResponse):
+    """A `StreamedResponse` that wraps an already-completed `ModelResponse` and yields no events.
+
+    Used when a [`StreamedResponse`][pydantic_ai.models.StreamedResponse] is needed but no
+    actual stream exists or was ever opened — for example, when an agent run is short-circuited
+    by [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], when a capability's
+    [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
+    short-circuits without calling the handler, or when a durable-execution capability drains
+    the real stream inside an activity/step/task and only surfaces the final
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] to the workflow.
+    """
+
+    def __init__(self, response: ModelResponse, *, model_request_parameters: ModelRequestParameters):
+        super().__init__(model_request_parameters)
+        self.response = response
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        return
+        # noinspection PyUnreachableCode
+        yield
+
+    async def close_stream(self) -> None:
+        # No live stream to close — the response was produced without (or outside of) one.
+        pass
+
+    def get(self) -> ModelResponse:
+        return self.response
+
+    def usage(self) -> RequestUsage:
+        return self.response.usage
+
+    @property
+    def model_name(self) -> str:
+        return self.response.model_name or ''
+
+    @property
+    def provider_name(self) -> str | None:
+        return self.response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.response.timestamp
+
+
+class _ReplayStreamedResponse(StreamedResponse):  # pyright: ignore[reportUnusedClass]
+    """A `StreamedResponse` that replays a completed `ModelResponse` as synthetic stream events.
+
+    Unlike [`CompletedStreamedResponse`][pydantic_ai.models.CompletedStreamedResponse] which
+    yields no events, this class either replays a list of buffered events (when supplied) or
+    converts each response part into `PartStartEvent` + `PartDeltaEvent` + `PartEndEvent`
+    sequences so streaming consumers (`event_stream_handler`, `run_stream_events`, ...) keep
+    working when a capability short-circuits `wrap_model_request` and returns a complete
+    `ModelResponse` instead of calling the handler.
+
+    Internal — used by the agent graph's shortcircuit path. The bundled durable-execution
+    integrations consume the live stream inside the activity/step/task and pass the captured
+    events through here so the workflow side replays them through any per-run handler.
+    """
+
+    def __init__(
+        self,
+        response: ModelResponse,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        hooks_already_applied: bool = False,
+        buffered_events: list[ModelResponseStreamEvent] | None = None,
+    ):
+        super().__init__(model_request_parameters)
+        self.response = response
+        self._hooks_already_applied = hooks_already_applied
+        self._buffered_events = buffered_events
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._buffered_events is None:
+            return super().__aiter__()
+        # Buffered events were already produced by the live stream's `__aiter__`,
+        # which means they include `PartEndEvent`s. Yield them directly so the
+        # parent `__aiter__` doesn't re-inject PartEnds (which would lookup parts
+        # in our empty `_parts_manager` and crash). Still register `PartStartEvent`s
+        # with the manager for downstream consumers that query it.
+        if self._event_iterator is None:
+            self._event_iterator = self._iter_buffered()
+        return self._event_iterator
+
+    async def _iter_buffered(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        assert self._buffered_events is not None
+        for event in self._buffered_events:
+            if isinstance(event, PartStartEvent):
+                self._parts_manager.handle_part(vendor_part_id=None, part=event.part)
+            yield event
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Only reached when `_buffered_events is None` — `__aiter__` short-circuits
+        # the buffered path above.
+        for part in self.response.parts:
+            # Register the part with the parts manager (always returns PartStartEvent for new parts)
+            start_event = self._parts_manager.handle_part(vendor_part_id=None, part=part)
+            assert isinstance(start_event, PartStartEvent)
+            yield start_event
+
+            # Emit a delta with the full content
+            index = start_event.index
+            if isinstance(part, TextPart) and part.content:
+                yield PartDeltaEvent(index=index, delta=TextPartDelta(content_delta=part.content))
+            elif isinstance(part, ThinkingPart) and part.content:
+                yield PartDeltaEvent(index=index, delta=ThinkingPartDelta(content_delta=part.content))
+            elif isinstance(part, ToolCallPart):
+                # `cast`: typed subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a `TypedDict`,
+                # which `ToolCallPartDelta.args_delta` doesn't accept. TypedDicts are dicts at runtime.
+                args_delta = cast('str | dict[str, Any] | None', part.args)
+                yield PartDeltaEvent(
+                    index=index,
+                    delta=ToolCallPartDelta(args_delta=args_delta),
+                )
+            # PartEndEvent is added automatically by StreamedResponse.__aiter__
+
+    async def close_stream(self) -> None:
+        # Events are replayed locally from an already-completed `ModelResponse`
+        # (typically captured inside a durable-execution activity/step/task), so
+        # there is no live connection to close.
+        pass
+
+    def get(self) -> ModelResponse:
+        return self.response
+
+    def usage(self) -> RequestUsage:
+        return self.response.usage
+
+    @property
+    def model_name(self) -> str:
+        return self.response.model_name or ''
+
+    @property
+    def provider_name(self) -> str | None:
+        return self.response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.response.timestamp
 
 
 ALLOW_MODEL_REQUESTS = True

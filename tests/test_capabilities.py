@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -20,6 +20,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -89,8 +90,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -8446,6 +8446,31 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+def test_wrapper_capability_for_agent_replaces():
+    """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
+
+    Some capabilities (e.g. `TemporalDurability`) snapshot agent state in `for_agent`
+    and return a new instance. The wrapper must propagate that.
+    """
+
+    @dataclass
+    class RebindCap(AbstractCapability[None]):
+        bound_to: str = ''
+
+        def for_agent(self, agent: AbstractAgent[None, Any]) -> AbstractCapability[None]:
+            return RebindCap(bound_to=agent.name or '')
+
+    inner = RebindCap()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='wrapper_for_agent_test')
+    bound = wrapper.for_agent(agent)
+    assert isinstance(bound, WrapperCapability)
+    assert bound is not wrapper
+    assert bound.wrapped is not inner
+    assert cast(RebindCap, bound.wrapped).bound_to == 'wrapper_for_agent_test'
+
+
 async def test_wrapper_capability_for_run_replaces():
     """WrapperCapability.for_run replaces wrapped when it changes."""
     toolset_a = FunctionToolset(id='a')
@@ -8493,6 +8518,28 @@ async def test_wrapper_capability_has_wrap_node_run():
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_resolve_model_id():
+    """WrapperCapability delegates `resolve_model_id` (and `has_resolve_model_id`) to the wrapped capability."""
+    resolved = TestModel()
+
+    @dataclass
+    class ResolverCap(AbstractCapability[None]):
+        def resolve_model_id(self, model_id: str, *, agent: Any) -> Any:
+            return resolved if model_id == 'magic' else None
+
+    wrapper = WrapperCapability(wrapped=ResolverCap())
+    assert wrapper.has_resolve_model_id is True
+
+    agent = Agent('test', capabilities=[wrapper])
+    assert wrapper.resolve_model_id('magic', agent=agent) is resolved
+    assert wrapper.resolve_model_id('other', agent=agent) is None
+
+    # Wrapping a capability without `resolve_model_id` is a no-op.
+    plain_wrapper = WrapperCapability(wrapped=CustomCapability())
+    assert plain_wrapper.has_resolve_model_id is False
+    assert plain_wrapper.resolve_model_id('any', agent=agent) is None
 
 
 async def test_wrapper_capability_delegates_model_request_hooks():
@@ -10738,6 +10785,22 @@ def test_ordering_mixed_type_and_instance_refs():
     assert combined.capabilities[0].__class__ is MixedRefs
 
 
+async def test_runtime_capability_with_mixed_position_root():
+    """Per-run capabilities can be added to an agent whose root mixes outermost and innermost.
+
+    `Agent.iter()` builds the effective capability by merging per-run capabilities into the
+    agent's `_root_capability`. If `_root_capability` is a `CombinedCapability` whose leaves
+    span tiers (e.g. an outermost-tier cap and an innermost-tier cap), wrapping it in another
+    `CombinedCapability` used to trigger "Conflicting positions in nested CombinedCapability"
+    because the outer sort tried to compute a single effective ordering for the inner group.
+    The fix splats the root container so each leaf participates as a sibling in the outer
+    ordering pass.
+    """
+    agent = Agent(TestModel(), capabilities=[OutermostCap(), InnermostCap()])
+    result = await agent.run('hi', capabilities=[Hooks()])
+    assert result.output == snapshot('success (no tool calls)')
+
+
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
 
 
@@ -10875,6 +10938,122 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- resolve_model_id hook tests ---
+
+
+def _resolve_dummy_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
+@dataclass
+class _StringResolver(AbstractCapability[Any]):
+    """Test capability that maps known strings to a fixed FunctionModel."""
+
+    target: FunctionModel
+
+    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+        if model_id == 'magic-model':
+            return self.target
+        return None
+
+
+@dataclass
+class _PassThroughResolver(AbstractCapability[Any]):
+    """Test capability that always defers."""
+
+    seen: list[Any] = field(default_factory=list[Any])
+
+    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+        self.seen.append(model_id)
+        return None
+
+
+async def test_resolve_model_id_maps_string_to_model() -> None:
+    """A capability's resolve_model_id maps a runtime string to a Model instance."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    agent = Agent(name='resolve_test', capabilities=[_StringResolver(target=target)])
+
+    result = await agent.run('hi', model='magic-model')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None:
+    """When all capabilities defer, _get_model uses the default infer_model path."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_pass', capabilities=[cap], defer_model_check=True)
+
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
+    assert cap.seen == ['test']
+
+
+def test_resolve_model_id_returns_none_for_unknown_string() -> None:
+    """A resolver that doesn't recognize the string returns None so the next layer can try."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    cap = _StringResolver(target=target)
+    assert cap.resolve_model_id('different-string', agent=cast(Any, None)) is None
+
+
+def test_resolve_model_id_first_non_none_wins() -> None:
+    """When two capabilities declare resolve_model_id, the first one in the list wins.
+
+    Composition is first-non-None-wins (not each-layer-wraps): only one capability
+    can claim a given string. Per-request *wrapping* of a resolved Model lives in
+    `before_model_request`, not here.
+    """
+    first_target = FunctionModel(_resolve_dummy_model_fn, model_name='first')
+    second_target = FunctionModel(_resolve_dummy_model_fn, model_name='second')
+
+    first = _StringResolver(target=first_target)
+    second = _StringResolver(target=second_target)
+    combined = CombinedCapability([first, second])
+
+    agent = Agent(name='resolve_layered', capabilities=[first, second], defer_model_check=True)
+    result = combined.resolve_model_id('magic-model', agent=agent)
+    assert result is first_target
+
+
+def test_resolve_model_id_skipped_for_model_instance() -> None:
+    """The hook is never called when the user passes a Model instance directly."""
+    cap = _PassThroughResolver()
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='direct')
+    agent = Agent(target, name='resolve_skip_instance', capabilities=[cap])
+
+    # No string ever flows through; cap.seen should stay empty.
+    assert agent.model is target
+    assert cap.seen == []
+
+
+async def test_resolve_model_id_invoked_on_override() -> None:
+    """`agent.override(model=string)` routes the string through resolve_model_id."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='override-resolved')
+    cap = _StringResolver(target=target)
+
+    initial_model = FunctionModel(_resolve_dummy_model_fn, model_name='initial')
+    agent = Agent(initial_model, name='resolve_override', capabilities=[cap])
+
+    with agent.override(model='magic-model'):
+        result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at init.
+
+    Capabilities with `resolve_model_id` need a shot at the default model string just
+    like they do for runtime overrides — otherwise things like `provider_factory` for
+    durability capabilities can't customize how the agent's primary model is built.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
+    cap = _StringResolver(target=target)
+
+    agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
+
+    # Capability's resolve_model_id ran at construction and the resolved Model is the default.
+    assert agent.model is target
 
 
 # --- Output hook tests ---

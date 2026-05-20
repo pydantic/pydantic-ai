@@ -16,6 +16,7 @@ from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .capabilities.abstract import AbstractCapability
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
@@ -109,6 +110,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.
+    """
+
+    root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
+    """The effective root capability for this run.
+
+    Reflects the merged capability chain (agent-level + per-run extras) that
+    is driving model requests, hooks, and toolsets for the current run.
+    Capability implementations can use this to validate per-run additions
+    (e.g. detect runtime-added capabilities that require worker registration).
+
+    Not part of the Temporal activity-boundary serialization (capabilities
+    don't round-trip), but populated on the activity side from the bound
+    agent's `root_capability`.
     """
 
     @property

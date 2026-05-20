@@ -841,6 +841,13 @@ class ToolDefinition:
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
+    toolset_id: str | None = None
+    """The ID of the toolset that this tool belongs to.
+
+    Set automatically when tools are collected from toolsets. Can be used by capabilities
+    (e.g. durable execution) to apply per-toolset configuration to tool operations.
+    """
+
     @cached_property
     def function_signature(self) -> FunctionSignature:
         """The function signature shape for this tool.

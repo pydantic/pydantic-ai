@@ -54,18 +54,18 @@ See the [Prefect documentation](https://docs.prefect.io/) for more information.
 
 ## Durable Agent
 
-Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get durable execution. `PrefectAgent` automatically:
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] [capability](../capabilities.md). The capability automatically:
 
-* Wraps [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync] as Prefect flows.
+* Rebinds [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync] to run as Prefect flows.
 * Wraps [model requests](../models/overview.md) as Prefect tasks.
 * Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
 * Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
-Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events)
+The agent stays a normal `Agent` everywhere — outside a Prefect flow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
-The original agent, model, and MCP server can still be used as normal outside the Prefect flow.
+Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter on the capability. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
-Here is a simple but complete example of wrapping an agent for durable execution. All it requires is to install Pydantic AI with Prefect:
+Here is a simple but complete example of attaching durable execution to an agent. All it requires is to install Pydantic AI with Prefect:
 
 ```bash
 pip/uv-add pydantic-ai[prefect]
@@ -77,31 +77,48 @@ Or if you're using the slim package, you can install it with the `prefect` optio
 pip/uv-add pydantic-ai-slim[prefect]
 ```
 
-```python {title="prefect_agent.py" test="skip"}
+```python {title="prefect_durability.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.prefect import PrefectAgent
+from pydantic_ai.durable_exec.prefect import PrefectDurability
 
 agent = Agent(
-    'gpt-5.2',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
+    capabilities=[PrefectDurability()],  # (2)!
 )
 
-prefect_agent = PrefectAgent(agent)  # (2)!
 
 async def main():
-    result = await prefect_agent.run('What is the capital of Mexico?')  # (3)!
+    result = await agent.run('What is the capital of Mexico?')  # (3)!
     print(result.output)
     #> Mexico City (Ciudad de México, CDMX)
 ```
 
 1. The agent's `name` is used to uniquely identify its flows and tasks.
-2. Wrapping the agent with `PrefectAgent` enables durable execution for all agent runs.
-3. [`PrefectAgent.run()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run] works like [`Agent.run()`][pydantic_ai.agent.Agent.run], but runs as a Prefect flow and executes model requests, decorated tool calls, and MCP communication as Prefect tasks.
+2. Attach durability via `capabilities=[...]`. The capability rebinds `agent.run` / `agent.run_sync` to run inside a Prefect flow, and routes model requests, tool calls, and MCP communication through Prefect tasks.
+3. `agent.run()` enters a Prefect flow automatically; model requests, tool calls, and MCP communication run as Prefect tasks.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities.md) without each needing a Prefect-specific wrapper variant.
+
 For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
+
+### Wrapper-agent path (deprecated)
+
+!!! warning "Deprecated"
+    [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v2. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
+
+Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant. `PrefectAgent` wraps `Agent.run` / `Agent.run_sync` as Prefect flows and routes model requests, tool calls, and MCP communication through Prefect tasks, identically to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]:
+
+```python {title="prefect_agent.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.prefect import PrefectAgent
+
+agent = Agent('openai:gpt-5.2', name='geography')
+prefect_agent = PrefectAgent(agent)  # Use `prefect_agent` in place of `agent`.
+```
 
 ## Prefect Integration Considerations
 
@@ -121,25 +138,29 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 
 You can customize tool task behavior using `tool_task_config` (applies to all tools) or `tool_task_config_by_name` (per-tool configuration):
 
-```python {title="prefect_agent_config.py" test="skip"}
+```python {title="prefect_durability_config.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
+from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 
-agent = Agent('gpt-5.2', name='my_agent')
+agent = Agent(
+    'openai:gpt-5.2',
+    name='my_agent',
+    capabilities=[
+        PrefectDurability(
+            tool_task_config=TaskConfig(retries=3),  # Default for all tools
+            tool_task_config_by_name={
+                'fetch_data': TaskConfig(timeout_seconds=10.0),  # Specific to fetch_data
+                'simple_tool': None,  # Disable task wrapping for simple_tool
+            },
+        ),
+    ],
+)
+
 
 @agent.tool_plain
 def fetch_data(url: str) -> str:
     # This tool will be wrapped as a Prefect task
     ...
-
-prefect_agent = PrefectAgent(
-    agent,
-    tool_task_config=TaskConfig(retries=3),  # Default for all tools
-    tool_task_config_by_name={
-        'fetch_data': TaskConfig(timeout_seconds=10.0),  # Specific to fetch_data
-        'simple_tool': None,  # Disable task wrapping for simple_tool
-    },
-)
 ```
 
 Set a tool's config to `None` in `tool_task_config_by_name` to disable task wrapping for that specific tool.
@@ -148,7 +169,7 @@ Set a tool's config to `None` in `tool_task_config_by_name` to disable task wrap
 
 When running inside a Prefect flow, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] works but doesn't provide real-time streaming because Prefect tasks consume their entire execution before returning results. The method will execute fully and return the complete result at once.
 
-For real-time streaming behavior inside Prefect flows, you can set an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `PrefectAgent` instance and use [`PrefectAgent.run()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run].
+For real-time streaming behavior inside Prefect flows, you can set an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability / [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent]) and use [`Agent.run()`][pydantic_ai.agent.Agent.run].
 
 **Note**: Event stream handlers behave differently when running inside a Prefect flow versus outside:
 - **Outside a flow**: The handler receives events as they stream from the model
@@ -158,7 +179,7 @@ The event stream handler function will receive the agent [run context][pydantic_
 
 ## Task Configuration
 
-You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the `PrefectAgent` constructor:
+You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] (or deprecated [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent]) constructor:
 
 - `mcp_task_config`: Configuration for MCP server communication tasks
 - `model_task_config`: Configuration for model request tasks
@@ -178,27 +199,28 @@ Available `TaskConfig` options:
 
 Example:
 
-```python {title="prefect_agent_config.py" test="skip"}
+```python {title="prefect_durability_task_config.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
+from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 
 agent = Agent(
-    'gpt-5.2',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',
+    capabilities=[
+        PrefectDurability(
+            model_task_config=TaskConfig(
+                retries=3,
+                retry_delay_seconds=[1.0, 2.0, 4.0],  # Exponential backoff
+                timeout_seconds=30.0,
+            ),
+        ),
+    ],
 )
 
-prefect_agent = PrefectAgent(
-    agent,
-    model_task_config=TaskConfig(
-        retries=3,
-        retry_delay_seconds=[1.0, 2.0, 4.0],  # Exponential backoff
-        timeout_seconds=30.0,
-    ),
-)
 
 async def main():
-    result = await prefect_agent.run('What is the capital of France?')
+    result = await agent.run('What is the capital of France?')
     print(result.output)
     #> Paris
 ```
@@ -247,13 +269,13 @@ For more information about Prefect monitoring, see the [Prefect documentation](h
 
 ## Deployments and Scheduling
 
-To deploy and schedule a `PrefectAgent`, wrap it in a Prefect flow and use the flow's [`serve()`](https://docs.prefect.io/v3/how-to-guides/deployments/create-deployments#create-a-deployment-with-serve) or [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) methods:
+To deploy and schedule a Prefect-durable agent, wrap it in a Prefect flow and use the flow's [`serve()`](https://docs.prefect.io/v3/how-to-guides/deployments/create-deployments#create-a-deployment-with-serve) or [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) methods:
 
 ```python {title="serve_agent.py" test="skip"}
 from prefect import flow
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.prefect import PrefectAgent
+from pydantic_ai.durable_exec.prefect import PrefectDurability
 
 
 @flow
@@ -263,11 +285,10 @@ async def daily_report_flow(user_prompt: str):
         'openai:gpt-5.2',
         name='daily_report_agent',
         instructions='Generate a daily summary report.',
+        capabilities=[PrefectDurability()],
     )
 
-    prefect_agent = PrefectAgent(agent)
-
-    result = await prefect_agent.run(user_prompt)
+    result = await agent.run(user_prompt)
     return result.output
 
 

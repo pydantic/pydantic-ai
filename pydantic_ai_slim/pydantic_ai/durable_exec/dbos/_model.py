@@ -11,8 +11,8 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
@@ -102,4 +102,4 @@ class DBOSModel(WrapperModel):
         response = await self._dbos_wrapped_request_stream_step(
             messages, model_settings, model_request_parameters, run_context
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)

@@ -14,6 +14,7 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
+from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
@@ -54,6 +55,7 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
+@deprecated('`TemporalAgent` is deprecated, use `capabilities=[TemporalDurability(...)]` on a regular `Agent` instead.')
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,

@@ -45,17 +45,17 @@ See the [DBOS documentation](https://docs.dbos.dev/architecture) for more inform
 
 ## Durable Agent
 
-Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get durable execution. `DBOSAgent` automatically:,
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] [capability](../capabilities.md). The capability automatically:
 
-* Wraps `Agent.run` and `Agent.run_sync` as DBOS workflows.
+* Rebinds `agent.run` and `agent.run_sync` to run inside DBOS workflows.
 * Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) as DBOS steps.
+
+The agent stays a normal `Agent` everywhere — outside a DBOS workflow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
 Custom tool functions and event stream handlers are **not automatically wrapped** by DBOS.
 If they involve non-deterministic behavior or perform I/O, you should explicitly decorate them with `@DBOS.step`.
 
-The original agent, model, and MCP server can still be used as normal outside the DBOS workflow.
-
-Here is a simple but complete example of wrapping an agent for durable execution. All it requires is to install Pydantic AI with the DBOS [open-source library](https://github.com/dbos-inc/dbos-transact-py):
+Here is a simple but complete example of attaching durable execution to an agent. All it requires is to install Pydantic AI with the DBOS [open-source library](https://github.com/dbos-inc/dbos-transact-py):
 
 ```bash
 pip/uv-add pydantic-ai[dbos]
@@ -67,43 +67,58 @@ Or if you're using the slim package, you can install it with the `dbos` optional
 pip/uv-add pydantic-ai-slim[dbos]
 ```
 
-```python {title="dbos_agent.py" test="skip"}
+```python {title="dbos_durability.py" test="skip"}
 from dbos import DBOS, DBOSConfig
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.dbos import DBOSAgent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
 
 dbos_config: DBOSConfig = {
     'name': 'pydantic_dbos_agent',
-    'system_database_url': 'sqlite:///dbostest.sqlite',  # (3)!
+    'system_database_url': 'sqlite:///dbostest.sqlite',  # (1)!
 }
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'gpt-5.2',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
-    name='geography',  # (4)!
+    name='geography',  # (2)!
+    capabilities=[DBOSDurability()],  # (3)!
 )
 
-dbos_agent = DBOSAgent(agent)  # (1)!
 
 async def main():
     DBOS.launch()
-    result = await dbos_agent.run('What is the capital of Mexico?')  # (2)!
+    result = await agent.run('What is the capital of Mexico?')  # (4)!
     print(result.output)
     #> Mexico City (Ciudad de México, CDMX)
 ```
 
-1. Workflows and `DBOSAgent` must be defined before `DBOS.launch()` so that recovery can correctly find all workflows.
-2. [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run] works like [`Agent.run()`][pydantic_ai.agent.Agent.run], but runs as a DBOS workflow and executes model requests, decorated tool calls, and MCP communication as DBOS steps.
-3. This example uses SQLite. Postgres is recommended for production.
-4. The agent's `name` is used to uniquely identify its workflows.
+1. This example uses SQLite. Postgres is recommended for production.
+2. The agent's `name` is used to uniquely identify its workflows.
+3. Attach durability via `capabilities=[...]`. The capability rebinds `agent.run` / `agent.run_sync` to run inside a DBOS workflow, and routes model requests and MCP communication through DBOS steps. Because DBOS workflows must be registered before `DBOS.launch()`, the agent must also be constructed before calling `DBOS.launch()`.
+4. `agent.run()` enters a DBOS workflow automatically; model requests and MCP communication run as DBOS steps.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Because DBOS workflows need to be defined before calling `DBOS.launch()` and the `DBOSAgent` instance automatically registers `run` and `run_sync` as workflows, it needs to be defined before calling `DBOS.launch()` as well.
+Because the same agent works inside and outside a DBOS workflow, [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] composes with all other [capabilities](../capabilities.md) without each needing a DBOS-specific wrapper variant.
 
 For more information on how to use DBOS in Python applications, see their [Python SDK guide](https://docs.dbos.dev/python/programming-guide).
+
+### Wrapper-agent path (deprecated)
+
+!!! warning "Deprecated"
+    [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] is the original wrapper-agent path for DBOS integration and will be removed in v2. New code should use the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability shown above.
+
+Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get a durable agent variant. `DBOSAgent` wraps `Agent.run` / `Agent.run_sync` as DBOS workflows and routes model requests and MCP communication through DBOS steps, identically to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]:
+
+```python {title="dbos_agent.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSAgent
+
+agent = Agent('openai:gpt-5.2', name='geography')
+dbos_agent = DBOSAgent(agent)  # Use `dbos_agent` in place of `agent`.
+```
 
 ## DBOS Integration Considerations
 
@@ -123,27 +138,27 @@ Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
 
-DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). This means you need to make sure [dependencies](../dependencies.md) object provided to [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run] or [`DBOSAgent.run_sync()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run_sync], and tool outputs can be serialized using pickle. You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
+DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). This means you need to make sure the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync] (or `DBOSAgent.run` / `DBOSAgent.run_sync` on the deprecated path), and tool outputs can be serialized using pickle. You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
 
 ### Streaming
 
 Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] are not supported when running inside of a DBOS workflow.
 
-Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `DBOSAgent` instance and using [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run].
+Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) and using [`Agent.run()`][pydantic_ai.agent.Agent.run].
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 
 ### Parallel Tool Execution
 
-When using `DBOSAgent`, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
+Under DBOS, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
-If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`parallel_execution_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
+If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] (or on the deprecated [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]).
 
 
 ## Step Configuration
 
-You can customize DBOS step behavior, such as retries, by passing [`StepConfig`][pydantic_ai.durable_exec.dbos.StepConfig] objects to the `DBOSAgent` constructor:
+You can customize DBOS step behavior, such as retries, by passing [`StepConfig`][pydantic_ai.durable_exec.dbos.StepConfig] objects to the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] (or deprecated [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) constructor:
 
 - `mcp_step_config`: The DBOS step config to use for MCP server communication. No retries if omitted.
 - `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted.
