@@ -37,6 +37,9 @@ def prepare_instructions(
         if isinstance(instruction, str):
             prepared.append(instruction)
         else:
+            # TemplateStr instances land here too: they are callable with a
+            # RunContext parameter, so SystemPromptRunner handles them like
+            # any other system prompt function.
             prepared.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
     return prepared
 

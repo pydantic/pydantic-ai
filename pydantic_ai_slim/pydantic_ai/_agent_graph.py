@@ -52,14 +52,14 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
-    'CallToolsNode',
-    'GraphAgentDeps',
     'GraphAgentState',
-    'HistoryProcessor',
-    'ModelRequestNode',
+    'GraphAgentDeps',
     'UserPromptNode',
+    'ModelRequestNode',
+    'CallToolsNode',
     'build_run_context',
     'capture_run_messages',
+    'HistoryProcessor',
     'resolve_conversation_id',
 )
 
@@ -503,16 +503,18 @@ async def _prepare_request_parameters(
 
     ctx.deps.root_capability.apply(add_loaded_native_tools)
 
+    # resolve dynamic native tools
     native_tools: list[AbstractNativeTool] = []
-    for tool in raw_native_tools:
-        if isinstance(tool, AbstractNativeTool):
-            native_tools.append(tool)
-        else:
-            t = tool(run_context)
-            if inspect.isawaitable(t):
-                t = await t
-            if t is not None:
-                native_tools.append(t)
+    if raw_native_tools:
+        for tool in raw_native_tools:
+            if isinstance(tool, AbstractNativeTool):
+                native_tools.append(tool)
+            else:
+                t = tool(run_context)
+                if inspect.isawaitable(t):
+                    t = await t
+                if t is not None:
+                    native_tools.append(t)
 
     # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
     # the toolset has nothing to manage, so emitting the native tool would waste a tool slot

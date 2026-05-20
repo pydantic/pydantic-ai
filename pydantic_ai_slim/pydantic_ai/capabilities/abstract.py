@@ -254,10 +254,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
             cls.get_builtin_tools = _get_builtin_tools_delegating
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        """Run a visitor function on capabilities registered for a run.
+        """Run a visitor function on all leaf capabilities in this tree.
 
-        For a single capability, calls the visitor on itself. Wrappers also visit
-        themselves because wrapper behavior affects the registered capability.
+        For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
         to recursively visit all child capabilities.
         """

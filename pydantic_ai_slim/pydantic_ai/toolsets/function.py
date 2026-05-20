@@ -55,7 +55,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
-    _defer_loading: bool | None
+    _defer_loading: bool
     include_return_schema: bool | None
 
     def __init__(
@@ -71,7 +71,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         include_return_schema: bool | None = None,
         id: str | None = None,
         instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
@@ -104,8 +104,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             defer_loading: Whether to hide tools from the model until discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
-                Applies to all tools, unless overridden when adding a tool. If `None`, the value is inherited
-                from the capability that provided this toolset.
+                Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
                 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -573,7 +572,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
-            defer_loading=bool(defer_loading if defer_loading is not None else self._defer_loading),
+            defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)

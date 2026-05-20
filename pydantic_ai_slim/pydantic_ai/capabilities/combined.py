@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai import _system_prompt
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -18,6 +17,7 @@ from pydantic_ai.tools import (
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
+    SystemPromptFunc,
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
@@ -112,7 +112,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return replace(self, capabilities=list(new_caps))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
+        instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
             if capability.defer_loading is True:
                 continue
@@ -133,7 +133,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if capability.defer_loading is True:
                 # Request-only settings can be lazy without changing prompt/tool schemas.
                 # Keep them in place so loaded capabilities preserve merge order.
-
                 def deferred_settings(
                     ctx: RunContext[AgentDepsT],
                     *,
@@ -179,11 +178,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 continue
             elif isinstance(toolset, AbstractToolset):
                 # Pyright can't narrow Callable type aliases out of unions after isinstance check
-                cap_toolset = cast(AbstractToolset[AgentDepsT], toolset)
+                toolsets.append(
+                    CapabilityOwnedToolset(
+                        wrapped=toolset,  # pyright: ignore[reportUnknownArgumentType]
+                        capability_id=capability.id,
+                    )
+                )
             else:
-                cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
-
-            toolsets.append(CapabilityOwnedToolset(wrapped=cap_toolset, capability_id=capability.id))
+                toolsets.append(
+                    CapabilityOwnedToolset(
+                        wrapped=DynamicToolset[AgentDepsT](toolset_func=toolset),
+                        capability_id=capability.id,
+                    )
+                )
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:

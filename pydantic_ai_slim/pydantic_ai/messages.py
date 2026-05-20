@@ -1986,7 +1986,12 @@ from ._deferred_capabilities import (  # noqa: E402
     LoadCapabilityReturn as LoadCapabilityReturn,
     LoadCapabilityReturnPart as LoadCapabilityReturnPart,
 )
-from ._tool_search import (  # noqa: E402
+
+# Typed subclasses + narrowers + cross-provider history translation live in their own
+# module to keep this file focused on the base part shapes. Imported here so the
+# discriminator unions below can reference them and so import-time registration of
+# narrowers happens whenever `pydantic_ai.messages` is imported.
+from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
     NativeToolSearchCallPart as NativeToolSearchCallPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     ToolSearchArgs as ToolSearchArgs,

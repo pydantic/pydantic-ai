@@ -103,7 +103,6 @@ if TYPE_CHECKING:
     from ..mcp import MCPServer
     from ..ui._web import ModelsParam
 
-
 __all__ = (
     'AbstractAgent',
     'Agent',
@@ -2548,6 +2547,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
         Toolset instructions are collected separately during run execution.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+            cap_instructions: Instructions from capabilities, resolved at run time.
+
+        Returns:
+            A tuple of (literal_instructions, instruction_functions) where:
+            - literal_instructions: Combined literal string instructions or None
+            - instruction_functions: List of instruction functions that need to be evaluated at runtime
         """
         override_instructions = self._override_instructions.get()
         if override_instructions:

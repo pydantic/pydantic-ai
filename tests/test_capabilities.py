@@ -11686,28 +11686,6 @@ def test_ordering_mixed_positions_in_nested():
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
-def test_ordering_wrapper_capability_recurses():
-    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
-    wrapped = WrapperCapability(wrapped=OutermostCap())
-    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
-    # and picks up OutermostCap's position='outermost' constraint.
-    combined = CombinedCapability([PlainCapA(), wrapped])
-    assert combined.capabilities[0] is wrapped
-
-
-def test_ordering_wrapper_capability_around_conflicting_positions_raises():
-    """A `WrapperCapability` wrapping a `CombinedCapability` whose leaves span both
-    `outermost` and `innermost` tiers can't be assigned a single effective position —
-    `_effective_ordering` raises `UserError`. (Direct nesting of `CombinedCapability`
-    is auto-flattened so this case only fires through a non-`CombinedCapability`
-    container like `WrapperCapability`.)
-    """
-    inner = CombinedCapability([OutermostCap(), InnermostCap()])
-    wrapped = WrapperCapability(wrapped=inner)
-    with pytest.raises(UserError, match='Conflicting positions'):
-        CombinedCapability([wrapped, PlainCapA()])
-
-
 def test_ordering_hooks_ordering_parameter():
     """Hooks with ordering= are sorted according to those constraints."""
     hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
