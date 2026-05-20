@@ -42,6 +42,8 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     """The function that takes the run context and returns a capability or `None`."""
 
     def __post_init__(self) -> None:
+        # Forwarding this to the returned capability would be ambiguous: the factory
+        # may return None, or a capability that deliberately chose its own loading state/id.
         if self.defer_loading is True:
             raise UserError(
                 '`defer_loading` is not supported on `DynamicCapability` — '

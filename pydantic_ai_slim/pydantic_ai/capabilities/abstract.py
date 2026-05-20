@@ -193,13 +193,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
+        # This catches dataclass subclasses and custom `__init__` methods that call
+        # `__post_init__`; run setup still validates these fields for subclasses that don't.
         try:
             defer_loading = self.defer_loading
         except AttributeError as e:
             raise UserError(
-                'Capabilities with custom `__init__` methods must initialize base dataclass fields. '
-                'Use the generated dataclass `__init__`, or set `self.id`, `self.description`, and '
-                '`self.defer_loading` before calling `self.__post_init__()`.'
+                'Capability subclasses must initialize the base dataclass fields. '
+                'Use `@dataclass` with the generated `__init__`, or set `self.id`, '
+                '`self.description`, and `self.defer_loading` before calling '
+                '`self.__post_init__()` from a custom `__init__`.'
             ) from e
 
         if defer_loading is not True:
