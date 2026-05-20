@@ -145,6 +145,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3.1-flash-image-preview',
     'gemini-3.1-flash-lite-preview',
     'gemini-3.1-pro-preview',
+    'gemini-3.5-flash',
 ]
 """Latest Gemini models."""
 

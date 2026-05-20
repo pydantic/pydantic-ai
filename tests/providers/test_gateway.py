@@ -36,9 +36,11 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
+        # PAIG exposes a single canonical `openai` route; Chat vs Responses is selected by the
+        # OpenAI SDK's sub-path (/chat/completions vs /responses), not by the URL prefix.
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
     ],
 )
 def test_init_with_base_url(
@@ -90,7 +92,7 @@ def vcr_config():
     [
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
         ('groq', GroqProvider, 'groq'),
         ('google', GoogleCloudProvider, 'google-vertex'),
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
@@ -113,7 +115,7 @@ def test_gateway_provider_unknown():
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('openai-chat', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 

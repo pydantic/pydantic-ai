@@ -111,6 +111,9 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
+    # Strip the `gateway/` prefix to get the canonical class-lookup name. The
+    # Gateway URL route value (e.g. `google-vertex`) is a separate concern
+    # handled by `_gateway_route` in `providers/gateway.py`.
     if provider.startswith('gateway/'):
         from .gateway import normalize_gateway_provider
 

@@ -4,11 +4,13 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -148,14 +150,15 @@ def gateway_provider(
         base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL')) or _infer_base_url(api_key)
     )
 
+    canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
         # Use the implied providerId as the default route.
-        route = _gateway_route(normalize_gateway_provider(upstream_provider))
+        route = _gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
     # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
-    if upstream_provider in ('bedrock', 'converse'):
+    if canonical == 'bedrock':
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
@@ -179,15 +182,15 @@ def gateway_provider(
             provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
         return provider
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
+    if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif upstream_provider == 'groq':
+    elif canonical == 'groq':
         from .groq import GroqProvider
 
         return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif upstream_provider == 'anthropic':
+    elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
@@ -197,9 +200,10 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google', 'google-cloud'):
-        # `google` is a convenience alias for `google-cloud` — the Gateway server
-        # only exposes the Google Cloud (Vertex) route today.
+    elif canonical == 'google-cloud':
+        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
+        # server only exposes the Google Cloud (Vertex) route today, so both shorthands
+        # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
         return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
@@ -238,39 +242,52 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def _gateway_route(provider: str) -> str:
-    """Translate a canonical provider name into the Gateway URL route segment.
+# Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
+# (the output of `normalize_gateway_provider`); defaults to identity. Only providers
+# whose Gateway wire value differs from the canonical name are listed.
+# PAIG's canonical OpenAI route is `openai` (per the gateway's own 404 list of
+# supported values). The Chat-vs-Responses API flavor is selected by the OpenAI
+# SDK appending `/chat/completions` or `/responses` on top of the base URL, so all
+# OpenAI flavors share the same wire route.
+_GATEWAY_ROUTE_REMAP: dict[str, str] = {
+    'openai-chat': 'openai',
+    'openai-responses': 'openai',
+    # Gateway team still uses the old name; flip this entry when they rename their side.
+    'google-cloud': 'google-vertex',
+}
 
-    `provider` must already have its `gateway/` prefix stripped. Only canonical names whose
-    Gateway-side wire value differs from the user-facing prefix are remapped; everything else
-    passes through unchanged. Drop a branch once the Gateway team renames their side.
-    """
-    if provider == 'openai-chat':
-        # Gateway doesn't use the `-chat` suffix for the Chat Completions route.
-        return 'openai'
-    elif provider == 'google-cloud':
-        # Gateway still uses the old name; flip when they rename.
-        return 'google-vertex'
-    return provider
+
+def _gateway_route(provider: str) -> str:
+    """Translate a canonical provider name into the Gateway URL route segment."""
+    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+
+
+# User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
+# onto `google-cloud` as a convenience — the Gateway server only exposes the Google Cloud
+# (Vertex) route today, so both prefixes land on the same backend.
+_GATEWAY_PROVIDER_ALIASES: dict[str, str] = {
+    'chat': 'openai-chat',
+    'responses': 'openai-responses',
+    'converse': 'bedrock',
+    'google': 'google-cloud',
+}
 
 
 def normalize_gateway_provider(provider: str) -> str:
-    """Strip the `gateway/` prefix and resolve API-flavor aliases to canonical provider names.
+    """Strip the `gateway/` prefix and resolve user-facing aliases to a canonical class-lookup name.
 
-    `gateway/google` is collapsed to `google-cloud` as a convenience: the Gateway server
-    only exposes the Google Cloud (Vertex) route today, so both shorthands land on the
-    same backend.
+    Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
-    if provider == 'chat':
-        return 'openai-chat'
-    elif provider == 'responses':
-        return 'openai-responses'
-    elif provider == 'converse':
-        return 'bedrock'
-    elif provider == 'google':
+    if provider == 'google-vertex':
+        warnings.warn(
+            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
         return 'google-cloud'
-    return provider
+    return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.
