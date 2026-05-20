@@ -5863,6 +5863,60 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
     )
 
 
+@pytest.mark.parametrize(
+    ('api_version', 'expected_function_call', 'expected_function_response'),
+    [
+        (
+            'v1beta1',
+            {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+            {'name': 'generate_topic', 'response': {'return_value': 'penguins'}, 'id': 'test_id'},
+        ),
+        (
+            'v1',
+            {'name': 'generate_topic', 'args': {}},
+            {'name': 'generate_topic', 'response': {'return_value': 'penguins'}},
+        ),
+    ],
+)
+async def test_google_cloud_v1_omits_function_call_ids(
+    api_version: str,
+    expected_function_call: dict[str, object],
+    expected_function_response: dict[str, object],
+):
+    provider = GoogleCloudProvider(api_key='test-key')
+    provider.client._api_client._http_options.api_version = api_version  # pyright: ignore[reportPrivateUsage]
+    m = GoogleModel('gemini-2.0-flash-lite', provider=provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='generate_topic', args={}, tool_call_id='test_id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='generate_topic', content='penguins', tool_call_id='test_id'),
+            ]
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': ''}]},
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'function_call': expected_function_call,
+                    'thought_signature': b'skip_thought_signature_validator',
+                }
+            ],
+        },
+        {'role': 'user', 'parts': [{'function_response': expected_function_response}]},
+    ]
+
+
 async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
     agent = Agent(model=model)
