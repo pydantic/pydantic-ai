@@ -65,10 +65,10 @@ from ..native_tools._tool_search import (
 from ..profiles import ModelProfileSpec
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
-    ANTHROPIC_THINKING_EFFORT_MAP,
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
+    resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
@@ -1923,10 +1923,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
-            if model_request_parameters.thinking == 'xhigh' and profile.anthropic_supports_xhigh_effort:
-                effort = 'xhigh'
-            else:
-                effort = ANTHROPIC_THINKING_EFFORT_MAP[model_request_parameters.thinking]
+            effort = resolve_anthropic_effort(
+                model_request_parameters.thinking, supports_xhigh=profile.anthropic_supports_xhigh_effort
+            )
 
         task_budget = self._get_task_budget(model_settings)
 

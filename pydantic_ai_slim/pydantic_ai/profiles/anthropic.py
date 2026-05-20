@@ -114,9 +114,24 @@ ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
 }
 """Maps unified thinking effort levels to Anthropic `output_config.effort`.
 
-`xhigh` maps to `'max'` by default; the Anthropic provider passes `'xhigh'` through
-when `anthropic_supports_xhigh_effort` is set.
+`xhigh` maps to `'max'` by default; callers that target a model with
+`anthropic_supports_xhigh_effort` should pass `supports_xhigh=True` to
+[`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort]
+to preserve `xhigh` instead of downshifting.
 """
+
+
+def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
+    """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
+
+    Shared between the direct Anthropic path and any provider that translates to the
+    Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
+    Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
+    base mapping, while letting the `xhigh` passthrough decision live in one place.
+    """
+    if level == 'xhigh' and supports_xhigh:
+        return 'xhigh'
+    return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
