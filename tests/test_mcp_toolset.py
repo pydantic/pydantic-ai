@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import dataclasses
 import importlib
 import json
 import sys
@@ -27,9 +26,8 @@ import pytest
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
@@ -736,13 +734,10 @@ class TestLoadMCPToolsets:
 
 
 class TestMCPToolsetBackgroundTasks:
-    """SEP-1686 task-augmented execution. Tools whose server config declares
-    `task=TaskConfig(mode='required'|'optional')` opt into a durable, cancelable, pollable execution path —
-    `client.call_tool(task=True)` → `tool_task.result()`.
-
-    The client-side opt-in is a `background=True` flag on the tool's runtime metadata, set by any capability
-    (e.g. `SetToolMetadata(tools={'task': True}, background=True)`). Without the opt-in, `mode='required'`
-    raises `UserError` and `mode='optional'` falls back to the regular sync path."""
+    """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
+    `execution.taskSupport` and routes the call accordingly:
+    `'required'` and `'optional'` go through `client.call_tool(task=True)` → `tool_task.result()`,
+    while `'forbidden'`/absent stay on the regular sync path."""
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:
@@ -760,74 +755,61 @@ class TestMCPToolsetBackgroundTasks:
             await asyncio.sleep(0)
             return 'task_optional_completed'
 
+        @server.tool()
+        async def plain_tool() -> str:
+            """A tool with no task support — `execution` is `None`."""
+            return 'plain_completed'
+
         return server
 
     async def test_get_tools_exposes_task_metadata(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """`get_tools` exposes `task` (any task support) and `task_required` so capabilities like
-        `SetToolMetadata(tools={'task': True}, background=True)` can target task-augmented tools."""
+        """`get_tools` exposes `task: bool` so downstream capabilities can target task-augmented tools."""
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
 
-        required_meta = tools['task_required_tool'].tool_def.metadata or {}
-        optional_meta = tools['task_optional_tool'].tool_def.metadata or {}
-        assert required_meta['task'] is True
-        assert required_meta['task_required'] is True
-        assert optional_meta['task'] is True
-        assert optional_meta['task_required'] is False
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
 
-    async def test_required_tool_without_opt_in_raises(
+    async def test_required_tool_routes_through_task_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """`mode='required'` without `background=True` in the runtime metadata raises `UserError` before
-        any RPC — the call would otherwise fail with a server-side `Method not found`."""
+        """`mode='required'` succeeds — getting the real result proves `task=True` was sent (the server
+        would otherwise return `-32601: requires task-augmented execution`)."""
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            ctx = _ctx_with_runtime_tools(run_context, toolset, tools)
-            with pytest.raises(UserError, match='requires MCP task-augmented execution'):
-                await toolset.call_tool('task_required_tool', {}, ctx, tools['task_required_tool'])
-
-    async def test_optional_tool_without_opt_in_uses_sync_path(
-        self, task_server: FastMCP[None], run_context: RunContext[None]
-    ) -> None:
-        """`mode='optional'` without an opt-in falls back to the regular sync call — no error, real result."""
-        toolset = MCPToolset(task_server)
-        async with toolset:
-            tools = await toolset.get_tools(run_context)
-            ctx = _ctx_with_runtime_tools(run_context, toolset, tools)
-            result = await toolset.call_tool('task_optional_tool', {}, ctx, tools['task_optional_tool'])
-        assert result == 'task_optional_completed'
-
-    async def test_required_tool_with_opt_in_uses_task_path(
-        self, task_server: FastMCP[None], run_context: RunContext[None]
-    ) -> None:
-        """With `background=True` on the runtime tool, a `mode='required'` tool succeeds via the task path —
-        getting back the real result proves `task=True` was sent (the server would otherwise return
-        `-32601: requires task-augmented execution`)."""
-        toolset = MCPToolset(task_server)
-        async with toolset:
-            tools = await toolset.get_tools(run_context)
-            ctx = _ctx_with_runtime_tools(run_context, toolset, tools, opted_in={'task_required_tool'})
-            result = await toolset.call_tool('task_required_tool', {}, ctx, tools['task_required_tool'])
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
 
-    async def test_optional_tool_with_opt_in_uses_task_path(
+    async def test_optional_tool_routes_through_task_path(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
-        """`mode='optional'` + `background=True` opts into the task path."""
+        """`mode='optional'` also goes through the task path by default — the SEP allows either, and the
+        task path delivers durability/cancellation/progress benefits with no functional downside."""
         toolset = MCPToolset(task_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            ctx = _ctx_with_runtime_tools(run_context, toolset, tools, opted_in={'task_optional_tool'})
-            result = await toolset.call_tool('task_optional_tool', {}, ctx, tools['task_optional_tool'])
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
         assert result == 'task_optional_completed'
 
+    async def test_plain_tool_stays_on_sync_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """A tool with no `execution.taskSupport` stays on the regular sync `tools/call`. Sending
+        `task=True` to such a server would violate the SEP."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('plain_tool', {}, run_context, tools['plain_tool'])
+        assert result == 'plain_completed'
+
     async def test_direct_call_tool_with_use_task(self, task_server: FastMCP[None]) -> None:
-        """`direct_call_tool(..., use_task=True)` takes the task path — `mode='required'` works without
-        the higher-level opt-in plumbing, since users calling `direct_call_tool` already know what they want."""
+        """`direct_call_tool(..., use_task=True)` is the low-level escape hatch for users calling without
+        a `ToolDefinition` — `mode='required'` works directly."""
         toolset = MCPToolset(task_server)
         async with toolset:
             result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
@@ -845,36 +827,8 @@ class TestMCPToolsetBackgroundTasks:
         toolset = MCPToolset(task_server, process_tool_call=passthrough)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            ctx = _ctx_with_runtime_tools(run_context, toolset, tools, opted_in={'task_required_tool'})
-            result = await toolset.call_tool('task_required_tool', {}, ctx, tools['task_required_tool'])
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
-
-
-def _ctx_with_runtime_tools(
-    ctx: RunContext[None],
-    toolset: MCPToolset[None],
-    tools: dict[str, Any],
-    *,
-    opted_in: set[str] | None = None,
-) -> RunContext[None]:
-    """Build a `RunContext` whose `tool_manager.tools` mirrors `tools` but adds `background=True` to the
-    runtime metadata for tools in `opted_in` — emulating what `SetToolMetadata(tools={'task': True},
-    background=True)` would do at runtime."""
-    opted_in = opted_in or set()
-    runtime_tools = {
-        name: dataclasses.replace(
-            tool,
-            tool_def=dataclasses.replace(
-                tool.tool_def,
-                metadata={**(tool.tool_def.metadata or {}), 'background': True},
-            ),
-        )
-        if name in opted_in
-        else tool
-        for name, tool in tools.items()
-    }
-    tool_manager: ToolManager[None] = ToolManager(toolset=toolset, tools=runtime_tools)
-    return dataclasses.replace(ctx, tool_manager=tool_manager)
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:

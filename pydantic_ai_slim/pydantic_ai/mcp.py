@@ -1682,31 +1682,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     client = Client(StreamableHttpTransport('http://localhost:8000/mcp'), auth='oauth')
     toolset = MCPToolset(client)
     ```
-
-    ## Background tasks
-
-    For tools that declare `task=TaskConfig(mode='required'|'optional')` server-side,
-    `MCPToolset` supports MCP task-augmented execution per
-    [SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) — the
-    server wraps the call in a durable, cancelable, pollable task. Each task-supporting tool exposes
-    `task=True` (and `task_required=True` for `mode='required'`) in its `ToolDefinition.metadata` so
-    a capability can opt them in by setting `background=True`:
-
-    ```python {test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import SetToolMetadata
-    from pydantic_ai.mcp import MCPToolset
-
-    agent = Agent(
-        'openai:gpt-5',
-        toolsets=[MCPToolset('http://localhost:8000/mcp')],
-        capabilities=[SetToolMetadata(tools={'task': True}, background=True)],
-    )
-    ```
-
-    Without an opt-in, `mode='required'` tools raise `UserError` (since the server would otherwise
-    return `-32601: requires task-augmented execution`) and `mode='optional'` tools fall back to the
-    regular sync path.
     """
 
     client: FastMCPClient[Any]
@@ -2122,7 +2097,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'task': task_support in ('required', 'optional'),
-                        'task_required': task_support == 'required',
                     },
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
@@ -2198,24 +2172,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        metadata = tool.tool_def.metadata or {}
-        supports_task = bool(metadata.get('task'))
-        task_required = bool(metadata.get('task_required'))
-
-        # Whether to opt in to the MCP task path is read from the *runtime* tool metadata
-        # (post-capability augmentation, e.g. by `SetToolMetadata`), not the static toolset view.
-        runtime_tool = ctx.tool_manager.tools.get(name) if ctx.tool_manager and ctx.tool_manager.tools else None
-        background = bool((runtime_tool.tool_def.metadata or {}).get('background')) if runtime_tool else False
-
-        if task_required and not background:
-            raise exceptions.UserError(
-                f'Tool {name!r} requires MCP task-augmented execution but no capability has opted it in. '
-                f"Add `SetToolMetadata(tools={{'task': True}}, background=True)` to your agent's capabilities, "
-                f"or any equivalent that sets `background=True` on the tool's metadata."
-            )
-
-        use_task = supports_task and background
-
+        # Server-side task-augmented execution per MCP SEP-1686 is governed entirely by the tool's
+        # `execution.taskSupport`: 'required'/'optional' → task path; 'forbidden' or absent → regular path.
+        use_task = bool((tool.tool_def.metadata or {}).get('task'))
         if self.process_tool_call is not None:
             return await self.process_tool_call(
                 ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
