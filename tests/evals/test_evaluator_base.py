@@ -262,7 +262,7 @@ def test_evaluation_name_attribute_emits_deprecation_warning():
         evaluation_name: str | None = 'custom'
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     evaluator = CustomNameViaAttr()
     with pytest.warns(PydanticEvalsDeprecationWarning, match='evaluation_name'):
@@ -275,7 +275,7 @@ def test_evaluation_name_method_override_does_not_warn():
     @dataclass
     class CustomNameViaMethod(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
         def get_default_evaluation_name(self) -> str:
             return 'overridden'
@@ -291,7 +291,7 @@ def test_evaluator_version_default_is_none():
     @dataclass
     class Unversioned(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     assert Unversioned().get_evaluator_version() is None
 
@@ -304,7 +304,7 @@ def test_evaluator_version_attribute_emits_deprecation_warning():
         evaluator_version = 'v2'
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
     with pytest.warns(PydanticEvalsDeprecationWarning, match='evaluator_version'):
         assert VersionedViaAttr().get_evaluator_version() == 'v2'
@@ -316,7 +316,7 @@ def test_evaluator_version_method_override_does_not_warn():
     @dataclass
     class VersionedViaMethod(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+            raise NotImplementedError
 
         def get_evaluator_version(self) -> str | None:
             return 'v3'
