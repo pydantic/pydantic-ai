@@ -8,6 +8,8 @@ Still-deprecated (warn + remap):
 Removed in v2 (must raise `UserError`):
 - `event_stream_handler=` (ctor kwarg removed; run-level kwarg on run()/iter() unaffected)
 - `prepare_tools=` (use `PrepareTools` capability)
+- `instrument=` (use `capabilities=[Instrumentation(...)]`; runtime paths dropped in #5434,
+  this PR drops the leftover entry from the deprecated `__init__` overload)
 
 `output_validators=` is not an `Agent.__init__` kwarg in 1.x (it's only set via decorator),
 so it's intentionally excluded.
@@ -84,6 +86,29 @@ def test_from_file_prepare_tools_kwarg_raises_in_v2(tmp_path: Any):
     spec_file.write_text('{"model": "test"}')
     with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`prepare_tools`'):
         Agent.from_file(spec_file, prepare_tools=_noop)  # pyright: ignore[reportCallIssue]
+
+
+def test_instrument_kwarg_raises_in_v2():
+    """`Agent(instrument=...)` was dropped in #5434 in favor of `capabilities=[Instrumentation(...)]`;
+    the runtime consumer is gone, so the kwarg now hits `validate_empty_kwargs`."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`instrument`'):
+        Agent(TestModel(), instrument=True)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_spec_instrument_kwarg_raises_in_v2():
+    """`Agent.from_spec(instrument=...)` was dropped in #5434; the kwarg now hits `from_spec`'s
+    own `validate_empty_kwargs` path."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`instrument`'):
+        Agent.from_spec({'model': 'test'}, instrument=True)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_file_instrument_kwarg_raises_in_v2(tmp_path: Any):
+    """`Agent.from_file(instrument=...)` was dropped in #5434; `from_file` validates its own
+    `**_deprecated_kwargs` before forwarding to `from_spec`."""
+    spec_file = tmp_path / 'agent.json'
+    spec_file.write_text('{"model": "test"}')
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`instrument`'):
+        Agent.from_file(spec_file, instrument=True)  # pyright: ignore[reportCallIssue]
 
 
 # --- prepare_output_tools= ---------------------------------------------------------------

@@ -316,7 +316,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # signature variations.
         history_processors: Sequence[Any] = (),
         prepare_output_tools: Callable[..., Any] | None = None,
-        instrument: InstrumentationSettings | bool | None = None,
     ) -> None: ...
 
     def __init__(
