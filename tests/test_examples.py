@@ -48,7 +48,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .conftest import ClientWithHandler, TestEnv, try_import
+from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -152,7 +152,6 @@ def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
-    client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,

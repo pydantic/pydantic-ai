@@ -102,10 +102,11 @@ def infer_embedding_model(
 
     if model_kind in (
         'openai',
-        'openai-chat',
-        'openai-responses',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
+        # `openai-chat` / `openai-responses` aren't listed: there's no chat-vs-responses split
+        # for the embeddings API, and `normalize_gateway_provider` returns `gateway/openai`
+        # as `openai`, so the canonical name suffices.
         *get_args(OpenAIChatCompatibleProvider.__value__),
         *get_args(OpenAIResponsesCompatibleProvider.__value__),
     ):
@@ -120,7 +121,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)

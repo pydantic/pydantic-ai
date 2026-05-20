@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -2123,6 +2124,10 @@ def tool_with_datetime(x: datetime) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_decimal(x: Decimal) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -2227,6 +2232,52 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_decimal,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                    'type': 'string',
+                                },
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_decimal,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'type': 'string',
+                                    'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                },
+                            ]
+                        }
+                    },
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3664,6 +3715,18 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
             ),
         ]
     )
+
+
+async def test_openai_responses_native_output_decimal_strict(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):

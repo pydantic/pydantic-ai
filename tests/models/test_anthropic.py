@@ -1413,6 +1413,18 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
+async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
+
+
 def _single_request_body(vcr: Cassette) -> dict[str, Any]:
     """Return the decoded JSON body of the single recorded VCR request."""
     requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]

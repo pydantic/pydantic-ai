@@ -66,12 +66,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/gemini:gemini-1.5-flash',
+        'gateway/google:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google-cloud',
         'google',
         GoogleModel,
-        id='gateway/gemini:gemini-1.5-flash',
+        id='gateway/google:gemini-1.5-flash',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
@@ -121,7 +121,7 @@ TEST_CASES = [
     ),
     pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
-        'google-gla:gemini-1.5-flash',
+        'google:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google',
         'google',
@@ -269,6 +269,7 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('openai:gpt-5', False, id='openai'),
         pytest.param('anthropic:claude-sonnet-4-5', False, id='anthropic'),
         pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', False, id='gateway-google-cloud'),
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
@@ -296,21 +297,12 @@ def test_infer_model_profile(model_id: str, is_default: bool):
             id='anthropic',
         ),
         pytest.param(
-            'google-gla:gemini-2.0-flash',
-            'pydantic_ai.providers.google.GoogleProvider',
-            'gemini-2.0-flash',
-            id='google-gla',
-        ),
-        pytest.param(
             'google:gemini-2.0-flash',
             'pydantic_ai.providers.google.GoogleProvider',
             'gemini-2.0-flash',
-            id='google-shorthand',
+            id='google',
         ),
     ],
-)
-@pytest.mark.filterwarnings(
-    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""

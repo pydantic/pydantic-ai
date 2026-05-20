@@ -6,7 +6,6 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 import functools
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
@@ -16,7 +15,6 @@ import anyio
 import httpx
 from typing_extensions import Self, TypeVar
 
-from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
@@ -114,31 +112,12 @@ class Provider(ABC, Generic[InterfaceClient]):
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
     # Strip the `gateway/` prefix to get the canonical class-lookup name. The
-    # Gateway URL route value (e.g. `gemini`, `google-vertex`) is a
-    # separate concern handled by `_gateway_route` in `providers/gateway.py`.
+    # Gateway URL route value (e.g. `google-vertex`) is a separate concern
+    # handled by `_gateway_route` in `providers/gateway.py`.
     if provider.startswith('gateway/'):
         from .gateway import normalize_gateway_provider
 
         provider = normalize_gateway_provider(provider)
-
-    # Normalize deprecated/alias provider names
-    if provider == 'vertexai':
-        provider = 'google-vertex'
-
-    if provider == 'google-gla':
-        warnings.warn(
-            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        provider = 'google'
-    elif provider == 'google-vertex':
-        warnings.warn(
-            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        provider = 'google-cloud'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
@@ -261,32 +240,8 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`,
-        # which `gateway_provider` calls below.
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-
-    if provider == 'vertexai':
-        provider = 'google-vertex'
-
-    if provider == 'google-gla':
-        warnings.warn(
-            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        from .google import GoogleProvider
-
-        return GoogleProvider()
-    elif provider == 'google-vertex':
-        warnings.warn(
-            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        from .google_cloud import GoogleCloudProvider
-
-        return GoogleCloudProvider()
 
     provider_class = infer_provider_class(provider)
     return provider_class()

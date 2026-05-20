@@ -263,7 +263,23 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
     'uuid',
 ]
 
+_REGEX_LOOKAROUND_TOKENS = ('(?=', '(?!', '(?<=', '(?<!')
+
 _sentinel = object()
+
+
+def _regex_contains_lookaround(pattern: str) -> bool:
+    escaped = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if pattern.startswith(_REGEX_LOOKAROUND_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -327,6 +343,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if format := schema.get('format'):
             if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
                 incompatible_values['format'] = format
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
+            incompatible_values['pattern'] = pattern
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
