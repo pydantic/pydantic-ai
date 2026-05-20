@@ -1242,7 +1242,7 @@ class StreamedResponse(ABC):
             'This model class must override `close_stream()` to support streaming cancellation.'
         )
 
-    # TODO: (v2) We should not have public private methods which need to be overwritten.
+    # TODO: We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
