@@ -42,7 +42,7 @@ class AgentSpec(BaseModel):
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
     retries: int | AgentRetries | None = None
-    end_strategy: EndStrategy = 'early'
+    end_strategy: EndStrategy = 'graceful'
     tool_timeout: float | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
@@ -196,7 +196,7 @@ class AgentSpec(BaseModel):
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
             retries: int | AgentRetries | None = None
-            end_strategy: EndStrategy = 'early'
+            end_strategy: EndStrategy = 'graceful'
             tool_timeout: float | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch

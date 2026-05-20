@@ -10,6 +10,14 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 - Drop `pydantic_ai.providers.grok.GrokProvider` (use `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel('grok-N', ...)` instead). The `'grok:'` model-string prefix is also removed; use `'xai:'` instead. `pydantic_ai.providers.grok.GrokModelName` is removed; use `pydantic_ai.models.xai.XaiModelName`.
 
+#### Tool-call execution: `end_strategy` default and `sequential=True` semantics
+
+The default [`end_strategy`][pydantic_ai.agent.EndStrategy] changed from `'early'` to `'graceful'`. When a model calls function tools alongside an output tool, the function tools now run by default (instead of being skipped the moment an output tool succeeds), and a function tool's [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] now suppresses the output result so the model can correct itself on the next round. Most agents don't need any change. If you relied on the run ending the instant an output tool succeeds — skipping any function tools requested in the same response — set `end_strategy='early'` explicitly.
+
+`sequential=True` on a tool is now a per-tool **barrier** rather than a batch-wide serial switch: a sequential tool runs alone, but other tools in the same response still run in parallel around it. To run *all* of a run's tools serially, wrap the run in [`agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
+
+See [Parallel Output Tool Calls](output.md#parallel-output-tool-calls) for the full behavior of all three strategies.
+
 #### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
 See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
