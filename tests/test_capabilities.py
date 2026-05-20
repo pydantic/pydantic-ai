@@ -11686,6 +11686,23 @@ def test_ordering_mixed_positions_in_nested():
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
+def test_ordering_conflicting_positions_in_custom_nested_capability():
+    """A custom capability tree cannot collapse outermost and innermost leaves into one ordered group."""
+
+    @dataclass
+    class NestedCapabilityGroup(AbstractCapability[Any]):
+        leaves: tuple[AbstractCapability[Any], ...]
+
+        def apply(self, visitor: Callable[[AbstractCapability[Any]], None]) -> None:
+            for leaf in self.leaves:
+                leaf.apply(visitor)
+
+    nested = NestedCapabilityGroup((OutermostCap(), InnermostCap()))
+
+    with pytest.raises(UserError, match='Conflicting positions among nested leaves'):
+        CombinedCapability([nested, PlainCapA()])
+
+
 def test_ordering_hooks_ordering_parameter():
     """Hooks with ordering= are sorted according to those constraints."""
     hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
