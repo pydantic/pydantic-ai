@@ -7575,18 +7575,6 @@ def test_many_multimodal_tool_response():
         agent.run_sync('Please analyze the data')
 
 
-def test_deprecated_kwargs_validation_agent_init():
-    """Test that invalid kwargs raise UserError in Agent constructor."""
-    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')  # pyright: ignore[reportCallIssue]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')  # pyright: ignore[reportCallIssue]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')  # pyright: ignore[reportCallIssue]
-
-
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 

@@ -38,8 +38,6 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
-from . import exceptions
-
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
 else:
@@ -730,128 +728,6 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
-
-
-def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
-    """Validate that no unknown kwargs remain after processing.
-
-    Args:
-        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
-
-    Raises:
-        UserError: If any unknown kwargs remain.
-    """
-    if _kwargs:
-        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
-        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
-
-
-def install_deprecated_kwarg_alias(
-    cls: type[Any],
-    *,
-    old: str,
-    new: str,
-    owner_name: str | None = None,
-) -> None:
-    """Install a wrapper around `cls.__init__` that accepts a deprecated kwarg as an alias for a renamed one.
-
-    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
-    from leaking into Pydantic's JSON-schema introspection of the wrapped class.
-
-    For `@dataclass` hierarchies, each subclass gets its own generated `__init__` that
-    bypasses the parent's wrap, so apply this helper to each subclass that needs the alias.
-
-    Args:
-        cls: The class whose `__init__` should be wrapped.
-        old: The deprecated kwarg name.
-        new: The renamed kwarg name that the legacy value should be forwarded to.
-        owner_name: Optional class name to use in the warning message. Defaults to the
-            class name of the instance being constructed (`type(self).__name__`).
-    """
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-
-    orig_init = cls.__init__
-
-    @functools.wraps(orig_init)
-    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
-        if old in kwargs:
-            name = owner_name or type(self).__name__
-            warnings.warn(
-                f'`{name}({old}=...)` is deprecated, use `{new}=` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            # When both `old` and `new` are present, the user explicitly typed the legacy spelling, so
-            # let it win. The common path that puts both keys here is `dataclasses.replace(obj, <old>=...)`,
-            # which silently re-passes every existing field value as `<new>=...`. The deprecation
-            # warning still tells the caller they're on the legacy kwarg.
-            kwargs[new] = kwargs.pop(old)
-        orig_init(self, *args, **kwargs)
-
-    cls.__init__ = wrapper
-
-
-def consume_deprecated_history_processors_as_capabilities(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    stacklevel: int = 3,
-) -> list[Any]:
-    """Pop a deprecated `history_processors=` kwarg, warn, and return `ProcessHistory` capability wrappers.
-
-    Returns a list of [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capabilities to
-    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
-
-    `ProcessHistory` is itself a thin wrapper over the `before_model_request` lifecycle hook;
-    new code should prefer either `capabilities=[ProcessHistory(fn)]` or, for richer control,
-    `capabilities=[Hooks(before_model_request=fn)]` directly.
-    """
-    if 'history_processors' not in deprecated_kwargs:
-        return []
-    legacy = deprecated_kwargs.pop('history_processors')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-    from .capabilities import ProcessHistory
-
-    warnings.warn(
-        f'`{owner}(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
-        f'Replace with `{owner}(capabilities=[ProcessHistory(fn), ...])`, or hook the '
-        '`before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    return [ProcessHistory(p) for p in legacy]
-
-
-def consume_deprecated_prepare_output_tools_as_capabilities(
-    deprecated_kwargs: dict[str, Any],
-    owner: str,
-    *,
-    stacklevel: int = 3,
-) -> list[Any]:
-    """Pop a deprecated `prepare_output_tools=` kwarg, warn, and return a `PrepareOutputTools` capability wrapper.
-
-    Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
-    if no legacy kwarg was passed.
-    """
-    if 'prepare_output_tools' not in deprecated_kwargs:
-        return []
-    legacy = deprecated_kwargs.pop('prepare_output_tools')
-    import warnings
-
-    from ._warnings import PydanticAIDeprecationWarning
-    from .capabilities.prepare_tools import PrepareOutputTools
-
-    warnings.warn(
-        f'`{owner}(prepare_output_tools=...)` is deprecated and will be removed in v2.0. '
-        'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead.',
-        PydanticAIDeprecationWarning,
-        stacklevel=stacklevel,
-    )
-    return [PrepareOutputTools(legacy)]
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)

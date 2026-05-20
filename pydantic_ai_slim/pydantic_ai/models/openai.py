@@ -579,9 +579,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
     """
 
-    openai_reasoning_generate_summary: Literal['detailed', 'concise']
-    """Deprecated alias for `openai_reasoning_summary`."""
-
     openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
@@ -2286,17 +2283,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
-        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
-
-        if reasoning_summary and reasoning_generate_summary:  # pragma: no cover
-            raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
-
-        if reasoning_generate_summary is not None:  # pragma: no cover
-            warnings.warn(
-                '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
-                DeprecationWarning,
-            )
-            reasoning_summary = reasoning_generate_summary
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
