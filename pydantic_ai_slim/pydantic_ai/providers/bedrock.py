@@ -60,21 +60,17 @@ class BedrockModelProfile(ModelProfile):
     """
 
     bedrock_supports_adaptive_thinking: bool = False
-    """Whether Bedrock Converse accepts `{'type': 'adaptive'}` for this model's thinking field.
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
 
-    Mirrors `AnthropicModelProfile.anthropic_supports_adaptive_thinking` but tracks Bedrock's separate
-    API surface (`additionalModelRequestFields.thinking` on Converse). When True, unified `thinking`
-    translates to `{'type': 'adaptive'}` and `thinking=False` omits the field entirely, matching
-    direct-API adaptive semantics.
+    Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
+    `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
     """
 
     bedrock_supports_effort: bool = False
-    """Whether Bedrock Converse accepts `output_config.effort` for this model.
+    """Whether this model accepts `output_config.effort` (Opus 4.5+, Sonnet 4.6+).
 
-    Mirrors `AnthropicModelProfile.anthropic_supports_effort`. On Bedrock Converse, effort lives at
-    `additionalModelRequestFields.output_config.effort` — a sibling of `thinking`, not inside it
-    (AWS returns `ValidationException` if `effort` is placed inside `thinking`). When True and the
-    unified thinking level is a string, it is also mapped to `output_config.effort`.
+    Only meaningful for the `'anthropic'` variant. On Bedrock Converse, effort lives at
+    `additionalModelRequestFields.output_config.effort` (a sibling of `thinking`, not inside it).
     """
 
 

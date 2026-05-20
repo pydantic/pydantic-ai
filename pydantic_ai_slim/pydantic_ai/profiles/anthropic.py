@@ -102,13 +102,7 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
 
 
 AnthropicEffort: TypeAlias = Literal['low', 'medium', 'high', 'xhigh', 'max']
-"""Effort values Anthropic accepts at `output_config.effort`.
-
-Distinct from [`ThinkingEffort`][pydantic_ai.settings.ThinkingEffort] (the unified pydantic-ai
-input vocabulary, which has `'minimal'` but no `'max'`): this is Anthropic's wire-level
-vocabulary. Use [`ANTHROPIC_THINKING_EFFORT_MAP`][pydantic_ai.profiles.anthropic.ANTHROPIC_THINKING_EFFORT_MAP]
-to translate between the two.
-"""
+"""Effort values Anthropic accepts at `output_config.effort`."""
 
 
 ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
@@ -118,12 +112,10 @@ ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
     'high': 'high',
     'xhigh': 'max',
 }
-"""Maps unified thinking effort levels to Anthropic's `output_config.effort` values.
+"""Maps unified thinking effort levels to Anthropic `output_config.effort`.
 
-`xhigh` defaults to `'max'` because most Anthropic models accept `'max'` but not `'xhigh'`
-(Bedrock Converse also accepts `'max'` but not `'xhigh'`). Models that natively support
-`'xhigh'` (per [`AnthropicModelProfile.anthropic_supports_xhigh_effort`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_xhigh_effort])
-should pass it through at the call site rather than mapping to `'max'`.
+`xhigh` maps to `'max'` by default; the Anthropic provider passes `'xhigh'` through
+when `anthropic_supports_xhigh_effort` is set.
 """
 
 
