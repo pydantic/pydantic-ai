@@ -73,7 +73,6 @@ from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
     keywords_search_fn,
-    parse_discovered_tools,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -2115,7 +2114,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
 
     # Switch to OpenAI for the follow-up. The Anthropic builtin parts should be silently
     # skipped (`provider_name` mismatch). `get_weather` was discovered in the prior turn,
-    # so `parse_discovered_tools` picks it up and exposes the regular
+    # so `ToolSearchToolset._parse_discovered_tools` picks it up and exposes the regular
     # variant on the new provider — the model can call it directly.
     followup = response_message(
         [
@@ -3312,7 +3311,9 @@ async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name(
         ),
     ]
 
-    discovered = parse_discovered_tools(history)
+    discovered = ToolSearchToolset._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        _build_run_context(None, messages=history)
+    )
     assert 'calculate_mortgage' in discovered
     assert 'should_not_surface' not in discovered
 
@@ -3380,7 +3381,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
 
     Reported by Devin's review of commit 53eb27b06 for the return side: previously the
     framework constructed a base `ToolReturnPart` (no `tool_kind`), and neither
-    `parse_discovered_tools`' isinstance check nor the legacy-metadata reader caught
+    `ToolSearchToolset._parse_discovered_tools`' isinstance check nor the legacy-metadata reader caught
     it, so previously-discovered tools reverted to hidden on every subsequent turn.
     """
     toolset: FunctionToolset[None] = FunctionToolset()
@@ -3455,7 +3456,9 @@ async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
             ],
         ),
     ]
-    discovered = parse_discovered_tools(history)
+    discovered = ToolSearchToolset._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        _build_run_context(None, messages=history)
+    )
     assert discovered == {'calculate_mortgage'}
 
 
@@ -3463,7 +3466,7 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     """Cross-provider replay end-to-end: a `NativeToolSearch*Part` carried over from
     a prior native turn is translated into the local-shape typed parts so a non-native
     adapter can replay it as a normal `search_tools` function-call exchange. The
-    toolset's `parse_discovered_tools` then surfaces the discoveries via the
+    toolset's `_parse_discovered_tools` then surfaces the discoveries via the
     discriminated-union dispatch."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
@@ -3512,7 +3515,9 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
 
     # And the toolset's parser surfaces the discovery off the translated history.
-    discovered = parse_discovered_tools(translated)
+    discovered = ToolSearchToolset._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        _build_run_context(None, messages=translated)
+    )
     assert discovered == {'calculate_mortgage'}
 
 

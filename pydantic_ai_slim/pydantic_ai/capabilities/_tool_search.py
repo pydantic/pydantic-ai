@@ -32,7 +32,7 @@ from ..tools import (
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
-from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn, parse_discovered_tools
+from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
 
 if TYPE_CHECKING:
@@ -214,7 +214,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             ctx, request_context.model_request_parameters.function_tools
         )
 
-        in_history = parse_discovered_tools(ctx.messages)
+        in_history = ToolSearchToolset._parse_discovered_tools(ctx)  # pyright: ignore[reportPrivateUsage]
         newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
         if not newly_loaded:
             return request_context
