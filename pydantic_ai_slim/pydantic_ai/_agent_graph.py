@@ -1594,6 +1594,42 @@ class _ExhaustiveState(Generic[NodeRunEndT]):
     retry_wins_triggered: bool = False
 
 
+async def _validate_function_calls(
+    tool_manager: ToolManager[DepsT],
+    calls: list[_messages.ToolCallPart],
+    calls_to_run_results: dict[str, DeferredToolResult],
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    validated_calls: dict[str, ValidatedToolCall[DepsT]],
+) -> AsyncIterator[_messages.HandleResponseEvent]:
+    """Validate a batch of function/unknown calls, emitting their `FunctionToolCallEvent`s.
+
+    Populates `validated_calls`. On resume, a supplied result that isn't a `ToolApproved`
+    (e.g. `ToolDenied`, `ModelRetry`) short-circuits inside `_call_tool`, so no validation is
+    needed — the event is emitted without args-validity.
+    """
+    for call in calls:
+        deferred_result = calls_to_run_results.get(call.tool_call_id)
+        if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
+            yield _messages.FunctionToolCallEvent(call)
+            continue
+        try:
+            if isinstance(deferred_result, ToolApproved):
+                validate_call = call
+                if deferred_result.override_args is not None:
+                    validate_call = dataclasses.replace(call, args=deferred_result.override_args)
+                metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
+                validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
+            else:
+                validated = await tool_manager.validate_tool_call(call)
+        except exceptions.UnexpectedModelBehavior:
+            ctx.state.check_incomplete_tool_call()
+            yield _messages.FunctionToolCallEvent(call, args_valid=False)
+            raise
+        validated_calls[call.tool_call_id] = validated
+        yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+
+
 async def _process_exhaustive(  # noqa: C901
     *,
     tool_manager: ToolManager[DepsT],
@@ -1625,27 +1661,15 @@ async def _process_exhaustive(  # noqa: C901
 
     # Upfront-validate function calls in emission order, emitting their call events.
     validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
-    for i in function_indices:
-        call = tool_calls[i]
-        deferred_result = calls_to_run_results.get(call.tool_call_id)
-        if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
-            yield _messages.FunctionToolCallEvent(call)
-            continue
-        try:
-            if isinstance(deferred_result, ToolApproved):
-                validate_call = call
-                if deferred_result.override_args is not None:
-                    validate_call = dataclasses.replace(call, args=deferred_result.override_args)
-                metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
-                validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
-            else:
-                validated = await tool_manager.validate_tool_call(call)
-        except exceptions.UnexpectedModelBehavior:
-            ctx.state.check_incomplete_tool_call()
-            yield _messages.FunctionToolCallEvent(call, args_valid=False)
-            raise
-        validated_calls[call.tool_call_id] = validated
-        yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+    async for event in _validate_function_calls(
+        tool_manager,
+        [tool_calls[i] for i in function_indices],
+        calls_to_run_results,
+        tool_call_metadata,
+        ctx,
+        validated_calls,
+    ):
+        yield event
 
     executable_indices = sorted([*output_indices, *function_indices])
 
@@ -1782,7 +1806,8 @@ async def _process_exhaustive(  # noqa: C901
             for i in executable_indices:
                 if i in function_parts:
                     output_parts.append(function_parts[i])
-            for i in executable_indices:
+            # `executable_indices` is non-empty whenever this runs, so the empty-loop branch can't happen.
+            for i in executable_indices:  # pragma: no branch
                 if i in function_user_parts:
                     output_parts.append(function_user_parts[i])
 
@@ -1904,26 +1929,10 @@ async def process_tool_calls(  # noqa: C901
         if not calls:
             return
         validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
-        for call in calls:
-            deferred_result = calls_to_run_results.get(call.tool_call_id)
-            if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
-                yield _messages.FunctionToolCallEvent(call)
-                continue
-            try:
-                if isinstance(deferred_result, ToolApproved):
-                    validate_call = call
-                    if deferred_result.override_args is not None:
-                        validate_call = dataclasses.replace(call, args=deferred_result.override_args)
-                    metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
-                    validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
-                else:
-                    validated = await tool_manager.validate_tool_call(call)
-            except exceptions.UnexpectedModelBehavior:
-                ctx.state.check_incomplete_tool_call()
-                yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                raise
-            validated_calls[call.tool_call_id] = validated
-            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+        async for event in _validate_function_calls(
+            tool_manager, calls, calls_to_run_results, tool_call_metadata, ctx, validated_calls
+        ):
+            yield event
 
         before = len(output_parts)
         async for event in _call_tools(
@@ -1953,18 +1962,15 @@ async def process_tool_calls(  # noqa: C901
             if is_winner:
                 part = _make_output_status_part(r.call, 'Final result processed.', output_parts)
                 yield from _emit_output_tool_events(r.call, part, args_valid=True)
-            elif end_strategy == 'exhaustive':
+            else:
+                # A successful-but-not-winning output only happens under `'exhaustive'`; `'early'`
+                # and `'graceful'` stop running output tools at the first success.
                 part = _make_output_status_part(
                     r.call,
                     'Output tool processed, but its value will not be the final result of the agent run.',
                     output_parts,
                 )
                 yield from _emit_output_tool_events(r.call, part, args_valid=True)
-            else:
-                part = _make_output_status_part(
-                    r.call, 'Output tool not used - a final result was already processed.', output_parts
-                )
-                yield from _emit_output_tool_events(r.call, part, args_valid=None)
         elif r.retry_part is not None:
             output_parts.append(r.retry_part)
             yield from _emit_output_tool_events(r.call, r.retry_part, args_valid=r.args_valid)
@@ -2034,7 +2040,8 @@ async def process_tool_calls(  # noqa: C901
 
         if end_strategy == 'early':
             for call in tool_calls_by_kind['output']:
-                async for event in run_output(call):
+                # `run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
+                async for event in run_output(call):  # pragma: no branch
                     yield event
             ctx.state.output_retries_used += output_retries_increment[0]
 
@@ -2051,7 +2058,7 @@ async def process_tool_calls(  # noqa: C901
                     )
             else:
                 # Every output failed; run function tools so the model can correct next round.
-                async for event in run_function_calls(function_calls):
+                async for event in run_function_calls(function_calls):  # pragma: no branch
                     yield event
         else:
             # `'graceful'`: walk in emission order, flushing pending function-tool batches before
@@ -2070,7 +2077,8 @@ async def process_tool_calls(  # noqa: C901
                 if call_kinds[i] == 'output':
                     async for event in flush_pending():
                         yield event
-                    async for event in run_output(call):
+                    # `run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
+                    async for event in run_output(call):  # pragma: no branch
                         yield event
                 elif is_executable_function(i):
                     pending_functions.append(call)
@@ -2081,7 +2089,9 @@ async def process_tool_calls(  # noqa: C901
     # Retry-wins (graceful + exhaustive): a function-tool retry suppresses the output result so
     # the model addresses the retry next round. The suppressed output's return part is rewritten.
     if retry_wins_triggered and final_result is not None and not final_result_was_set_externally:
-        for idx, part in enumerate(output_parts):
+        # The winning output always has a 'Final result processed.' part here, so the loop
+        # always breaks; the no-match fall-through can't happen.
+        for idx, part in enumerate(output_parts):  # pragma: no branch
             if (
                 isinstance(part, _messages.ToolReturnPart)
                 and part.tool_call_id == final_result.tool_call_id

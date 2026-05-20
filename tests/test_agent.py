@@ -6087,8 +6087,8 @@ class TestMultipleToolCalls:
         agent = Agent(FunctionModel(return_model), end_strategy='exhaustive')
 
         @agent.tool_plain(sequential=True)
-        def good_tool(x: int) -> int:
-            return x * 10
+        def good_tool(x: int) -> ToolReturn:
+            return ToolReturn(return_value=x * 10, content='extra context')
 
         @agent.tool_plain(sequential=True)
         def bad_tool(x: int) -> int:
@@ -6101,6 +6101,7 @@ class TestMultipleToolCalls:
         interrupted = messages[-1]
         assert isinstance(interrupted, ModelRequest)
         assert interrupted.state == 'interrupted'
+        # The completed tool's return part and its user-content part both surface.
         assert interrupted.parts == snapshot(
             [
                 ToolReturnPart(
@@ -6109,8 +6110,214 @@ class TestMultipleToolCalls:
                     tool_call_id='call_good',
                     timestamp=IsDatetime(),
                 ),
+                UserPromptPart(content='extra context', timestamp=IsDatetime()),
             ]
         )
+
+    def test_exhaustive_function_tool_user_content(self):
+        """Under `exhaustive`, a function tool's `ToolReturn` content surfaces as a `UserPromptPart`."""
+
+        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('ctx_tool', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def ctx_tool() -> ToolReturn:
+            return ToolReturn(return_value='ok', content='extra context for the model')
+
+        result = agent.run_sync('test')
+        assert result.output == 'done'
+        assert any(
+            isinstance(part, UserPromptPart) and part.content == 'extra context for the model'
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
+    def test_exhaustive_approval_required_then_resume(self):
+        """Under `exhaustive`, a tool raising `ApprovalRequired` defers; resuming with an approval
+        runs it through the normal pipeline."""
+        from pydantic_ai.exceptions import ApprovalRequired
+
+        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('needs_approval', {}, tool_call_id='appr')])
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive', output_type=[str, DeferredToolRequests])
+
+        approved = False
+
+        @agent.tool_plain
+        def needs_approval() -> str:
+            if not approved:
+                raise ApprovalRequired()
+            return 'approved-result'
+
+        result = agent.run_sync('test')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert result.output.approvals == snapshot(
+            [ToolCallPart(tool_name='needs_approval', args={}, tool_call_id='appr')]
+        )
+
+        approved = True
+        results = DeferredToolResults()
+        results.approvals['appr'] = True
+        result2 = agent.run_sync(message_history=result.all_messages(), deferred_tool_results=results)
+        assert result2.output == 'done'
+
+    def test_early_no_function_tools_all_outputs_fail(self):
+        """Under `early` with no function tools, a failing output simply retries on the next round."""
+        rounds = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            value = 'bad' if rounds == 1 else 'ok'
+            return ModelResponse(parts=[ToolCallPart('only_output', {'value': value})])
+
+        def only_output(output: OutputType) -> OutputType:
+            if output.value == 'bad':
+                raise ModelRetry('try again')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=ToolOutput(only_output, name='only_output'),
+            end_strategy='early',
+        )
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'ok'
+        assert rounds == 2
+
+    def test_early_multiple_outputs_and_function_tools(self):
+        """Early with several output tools (first wins, rest skipped) and function tools (stubbed)."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'a'}),
+                    ToolCallPart('second_output', {'value': 'b'}),
+                    ToolCallPart('regular_tool', {'x': 1}),
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'a'
+
+    def test_graceful_interleaved_outputs_and_function_tools(self):
+        """Graceful walk with outputs and function tools interleaved across emission order."""
+        called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}),
+                    ToolCallPart('first_output', {'value': 'a'}),
+                    ToolCallPart('tool_b', {}),
+                    ToolCallPart('second_output', {'value': 'b'}),
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'a'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    def test_exhaustive_call_deferred(self):
+        """Under `exhaustive`, a tool raising `CallDeferred` is collected as an external deferred call."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')])
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive', output_type=[str, DeferredToolRequests])
+
+        @agent.tool_plain
+        def slow_tool() -> str:
+            raise CallDeferred
+
+        result = agent.run_sync('test')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert result.output.calls == snapshot([ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='slow')])
+
+    async def test_exhaustive_outer_cancellation_cancels_pending_tools(self):
+        """Outer cancellation during `exhaustive` parallel execution cancels still-pending tool tasks."""
+        first_done = asyncio.Event()
+        pending_started = asyncio.Event()
+        pending_cancelled = asyncio.Event()
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='fast_tool'),
+                    ToolCallPart(tool_name='slow_tool'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive')
+
+        @agent.tool_plain
+        async def fast_tool() -> str:
+            first_done.set()
+            return 'done'
+
+        @agent.tool_plain
+        async def slow_tool() -> str:
+            pending_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pending_cancelled.set()
+                raise
+            return 'done'  # pragma: no cover
+
+        task = asyncio.create_task(agent.run('test'))
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert pending_cancelled.is_set()
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
