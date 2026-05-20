@@ -1,5 +1,5 @@
 ---
-description: Review the current branch against main, simulating the automated CI review from the bots workflow.
+description: Review the current branch against main, simulating the automated CI review from the bots workflow
 allowed-tools:
   - Read
   - Glob
