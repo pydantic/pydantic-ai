@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import datetime
+import gc
 import json
 import re
-import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -19,7 +19,6 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
-    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -67,12 +66,7 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.filterwarnings(
-        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
-    ),
-]
+pytestmark = pytest.mark.anyio
 
 
 class Foo(BaseModel):
@@ -3944,7 +3938,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as event_stream:
+        events = [event async for event in event_stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -4114,8 +4109,9 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4186,8 +4182,9 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4240,8 +4237,9 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -4273,8 +4271,9 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
-            events.append(event)
+        async with agent.run_stream_events('call add_numbers', deps=42) as event_stream:
+            async for event in event_stream:  # pragma: no branch
+                events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -4331,8 +4330,9 @@ async def test_event_ordering_call_before_result():
         return x * 2
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -4379,12 +4379,13 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4418,12 +4419,13 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4452,8 +4454,9 @@ async def test_deferred_tool_validation_event_in_stream():
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
@@ -4620,67 +4623,74 @@ async def test_stream_response_state_incomplete_after_early_break():
                 return
 
 
-async def test_run_stream_events_aclose():
-    agent = Agent(TestModel())
-
-    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-    async with agent.run_stream_events('Hello') as stream:
-        async for event in stream:  # pragma: no branch
-            events.append(event)
-            if isinstance(event, PartStartEvent):  # pragma: no branch
-                await stream.aclose()
-                break
-
-        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
-        assert [e async for e in stream] == []
-
-        # Double close is a no-op.
-        await stream.aclose()
-
-    assert len(events) >= 1
-
-
 async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
-    async with agent.run_stream_events('Hello') as stream:
-        await anext(stream)
+    async with agent.run_stream_events('Hello') as events:
+        await anext(events)
 
-    # __aexit__ closed the generator (because _closed was False);
-    # no task leak, no error.
+    # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
-async def test_agent_event_stream_standalone_break_cleanup():
-    cleanup_finished = asyncio.Event()
+async def test_run_stream_events_unstarted_iterator_cleanup():
+    """Entering and exiting the CM without advancing the iterator must still drain the background task."""
+    never = asyncio.Event()
+    producer_finalized = asyncio.Event()
 
-    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
         try:
-            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+            yield 'hello'
+            await never.wait()  # pragma: no cover  # blocks until cancelled
         finally:
-            cleanup_finished.set()
+            producer_finalized.set()
 
-    stream = AgentEventStream(generator())
-    async for _ in stream:  # pragma: no branch
-        break
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
 
-    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+    async with agent.run_stream_events(''):
+        # Let the background task start and block on send_stream.send(); we never advance the iterator.
+        await asyncio.sleep(0.05)
+
+    # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
+    # drain the background task; otherwise the producer's `finally` never runs.
+    await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
 
 
-async def test_run_stream_events_standalone_deprecation():
-    agent = Agent(TestModel())
+async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
+    """Breaking on the documented final-result event must still retrieve background task errors."""
+    producer_finished = asyncio.Event()
 
-    stream = agent.run_stream_events('Hello')
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        async for _ in stream:  # pragma: no branch
-            break
-    await stream.aclose()
+    async def stream_that_fails_after_final_result(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello'
+        try:
+            raise RuntimeError('producer boom')
+        finally:
+            producer_finished.set()
 
-    assert len(caught) == 1
-    assert issubclass(caught[0].category, DeprecationWarning)
-    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
-        caught[0].message
-    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    handle_exception = MagicMock()
+
+    loop.set_exception_handler(handle_exception)
+    try:
+        agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
+
+        async with agent.run_stream_events('') as events:
+            async for event in events:  # pragma: no branch
+                if isinstance(event, FinalResultEvent):
+                    # This mirrors the documented "stop once final result is known" pattern.
+                    # The producer task can still finish with an exception before the CM exits.
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.sleep(0)
+                    break
+
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    handle_exception.assert_not_called()
 
 
 async def test_run_stream_events_external_task_cancellation():

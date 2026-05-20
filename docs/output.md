@@ -881,7 +881,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] should be used as an async context manager so cleanup runs deterministically when you stop consuming events.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task.
 
 !!! note "Model support"
     The deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] does not currently support stream cancellation.
@@ -889,7 +889,7 @@ Sometimes you need to stop a streaming response before it completes: a user clic
 
 #### Cleaning up `run_stream_events`
 
-[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager:
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
 
 ```python {title="stream_cancel_run_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
@@ -898,17 +898,16 @@ agent = Agent('openai:gpt-5.2')
 
 
 async def main():
-    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
-        async for event in stream:
+    async with agent.run_stream_events('Write a long essay about Python') as events:
+        async for event in events:
             if isinstance(event, PartStartEvent):
                 print(f'Started: {event.part!r}')
                 #> Started: TextPart(content='Python is a ')
             elif isinstance(event, FinalResultEvent):
-                break  # (2)!
+                break  # (1)!
 ```
 
-1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
-2. Breaking out of the loop leaves the `async with` block, which closes the event stream and runs cleanup.
+1. Breaking out of the loop leaves the `async with` block, which cancels the background run task and closes the HTTP connection.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
