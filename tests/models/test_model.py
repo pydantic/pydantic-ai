@@ -57,12 +57,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/gemini:gemini-1.5-flash',
+        'gateway/google-cloud:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google-cloud',
         'google',
         GoogleModel,
-        id='gateway/gemini:gemini-1.5-flash',
+        id='gateway/google-cloud:gemini-1.5-flash',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},

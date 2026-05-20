@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
+from pydantic_core import to_json
 from typing_extensions import ParamSpec, assert_never
 
 try:
@@ -52,6 +53,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
@@ -89,7 +91,9 @@ if TYPE_CHECKING:
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         InferenceConfigurationTypeDef,
+        JsonSchemaDefinitionTypeDef,
         MessageUnionTypeDef,
+        OutputConfigTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
@@ -460,15 +464,6 @@ class BedrockConverseModel(Model[BaseClient]):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
-
-        if f.description:  # pragma: no branch
-            tool_spec['description'] = f.description
-
-        return {'toolSpec': tool_spec}
-
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -484,8 +479,51 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+        if (
+            self.profile.supports_json_schema_output
+            and model_request_parameters.output_mode == 'native'
+            and model_request_parameters.output_object is not None
+        ):
+            # Bedrock's structured-output API requires `strict: true` on the output object — see
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+            # so we force it regardless of the caller's setting. Mirrors Anthropic's behavior.
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
         # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
+        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
+
+        if f.description:  # pragma: no branch
+            tool_spec['description'] = f.description
+
+        if f.strict and self.profile.bedrock_supports_strict_tool_definition:
+            tool_spec['strict'] = f.strict
+
+        return {'toolSpec': tool_spec}
+
+    @staticmethod
+    def _native_output_format(
+        model_request_parameters: ModelRequestParameters,
+    ) -> OutputConfigTypeDef | None:
+        """Build the `outputConfig` block for native structured output.
+
+        See [Bedrock structured output](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html).
+        """
+        if model_request_parameters.output_mode != 'native' or model_request_parameters.output_object is None:
+            return None
+        output_object = model_request_parameters.output_object
+
+        json_schema_config: JsonSchemaDefinitionTypeDef = {
+            'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': to_json(output_object.json_schema).decode(),
+        }
+        if output_object.description:
+            json_schema_config['description'] = output_object.description
+
+        return {'textFormat': {'type': 'json_schema', 'structure': {'jsonSchema': json_schema_config}}}
 
     async def request(
         self,
@@ -724,6 +762,9 @@ class BedrockConverseModel(Model[BaseClient]):
 
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+
+        if output_config := self._native_output_format(model_request_parameters):
+            params['outputConfig'] = output_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
