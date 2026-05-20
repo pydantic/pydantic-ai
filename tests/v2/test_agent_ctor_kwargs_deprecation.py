@@ -6,7 +6,7 @@ Still-deprecated (warn + remap):
 - `history_processors=` (on `Agent.from_spec` / `Agent.from_file`) -> `ProcessHistory` capability
 
 Removed in v2 (must raise `UserError`):
-- `event_stream_handler=` (run-level kwarg only)
+- `event_stream_handler=` (ctor kwarg removed; run-level kwarg on run()/iter() unaffected)
 - `prepare_tools=` (use `PrepareTools` capability)
 
 `output_validators=` is not an `Agent.__init__` kwarg in 1.x (it's only set via decorator),
@@ -34,17 +34,46 @@ pytestmark = [pytest.mark.anyio]
 # --- removed kwargs (regression guards) -------------------------------------------------
 
 
+def _noop(*args: object, **kwargs: object) -> None:
+    """Placeholder callable for kwargs that are dropped in v2; `validate_empty_kwargs` raises
+    before the value would ever be invoked."""
+
+
 def test_event_stream_handler_kwarg_raises_in_v2():
     """`Agent(event_stream_handler=...)` was dropped in v2; passing it must now raise `UserError`
     via the `**_deprecated_kwargs` -> `validate_empty_kwargs` path."""
     with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`event_stream_handler`'):
-        Agent(TestModel(), event_stream_handler=lambda *_a, **_k: None)  # pyright: ignore[reportCallIssue]
+        Agent(TestModel(), event_stream_handler=_noop)  # pyright: ignore[reportCallIssue]
 
 
 def test_prepare_tools_kwarg_raises_in_v2():
     """`Agent(prepare_tools=...)` was dropped in v2; users migrate to `capabilities=[PrepareTools(...)]`."""
     with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`prepare_tools`'):
-        Agent(TestModel(), prepare_tools=lambda *_a, **_k: None)  # pyright: ignore[reportCallIssue]
+        Agent(TestModel(), prepare_tools=_noop)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_spec_event_stream_handler_kwarg_raises_in_v2():
+    """`Agent.from_spec(event_stream_handler=...)` was dropped in v2; the kwarg now hits
+    `from_spec`'s own `validate_empty_kwargs` path (independent of `Agent.__init__`'s)."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`event_stream_handler`'):
+        Agent.from_spec({'model': 'test'}, event_stream_handler=_noop)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_spec_prepare_tools_kwarg_raises_in_v2():
+    """`Agent.from_spec(prepare_tools=...)` was dropped in v2; users migrate to
+    `capabilities=[PrepareTools(...)]`."""
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`prepare_tools`'):
+        Agent.from_spec({'model': 'test'}, prepare_tools=_noop)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_file_event_stream_handler_kwarg_raises_in_v2(tmp_path: Any):
+    """`Agent.from_file` has its own `**_deprecated_kwargs` + `validate_empty_kwargs` path
+    (it runs validation before forwarding to `from_spec`), so the regression guard must cover
+    it independently."""
+    spec_file = tmp_path / 'agent.json'
+    spec_file.write_text('{"model": "test"}')
+    with pytest.raises(UserError, match=r'Unknown keyword arguments:.*`event_stream_handler`'):
+        Agent.from_file(spec_file, event_stream_handler=_noop)  # pyright: ignore[reportCallIssue]
 
 
 # --- prepare_output_tools= ---------------------------------------------------------------
