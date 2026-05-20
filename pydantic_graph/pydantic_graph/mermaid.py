@@ -7,7 +7,7 @@ from pathlib import Path
 from textwrap import indent
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
-import httpx
+import httpx2
 from annotated_types import Ge, Le
 from typing_extensions import TypedDict, Unpack
 
@@ -184,10 +184,10 @@ def request_image(
     if scale := kwargs.get('scale'):
         params['scale'] = scale
 
-    httpx_client = kwargs.get('httpx_client') or httpx.Client()
-    response = httpx_client.get(url, params=params)
+    httpx2_client = kwargs.get('httpx2_client') or httpx2.Client()
+    response = httpx2_client.get(url, params=params)
     if not response.is_success:
-        raise httpx.HTTPStatusError(
+        raise httpx2.HTTPStatusError(
             f'{response.status_code} error generating image:\n{response.text}',
             request=response.request,
             response=response,
@@ -265,8 +265,8 @@ class MermaidConfig(TypedDict, total=False):
 
     The scale must be a number between 1 and 3, and you can only set a scale if one or both of width and height are set.
     """
-    httpx_client: httpx.Client
-    """An HTTPX client to use for requests, mostly for testing purposes."""
+    httpx2_client: httpx2.Client
+    """An HTTPX2 client to use for requests, mostly for testing purposes."""
     direction: StateDiagramDirection
     """The direction of the state diagram."""
 
