@@ -251,6 +251,63 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
+@pytest.mark.anyio
+async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'')
+    test_content = b'<html>Recovered UI</html>'
+    fetch_count = 0
+
+    class MockResponse:
+        content = test_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            nonlocal fetch_count
+            fetch_count += 1
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    result = await _get_ui_html()
+
+    assert result == test_content
+    assert cache_file.read_bytes() == test_content
+    assert fetch_count == 1
+
+
+def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'old content')
+    temp_paths: list[Path] = []
+
+    def fail_replace(src: Any, dst: Any) -> None:
+        temp_paths.append(Path(src))
+        assert Path(dst) == cache_file
+        assert Path(src).exists()
+        raise OSError('replace failed')
+
+    monkeypatch.setattr(app_module.os, 'replace', fail_replace)
+
+    with pytest.raises(OSError, match='replace failed'):
+        app_module._write_cached_file(cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_file.read_bytes() == b'old content'
+    assert temp_paths
+    assert not temp_paths[0].exists()
+
+
 def test_chat_app_index_caching():
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
@@ -47,6 +48,26 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
+def _read_cached_file(cache_file: Path) -> bytes | None:
+    if cache_file.exists():
+        content = cache_file.read_bytes()
+        if content:
+            return content
+    return None
+
+
+def _write_cached_file(cache_file: Path, content: bytes) -> None:
+    with tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False) as tmp_file:
+        tmp_file.write(content)
+        tmp_path = Path(tmp_file.name)
+
+    try:
+        os.replace(tmp_path, cache_file)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
@@ -65,15 +86,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         cache_dir = _get_cache_dir()
         cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(DEFAULT_HTML_URL)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle Path instances
@@ -89,15 +110,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         url_hash = hashlib.sha256(html_source.encode()).hexdigest()[:16]
         cache_file = cache_dir / f'url_{url_hash}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(html_source)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle local file paths (strings)
