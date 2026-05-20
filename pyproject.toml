@@ -261,9 +261,6 @@ filterwarnings = [
     "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
     "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
-    # Most tests create providers without async context managers, so this is expected.
-    "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
