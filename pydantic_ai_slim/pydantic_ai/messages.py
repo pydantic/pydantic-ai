@@ -1079,9 +1079,10 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
-_MULTIMODAL_KINDS: frozenset[str] = frozenset(
-    {'binary', 'image-url', 'audio-url', 'document-url', 'video-url', 'uploaded-file'}
-)
+# Derived from the union members so it can't drift: every `MultiModalContent` type carries a
+# `kind` literal, and `MULTI_MODAL_CONTENT_TYPES` is pinned to the union by
+# `test_multi_modal_content_types_matches_union`.
+_MULTIMODAL_KINDS: frozenset[str] = frozenset(t.__dataclass_fields__['kind'].default for t in MULTI_MODAL_CONTENT_TYPES)
 
 
 def _tool_return_content_discriminator(value: Any) -> str:
