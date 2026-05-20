@@ -150,6 +150,8 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
+Mid-conversation `SystemPromptPart`s (those in any `ModelRequest` after the first) are rendered as `<system>`-tagged `UserPromptPart`s at their original position for providers that don't accept inline system messages (Anthropic, Google, Bedrock), preserving the prefix cache and positional intent. Leading ones still hoist to the provider's top-level system parameter; configurable via [`ModelProfile.supports_inline_system_prompts`][pydantic_ai.profiles.ModelProfile.supports_inline_system_prompts].
+
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 

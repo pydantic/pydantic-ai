@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 from httpx import AsyncClient
@@ -59,15 +60,14 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             'moonshotai': moonshotai_model_profile,
         }
 
-        if '/' not in model_name:
-            return None
+        profile: ModelProfile | None = None
+        if '/' in model_name:
+            model_name = model_name.lower()
+            provider, model_name = model_name.split('/', 1)
+            if provider in provider_to_profile:
+                profile = provider_to_profile[provider](model_name)
 
-        model_name = model_name.lower()
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
-
-        return None
+        return replace(profile or ModelProfile(), supports_inline_system_prompts=True)
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...

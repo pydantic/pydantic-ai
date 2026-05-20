@@ -4183,6 +4183,35 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
 
 
+async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    message_history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')],
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')],
+        ),
+    ]
+    agent = Agent(m)
+    await agent.run('continue', message_history=message_history)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == 'You are helpful.'
+    wrapped_contents = [
+        block['text']
+        for msg in kwargs['messages']
+        if msg['role'] == 'user'
+        for block in (msg['content'] if isinstance(msg['content'], list) else [{'text': msg['content']}])
+        if '<system>' in block.get('text', '')
+    ]
+    assert wrapped_contents == ['<system>Now be terse.</system>']
+
+
 def anth_msg(usage: BetaUsage) -> BetaMessage:
     return BetaMessage(
         id='x',
