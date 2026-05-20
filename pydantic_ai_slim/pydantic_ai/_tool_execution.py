@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
@@ -536,8 +536,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT]):
             run_strategy = self._run_exhaustive
         elif end_strategy == 'early':
             run_strategy = self._run_early
-        else:
+        elif end_strategy == 'graceful':
             run_strategy = self._run_graceful
+        else:
+            assert_never(end_strategy)
         async for event in run_strategy():
             yield event
 

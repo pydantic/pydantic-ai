@@ -5856,6 +5856,19 @@ class TestMultipleToolCalls:
         assert result.output.value == 'corrected'
         assert rounds == ['first', 'second']
 
+        messages = result.all_messages()
+        # The suppressed output's return part is rewritten to signal it wasn't used.
+        suppressed = next(
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'final_result'
+        )
+        assert suppressed.content == snapshot(
+            'Output not used as the final result - addressing tool retries from this round first.'
+        )
+
     def test_early_function_tool_retry_does_not_suppress_output(self):
         """Under `early`, a successful output ends the run and function tools never run, so there's
         no retry to suppress it."""
