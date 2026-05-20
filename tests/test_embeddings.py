@@ -131,6 +131,18 @@ class TestOpenAI:
         assert model.system == 'openai'
         assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
 
+    @pytest.mark.parametrize('prefix', ['gateway/openai-chat', 'gateway/openai-responses'])
+    async def test_infer_model_gateway_openai_chat_and_responses_both_route_to_openai_embeddings(self, prefix: str):
+        # Embeddings have no chat/responses split — both `gateway/openai-chat:` and
+        # `gateway/openai-responses:` strip to canonical names accepted by the OpenAI embeddings branch.
+        with patch.dict(
+            os.environ,
+            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+        ):
+            model = infer_embedding_model(f'{prefix}:text-embedding-3-small')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'text-embedding-3-small'
+
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(

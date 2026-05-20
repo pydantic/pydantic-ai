@@ -30,6 +30,15 @@ if not imports_successful():
 TEST_CASES = [
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        'gateway/openai:gpt-5',
+        'gpt-5',
+        'openai',
+        'openai',
+        OpenAIResponsesModel,
+        id='gateway/openai:gpt-5',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
         'gateway/chat:gpt-5',
         'gpt-5',
         'openai',
@@ -85,6 +94,14 @@ TEST_CASES = [
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
         'openai:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'openai',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
+        {'OPENAI_API_KEY': 'openai-api-key'},
+        'openai-chat:gpt-3.5-turbo',
         'gpt-3.5-turbo',
         'openai',
         'openai',

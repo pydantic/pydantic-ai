@@ -113,10 +113,10 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    came_from_gateway = provider.startswith('gateway/')
-    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai').
-    # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`.
-    if came_from_gateway:
+    # Strip the `gateway/` prefix to get the canonical class-lookup name. The
+    # Gateway URL route value (e.g. `gemini`, `google-vertex`) is a
+    # separate concern handled by `_gateway_route` in `providers/gateway.py`.
+    if provider.startswith('gateway/'):
         from .gateway import normalize_gateway_provider
 
         provider = normalize_gateway_provider(provider)
@@ -133,15 +133,11 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         )
         provider = 'google'
     elif provider == 'google-vertex':
-        # Suppress the standalone `'google-vertex:'` rename warning when coming from a gateway
-        # prefix — the caller already saw the `'gateway/google-vertex:'` warning above, and the
-        # internal mapping `gateway/google-cloud -> google-vertex` is intentional (see rule 17).
-        if not came_from_gateway:
-            warnings.warn(
-                "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
+        warnings.warn(
+            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
         provider = 'google-cloud'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
