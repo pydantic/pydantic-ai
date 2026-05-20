@@ -142,7 +142,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set()
 
-        return set(self.tool_manager.tools.keys())
+        return {
+            tool.tool_def.name for tool in self.tool_manager.tools.values() if tool.tool_def.defer_loading is not False
+        }
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
