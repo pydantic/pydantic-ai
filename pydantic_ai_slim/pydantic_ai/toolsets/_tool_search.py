@@ -251,14 +251,17 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered_tool_names = self.parse_discovered_tools(ctx.messages)
         loaded_capability_tool_names = set(
             tool_defs_for_loaded_capabilities(
                 ctx,
                 (tool.tool_def for tool in all_tools.values()),
             )
         )
-        visible_deferred_tool_names = discovered_tool_names | loaded_capability_tool_names
+
+        # Well available tools at the moment only know the tools that were revealed based on the message history
+        discovered_tool_names = ctx.available_tools | loaded_capability_tool_names
+        # So the tools provided by the last load_capability are not present at the moment?
+
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Single entry per deferred tool, keyed by its real name. `with_native`
@@ -271,7 +274,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             managed_def = replace(
                 tool.tool_def,
                 with_native=_TOOL_SEARCH_BUILTIN_ID,
-                defer_loading=name not in visible_deferred_tool_names,
+                defer_loading=name not in discovered_tool_names,
             )
             result[name] = replace(tool, tool_def=managed_def)
 
@@ -288,15 +291,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, visible_deferred_tool_names)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, discovered_tool_names)
 
+        ctx.available_tools = set(result.keys())
         return result
 
     def _build_search_tool(
         self,
         ctx: RunContext[AgentDepsT],
         deferred: dict[str, ToolsetTool[AgentDepsT]],
-        visible_deferred_tool_names: set[str],
+        discovered_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
@@ -306,8 +310,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         corpus = [
             tool.tool_def
             for name, tool in deferred.items()
-            if name not in visible_deferred_tool_names
-            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.loaded_capability_ids)
+            if name not in discovered_tool_names
+            and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.available_capability_ids)
         ]
 
         # `unless_native` tells the adapter to drop this function tool when the native

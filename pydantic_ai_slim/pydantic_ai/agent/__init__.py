@@ -1476,7 +1476,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_capability.apply(_register)
 
-        loaded_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
+        available_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1494,7 +1494,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=self._validation_context,
             root_capability=run_capability,
             capabilities=capabilities_dict,
-            loaded_capability_ids=loaded_capability_ids,
+            available_capability_ids=available_capability_ids,
+            available_tools=set(),
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,

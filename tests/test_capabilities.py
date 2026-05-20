@@ -2366,13 +2366,13 @@ def test_combined_capability_get_model_settings_deferred():
 
     assert callable(resolver)
 
-    def resolve(loaded_capability_ids: set[str]) -> _ModelSettings:
+    def resolve(available_capability_ids: set[str]) -> _ModelSettings:
         return resolver(
             RunContext(
                 deps=None,
                 model=TestModel(),
                 usage=RunUsage(),
-                loaded_capability_ids=loaded_capability_ids,
+                available_capability_ids=available_capability_ids,
             )
         )
 

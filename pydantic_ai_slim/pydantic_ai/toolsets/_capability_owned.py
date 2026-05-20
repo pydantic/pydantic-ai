@@ -58,7 +58,7 @@ def tool_defs_for_loaded_capabilities(
         tool_def.name: tool_def
         for tool_def in tool_defs
         if (capability_id := tool_def.capability_id) is not None
-        and capability_id in ctx.loaded_capability_ids
+        and capability_id in ctx.available_capability_ids
         and (cap := ctx.capabilities.get(capability_id)) is not None
         and cap.defer_loading is True
     }

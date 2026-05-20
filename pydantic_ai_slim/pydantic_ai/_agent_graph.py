@@ -24,6 +24,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
+from pydantic_ai.toolsets._tool_search import ToolSearchToolset
 from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import End, NodeRunEndT
 from pydantic_graph.graph_builder import Graph
@@ -197,7 +198,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     root_capability: AbstractCapability[DepsT]
 
     capabilities: dict[str, AbstractCapability[DepsT]]
-    loaded_capability_ids: set[str]
+    available_capability_ids: set[str]
+    available_tools: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -498,7 +500,7 @@ async def _prepare_request_parameters(
     raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
 
     def add_loaded_native_tools(capability: AbstractCapability[DepsT]) -> None:
-        if capability.defer_loading is True and capability.id in ctx.deps.loaded_capability_ids:
+        if capability.defer_loading is True and capability.id in ctx.deps.available_capability_ids:
             raw_native_tools.extend(capability.get_native_tools() or ())
 
     ctx.deps.root_capability.apply(add_loaded_native_tools)
@@ -861,7 +863,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
-        _refresh_loaded_capability_ids(ctx)
+        _refresh_available_capability_ids(ctx)
+
+        _refresh_available_tools(ctx)
 
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1427,22 +1431,34 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
-        loaded_capability_ids=ctx.deps.loaded_capability_ids,
+        available_capability_ids=ctx.deps.available_capability_ids,
+        # available_tools=ctx.deps.available_tools,
+        # Not sure if it makes sense here?
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
 
-def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Refresh loaded capability ids from the current graph state."""
-    loaded_capability_ids = {
+def _refresh_available_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh available capability ids from the current graph state."""
+    available_capability_ids = {
         capability.id for capability in ctx.deps.capabilities.values() if capability.defer_loading is not True
     }
-    loaded_capability_ids.update(parse_loaded_capabilities(ctx.state.message_history))
+    available_capability_ids.update(parse_loaded_capabilities(ctx.state.message_history))
 
-    ctx.deps.loaded_capability_ids.clear()
-    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
+    ctx.deps.available_capability_ids.clear()
+    ctx.deps.available_capability_ids.update(available_capability_ids)
+
+
+def _refresh_available_tools(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh available tools from the current graph state."""
+    discovered_tool_names = ToolSearchToolset.parse_discovered_tools(ctx.state.message_history)
+    # I have all the tools that were revealed in this turn
+    # Now I need all the tools period?
+    # But that can obviously happen after get_tools() or where get_tools() is called because that will know which tools are available right now
+    # so available tools right now could just be this?
+    ctx.deps.available_tools = discovered_tool_names
 
 
 def build_validation_context(

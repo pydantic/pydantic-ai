@@ -139,7 +139,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     capability_id: str = capability.id,
                     cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
                 ) -> ModelSettings:
-                    if capability_id in ctx.loaded_capability_ids:
+                    if capability_id in ctx.available_capability_ids:
                         return cap_settings(ctx) if callable(cap_settings) else cap_settings
                     return ModelSettings()
 
@@ -196,7 +196,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         # Skip deferred children: their native tools are spliced in per-step by
         # `_prepare_request_parameters` once the owning capability's id appears in
-        # `loaded_capability_ids`. The mid-run append intentionally invalidates the
+        # `available_capability_ids`. The mid-run append intentionally invalidates the
         # prompt cache for that turn — see `defer_loading` on `AbstractCapability`.
         native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for capability in self.capabilities:
@@ -773,4 +773,4 @@ def _make_output_process_wrap(
 
 
 def _ctx_for_cap(capability_id: str, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_loaded=capability_id in ctx.loaded_capability_ids)
+    return replace(ctx, capability_loaded=capability_id in ctx.available_capability_ids)
