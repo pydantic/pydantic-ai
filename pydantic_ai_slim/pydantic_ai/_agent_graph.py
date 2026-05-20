@@ -77,8 +77,10 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], the output result is suppressed and the retry is
   surfaced to the model instead.
 - `'exhaustive'`: Every tool runs (in parallel by default); the first valid output by emission order
-  becomes the final result. Use `sequential=True` on a tool (including via
-  [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that doesn't overlap with others.
+  becomes the final result. As with `'graceful'`, a function tool's
+  [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] suppresses the output result. Use `sequential=True`
+  on a tool (including via [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that
+  doesn't overlap with others.
 
 The default changed from `'early'` to `'graceful'` in v2. Set `end_strategy='early'` to keep the v1
 behavior where the run ends the instant an output tool succeeds.
@@ -1860,7 +1862,7 @@ async def process_tool_calls(  # noqa: C901
       correct on the next round). Once an output succeeds, all function tools are stubbed
       as not executed.
     - `'graceful'` (default): tools run in the order the model emitted them — function
-      tools that precede an output tool complete before it validates. Output tools run
+      tools that precede an output tool complete before it runs. Output tools run
       sequentially and stop at the first success; subsequent output tools are skipped
       (their side effects don't run). Function tools run in parallel within each segment.
     - `'exhaustive'`: every tool runs in parallel; the first valid output by emission order
