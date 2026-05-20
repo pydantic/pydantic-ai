@@ -1,12 +1,10 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
@@ -25,7 +23,7 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import AgentStreamEvent, ModelResponseStreamEvent
+from .messages import ModelResponseStreamEvent
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -36,7 +34,7 @@ from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
-    from .run import AgentRunResult, AgentRunResultEvent
+    from .run import AgentRunResult
 
 __all__ = (
     'OutputDataT',
@@ -906,89 +904,6 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
-
-
-class AgentEventStream(Generic[OutputDataT]):
-    """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
-
-    Wraps the underlying async generator to support deterministic cleanup via the async context manager protocol.
-
-    Usage:
-
-    ```python {lint="skip"}
-    async def stream_events_example():
-        async with agent.run_stream_events('Hello') as stream:
-            async for event in stream:
-                ...
-    # cleanup is automatic on __aexit__
-    ```
-
-    Direct iteration with `async for event in stream:` (without `async with`)
-    is deprecated and will be removed in v2.
-    """
-
-    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
-        self._generator = generator
-        self._managed = False
-        self._closed = False
-
-    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
-        self._managed = True
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> bool:
-        await self.aclose()
-        return False
-
-    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
-        # TODO(v2): remove standalone iteration support and require `async with`
-        if self._managed:
-            return self
-
-        warnings.warn(
-            'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
-            'Use `async with agent.run_stream_events(...) as stream:` and '
-            '`async for event in stream:` instead '
-            'to ensure proper cleanup.',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        return self._standalone_iterator()
-
-    async def _standalone_iterator(
-        self,
-    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT], None]:
-        # `async for` only closes async generators on early exit. Wrapping the deprecated
-        # standalone path in an async generator preserves cleanup on `break`.
-        try:
-            async for event in self._generator:
-                yield event
-        finally:
-            await self.aclose()
-
-    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
-        if self._closed:
-            raise StopAsyncIteration
-        try:
-            return await self._generator.__anext__()
-        except StopAsyncIteration:
-            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
-            # but keeps _closed accurate after natural exhaustion so __aexit__()
-            # doesn't call aclose() unnecessarily.
-            self._closed = True
-            raise
-
-    async def aclose(self) -> None:
-        """Close the stream and trigger any pending cleanup."""
-        if not self._closed:
-            self._closed = True
-            await self._generator.aclose()
 
 
 @dataclass(repr=False)

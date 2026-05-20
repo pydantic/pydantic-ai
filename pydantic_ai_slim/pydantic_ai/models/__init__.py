@@ -192,6 +192,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -263,6 +264,7 @@ KnownModelName = TypeAliasType(
         'google-cloud:gemini-3.1-flash-image-preview',
         'google-cloud:gemini-3.1-flash-lite-preview',
         'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-3.5-flash',
         'google-cloud:gemini-flash-latest',
         'google-cloud:gemini-flash-lite-latest',
         'google:gemini-2.0-flash-lite',
@@ -279,6 +281,7 @@ KnownModelName = TypeAliasType(
         'google:gemini-3.1-flash-image-preview',
         'google:gemini-3.1-flash-lite-preview',
         'google:gemini-3.1-pro-preview',
+        'google:gemini-3.5-flash',
         'google:gemini-flash-latest',
         'google:gemini-flash-lite-latest',
         'xai:grok-3',
@@ -1440,22 +1443,14 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
-    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
-        from .openai import OpenAIChatModel
-
-        if provider_name in ('openai', 'gateway/openai'):
-            warnings.warn(
-                "In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. "
-                "Use 'openai-chat:' to keep current Chat Completions behavior, or "
-                "'openai-responses:' to opt in early.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind == 'openai-responses':
+    elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
+    elif model_kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
+        from .openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name, provider=provider)
     elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
         from .google import GoogleModel
 

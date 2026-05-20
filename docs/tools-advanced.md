@@ -270,7 +270,7 @@ from pydantic_ai.models.test import TestModel
 
 
 async def turn_on_strict_if_openai(
-    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+    ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
@@ -399,14 +399,14 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
 
-class RequireFirstCall(AbstractCapability[None]):
+class RequireFirstCall(AbstractCapability):
     """Force `tool_name` to be called successfully before anything else."""
 
     def __init__(self, tool_name: str) -> None:
         self.tool_name = tool_name
 
     def get_model_settings(self):
-        def settings(ctx: RunContext[None]) -> ModelSettings:
+        def settings(ctx: RunContext) -> ModelSettings:
             called = any(
                 isinstance(part, ToolReturnPart) and part.tool_name == self.tool_name
                 for message in ctx.messages
@@ -666,7 +666,7 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def fuzzy_search(
-    ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
 ) -> list[str]:
     """Match tools whose name or description contains any query word."""
     needles = [n for q in queries for n in q.lower().split()]

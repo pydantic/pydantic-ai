@@ -714,7 +714,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
-    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    async with agent.run_stream_events(prompt, model_settings=settings) as event_stream:
+        events = [event async for event in event_stream]
     annotation_event = next(
         event
         for event in events
@@ -739,7 +740,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
-    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    async with agent2.run_stream_events(prompt) as event_stream2:
+        events2 = [event async for event in event_stream2]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -759,7 +761,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
-    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    async with agent3.run_stream_events('What is 2+2?', model_settings=settings3) as event_stream3:
+        events3 = [event async for event in event_stream3]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -11348,7 +11351,8 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
         'Now a 300-word story about a bear in a cave. Be very descriptive.',
         'What is 2+2?',
     ]:
-        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        async with agent.run_stream_events(question, message_history=message_history) as event_stream:
+            events = [event async for event in event_stream]
         all_events.extend(events)
         final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
         last_output = final.result.output

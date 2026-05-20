@@ -421,7 +421,7 @@ def test_output_validator():
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         assert ctx.tool_name == 'final_result'
         if o.a == 42:
             return o
@@ -500,7 +500,7 @@ def test_output_validator_retries():
     agent = Agent(FunctionModel(return_model), output_type=Foo, retries={'output': target_retries})
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         # Succeed on the last retry
@@ -523,7 +523,7 @@ def test_output_function_retries():
     max_retries_log: list[int] = []
     target_retries = 3
 
-    def get_weather(ctx: RunContext[None], text: str) -> str:
+    def get_weather(ctx: RunContext, text: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == target_retries:
@@ -550,7 +550,7 @@ def test_tool_output_function_retries():
     max_retries_log: list[int] = []
     target_retries = 3
 
-    def get_weather(ctx: RunContext[None], city: str) -> str:
+    def get_weather(ctx: RunContext, city: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == target_retries:
@@ -579,7 +579,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
     max_retries_log: list[int] = []
     target_retries = 5
 
-    def get_weather(ctx: RunContext[None], city: str) -> str:
+    def get_weather(ctx: RunContext, city: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry < target_retries:
@@ -782,13 +782,13 @@ def test_tool_output_max_retries_per_tool():
     a_max_retries_seen: list[int] = []
     b_max_retries_seen: list[int] = []
 
-    def output_a(ctx: RunContext[None], value: str) -> str:
+    def output_a(ctx: RunContext, value: str) -> str:
         a_max_retries_seen.append(ctx.max_retries)
         if ctx.retry < 3:
             raise ModelRetry(f'Retry A {ctx.retry}')
         return f'A: {value}'
 
-    def output_b(ctx: RunContext[None], value: str) -> str:
+    def output_b(ctx: RunContext, value: str) -> str:
         b_max_retries_seen.append(ctx.max_retries)
         raise ModelRetry(f'Retry B {ctx.retry}')
 
@@ -989,7 +989,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(return_model))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1011,7 +1011,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(return_model), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1024,7 +1024,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -1041,7 +1041,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1061,7 +1061,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1081,7 +1081,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1304,12 +1304,12 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, str | Foo] = Agent(m, output_type=union)
+    agent: Agent[object, str | Foo] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:
+    def validate_output(ctx: RunContext, o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return o
@@ -1389,7 +1389,7 @@ class Bar(BaseModel):
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:
+    def validate_output(ctx: RunContext, o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return o
@@ -1576,7 +1576,7 @@ def test_output_type_function_with_run_context():
         temperature: float
         description: str
 
-    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+    def get_weather(ctx: RunContext, city: str) -> Weather:
         assert ctx is not None
         return Weather(temperature=28.7, description='sunny')
 
@@ -1657,7 +1657,7 @@ def test_output_type_bound_instance_method_with_run_context():
         temperature: float
         description: str
 
-        def get_weather(self, ctx: RunContext[None], city: str) -> Self:
+        def get_weather(self, ctx: RunContext, city: str) -> Self:
             assert ctx is not None
             return self
 
@@ -1793,7 +1793,7 @@ def test_output_type_text_output_function_with_retry():
         temperature: float
         description: str
 
-    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+    def get_weather(ctx: RunContext, city: str) -> Weather:
         assert ctx is not None
         if city != 'Mexico City':
             raise ModelRetry('City not found, I only know Mexico City')
@@ -3546,7 +3546,7 @@ def test_agent_conversation_id_new_sentinel_forks() -> None:
 def test_agent_conversation_id_available_in_run_context() -> None:
     captured: list[str | None] = []
 
-    def capture_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+    def capture_metadata(ctx: RunContext) -> dict[str, Any]:
         captured.append(ctx.conversation_id)
         return {}
 
@@ -3679,7 +3679,7 @@ async def test_agent_run_metadata_kwarg_dict() -> None:
 async def test_agent_run_metadata_kwarg_callable() -> None:
     agent = Agent(TestModel(custom_output_text='kwarg callable output'))
 
-    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+    def run_meta(ctx: RunContext) -> dict[str, Any]:
         return {'prompt': ctx.prompt}
 
     result = await agent.run('kwarg callable prompt', metadata=run_meta)
@@ -4119,7 +4119,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -4362,7 +4362,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -4980,7 +4980,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -5099,7 +5099,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -5592,7 +5592,7 @@ class TestMultipleToolCalls:
         def process_first(output: OutputType) -> OutputType:
             return output
 
-        def process_second(ctx: RunContext[None], value: str) -> str:
+        def process_second(ctx: RunContext, value: str) -> str:
             raise ModelRetry('always fails')
 
         call_count = 0
@@ -6433,7 +6433,7 @@ def test_custom_output_type_invalid() -> None:
     agent = Agent('test')
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: no cover
+    def validate_output(ctx: RunContext, o: Any) -> Any:  # pragma: no cover
         return o
 
     with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has output validators'):
@@ -7655,7 +7655,7 @@ def test_override_toolsets():
 
     available_tools: list[list[str]] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
@@ -7705,7 +7705,7 @@ def test_override_tools():
 
     available_tools: list[list[str]] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
@@ -7736,14 +7736,14 @@ def test_toolset_factory():
 
     available_tools: list[str] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools = [tool_def.name for tool_def in tool_defs]
         return tool_defs
 
     toolset_creation_counts: dict[str, int] = defaultdict(int)
 
-    def via_toolsets_arg(ctx: RunContext[None]) -> AbstractToolset[None]:
+    def via_toolsets_arg(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolsets_arg'] += 1
         return toolset.prefixed('via_toolsets_arg')
@@ -7759,13 +7759,13 @@ def test_toolset_factory():
     agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.toolset
-    def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
+    def via_toolset_decorator(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolset_decorator'] += 1
         return toolset.prefixed('via_toolset_decorator')
 
     @agent.toolset(per_run_step=False)
-    async def via_toolset_decorator_for_entire_run(ctx: RunContext[None]) -> AbstractToolset[None]:
+    async def via_toolset_decorator_for_entire_run(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolset_decorator_for_entire_run'] += 1
         return toolset.prefixed('via_toolset_decorator_for_entire_run')
@@ -7989,7 +7989,7 @@ def test_prepare_output_tools_receives_output_max_retries():
         # Always return the same output; the validator drives retries.
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prep(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         seen_retries.append(ctx.retry)
         seen_max_retries.append(ctx.max_retries)
         seen_per_tool_retries.append(ctx.retries.get(tool_defs[0].name, 0))
@@ -8004,7 +8004,7 @@ def test_prepare_output_tools_receives_output_max_retries():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         if ctx.retry == target_retries:
             return o
         raise ModelRetry(f'Retry {ctx.retry}')
@@ -8033,7 +8033,7 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prep(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         seen_max_retries.append(ctx.max_retries)
         return tool_defs
 
@@ -8272,8 +8272,8 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
     started = asyncio.Event()
     never_finishes = asyncio.Future[AgentRunResult[Any]]()
 
-    class WrapRunCapability(AbstractCapability[None]):
-        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+    class WrapRunCapability(AbstractCapability):
+        async def wrap_run(self, ctx: RunContext, *, handler: WrapRunHandler) -> AgentRunResult[Any]:
             try:
                 started.set()
                 return await never_finishes
@@ -8434,7 +8434,7 @@ def test_toolsets():
     r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
 async def test_wrapper_agent():
-    async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
         pass  # pragma: no cover
 
     foo_toolset = FunctionToolset()
@@ -10151,7 +10151,7 @@ async def test_agent_allows_none_output_validator_called():
     agent = Agent(model, output_type=str | None)
 
     @agent.output_validator
-    async def validate_output(ctx: RunContext[None], output: str | None) -> str | None:
+    async def validate_output(ctx: RunContext, output: str | None) -> str | None:
         nonlocal validator_called
         validator_called = True
         assert output is None
@@ -10192,7 +10192,7 @@ async def test_agent_allows_none_output_validator_retry():
     agent = Agent(model, output_type=str | None)
 
     @agent.output_validator
-    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+    async def reject_none(ctx: RunContext, output: str | None) -> str | None:
         if output is None:
             raise ModelRetry('None not acceptable, please respond')
         return output
@@ -10374,7 +10374,7 @@ class TestCallableAgentLevelSettings:
     """Test agent-level callable model_settings."""
 
     def test_callable_agent_settings(self):
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=200)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=dynamic_settings)
@@ -10398,7 +10398,7 @@ class TestCallableAgentLevelSettings:
         """The callable should see `ctx.model_settings` set to the model's base settings."""
         seen_settings: list[ModelSettings | None] = []
 
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
             return ModelSettings(max_tokens=100)
 
@@ -10414,7 +10414,7 @@ class TestCallableRunLevelSettings:
     """Test run-level callable model_settings."""
 
     def test_callable_run_settings(self):
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.9)
 
         agent = Agent(FunctionModel(_model_with_settings))
@@ -10425,7 +10425,7 @@ class TestCallableRunLevelSettings:
         """Run-level callable should see merged model+agent settings via ctx.model_settings."""
         seen_settings: list[ModelSettings | None] = []
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
             return ModelSettings(temperature=0.5)
 
@@ -10441,7 +10441,7 @@ class TestMixedStaticAndCallableSettings:
     """Test mixing static and callable model_settings."""
 
     def test_static_agent_callable_run(self):
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.8)
 
         agent = Agent(
@@ -10452,7 +10452,7 @@ class TestMixedStaticAndCallableSettings:
         assert result.output == 'max_tokens=100 temperature=0.8'
 
     def test_callable_agent_static_run(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=150)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10460,10 +10460,10 @@ class TestMixedStaticAndCallableSettings:
         assert result.output == 'max_tokens=150 temperature=0.6'
 
     def test_callable_agent_callable_run(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=200)
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.4)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10478,7 +10478,7 @@ class TestPerStepSettingsResolution:
         call_count = 0
         step_numbers: list[int] = []
 
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             nonlocal call_count
             call_count += 1
             step_numbers.append(ctx.run_step)
@@ -10503,7 +10503,7 @@ class TestPerStepSettingsResolution:
     def test_step_dependent_settings(self):
         """Settings can vary based on run_step."""
 
-        def step_dependent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def step_dependent_settings(ctx: RunContext) -> ModelSettings:
             if ctx.run_step <= 1:
                 return ModelSettings(max_tokens=100)
             return ModelSettings(max_tokens=500)
@@ -10534,10 +10534,10 @@ class TestDynamicSettingsPrecedence:
     """Test that run > agent > model precedence is maintained with callables."""
 
     def test_callable_run_overrides_callable_agent(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.2)
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.8)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10556,7 +10556,7 @@ class TestOverrideWithModelSettings:
             assert result.output == 'max_tokens=42 temperature=None'
 
     def test_override_with_callable(self):
-        def override_settings(ctx: RunContext[None]) -> ModelSettings:
+        def override_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=99)
 
         agent = Agent(FunctionModel(_model_with_settings))
@@ -10626,7 +10626,7 @@ def test_output_validator_retry_consistency_across_paths():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == 2:
@@ -10661,7 +10661,7 @@ def test_output_validator_exceeds_output_retries():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'Retry {ctx.retry}')
 
@@ -10695,7 +10695,7 @@ async def test_concurrent_runs_output_retry_isolation():
     )
 
     @agent.output_validator
-    async def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    async def validate_output(ctx: RunContext, o: Foo) -> Foo:
         # Use the prompt to identify which run this is
         run_id = 'slow' if 'slow' in (ctx.prompt or '') else 'fast'
         retries_by_run[run_id].append(ctx.retry)
@@ -10759,7 +10759,7 @@ def test_output_validator_retry_counter_with_tool_switch():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: str) -> str:
+    def validate_output(ctx: RunContext, o: str) -> str:
         validator_retries.append(ctx.retry)
         validator_max_retries.append(ctx.max_retries)
         if ctx.retry < 2:
@@ -10803,7 +10803,7 @@ def test_output_tool_validation_vs_execution_retry_counting():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         validator_retries.append(ctx.retry)
         if ctx.retry < 2:
             raise ModelRetry(f'Retry {ctx.retry}')
@@ -10932,7 +10932,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
     agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
 
     @agent.output_validator
-    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+    def always_retry(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'retry {ctx.retry}')
 
@@ -10960,7 +10960,7 @@ def test_text_path_honors_output_retry_budget():
     agent = Agent(FunctionModel(return_model), output_type=str, retries={'output': 5})
 
     @agent.output_validator
-    def always_retry(ctx: RunContext[None], o: str) -> str:
+    def always_retry(ctx: RunContext, o: str) -> str:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'retry {ctx.retry}')
 
@@ -11160,7 +11160,7 @@ async def test_image_output_validators_run():
     agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         return BinaryImage(data=b'modified', media_type=output.media_type)
 
     result = await agent.run('Give me an image')
@@ -11248,7 +11248,7 @@ async def test_image_output_validator_model_retry():
     agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         raise ModelRetry('image validation failed')
 
     with pytest.raises(
@@ -11321,7 +11321,7 @@ async def test_image_output_validators_run_stream():
     agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         return BinaryImage(data=b'modified', media_type=output.media_type)
 
     async with agent.run_stream('Give me an image') as stream:

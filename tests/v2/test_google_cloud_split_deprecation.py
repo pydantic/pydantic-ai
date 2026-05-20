@@ -37,7 +37,10 @@ with try_import() as imports_successful:
         _resolve_google_cloud_service_tier,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers import infer_provider, infer_provider_class
-    from pydantic_ai.providers.gateway import normalize_gateway_provider
+    from pydantic_ai.providers.gateway import (
+        _gateway_route,  # pyright: ignore[reportPrivateUsage]
+        normalize_gateway_provider,
+    )
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -167,11 +170,12 @@ def test_gateway_google_cloud_maps_to_legacy_gateway_wire_value() -> None:
     """Rule 17: the user-facing rename ships ahead of the Gateway API rename.
 
     Both `gateway/google-cloud` and `gateway/google-vertex` must still serialize to
-    `'google-vertex'` on the wire until Daniel renames the Gateway side.
+    `'google-vertex'` on the wire until Daniel renames the Gateway side. Class lookup
+    uses the canonical `'google-cloud'`; wire routing uses `'google-vertex'`.
     """
-    assert normalize_gateway_provider('gateway/google-cloud') == 'google-vertex'
+    assert _gateway_route(normalize_gateway_provider('gateway/google-cloud')) == 'google-vertex'
     with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/google-vertex.' prefix is deprecated"):
-        assert normalize_gateway_provider('gateway/google-vertex') == 'google-vertex'
+        assert _gateway_route(normalize_gateway_provider('gateway/google-vertex')) == 'google-vertex'
 
 
 def test_google_vertex_service_tier_warns_and_routes_to_google_cloud_service_tier() -> None:
