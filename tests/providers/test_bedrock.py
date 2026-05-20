@@ -132,6 +132,22 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.supports_json_schema_output is False
     assert anthropic_profile.bedrock_supports_strict_tool_definition is False
+    # Pre-4.6 Claude on Bedrock keeps the legacy `enabled + budget_tokens` translation.
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
+    assert anthropic_profile.bedrock_supports_effort is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-6-20251015-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-6-20251015')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    # Sonnet 4.6+ requires adaptive thinking on Bedrock — see issue #5304.
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is True
+    assert anthropic_profile.bedrock_supports_effort is True
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-6-20251015-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-6-20251015')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is True
+    assert anthropic_profile.bedrock_supports_effort is True
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
