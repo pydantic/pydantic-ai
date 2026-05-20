@@ -14,7 +14,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, auto_capability_id
 
 
 @dataclass(init=False)
@@ -66,18 +66,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         native: AgentNativeTool[AgentDepsT] | bool = True,
         local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None,
         id: str | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
-        if id is not None:
-            self.id = id
-        self.defer_loading = defer_loading
-        self.description = description
         self.__post_init__()
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 

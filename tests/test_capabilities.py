@@ -189,7 +189,16 @@ def test_agent_from_spec_mcp():
         {
             'model': 'test',
             'capabilities': [
-                {'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search'], 'native': True}}
+                {
+                    'MCP': {
+                        'url': 'https://mcp.example.com/sse',
+                        'allowed_tools': ['search'],
+                        'native': True,
+                        'id': 'search-mcp',
+                        'description': 'Search MCP server.',
+                        'defer_loading': True,
+                    }
+                }
             ],
         }
     )
@@ -197,6 +206,9 @@ def test_agent_from_spec_mcp():
     cap = next(c for c in children if isinstance(c, MCP))
     assert cap.url == 'https://mcp.example.com/sse'
     assert cap.allowed_tools == ['search']
+    assert cap.id == 'search-mcp'
+    assert cap.description == 'Search MCP server.'
+    assert cap.defer_loading is True
 
 
 def test_agent_from_spec_unknown_capability():
@@ -1511,7 +1523,7 @@ Supported by:
                     'properties': {
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                         'id': {'title': 'Id', 'type': 'string'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
@@ -1529,7 +1541,7 @@ Supported by:
                             'title': 'Tools',
                         },
                         'id': {'title': 'Id', 'type': 'string'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_IncludeToolReturnSchemas',
@@ -1546,7 +1558,7 @@ Supported by:
                             'title': 'Effort',
                         },
                         'id': {'title': 'Id', 'type': 'string'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_Thinking',
@@ -1624,7 +1636,7 @@ Supported by:
                             'title': 'Aspect Ratio',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ImageGeneration',
@@ -1656,6 +1668,7 @@ Supported by:
                             'title': 'Allowed Tools',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
@@ -1717,7 +1730,7 @@ Supported by:
                             'title': 'Parameter Description',
                         },
                         'id': {'title': 'Id', 'type': 'string'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ToolSearch',
@@ -1749,7 +1762,7 @@ Supported by:
                             'title': 'Max Content Tokens',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebFetch',
@@ -1781,7 +1794,7 @@ Supported by:
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
@@ -2267,12 +2280,12 @@ async def test_abstract_capability_description_field_is_optional_in_deferred_cat
     class AccountSecurityRunbook(AbstractCapability[None]):
         id: str = 'account-security'
         description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
-        defer_loading: bool | None = True
+        defer_loading: bool = True
 
     @dataclass
     class RefundsRunbook(AbstractCapability[None]):
         id: str = 'refunds'
-        defer_loading: bool | None = True
+        defer_loading: bool = True
 
     def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('done')])
@@ -2454,21 +2467,35 @@ async def test_capability_function_tools_shortcuts_in_agent():
     assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
 
 
-def test_deferred_capability_rejects_unsupported_native_tools() -> None:
-    """Deferred loading does not currently support native tools."""
+async def test_deferred_capability_partitions_native_tools() -> None:
+    """Deferred native tools are kept out of the baseline request until loaded."""
     native_cap = NativeTool[None](
         tool=WebSearchTool(),
         id='web-search',
         defer_loading=True,
     )
 
-    with pytest.raises(UserError) as native_tools_exc:
-        CombinedCapability([native_cap]).get_native_tools()
+    assert CombinedCapability([native_cap]).get_native_tools() == []
 
-    assert str(native_tools_exc.value) == snapshot(
-        "Deferred capability 'web-search' provides native tools, but lazy-loading native tools is not supported yet. "
-        'Remove the native tools from this capability or set `defer_loading=False`.'
+    seen_web_search_tools: list[list[WebSearchTool]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_web_search_tools.append(
+            [tool for tool in info.model_request_parameters.native_tools if isinstance(tool, WebSearchTool)]
+        )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[native_cap])
+    await agent.run('before load')
+    await agent.run(
+        'after load',
+        message_history=[
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'web-search'}, tool_call_id='load-web')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-web')]),
+        ],
     )
+
+    assert seen_web_search_tools == snapshot([[], [WebSearchTool()]])
 
 
 async def test_load_capability_tool_name_conflict_raises() -> None:
@@ -3136,9 +3163,9 @@ async def test_combined_capability_for_run_propagates():
 async def test_combined_capability_for_run_returns_new_when_child_changes():
     """CombinedCapability returns new instance when a child's for_run returns different."""
 
+    @dataclass
     class PerRunCap(AbstractCapability[None]):
-        def __init__(self, run_id: int = 0):
-            self.run_id = run_id
+        run_id: int = 0
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return PerRunCap(run_id=self.run_id + 1)
@@ -3248,23 +3275,23 @@ def test_apply_nested_combined_capability():
 
 
 def test_apply_wrapper_capability():
-    """WrapperCapability.apply() delegates to the wrapped capability."""
+    """WrapperCapability.apply() visits the wrapper registered for the wrapped capability."""
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
     visited: list[AbstractCapability[None]] = []
     wrapper.apply(visited.append)
-    assert visited == [inner]
+    assert visited == [wrapper]
 
 
 def test_apply_prefix_tools():
-    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
+    """PrefixTools.apply() visits the wrapper registered for the wrapped capability."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
 
     visited: list[AbstractCapability[None]] = []
     prefixed.apply(visited.append)
-    assert visited == [thinking]
+    assert visited == [prefixed]
 
 
 def test_apply_finds_capability_by_type():
@@ -3282,7 +3309,7 @@ def test_apply_finds_capability_by_type():
 
 
 def test_apply_finds_wrapped_capability_by_type():
-    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    """apply() registers wrappers themselves because wrapper behavior affects the loaded capability."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
     combined = CombinedCapability([prefixed, WebSearch(local='duckduckgo')])
@@ -3290,9 +3317,9 @@ def test_apply_finds_wrapped_capability_by_type():
     visited: list[AbstractCapability[None]] = []
     combined.apply(visited.append)
 
-    assert any(isinstance(c, Thinking) for c in visited)
+    assert not any(isinstance(c, Thinking) for c in visited)
     assert any(isinstance(c, WebSearch) for c in visited)
-    assert not any(isinstance(c, PrefixTools) for c in visited)
+    assert any(isinstance(c, PrefixTools) for c in visited)
 
 
 def test_apply_empty_combined():
@@ -3317,9 +3344,9 @@ async def test_for_run_with_different_toolset():
     def tool_b() -> str:
         return 'b'  # pragma: no cover
 
+    @dataclass
     class SwitchingCap(AbstractCapability[None]):
-        def __init__(self, use_b: bool = False):
-            self.use_b = use_b
+        use_b: bool = False
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return SwitchingCap(use_b=True)
@@ -3342,15 +3369,15 @@ async def test_for_run_with_different_toolset():
 async def test_for_run_with_different_instructions():
     """When for_run returns a capability with different get_instructions(), per-run instructions are used."""
 
+    @dataclass
     class DynamicInstructionsCap(AbstractCapability[None]):
-        def __init__(self, run_instructions: str = 'init-time'):
-            self._run_instructions = run_instructions
+        run_instructions: str = 'init-time'
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return DynamicInstructionsCap(run_instructions='per-run')
 
         def get_instructions(self) -> str:
-            return self._run_instructions
+            return self.run_instructions
 
     captured_messages: list[ModelMessage] = []
 
@@ -3403,9 +3430,9 @@ async def test_for_run_receives_populated_run_context():
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
+    @dataclass
     class CountingCap(AbstractCapability[None]):
-        def __init__(self) -> None:
-            self.request_count = 0
+        request_count: int = 0
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return CountingCap()
@@ -7773,6 +7800,50 @@ def test_validate_capability_not_dataclass():
         get_capability_registry(custom_types=(NotADataclass,))
 
 
+def test_deferred_dataclass_capability_requires_explicit_id() -> None:
+    """Generated dataclass init validates that deferred capabilities do not use an auto id."""
+
+    @dataclass
+    class DeferredCap(AbstractCapability[None]):
+        pass
+
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        DeferredCap(defer_loading=True)
+
+    assert DeferredCap(id='stable', defer_loading=True).id == 'stable'
+
+
+def test_deferred_custom_init_capability_must_initialize_id() -> None:
+    """Custom capability init must initialize base metadata when using deferred loading."""
+
+    @dataclass(init=False)
+    class DeferredCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.defer_loading = True
+            self.__post_init__()
+
+    with pytest.raises(UserError, match='must initialize `id`'):
+        DeferredCap()
+
+
+def test_custom_init_capability_can_initialize_metadata() -> None:
+    """Custom capability init can initialize base metadata without relying on `__new__`."""
+
+    @dataclass(init=False)
+    class DeferredCap(AbstractCapability[None]):
+        def __init__(self, *, id: str | None = None, defer_loading: bool = False) -> None:
+            if id is not None:
+                self.id = id
+            self.description = None
+            self.defer_loading = defer_loading
+            self.__post_init__()
+
+    cap = DeferredCap(id='stable', defer_loading=True)
+
+    assert cap.id == 'stable'
+    assert cap.defer_loading is True
+
+
 # --- Node run lifecycle hook tests ---
 
 
@@ -9242,6 +9313,168 @@ async def test_prefix_tools_with_callable_toolset():
     agent = Agent(FunctionModel(respond), capabilities=[cap])
     result = await agent.run('list tools')
     assert result.output == 'dyn_dynamic_tool'
+
+
+def test_prefix_tools_delegates_metadata_to_wrapped_capability():
+    """PrefixTools defaults to wrapped metadata while registering the wrapper behavior."""
+    toolset = FunctionToolset[None]()
+    wrapped = Toolset(
+        toolset,
+        id='leaf-tools',
+        description='Leaf tool bundle.',
+        defer_loading=True,
+    )
+    cap = PrefixTools(wrapped=wrapped, prefix='leaf')
+
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+
+    assert cap.id == 'leaf-tools'
+    assert cap.description == 'Leaf tool bundle.'
+    assert cap.get_description(None) == 'Leaf tool bundle.'
+    assert cap.defer_loading is True
+    assert visited == [cap]
+
+
+def test_prefix_tools_can_override_metadata():
+    """A wrapper with explicit metadata becomes its own registered capability."""
+    wrapped = Toolset(FunctionToolset[None](), id='leaf-tools', description='Leaf tool bundle.', defer_loading=True)
+    cap = PrefixTools(
+        wrapped=wrapped,
+        prefix='leaf',
+        id='prefixed-leaf-tools',
+        description='Prefixed leaf tools.',
+        defer_loading=False,
+    )
+
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+
+    assert cap.id == 'prefixed-leaf-tools'
+    assert cap.description == 'Prefixed leaf tools.'
+    assert cap.defer_loading is False
+    assert visited == [cap]
+
+
+async def test_prefix_tools_registration_matches_wrapper_metadata_cases():
+    """Wrappers register themselves, using wrapped metadata unless explicit wrapper metadata is provided."""
+
+    async def registered_capabilities(capability: AbstractCapability[None]) -> dict[str, AbstractCapability[None]]:
+        captured: dict[str, AbstractCapability[None]] = {}
+
+        @dataclass
+        class CaptureCapabilities(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                captured.update(ctx.capabilities)
+                return request_context
+
+        agent = Agent(
+            FunctionModel(lambda _messages, _info: make_text_response('done')),
+            capabilities=[capability, CaptureCapabilities()],
+        )
+        await agent.run('capture capabilities')
+        return captured
+
+    github = Capability[None](
+        id='github',
+        description='GitHub MCP server.',
+        defer_loading=True,
+    )
+    prefixed = PrefixTools(github, prefix='github')
+
+    registered = await registered_capabilities(prefixed)
+
+    assert registered['github'] is prefixed
+    assert prefixed.id == 'github'
+    assert prefixed.defer_loading is True
+    assert prefixed.get_description(None) == 'GitHub MCP server.'
+
+    explicit_id = PrefixTools(github, prefix='github', id='github_prefixed')
+    registered = await registered_capabilities(explicit_id)
+
+    assert registered['github_prefixed'] is explicit_id
+    assert explicit_id.defer_loading is False
+    assert explicit_id.get_description(None) == 'GitHub MCP server.'
+
+    explicit_deferred = PrefixTools(
+        Capability[None](),
+        prefix='github',
+        id='github',
+        defer_loading=True,
+    )
+    registered = await registered_capabilities(explicit_deferred)
+
+    assert registered['github'] is explicit_deferred
+    assert explicit_deferred.defer_loading is True
+
+
+async def test_prefix_tools_preserves_deferred_wrapped_capability():
+    """A deferred wrapped capability keeps its prefixed tools deferred until load."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    cap = PrefixTools(
+        wrapped=Toolset(
+            toolset,
+            id='refunds',
+            description='Refund policy tools.',
+            defer_loading=True,
+        ),
+        prefix='billing',
+    )
+    seen_tool_state: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'billing_lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='billing_lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'billing_lookup_refund_policy')
+        return make_text_response(f'done: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done: order-123: refund allowed'
+    assert seen_tool_state == snapshot(
+        [
+            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False)],
+        ]
+    )
 
 
 async def test_prefix_tools_convenience_method():
@@ -17669,6 +17902,7 @@ async def test_dynamic_capability_returning_combined() -> None:
 async def test_dynamic_deferred_capability_requires_stable_returned_id() -> None:
     """Deferred capability ids are part of message history and must survive replay."""
 
+    @dataclass(init=False)
     class CustomInitDeferredCap(AbstractCapability[None]):
         def __init__(self) -> None:
             self.defer_loading = True
@@ -17681,8 +17915,7 @@ async def test_dynamic_deferred_capability_requires_stable_returned_id() -> None
     with pytest.raises(UserError) as exc_info:
         await agent.run('hi')
 
-    assert 'stable explicit ids for message history replay' in str(exc_info.value)
-    assert "'auto_capability_" in str(exc_info.value)
+    assert 'must initialize base dataclass fields' in str(exc_info.value)
 
 
 async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_tools() -> None:

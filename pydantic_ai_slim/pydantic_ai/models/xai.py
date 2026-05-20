@@ -244,9 +244,10 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool = False,
         enable_video_understanding: bool = False,
         include_output: bool = False,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> None:
-        self.native = native
-        self.local = local
         self.allowed_x_handles = allowed_x_handles
         self.excluded_x_handles = excluded_x_handles
         self.from_date = from_date
@@ -254,7 +255,13 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         self.enable_image_understanding = enable_image_understanding
         self.enable_video_understanding = enable_video_understanding
         self.include_output = include_output
-        self.__post_init__()
+        super().__init__(
+            native=native,
+            local=local,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+        )
 
     def _default_native(self) -> XSearchTool:
         return XSearchTool(

@@ -179,10 +179,15 @@ def _effective_ordering(leaves: list[AbstractCapability[Any]]) -> CapabilityOrde
 
 
 def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
-    """Collect all leaf capabilities using the `apply` visitor pattern."""
-    leaves: list[AbstractCapability[Any]] = []
-    cap.apply(leaves.append)
-    return leaves
+    """Collect underlying leaf capabilities for ordering and type checks."""
+    from .combined import CombinedCapability
+    from .wrapper import WrapperCapability
+
+    if isinstance(cap, CombinedCapability):
+        return [leaf for child in cap.capabilities for leaf in collect_leaves(child)]
+    if isinstance(cap, WrapperCapability):
+        return collect_leaves(cap.wrapped)
+    return [cap]
 
 
 def has_capability_type(

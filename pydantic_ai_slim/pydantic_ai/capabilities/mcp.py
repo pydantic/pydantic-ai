@@ -13,6 +13,7 @@ from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -86,8 +87,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
     ) -> None:
+        self.description = description
+        self.defer_loading = defer_loading
         # In v2, MCP's `native` default flips from True to False. Warn whenever the user is
         # relying on the default — passing only `local=False` today gives native-only behavior,
         # but in v2 that combo will raise "both can't be False" without an explicit `native=True`.
@@ -120,20 +123,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         ):
             local = MCPToolset(local, include_instructions=True)
         self.local = local
-        # `AbstractCapability.__new__` seeds `id` with a UUID for subclasses that don't call
-        # `super().__init__()`. MCP needs a stable semantic id so provider server labels and
-        # local fallback `unless_native` markers refer to the same server across runs.
-        if id:
+        if id is not None:
             self.id = id
         elif isinstance(native, MCPServerTool):
             self.id = native.id
         else:
-            self.id = _mcp_id_from_url(url)
+            self.id = _mcp_id_from_url(url) or auto_capability_id()
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
-        self.description = description
-        self.defer_loading = defer_loading
         self.__post_init__()
 
     def _default_native(self) -> MCPServerTool:
@@ -203,6 +201,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
         """Construct an `MCP` capability from spec-serializable args.
 
@@ -220,6 +219,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             headers=headers,
             allowed_tools=allowed_tools,
             description=description,
+            defer_loading=defer_loading,
         )
 
 

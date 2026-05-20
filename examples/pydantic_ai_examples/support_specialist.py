@@ -134,7 +134,7 @@ class AccountSecurityRunbook(AbstractCapability[Store]):
         'Use for suspicious logins, stolen credentials, account takeover, session revocation, '
         'or urgent account lock requests.'
     )
-    defer_loading: bool | None = True
+    defer_loading: bool = True
 
     def get_toolset(self) -> FunctionToolset[Store]:
         return security_tools

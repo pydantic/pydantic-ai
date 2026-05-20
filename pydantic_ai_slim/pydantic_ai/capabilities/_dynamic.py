@@ -42,11 +42,12 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     """The function that takes the run context and returns a capability or `None`."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading is not None:
+        if self.defer_loading is True:
             raise UserError(
                 '`defer_loading` is not supported on `DynamicCapability` — '
                 'set it on the capability the factory returns instead.'
             )
+        super().__post_init__()
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = self.capability_func(ctx)

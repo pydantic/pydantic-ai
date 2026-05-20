@@ -51,14 +51,14 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
-    'GraphAgentState',
-    'GraphAgentDeps',
-    'UserPromptNode',
-    'ModelRequestNode',
     'CallToolsNode',
+    'GraphAgentDeps',
+    'GraphAgentState',
+    'HistoryProcessor',
+    'ModelRequestNode',
+    'UserPromptNode',
     'build_run_context',
     'capture_run_messages',
-    'HistoryProcessor',
     'resolve_conversation_id',
 )
 
@@ -492,18 +492,29 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
-    # resolve dynamic native tools
+    # Splice in native tools owned by deferred capabilities that have since been loaded.
+    # `CombinedCapability.get_native_tools` filters them out of the baseline, so they only
+    # appear here once `loaded_capability_ids` contains the owning cap id. The mid-run
+    # append intentionally invalidates the prompt cache for that turn — see `defer_loading`
+    # on `AbstractCapability`.
+    raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
+
+    def add_loaded_native_tools(capability: AbstractCapability[DepsT]) -> None:
+        if capability.defer_loading is True and capability.id in ctx.deps.loaded_capability_ids:
+            raw_native_tools.extend(capability.get_native_tools() or ())
+
+    ctx.deps.root_capability.apply(add_loaded_native_tools)
+
     native_tools: list[AbstractNativeTool] = []
-    if ctx.deps.native_tools:
-        for tool in ctx.deps.native_tools:
-            if isinstance(tool, AbstractNativeTool):
-                native_tools.append(tool)
-            else:
-                t = tool(run_context)
-                if inspect.isawaitable(t):
-                    t = await t
-                if t is not None:
-                    native_tools.append(t)
+    for tool in raw_native_tools:
+        if isinstance(tool, AbstractNativeTool):
+            native_tools.append(tool)
+        else:
+            t = tool(run_context)
+            if inspect.isawaitable(t):
+                t = await t
+            if t is not None:
+                native_tools.append(t)
 
     # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
     # the toolset has nothing to manage, so emitting the native tool would waste a tool slot

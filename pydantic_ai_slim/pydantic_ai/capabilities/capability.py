@@ -50,6 +50,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if self.toolset and self.tools:
             raise UserError(
                 'Cannot use both `toolset` and `tools` on the same capability. '

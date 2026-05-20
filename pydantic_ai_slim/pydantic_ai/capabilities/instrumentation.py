@@ -81,6 +81,7 @@ class Instrumentation(AbstractCapability[Any]):
     )
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         self._instrumentation_names = InstrumentationNames.for_version(self.settings.version)
 
     def get_ordering(self) -> CapabilityOrdering:

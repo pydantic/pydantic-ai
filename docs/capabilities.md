@@ -587,6 +587,66 @@ Loaded capability state comes from the [message history](message-history.md). If
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
 
+Custom capability classes should be dataclasses. This lets Pydantic AI expose the shared capability fields — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — consistently, and it is required when custom capabilities are used in agent specs.
+
+```python {title="custom_capability_dataclass.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class MyCapability(AbstractCapability[Any]):
+    """A custom capability."""
+```
+
+If you define a custom `__post_init__`, call `super().__post_init__()` so base validation still runs:
+
+```python {title="custom_capability_post_init.py"}
+from dataclasses import dataclass
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class MyCapability(AbstractCapability[None]):
+    label: str
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.label = self.label.strip()
+```
+
+If you define a custom `__init__`, use `@dataclass(init=False)` and initialize the base metadata before calling `__post_init__()`. Only expose `defer_loading` if the capability should support lazy loading; otherwise set `self.defer_loading = False`.
+
+```python {title="custom_capability_init.py"}
+from dataclasses import dataclass
+
+from pydantic_ai.capabilities import AbstractCapability, auto_capability_id
+
+
+@dataclass(init=False)
+class MyCapability(AbstractCapability[None]):
+    label: str
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
+        self.label = label
+        self.__post_init__()
+```
+
+When [`defer_loading=True`](#deferred-capability-loading), the capability must have a stable explicit `id`; auto-generated ids are rejected because they cannot be replayed from message history.
+
 ### Providing tools
 
 A capability that provides tools returns a [toolset](toolsets.md) from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset]. This can be a pre-built [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] instance, or a callable that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns one dynamically:

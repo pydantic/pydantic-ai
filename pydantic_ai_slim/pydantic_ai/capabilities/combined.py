@@ -25,7 +25,13 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
-from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
+from .abstract import (
+    AbstractCapability,
+    RawOutput,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
+    is_auto_capability_id,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -43,6 +49,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         # Splat any nested `CombinedCapability` so leaves participate as siblings in the
         # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
         # span both `outermost` and `innermost` tiers would force `_effective_ordering`
@@ -60,12 +67,29 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         seen: set[str] = set()
 
         def _check_unique(cap: AbstractCapability[AgentDepsT]) -> None:
-            if cap.id in seen:
+            try:
+                defer_loading = cap.defer_loading
+                cap_id = cap.id
+                _ = cap.description
+            except AttributeError as e:
                 raise UserError(
-                    f'Capability id {cap.id!r} is used by multiple capabilities. '
+                    'Capabilities with custom `__init__` methods must initialize base dataclass fields. '
+                    'Use the generated dataclass `__init__`, or set `self.id`, `self.description`, and '
+                    '`self.defer_loading` before calling `self.__post_init__()`.'
+                ) from e
+
+            if defer_loading is True and is_auto_capability_id(cap_id):
+                raise UserError(
+                    'Deferred capabilities must use stable explicit `id` values for message history replay. '
+                    'Pass `id=...` when using `defer_loading=True`.'
+                )
+
+            if cap_id in seen:
+                raise UserError(
+                    f'Capability id {cap_id!r} is used by multiple capabilities. '
                     'Capability ids must be unique within a run.'
                 )
-            seen.add(cap.id)
+            seen.add(cap_id)
 
         self.apply(_check_unique)
 
@@ -163,16 +187,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        # Skip deferred children: their native tools are spliced in per-step by
+        # `_prepare_request_parameters` once the owning capability's id appears in
+        # `loaded_capability_ids`. The mid-run append intentionally invalidates the
+        # prompt cache for that turn — see `defer_loading` on `AbstractCapability`.
         native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            cap_native_tools = capability.get_native_tools() or []
-            if capability.defer_loading is True and cap_native_tools:
-                raise UserError(
-                    f'Deferred capability {capability.id!r} provides native tools, but lazy-loading native '
-                    'tools is not supported yet. Remove the native tools from this capability or set '
-                    '`defer_loading=False`.'
-                )
-            native_tools.extend(cap_native_tools)
+            if capability.defer_loading is True:
+                continue
+            native_tools.extend(capability.get_native_tools() or [])
         return native_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

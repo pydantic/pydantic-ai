@@ -141,6 +141,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         # `'keywords'` and a callable strategy both run their algorithm on our side and
         # both engage the provider's "client-executed" native mode where supported, so
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
@@ -232,6 +233,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         loaded_tool_defs = tool_defs_for_loaded_capabilities(
             ctx, request_context.model_request_parameters.function_tools
         )
+
+        # TODO: I don't want to be parsing it again here
         in_history = parse_discovered_tools(ctx.messages)
         newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
         if not newly_loaded:

@@ -50,8 +50,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import collect_leaves, has_capability_type
-from ..capabilities.abstract import _AUTO_CAPABILITY_ID_PREFIX  # pyright: ignore[reportPrivateUsage]
+from ..capabilities._ordering import has_capability_type
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -1388,13 +1387,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
-        deferred_caps = [cap for cap in collect_leaves(run_capability) if cap.defer_loading is True]
-        if auto_id_caps := [cap for cap in deferred_caps if cap.id.startswith(_AUTO_CAPABILITY_ID_PREFIX)]:
-            auto_ids = ', '.join(repr(cap.id) for cap in auto_id_caps)
-            raise exceptions.UserError(
-                f'Deferred capabilities must use stable explicit ids for message history replay; got {auto_ids}. '
-                'Set `id=` on each static capability or dynamic factory result with `defer_loading=True`.'
-            )
+        deferred_caps: list[AbstractCapability[AgentDepsT]] = []
+
+        def _collect_deferred(cap: AbstractCapability[AgentDepsT]) -> None:
+            if cap.defer_loading is True:
+                deferred_caps.append(cap)
+
+        run_capability.apply(_collect_deferred)
         if deferred_caps:
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None

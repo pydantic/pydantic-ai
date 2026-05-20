@@ -12,6 +12,7 @@ from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
+from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 
@@ -57,9 +58,12 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
         id: str | None = None,
-        defer_loading: bool | None = None,
+        defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
+        self.id = id if id is not None else auto_capability_id()
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.allowed_domains = allowed_domains
@@ -67,10 +71,6 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.enable_citations = enable_citations
         self.max_content_tokens = max_content_tokens
-        if id is not None:
-            self.id = id
-        self.defer_loading = defer_loading
-        self.description = description
         self.__post_init__()
 
     def _default_native(self) -> WebFetchTool:
