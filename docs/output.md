@@ -96,7 +96,7 @@ Here's an example of using a union return type, which will register multiple out
 ```python {title="colors_or_sizes.py"}
 from pydantic_ai import Agent
 
-agent = Agent[None, list[str] | list[int]](
+agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
@@ -175,7 +175,7 @@ def run_sql_query(query: str) -> list[Row]:
     raise ModelRetry(f"Unsupported query: '{query}'.")
 
 
-sql_agent = Agent[None, list[Row] | SQLFailure](
+sql_agent = Agent[object, list[Row] | SQLFailure](
     'openai:gpt-5.2',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
@@ -207,7 +207,7 @@ class RouterFailure(BaseModel):
     explanation: str
 
 
-router_agent = Agent[None, list[Row] | RouterFailure](
+router_agent = Agent[object, list[Row] | RouterFailure](
     'openai:gpt-5.2',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
@@ -881,15 +881,14 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] should be used as an async context manager so cleanup runs deterministically when you stop consuming events.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task.
 
 !!! note "Model support"
-    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
     The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, which limits when [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] can interrupt an in-flight chunk read. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider docs for the recommended pattern.
 
 #### Cleaning up `run_stream_events`
 
-[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager:
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
 
 ```python {title="stream_cancel_run_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
@@ -898,17 +897,16 @@ agent = Agent('openai:gpt-5.2')
 
 
 async def main():
-    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
-        async for event in stream:
+    async with agent.run_stream_events('Write a long essay about Python') as events:
+        async for event in events:
             if isinstance(event, PartStartEvent):
                 print(f'Started: {event.part!r}')
                 #> Started: TextPart(content='Python is a ')
             elif isinstance(event, FinalResultEvent):
-                break  # (2)!
+                break  # (1)!
 ```
 
-1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
-2. Breaking out of the loop leaves the `async with` block, which closes the event stream and runs cleanup.
+1. Breaking out of the loop leaves the `async with` block, which cancels the background run task and closes the HTTP connection.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 

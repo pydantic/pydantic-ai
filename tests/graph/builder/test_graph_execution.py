@@ -397,3 +397,30 @@ async def test_early_termination_from_nested_generator():
     async for _ in gen:  # pragma: no branch
         break
     await gen.aclose()
+
+
+def test_run_sync():
+    """`Graph.run_sync` mirrors `Graph.run` from synchronous code."""
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    @g.step
+    async def increment(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs + 1
+
+    @g.step
+    async def double(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs * 2
+
+    g.add(
+        g.edge_from(g.start_node).to(increment),
+        g.edge_from(increment).to(double),
+        g.edge_from(double).to(g.end_node),
+    )
+
+    graph = g.build()
+    # First call infers the name from the calling frame.
+    assert graph.run_sync(inputs=3) == 8
+    assert graph.name == 'graph'
+    # Second call skips name inference because the name is already set.
+    assert graph.run_sync(inputs=4) == 10
+    assert graph.name == 'graph'

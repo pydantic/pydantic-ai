@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import inspect
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
@@ -14,7 +13,6 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
@@ -141,7 +139,7 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def turn_on_strict_if_openai(
-    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+    ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
@@ -379,7 +377,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
-    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object from the previous run.
 
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
@@ -871,38 +869,4 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated aliases for read access to the renamed `unless_native` field
-        # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
-        if name in ('prefer_builtin', 'prefer_native'):
-            warnings.warn(
-                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.unless_native
-        raise AttributeError(name)
-
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
-
-
-_RENAMED_TYPE_ALIASES: dict[str, str] = {
-    'BuiltinToolFunc': 'NativeToolFunc',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_TYPE_ALIASES:
-        new_name = _RENAMED_TYPE_ALIASES[name]
-        warnings.warn(
-            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

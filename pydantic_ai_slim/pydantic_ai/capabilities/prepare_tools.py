@@ -24,7 +24,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
 
 
     async def hide_admin_tools(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ctx: RunContext, tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition] | None:
         return [td for td in tool_defs if not td.name.startswith('admin_')]
 
@@ -59,7 +59,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
 
     async def only_after_first_step(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ctx: RunContext, tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition] | None:
         return tool_defs if ctx.run_step > 0 else []
 

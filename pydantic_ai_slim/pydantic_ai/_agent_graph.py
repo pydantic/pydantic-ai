@@ -24,9 +24,8 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
-from pydantic_graph.basenode import End, NodeRunEndT
-from pydantic_graph.graph_builder import Graph
+from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
+from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context
@@ -726,6 +725,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             if stream_error is not None:
                 await _cancel_task(wrap_task)
+                # Capture the partial response so `capture_run_messages` and `all_messages()`
+                # include what was streamed before the interruption. State is forced to
+                # 'interrupted' since the run did not complete normally — `sr._cancelled`
+                # may be False here (downstream exception rather than explicit cancel).
+                # We append directly rather than via `_append_response` to skip the usage-limit
+                # check; raising `UsageLimitExceeded` here would mask `stream_error`.
+                if agent_stream_holder:  # pragma: no branch
+                    partial_response = replace(
+                        agent_stream_holder[0].response,
+                        state='interrupted',
+                        run_id=ctx.state.run_id,
+                        conversation_id=ctx.state.conversation_id,
+                    )
+                    ctx.state.usage.incr(partial_response.usage)
+                    ctx.state.message_history.append(partial_response)
             else:
                 try:
                     try:
@@ -1184,12 +1198,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
+                        # Text parts before a native tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text.
+                        # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
                         text = ''
-                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.NativeToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                        # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                        pass
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):
@@ -1271,17 +1286,33 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
-        async for event in process_tool_calls(
-            tool_manager=ctx.deps.tool_manager,
-            tool_calls=tool_calls,
-            tool_call_results=self.tool_call_results,
-            tool_call_metadata=self.tool_call_metadata,
-            final_result=None,
-            ctx=ctx,
-            output_parts=output_parts,
-            output_final_result=output_final_result,
-        ):
-            yield event
+        try:
+            async for event in process_tool_calls(
+                tool_manager=ctx.deps.tool_manager,
+                tool_calls=tool_calls,
+                tool_call_results=self.tool_call_results,
+                tool_call_metadata=self.tool_call_metadata,
+                final_result=None,
+                ctx=ctx,
+                output_parts=output_parts,
+                output_final_result=output_final_result,
+            ):
+                yield event
+        except BaseException:
+            # Capture the partial tool returns collected so far. State is 'interrupted'
+            # so `capture_run_messages` consumers can detect partial state. The user prompt
+            # is intentionally omitted: this request was never sent to the model.
+            if output_parts:
+                ctx.state.message_history.append(
+                    _messages.ModelRequest(
+                        parts=list(output_parts),
+                        run_id=ctx.state.run_id,
+                        conversation_id=ctx.state.conversation_id,
+                        timestamp=now_utc(),
+                        state='interrupted',
+                    )
+                )
+            raise
 
         if output_final_result:
             final_result = output_final_result[0]
@@ -1476,24 +1507,6 @@ def _emit_output_tool_events(
     yield _messages.OutputToolResultEvent(part)
 
 
-def _emit_legacy_output_tool_function_events(
-    call: _messages.ToolCallPart,
-    part: _messages.ToolReturnPart | _messages.RetryPromptPart,
-    *,
-    args_valid: bool | None,
-) -> Iterator[_messages.HandleResponseEvent]:
-    """Yield legacy `FunctionToolCallEvent` / `FunctionToolResultEvent` for an output tool call.
-
-    These keep firing on output-tool failure paths (skipped, validation/execution failure triggering
-    a retry) for backward compatibility, so consumers matching the legacy event types still see them.
-    They will stop firing in v2; users should match `OutputToolCallEvent` / `OutputToolResultEvent`
-    (or the shared `ToolCallEvent` / `ToolResultEvent` bases) instead. No runtime warning is fired
-    so that already-migrated consumers don't see noise on every output-tool retry.
-    """
-    yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
-    yield _messages.FunctionToolResultEvent(part)
-
-
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1534,8 +1547,6 @@ async def process_tool_calls(  # noqa: C901
             )
             for event in _emit_output_tool_events(call, part, args_valid=None):
                 yield event
-            for event in _emit_legacy_output_tool_function_events(call, part, args_valid=None):
-                yield event
         # No final result yet, or exhaustive strategy processes all output tools
         else:
             # Validate and execute the output tool call using output hooks (not tool hooks).
@@ -1551,8 +1562,6 @@ async def process_tool_calls(  # noqa: C901
                         call, 'Output tool not used - output failed validation.', output_parts
                     )
                     for event in _emit_output_tool_events(call, part, args_valid=False):
-                        yield event
-                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=False):
                         yield event
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
@@ -1570,16 +1579,10 @@ async def process_tool_calls(  # noqa: C901
                     )
                     for event in _emit_output_tool_events(call, part, args_valid=False):
                         yield event
-                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=False):
-                        yield event
                     continue
 
                 output_parts.append(validated.validation_error.tool_retry)
                 for event in _emit_output_tool_events(call, validated.validation_error.tool_retry, args_valid=False):
-                    yield event
-                for event in _emit_legacy_output_tool_function_events(
-                    call, validated.validation_error.tool_retry, args_valid=False
-                ):
                     yield event
                 ctx.state.output_retries_used += 1
                 continue
@@ -1594,8 +1597,6 @@ async def process_tool_calls(  # noqa: C901
                     )
                     for event in _emit_output_tool_events(call, part, args_valid=True):
                         yield event
-                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=True):
-                        yield event
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
                 max_retries = (
@@ -1607,8 +1608,6 @@ async def process_tool_calls(  # noqa: C901
             except ToolRetryError as e:
                 output_parts.append(e.tool_retry)
                 for event in _emit_output_tool_events(call, e.tool_retry, args_valid=True):
-                    yield event
-                for event in _emit_legacy_output_tool_function_events(call, e.tool_retry, args_valid=True):
                     yield event
                 ctx.state.output_retries_used += 1
                 continue
@@ -1860,65 +1859,68 @@ async def _call_tools(  # noqa: C901
             return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
     parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
-    if parallel_execution_mode == 'sequential':
-        for index, call in enumerate(tool_calls):
-            if event := await handle_call_or_result(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                index,
-            ):
-                yield event
+    try:
+        if parallel_execution_mode == 'sequential':
+            for index, call in enumerate(tool_calls):
+                if event := await handle_call_or_result(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    index,
+                ):
+                    yield event
 
-    else:
-        tasks = [
-            asyncio.create_task(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                name=call.tool_name,
-            )
-            for call in tool_calls
-        ]
-        try:
-            if parallel_execution_mode == 'parallel_ordered_events':
-                # Wait for all tasks to complete before yielding any events
-                await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-                for index, task in enumerate(tasks):
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
-            else:
-                pending: set[
-                    asyncio.Task[
-                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                    ]
-                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+        else:
+            tasks = [
+                asyncio.create_task(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    name=call.tool_name,
+                )
+                for call in tool_calls
+            ]
+            try:
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
                             yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
 
-        except asyncio.CancelledError as e:
-            await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
-            raise
-        except BaseException:
-            # Cancel any still-running sibling tasks so they don't become
-            # orphaned asyncio tasks when a non-CancelledError exception
-            # (e.g. RuntimeError, ConnectionError) propagates out of
-            # handle_call_or_result().
-            await cancel_and_drain(*tasks)
-            raise
-
-    # We append the results at the end, rather than as they are received, to retain a consistent ordering
-    # This is mostly just to simplify testing
-    output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
-    output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
+            except asyncio.CancelledError as e:
+                await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
+                raise
+            except BaseException:
+                # Cancel any still-running sibling tasks so they don't become
+                # orphaned asyncio tasks when a non-CancelledError exception
+                # (e.g. RuntimeError, ConnectionError) propagates out of
+                # handle_call_or_result().
+                await cancel_and_drain(*tasks)
+                raise
+    finally:
+        # Populate output_parts even on exception so partial tool returns surface
+        # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
+        # results at the end, rather than as they are received, to retain a
+        # consistent ordering.
+        output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
+        output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
         tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
@@ -2044,6 +2046,11 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     !!! note
         If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
         `messages` will represent the messages exchanged during the first call only.
+
+    If a run is interrupted by an exception or cancellation while streaming a response or executing
+    tool calls, the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] or
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] is still captured here with
+    `state='interrupted'`, so consumers can detect and inspect partial state.
     """
     token = None
     messages: list[_messages.ModelMessage] = []

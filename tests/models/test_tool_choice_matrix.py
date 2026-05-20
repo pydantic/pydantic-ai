@@ -424,7 +424,7 @@ async def test_tool_choice_matrix(
     expected_tool_choice = EXPECTED_TOOL_CHOICE.get((provider, scenario))
 
     if scenario == 'auto':
-        agent: Agent[None, str] = Agent(model, tools=[get_weather])
+        agent = Agent(model, tools=[get_weather])
         settings: ModelSettings = {'tool_choice': 'auto'}
         await agent.run(
             "What's the weather in Paris?", model_settings=settings, usage_limits=UsageLimits(output_tokens_limit=5000)
@@ -452,14 +452,14 @@ async def test_tool_choice_matrix(
         await model.request([ModelRequest.user_text_prompt("What's the weather in Paris?")], settings, params)
 
     elif scenario == 'none_with_output':
-        agent_with_output: Agent[None, CityInfo] = Agent(model, tools=[get_weather], output_type=CityInfo)
+        agent_with_output: Agent[object, CityInfo] = Agent(model, tools=[get_weather], output_type=CityInfo)
         settings = {'tool_choice': 'none'}
         await agent_with_output.run(
             'Tell me about Paris', model_settings=settings, usage_limits=UsageLimits(output_tokens_limit=5000)
         )
 
     elif scenario == 'tools_plus_output':
-        agent_tpo: Agent[None, CityInfo] = Agent(model, tools=[get_weather, get_time], output_type=CityInfo)
+        agent_tpo: Agent[object, CityInfo] = Agent(model, tools=[get_weather, get_time], output_type=CityInfo)
         settings = {'tool_choice': ToolOrOutput(function_tools=['get_weather'])}
         await agent_tpo.run(
             'Get weather for Paris and summarize',

@@ -10,7 +10,7 @@ from pydantic_ai.tools import RunContext
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
+AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 

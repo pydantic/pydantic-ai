@@ -2,13 +2,14 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -113,35 +114,44 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
         return schema
 
 
-@dataclass(kw_only=True)
-class BedrockModelProfile(ModelProfile):
+class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
     ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    bedrock_supports_tool_choice: bool = False
-    bedrock_tool_result_format: Literal['text', 'json'] = 'text'
-    bedrock_send_back_thinking_parts: bool = False
-    bedrock_supports_prompt_caching: bool = False
-    bedrock_supports_tool_caching: bool = False
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
-    bedrock_supports_strict_tool_definition: bool = False
+    bedrock_supports_tool_choice: bool
+    """Default: `False`."""
+    bedrock_tool_result_format: Literal['text', 'json']
+    """Default: `'text'`."""
+    bedrock_send_back_thinking_parts: bool
+    """Default: `False`."""
+    bedrock_supports_prompt_caching: bool
+    """Default: `False`."""
+    bedrock_supports_tool_caching: bool
+    """Default: `False`."""
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
+    """Default: `frozenset({'image'})`."""
+    bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
     Tracked separately from `supports_json_schema_output` (which gates `NativeOutput` /
     `outputConfig`) because AWS could in principle ship a model that supports one without the
     other; today both features track the same per-model allowlist per the Bedrock structured-output
     docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html.
+
+    Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
+
+    Default: `None`.
     """
 
 
@@ -150,36 +160,45 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
     # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
     bedrock_structured_output_unsupported = ('claude-opus-4-1',)
-    profile = BedrockModelProfile(
-        bedrock_supports_tool_choice=True,
-        bedrock_send_back_thinking_parts=True,
-        bedrock_supports_prompt_caching=True,
-        bedrock_supports_tool_caching=True,
-        bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-        bedrock_thinking_variant='anthropic',
-    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
-    supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
+    profile = merge_profile(
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_send_back_thinking_parts=True,
+            bedrock_supports_prompt_caching=True,
+            bedrock_supports_tool_caching=True,
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+            bedrock_thinking_variant='anthropic',
+        ),
+        _strip_builtin_tools(anthropic_model_profile(model_name)),
+    )
+    supports_structured_output = profile.get('supports_json_schema_output', False) and not model_name.startswith(
         bedrock_structured_output_unsupported
     )
-    return replace(
+    return merge_profile(
         profile,
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+        BedrockModelProfile(
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = _without_builtin_tools(amazon_model_profile(model_name))
+    profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
-        profile = BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
-            bedrock_supports_prompt_caching=True,
-        ).update(profile)
+        # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        profile = merge_profile(
+            profile,
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_supports_prompt_caching=True,
+            ),
+        )
 
     if 'nova-2' in model_name:
-        profile.supported_native_tools = frozenset({CodeExecutionTool})
+        profile = merge_profile(profile, ModelProfile(supported_native_tools=frozenset({CodeExecutionTool})))
 
     return profile
 
@@ -188,7 +207,8 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
     profile = deepseek_model_profile(model_name)
     if 'r1' in model_name:
-        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
+        # Bedrock-specific override applies on top of the upstream DeepSeek profile.
+        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
     return profile  # pragma: no cover
 
 
@@ -196,13 +216,14 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
+    return merge_profile(
+        _strip_builtin_tools(mistral_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_tool_result_format='json',
-        ).update(_without_builtin_tools(mistral_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 
@@ -210,16 +231,17 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
+    return merge_profile(
+        _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
             supports_thinking='qwq' in model_name or 'qwen3' in model_name,
-        ).update(_without_builtin_tools(qwen_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
-        # Bedrock Converse API doesn't support JSON object mode
-        supports_json_object_output=False,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Bedrock Converse API doesn't support JSON object mode
+            supports_json_object_output=False,
+        ),
     )
 
 
@@ -227,21 +249,23 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model used via Bedrock."""
     models_that_support_structured_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
-        # Bedrock Converse API doesn't support JSON object mode
-        supports_json_object_output=False,
-        # Bedrock Converse API doesn't support tool return schemas natively
-        supports_tool_return_schema=False,
+    return merge_profile(
+        _strip_builtin_tools(google_model_profile(model_name)),
+        BedrockModelProfile(
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Bedrock Converse API doesn't support JSON object mode
+            supports_json_object_output=False,
+            # Bedrock Converse API doesn't support tool return schemas natively
+            supports_tool_return_schema=False,
+        ),
     )
 
 
 # MiniMax and NVIDIA don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
 # these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_without_builtin_tools(<upstream>_model_profile(model_name))` like the
+# upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
 # other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
 # `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
 
@@ -250,8 +274,7 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile(),
+    return BedrockModelProfile(
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -263,8 +286,7 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an NVIDIA model used via Bedrock."""
     models_that_support_structured_output = ('nemotron-nano',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile(),
+    return BedrockModelProfile(
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -272,8 +294,8 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
+def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return merge_profile(profile, ModelProfile(supported_native_tools=frozenset()))
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -306,10 +328,10 @@ class BedrockProvider(Provider[BaseClient]):
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'anthropic': bedrock_anthropic_model_profile,
             'mistral': bedrock_mistral_model_profile,
-            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
+            'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
-            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,

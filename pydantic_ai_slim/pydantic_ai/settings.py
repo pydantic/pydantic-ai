@@ -100,7 +100,6 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * MCP Sampling
-    * Outlines (all providers)
     * xAI
     """
 
@@ -121,7 +120,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -141,7 +139,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -213,7 +210,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
-    * Outlines (LlamaCpp, VLLMOffline)
     """
 
     presence_penalty: float
@@ -226,7 +222,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -240,7 +235,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -251,7 +245,6 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
-    * Outlines (Transformers, LlamaCpp, VLLMOffline)
     """
 
     stop_sequences: list[str]
@@ -330,7 +323,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
-    * Outlines (all providers)
     """
 
 

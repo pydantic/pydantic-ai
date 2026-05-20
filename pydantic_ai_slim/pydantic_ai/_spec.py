@@ -204,7 +204,6 @@ def load_from_registry(
     custom_types_param: str,
     context: str | None = None,
     instantiate: Callable[[type[T], tuple[Any, ...], dict[str, Any]], T] | None = None,
-    legacy_aliases: Mapping[str, str] | None = None,
 ) -> T:
     """Load an object from the registry based on a specification.
 
@@ -215,25 +214,11 @@ def load_from_registry(
         custom_types_param: Name of the parameter for custom types, used in error messages.
         context: Optional context for error messages.
         instantiate: Optional callback to instantiate the class. Default: `cls(*args, **kwargs)`.
-        legacy_aliases: Optional mapping of deprecated spec names to their current names.
-            When a spec uses a legacy name, a `PydanticAIDeprecationWarning` is emitted and
-            the lookup is redirected to the current name.
 
     Returns:
         An initialized instance.
     """
     name = spec.name
-    if legacy_aliases is not None and (renamed := legacy_aliases.get(name)) is not None:
-        import warnings
-
-        from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
-        warnings.warn(
-            f"In {label.lower()} specs, {label.lower()} name '{name}' is deprecated, use '{renamed}' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        name = renamed
     cls = registry.get(name)
     if cls is None:
         raise ValueError(

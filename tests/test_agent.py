@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -18,7 +18,6 @@ from typing_extensions import Self
 from pydantic_ai import (
     AbstractToolset,
     Agent,
-    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -89,9 +88,6 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -113,7 +109,6 @@ else:
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider
-        from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -126,7 +121,7 @@ else:
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = GrokProvider = HerokuProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
         TogetherProvider = VercelProvider = None  # type: ignore
@@ -145,16 +140,6 @@ else:
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:  # pragma: lax no cover
         GoogleProvider = None
-
-    try:
-        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleGLAProvider = None
-
-    try:
-        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleVertexProvider = None
 
     try:
         from pydantic_ai.providers.groq import GroqProvider
@@ -180,8 +165,6 @@ requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not 
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-genai not installed')  # pyright: ignore[reportUnnecessaryComparison]
-requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
-requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -423,7 +406,7 @@ def test_output_validator():
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         assert ctx.tool_name == 'final_result'
         if o.a == 42:
             return o
@@ -502,7 +485,7 @@ def test_output_validator_retries():
     agent = Agent(FunctionModel(return_model), output_type=Foo, retries={'output': target_retries})
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         # Succeed on the last retry
@@ -525,7 +508,7 @@ def test_output_function_retries():
     max_retries_log: list[int] = []
     target_retries = 3
 
-    def get_weather(ctx: RunContext[None], text: str) -> str:
+    def get_weather(ctx: RunContext, text: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == target_retries:
@@ -552,7 +535,7 @@ def test_tool_output_function_retries():
     max_retries_log: list[int] = []
     target_retries = 3
 
-    def get_weather(ctx: RunContext[None], city: str) -> str:
+    def get_weather(ctx: RunContext, city: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == target_retries:
@@ -581,7 +564,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
     max_retries_log: list[int] = []
     target_retries = 5
 
-    def get_weather(ctx: RunContext[None], city: str) -> str:
+    def get_weather(ctx: RunContext, city: str) -> str:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry < target_retries:
@@ -784,13 +767,13 @@ def test_tool_output_max_retries_per_tool():
     a_max_retries_seen: list[int] = []
     b_max_retries_seen: list[int] = []
 
-    def output_a(ctx: RunContext[None], value: str) -> str:
+    def output_a(ctx: RunContext, value: str) -> str:
         a_max_retries_seen.append(ctx.max_retries)
         if ctx.retry < 3:
             raise ModelRetry(f'Retry A {ctx.retry}')
         return f'A: {value}'
 
-    def output_b(ctx: RunContext[None], value: str) -> str:
+    def output_b(ctx: RunContext, value: str) -> str:
         b_max_retries_seen.append(ctx.max_retries)
         raise ModelRetry(f'Retry B {ctx.retry}')
 
@@ -991,7 +974,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(return_model))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1013,7 +996,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(return_model), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1026,7 +1009,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -1043,7 +1026,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1063,7 +1046,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1083,7 +1066,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with sync run."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1306,12 +1289,12 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, str | Foo] = Agent(m, output_type=union)
+    agent: Agent[object, str | Foo] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:
+    def validate_output(ctx: RunContext, o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return o
@@ -1391,7 +1374,7 @@ class Bar(BaseModel):
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:
+    def validate_output(ctx: RunContext, o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
         return o
@@ -1578,7 +1561,7 @@ def test_output_type_function_with_run_context():
         temperature: float
         description: str
 
-    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+    def get_weather(ctx: RunContext, city: str) -> Weather:
         assert ctx is not None
         return Weather(temperature=28.7, description='sunny')
 
@@ -1659,7 +1642,7 @@ def test_output_type_bound_instance_method_with_run_context():
         temperature: float
         description: str
 
-        def get_weather(self, ctx: RunContext[None], city: str) -> Self:
+        def get_weather(self, ctx: RunContext, city: str) -> Self:
             assert ctx is not None
             return self
 
@@ -1795,7 +1778,7 @@ def test_output_type_text_output_function_with_retry():
         temperature: float
         description: str
 
-    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+    def get_weather(ctx: RunContext, city: str) -> Weather:
         assert ctx is not None
         if city != 'Mexico City':
             raise ModelRetry('City not found, I only know Mexico City')
@@ -3548,7 +3531,7 @@ def test_agent_conversation_id_new_sentinel_forks() -> None:
 def test_agent_conversation_id_available_in_run_context() -> None:
     captured: list[str | None] = []
 
-    def capture_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+    def capture_metadata(ctx: RunContext) -> dict[str, Any]:
         captured.append(ctx.conversation_id)
         return {}
 
@@ -3681,7 +3664,7 @@ async def test_agent_run_metadata_kwarg_dict() -> None:
 async def test_agent_run_metadata_kwarg_callable() -> None:
     agent = Agent(TestModel(custom_output_text='kwarg callable output'))
 
-    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+    def run_meta(ctx: RunContext) -> dict[str, Any]:
         return {'prompt': ctx.prompt}
 
     result = await agent.run('kwarg callable prompt', metadata=run_meta)
@@ -4121,7 +4104,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -4364,7 +4347,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -4982,7 +4965,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -5101,7 +5084,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -5594,7 +5577,7 @@ class TestMultipleToolCalls:
         def process_first(output: OutputType) -> OutputType:
             return output
 
-        def process_second(ctx: RunContext[None], value: str) -> str:
+        def process_second(ctx: RunContext, value: str) -> str:
             raise ModelRetry('always fails')
 
         call_count = 0
@@ -5973,6 +5956,123 @@ def test_capture_run_messages_with_user_exception_does_not_contain_internal_erro
         assert e.__context__ is None
 
 
+async def test_tool_exception_captures_partial_request() -> None:
+    """When one tool raises mid-loop, completed tool returns are captured in a
+    `ModelRequest` with `state='interrupted'` so `capture_run_messages` reflects
+    the partial state.
+    """
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    # `sequential=True` makes tool execution deterministic: good_tool runs and
+    # completes before bad_tool raises, so the captured partial reliably includes
+    # good_tool's return.
+    @agent.tool_plain(sequential=True)
+    def good_tool(x: int) -> int:
+        return x * 10
+
+    @agent.tool_plain(sequential=True)
+    def bad_tool(x: int) -> int:
+        raise RuntimeError('tool-failure')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='tool-failure'):
+            await agent.run('Hello')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                    ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='good_tool',
+                        content=10,
+                        tool_call_id='call_good',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_tool_execution_cancellation_captures_partial_request() -> None:
+    """Cancellation mid-tool-execution captures the completed tool returns as a partial
+    `ModelRequest` with `state='interrupted'`.
+    """
+    first_done = asyncio.Event()
+    never = asyncio.Event()
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_tool', args='{"x": 1}', tool_call_id='call_fast'),
+                ToolCallPart(tool_name='slow_tool', args='{"x": 2}', tool_call_id='call_slow'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    @agent.tool_plain
+    async def fast_tool(x: int) -> int:
+        first_done.set()
+        return x * 10
+
+    @agent.tool_plain
+    async def slow_tool(x: int) -> int:
+        await never.wait()
+        return x  # pragma: no cover
+
+    captured: list[ModelMessage] = []
+
+    async def consume() -> None:
+        nonlocal captured
+        with capture_run_messages() as messages:
+            try:
+                await agent.run('Hello')
+            finally:
+                captured = list(messages)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_done.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    partial_requests = [m for m in captured if isinstance(m, ModelRequest) and m.state == 'interrupted']
+    assert len(partial_requests) == 1
+    parts = partial_requests[0].parts
+    assert any(isinstance(p, ToolReturnPart) and p.tool_name == 'fast_tool' and p.content == 10 for p in parts)
+
+
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
@@ -6318,7 +6418,7 @@ def test_custom_output_type_invalid() -> None:
     agent = Agent('test')
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: no cover
+    def validate_output(ctx: RunContext, o: Any) -> Any:  # pragma: no cover
         return o
 
     with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has output validators'):
@@ -6357,6 +6457,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6430,6 +6531,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -6510,6 +6612,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
             {
                 'parts': [
@@ -7008,13 +7111,6 @@ async def test_agent_context_manager_no_model():
         pass
 
 
-def test_cached_async_http_client_deprecated():
-    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
-
-    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
-        cached_async_http_client()  # pyright: ignore[reportDeprecated]
-
-
 @requires_openai
 async def test_provider_lifecycle_closes_client():
     """Provider lifecycle closes owned HTTP client on exit.
@@ -7104,50 +7200,6 @@ async def test_provider_reentry_after_close():
     assert second_client.is_closed
 
 
-@requires_google_gla
-@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
-async def test_google_gla_provider_reentry_after_close():
-    """GoogleGLAProvider restores base_url and API key header on re-entry."""
-    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert second_client.is_closed
-
-
-@requires_google_vertex
-@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
-async def test_google_vertex_provider_reentry_after_close():
-    """GoogleVertexProvider restores auth and base_url on re-entry."""
-    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert first_client.auth is not None
-        assert 'us-central1' in str(first_client.base_url)
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert second_client.auth is not None
-        assert 'us-central1' in str(second_client.base_url)
-    assert second_client.is_closed
-
-
 @requires_openai
 async def test_gateway_provider_reentry_after_close():
     """Gateway provider restores event_hooks on re-entry."""
@@ -7189,7 +7241,6 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
-@pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -7208,7 +7259,6 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
-        pytest.param(lambda: GrokProvider(api_key='t'), marks=[requires_openai], id='grok'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
@@ -7287,6 +7337,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'run_id': IsStr(),
             'conversation_id': IsStr(),
             'metadata': None,
+            'state': 'complete',
         }
     )
 
@@ -7524,43 +7575,6 @@ def test_many_multimodal_tool_response():
         agent.run_sync('Please analyze the data')
 
 
-def test_deprecated_kwargs_validation_agent_init():
-    """Test that invalid kwargs raise UserError in Agent constructor."""
-    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')  # type: ignore[call-arg]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')  # type: ignore[call-arg]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
-
-
-def test_deprecated_kwargs_still_work():
-    """Test that valid deprecated kwargs still work with warnings."""
-    import warnings
-
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-
-            Agent(  # pyright: ignore[reportDeprecated]
-                'test',
-                mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],  # pyright: ignore[reportDeprecated]
-            )
-            mcp_servers_warnings = [
-                warning
-                for warning in w
-                if issubclass(warning.category, DeprecationWarning)
-                and '`mcp_servers` is deprecated' in str(warning.message)
-            ]
-            assert len(mcp_servers_warnings) == 1
-    except ImportError:
-        pass
-
-
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
@@ -7570,7 +7584,7 @@ def test_override_toolsets():
 
     available_tools: list[list[str]] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
@@ -7620,7 +7634,7 @@ def test_override_tools():
 
     available_tools: list[list[str]] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
@@ -7651,14 +7665,14 @@ def test_toolset_factory():
 
     available_tools: list[str] = []
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools = [tool_def.name for tool_def in tool_defs]
         return tool_defs
 
     toolset_creation_counts: dict[str, int] = defaultdict(int)
 
-    def via_toolsets_arg(ctx: RunContext[None]) -> AbstractToolset[None]:
+    def via_toolsets_arg(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolsets_arg'] += 1
         return toolset.prefixed('via_toolsets_arg')
@@ -7674,13 +7688,13 @@ def test_toolset_factory():
     agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.toolset
-    def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
+    def via_toolset_decorator(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolset_decorator'] += 1
         return toolset.prefixed('via_toolset_decorator')
 
     @agent.toolset(per_run_step=False)
-    async def via_toolset_decorator_for_entire_run(ctx: RunContext[None]) -> AbstractToolset[None]:
+    async def via_toolset_decorator_for_entire_run(ctx: RunContext) -> AbstractToolset:
         nonlocal toolset_creation_counts
         toolset_creation_counts['via_toolset_decorator_for_entire_run'] += 1
         return toolset.prefixed('via_toolset_decorator_for_entire_run')
@@ -7904,7 +7918,7 @@ def test_prepare_output_tools_receives_output_max_retries():
         # Always return the same output; the validator drives retries.
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prep(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         seen_retries.append(ctx.retry)
         seen_max_retries.append(ctx.max_retries)
         seen_per_tool_retries.append(ctx.retries.get(tool_defs[0].name, 0))
@@ -7919,7 +7933,7 @@ def test_prepare_output_tools_receives_output_max_retries():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         if ctx.retry == target_retries:
             return o
         raise ModelRetry(f'Retry {ctx.retry}')
@@ -7948,7 +7962,7 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
-    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prep(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         seen_max_retries.append(ctx.max_retries)
         return tool_defs
 
@@ -7965,15 +7979,61 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
     assert seen_max_retries == [2]
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
-async def test_explicit_context_manager():
+def test_set_mcp_sampling_model():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    test_model = TestModel()
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport, sampling_model=test_model)
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent(None, toolsets=[toolset])
+
+    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+        agent.set_mcp_sampling_model()
+    assert server1.sampling_model is None
+    assert server2.sampling_model is test_model
+
+    def _callback(toolset: MCPToolset) -> Any:
+        # Probe fastmcp's private session-kwargs to confirm the client's sampling callback was
+        # rewired alongside the public `sampling_model` attribute.
+        return toolset.client._session_kwargs.get('sampling_callback')  # pyright: ignore[reportPrivateUsage]
+
+    agent.model = test_model
+    agent.set_mcp_sampling_model()
+    assert server1.sampling_model is test_model
+    assert server2.sampling_model is test_model
+    assert _callback(server1) is not None
+    assert _callback(server2) is not None
+
+    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
+    with agent.override(model=function_model):
+        agent.set_mcp_sampling_model()
+        assert server1.sampling_model is function_model
+        assert server2.sampling_model is function_model
+
+    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
+    agent.set_mcp_sampling_model(function_model2)
+    assert server1.sampling_model is function_model2
+    assert server2.sampling_model is function_model2
+
+
+async def test_explicit_context_manager():
+    try:
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -7986,15 +8046,17 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_implicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+    server1 = MCPToolset(transport)
+    server2 = MCPToolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -8003,10 +8065,11 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_parallel_mcp_calls():
     try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+        from fastmcp.client.transports import StdioTransport
+
+        from pydantic_ai.mcp import MCPToolset
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
@@ -8021,7 +8084,7 @@ def test_parallel_mcp_calls():
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
@@ -8138,8 +8201,8 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
     started = asyncio.Event()
     never_finishes = asyncio.Future[AgentRunResult[Any]]()
 
-    class WrapRunCapability(AbstractCapability[None]):
-        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+    class WrapRunCapability(AbstractCapability):
+        async def wrap_run(self, ctx: RunContext, *, handler: WrapRunHandler) -> AgentRunResult[Any]:
             try:
                 started.set()
                 return await never_finishes
@@ -8280,41 +8343,6 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     assert integer_holder == 2
 
 
-@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
-def test_set_mcp_sampling_model():
-    try:
-        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    test_model = TestModel()
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)  # pyright: ignore[reportDeprecated]
-    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
-    agent = Agent(None, toolsets=[toolset])
-
-    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
-        agent.set_mcp_sampling_model()
-    assert server1.sampling_model is None
-    assert server2.sampling_model is test_model
-
-    agent.model = test_model
-    agent.set_mcp_sampling_model()
-    assert server1.sampling_model is test_model
-    assert server2.sampling_model is test_model
-
-    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
-    with agent.override(model=function_model):
-        agent.set_mcp_sampling_model()
-        assert server1.sampling_model is function_model
-        assert server2.sampling_model is function_model
-
-    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
-    agent.set_mcp_sampling_model(function_model2)
-    assert server1.sampling_model is function_model2
-    assert server2.sampling_model is function_model2
-
-
 def test_toolsets():
     toolset = FunctionToolset()
 
@@ -8331,13 +8359,7 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
-@pytest.mark.filterwarnings(
-    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
 async def test_wrapper_agent():
-    async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
-        pass  # pragma: no cover
-
     foo_toolset = FunctionToolset()
 
     @foo_toolset.tool_plain
@@ -8345,12 +8367,11 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(  # pyright: ignore[reportCallIssue]
+    agent = Agent(
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
-        event_stream_handler=event_stream_handler,
     )
     wrapper_agent = WrapperAgent(agent)
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
@@ -10052,7 +10073,7 @@ async def test_agent_allows_none_output_validator_called():
     agent = Agent(model, output_type=str | None)
 
     @agent.output_validator
-    async def validate_output(ctx: RunContext[None], output: str | None) -> str | None:
+    async def validate_output(ctx: RunContext, output: str | None) -> str | None:
         nonlocal validator_called
         validator_called = True
         assert output is None
@@ -10093,7 +10114,7 @@ async def test_agent_allows_none_output_validator_retry():
     agent = Agent(model, output_type=str | None)
 
     @agent.output_validator
-    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+    async def reject_none(ctx: RunContext, output: str | None) -> str | None:
         if output is None:
             raise ModelRetry('None not acceptable, please respond')
         return output
@@ -10275,7 +10296,7 @@ class TestCallableAgentLevelSettings:
     """Test agent-level callable model_settings."""
 
     def test_callable_agent_settings(self):
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=200)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=dynamic_settings)
@@ -10299,7 +10320,7 @@ class TestCallableAgentLevelSettings:
         """The callable should see `ctx.model_settings` set to the model's base settings."""
         seen_settings: list[ModelSettings | None] = []
 
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
             return ModelSettings(max_tokens=100)
 
@@ -10315,7 +10336,7 @@ class TestCallableRunLevelSettings:
     """Test run-level callable model_settings."""
 
     def test_callable_run_settings(self):
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.9)
 
         agent = Agent(FunctionModel(_model_with_settings))
@@ -10326,7 +10347,7 @@ class TestCallableRunLevelSettings:
         """Run-level callable should see merged model+agent settings via ctx.model_settings."""
         seen_settings: list[ModelSettings | None] = []
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
             return ModelSettings(temperature=0.5)
 
@@ -10342,7 +10363,7 @@ class TestMixedStaticAndCallableSettings:
     """Test mixing static and callable model_settings."""
 
     def test_static_agent_callable_run(self):
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.8)
 
         agent = Agent(
@@ -10353,7 +10374,7 @@ class TestMixedStaticAndCallableSettings:
         assert result.output == 'max_tokens=100 temperature=0.8'
 
     def test_callable_agent_static_run(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=150)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10361,10 +10382,10 @@ class TestMixedStaticAndCallableSettings:
         assert result.output == 'max_tokens=150 temperature=0.6'
 
     def test_callable_agent_callable_run(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=200)
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.4)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10379,7 +10400,7 @@ class TestPerStepSettingsResolution:
         call_count = 0
         step_numbers: list[int] = []
 
-        def dynamic_settings(ctx: RunContext[None]) -> ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> ModelSettings:
             nonlocal call_count
             call_count += 1
             step_numbers.append(ctx.run_step)
@@ -10404,7 +10425,7 @@ class TestPerStepSettingsResolution:
     def test_step_dependent_settings(self):
         """Settings can vary based on run_step."""
 
-        def step_dependent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def step_dependent_settings(ctx: RunContext) -> ModelSettings:
             if ctx.run_step <= 1:
                 return ModelSettings(max_tokens=100)
             return ModelSettings(max_tokens=500)
@@ -10435,10 +10456,10 @@ class TestDynamicSettingsPrecedence:
     """Test that run > agent > model precedence is maintained with callables."""
 
     def test_callable_run_overrides_callable_agent(self):
-        def agent_settings(ctx: RunContext[None]) -> ModelSettings:
+        def agent_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.2)
 
-        def run_settings(ctx: RunContext[None]) -> ModelSettings:
+        def run_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(temperature=0.8)
 
         agent = Agent(FunctionModel(_model_with_settings), model_settings=agent_settings)
@@ -10457,7 +10478,7 @@ class TestOverrideWithModelSettings:
             assert result.output == 'max_tokens=42 temperature=None'
 
     def test_override_with_callable(self):
-        def override_settings(ctx: RunContext[None]) -> ModelSettings:
+        def override_settings(ctx: RunContext) -> ModelSettings:
             return ModelSettings(max_tokens=99)
 
         agent = Agent(FunctionModel(_model_with_settings))
@@ -10527,7 +10548,7 @@ def test_output_validator_retry_consistency_across_paths():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         max_retries_log.append(ctx.max_retries)
         if ctx.retry == 2:
@@ -10562,7 +10583,7 @@ def test_output_validator_exceeds_output_retries():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'Retry {ctx.retry}')
 
@@ -10596,7 +10617,7 @@ async def test_concurrent_runs_output_retry_isolation():
     )
 
     @agent.output_validator
-    async def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    async def validate_output(ctx: RunContext, o: Foo) -> Foo:
         # Use the prompt to identify which run this is
         run_id = 'slow' if 'slow' in (ctx.prompt or '') else 'fast'
         retries_by_run[run_id].append(ctx.retry)
@@ -10660,7 +10681,7 @@ def test_output_validator_retry_counter_with_tool_switch():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: str) -> str:
+    def validate_output(ctx: RunContext, o: str) -> str:
         validator_retries.append(ctx.retry)
         validator_max_retries.append(ctx.max_retries)
         if ctx.retry < 2:
@@ -10704,7 +10725,7 @@ def test_output_tool_validation_vs_execution_retry_counting():
     )
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+    def validate_output(ctx: RunContext, o: Foo) -> Foo:
         validator_retries.append(ctx.retry)
         if ctx.retry < 2:
             raise ModelRetry(f'Retry {ctx.retry}')
@@ -10833,7 +10854,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
     agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
 
     @agent.output_validator
-    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+    def always_retry(ctx: RunContext, o: Foo) -> Foo:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'retry {ctx.retry}')
 
@@ -10861,7 +10882,7 @@ def test_text_path_honors_output_retry_budget():
     agent = Agent(FunctionModel(return_model), output_type=str, retries={'output': 5})
 
     @agent.output_validator
-    def always_retry(ctx: RunContext[None], o: str) -> str:
+    def always_retry(ctx: RunContext, o: str) -> str:
         retries_log.append(ctx.retry)
         raise ModelRetry(f'retry {ctx.retry}')
 
@@ -11061,7 +11082,7 @@ async def test_image_output_validators_run():
     agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         return BinaryImage(data=b'modified', media_type=output.media_type)
 
     result = await agent.run('Give me an image')
@@ -11149,7 +11170,7 @@ async def test_image_output_validator_model_retry():
     agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         raise ModelRetry('image validation failed')
 
     with pytest.raises(
@@ -11222,7 +11243,7 @@ async def test_image_output_validators_run_stream():
     agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+    def validate_output(ctx: RunContext, output: BinaryImage) -> BinaryImage:
         return BinaryImage(data=b'modified', media_type=output.media_type)
 
     async with agent.run_stream('Give me an image') as stream:

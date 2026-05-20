@@ -56,7 +56,6 @@ __all__ = (
     'IsInstance',
     'IsList',
     'TestEnv',
-    'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
@@ -275,26 +274,6 @@ def anyio_backend():
 def allow_model_requests():
     with pydantic_ai.models.override_allow_model_requests(True):
         yield
-
-
-@pytest.fixture
-async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
-    client: httpx.AsyncClient | None = None
-
-    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
-        nonlocal client
-        assert client is None, 'client_with_handler can only be called once'
-        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
-        return client
-
-    try:
-        yield create_client
-    finally:
-        if client:  # pragma: no branch
-            await client.aclose()
-
-
-ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]
 
 
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
@@ -826,7 +805,6 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
-    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()
@@ -888,11 +866,6 @@ def model(
             from pydantic_ai.providers.cohere import CohereProvider
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
-        elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
@@ -910,39 +883,10 @@ def model(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
-        elif request.param == 'outlines':
-            import warnings
-
-            from outlines.models.transformers import from_transformers
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            from pydantic_ai._warnings import PydanticAIDeprecationWarning
-            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-                return OutlinesModel(  # pyright: ignore[reportDeprecated]
-                    from_transformers(
-                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    )
-                )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
         pytest.skip(f'{request.param} is not installed')
-
-
-@pytest.fixture
-def mock_snapshot_id(mocker: MockerFixture):
-    i = 0
-
-    def generate_snapshot_id(node_id: str) -> str:
-        nonlocal i
-        i += 1
-        return f'{node_id}:{i}'
-
-    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture

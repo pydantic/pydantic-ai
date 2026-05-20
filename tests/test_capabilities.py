@@ -219,12 +219,12 @@ def test_agent_from_spec_bad_args():
 
 
 @dataclass
-class CustomCapability(AbstractCapability[None]):
+class CustomCapability(AbstractCapability):
     greeting: str = 'hello'
 
 
 @dataclass
-class CapabilityWithCallbackParam(AbstractCapability[None]):
+class CapabilityWithCallbackParam(AbstractCapability):
     """Custom capability with a mix of serializable and non-serializable params."""
 
     max_retries: int = 3
@@ -446,36 +446,6 @@ def test_agent_from_spec_tool_timeout_override():
     assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_instrument():
-    """The deprecated spec `instrument` field configures `agent.instrument`."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'instrument': True})
-    assert agent.instrument is True
-
-
-def test_agent_from_spec_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
-    """The `instrument=` kwarg on `from_file` is deprecated; the agent still gets configured."""
-    spec_path = tmp_path / 'spec.yaml'
-    spec_path.write_text('model: test\n')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
-
-
-def test_agent_init_instrument_kwarg_deprecated():
-    """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
-        agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
-    assert agent.instrument is True
-
-
 def test_agent_from_spec_metadata():
     agent = Agent.from_spec({'model': 'test', 'metadata': {'env': 'prod', 'version': '1.0'}})
     assert agent._metadata == {'env': 'prod', 'version': '1.0'}  # pyright: ignore[reportPrivateUsage]
@@ -496,7 +466,7 @@ def test_agent_from_spec_model_override():
 
 def test_agent_from_spec_capabilities_merged():
     @dataclass
-    class ExtraCap(AbstractCapability[None]):
+    class ExtraCap(AbstractCapability):
         pass
 
     agent = Agent.from_spec(
@@ -775,6 +745,17 @@ Keys:
                         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
+                        'gateway/google:gemini-2.5-flash-image',
+                        'gateway/google:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google:gemini-2.5-flash-lite',
+                        'gateway/google:gemini-2.5-flash',
+                        'gateway/google:gemini-2.5-pro',
+                        'gateway/google:gemini-3-flash-preview',
+                        'gateway/google:gemini-3-pro-image-preview',
+                        'gateway/google:gemini-3.1-flash-image-preview',
+                        'gateway/google:gemini-3.1-flash-lite-preview',
+                        'gateway/google:gemini-3.1-pro-preview',
+                        'gateway/google:gemini-3.5-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -866,22 +847,6 @@ Keys:
                         'google:gemini-3.5-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
-                        'grok:grok-2-image-1212',
-                        'grok:grok-2-vision-1212',
-                        'grok:grok-3-fast',
-                        'grok:grok-3-mini-fast',
-                        'grok:grok-3-mini',
-                        'grok:grok-3',
-                        'grok:grok-4-0709',
-                        'grok:grok-4-latest',
-                        'grok:grok-4-1-fast-non-reasoning',
-                        'grok:grok-4-1-fast-reasoning',
-                        'grok:grok-4-1-fast',
-                        'grok:grok-4-fast-non-reasoning',
-                        'grok:grok-4-fast-reasoning',
-                        'grok:grok-4-fast',
-                        'grok:grok-4',
-                        'grok:grok-code-fast-1',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -1236,36 +1201,6 @@ All types must be serializable using Pydantic.\
                     'title': 'ToolSearchTool',
                     'type': 'object',
                 },
-                'UrlContextTool': {
-                    'deprecated': True,
-                    'properties': {
-                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
-                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
-                        'max_uses': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Uses',
-                        },
-                        'allowed_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Allowed Domains',
-                        },
-                        'blocked_domains': {
-                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Blocked Domains',
-                        },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
-                        'max_content_tokens': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Max Content Tokens',
-                        },
-                    },
-                    'title': 'UrlContextTool',
-                    'type': 'object',
-                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
@@ -1401,7 +1336,6 @@ Supported by:
                                         {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
                                         {'$ref': '#/$defs/ImageGenerationTool'},
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
@@ -1765,22 +1699,10 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'tool_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'deprecated': True,
-                    'title': 'Tool Retries',
-                },
                 'retries': {
                     'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Retries',
-                },
-                'output_retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'deprecated': True,
-                    'title': 'Output Retries',
                 },
                 'end_strategy': {
                     'default': 'early',
@@ -1792,11 +1714,6 @@ Supported by:
                     'anyOf': [{'type': 'number'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Tool Timeout',
-                },
-                'instrument': {
-                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Instrument',
                 },
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
@@ -2110,12 +2027,12 @@ def test_to_file_roundtrip_json(tmp_path: str):
 
 
 @dataclass
-class ToolsetFuncCapability(AbstractCapability[None]):
+class ToolsetFuncCapability(AbstractCapability):
     """A capability that returns a ToolsetFunc instead of an AbstractToolset."""
 
-    def get_toolset(self) -> ToolsetFunc[None]:
-        def make_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-            toolset = FunctionToolset[None]()
+    def get_toolset(self) -> ToolsetFunc:
+        def make_toolset(ctx: RunContext) -> AbstractToolset:
+            toolset = FunctionToolset()
 
             @toolset.tool_plain
             def greet(name: str) -> str:
@@ -2204,7 +2121,7 @@ def test_abstract_capability_get_model_settings_default():
     """AbstractCapability.get_model_settings() returns None by default."""
 
     @dataclass
-    class PlainCap(AbstractCapability[None]):
+    class PlainCap(AbstractCapability):
         pass
 
     cap = PlainCap()
@@ -2215,12 +2132,12 @@ def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
 
     @dataclass
-    class MaxTokensCap(AbstractCapability[None]):
+    class MaxTokensCap(AbstractCapability):
         def get_model_settings(self) -> _ModelSettings | None:
             return _ModelSettings(max_tokens=100)
 
     @dataclass
-    class TemperatureCap(AbstractCapability[None]):
+    class TemperatureCap(AbstractCapability):
         def get_model_settings(self) -> _ModelSettings | None:
             return _ModelSettings(temperature=0.5)
 
@@ -2241,7 +2158,7 @@ def test_combined_capability_get_model_settings_none():
     """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
 
     @dataclass
-    class PlainCap(AbstractCapability[None]):
+    class PlainCap(AbstractCapability):
         pass
 
     caps = CombinedCapability(capabilities=[PlainCap()])
@@ -2250,14 +2167,14 @@ def test_combined_capability_get_model_settings_none():
 
 def test_toolset_capability_get_toolset():
     """Toolset capability returns its toolset."""
-    ts = FunctionToolset[None]()
+    ts = FunctionToolset()
     cap = Toolset(toolset=ts)
     assert cap.get_toolset() is ts
 
 
 async def test_toolset_capability_in_agent():
     """A Toolset capability's tools are available to the agent."""
-    ts = FunctionToolset[None]()
+    ts = FunctionToolset()
 
     @ts.tool_plain
     def greet(name: str) -> str:
@@ -2328,7 +2245,7 @@ async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
 
     @dataclass
-    class SimpleCap(AbstractCapability[None]):
+    class SimpleCap(AbstractCapability):
         pass
 
     cap = SimpleCap()
@@ -2340,7 +2257,7 @@ async def test_combined_capability_for_run_propagates():
     """CombinedCapability propagates for_run to children."""
 
     @dataclass
-    class SimpleCap(AbstractCapability[None]):
+    class SimpleCap(AbstractCapability):
         label: str = ''
 
     cap1 = SimpleCap(label='a')
@@ -2356,15 +2273,15 @@ async def test_combined_capability_for_run_propagates():
 async def test_combined_capability_for_run_returns_new_when_child_changes():
     """CombinedCapability returns new instance when a child's for_run returns different."""
 
-    class PerRunCap(AbstractCapability[None]):
+    class PerRunCap(AbstractCapability):
         def __init__(self, run_id: int = 0):
             self.run_id = run_id
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return PerRunCap(run_id=self.run_id + 1)
 
     @dataclass
-    class StaticCap(AbstractCapability[None]):
+    class StaticCap(AbstractCapability):
         pass
 
     static_cap = StaticCap()
@@ -2386,13 +2303,13 @@ async def test_combined_capability_for_run_cancels_siblings_on_failure():
     sibling_completed = False
 
     @dataclass
-    class FailingCap(AbstractCapability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+    class FailingCap(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             raise RuntimeError('boom')
 
     @dataclass
-    class SlowCap(AbstractCapability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+    class SlowCap(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             nonlocal sibling_completed
             await anyio.sleep(0.1)
             sibling_completed = True  # pragma: no cover
@@ -2412,11 +2329,11 @@ def test_apply_single_capability():
     """AbstractCapability.apply() visits just the capability itself."""
 
     @dataclass
-    class MyCap(AbstractCapability[None]):
+    class MyCap(AbstractCapability):
         pass
 
     cap = MyCap()
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     cap.apply(visited.append)
     assert visited == [cap]
 
@@ -2425,18 +2342,18 @@ def test_apply_combined_capability():
     """CombinedCapability.apply() recursively visits all leaf capabilities."""
 
     @dataclass
-    class CapA(AbstractCapability[None]):
+    class CapA(AbstractCapability):
         pass
 
     @dataclass
-    class CapB(AbstractCapability[None]):
+    class CapB(AbstractCapability):
         pass
 
     cap_a = CapA()
     cap_b = CapB()
     combined = CombinedCapability([cap_a, cap_b])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     combined.apply(visited.append)
     assert visited == [cap_a, cap_b]
 
@@ -2445,15 +2362,15 @@ def test_apply_nested_combined_capability():
     """CombinedCapability.apply() flattens nested CombinedCapabilities."""
 
     @dataclass
-    class CapA(AbstractCapability[None]):
+    class CapA(AbstractCapability):
         pass
 
     @dataclass
-    class CapB(AbstractCapability[None]):
+    class CapB(AbstractCapability):
         pass
 
     @dataclass
-    class CapC(AbstractCapability[None]):
+    class CapC(AbstractCapability):
         pass
 
     cap_a = CapA()
@@ -2462,7 +2379,7 @@ def test_apply_nested_combined_capability():
     inner = CombinedCapability([cap_a, cap_b])
     outer = CombinedCapability([inner, cap_c])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     outer.apply(visited.append)
     assert visited == [cap_a, cap_b, cap_c]
 
@@ -2472,7 +2389,7 @@ def test_apply_wrapper_capability():
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     wrapper.apply(visited.append)
     assert visited == [inner]
 
@@ -2482,7 +2399,7 @@ def test_apply_prefix_tools():
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     prefixed.apply(visited.append)
     assert visited == [thinking]
 
@@ -2493,7 +2410,7 @@ def test_apply_finds_capability_by_type():
     web_search = WebSearch(local='duckduckgo')
     combined = CombinedCapability([thinking, web_search])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     combined.apply(visited.append)
 
     assert any(isinstance(c, Thinking) for c in visited)
@@ -2507,7 +2424,7 @@ def test_apply_finds_wrapped_capability_by_type():
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
     combined = CombinedCapability([prefixed, WebSearch(local='duckduckgo')])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability] = []
     combined.apply(visited.append)
 
     assert any(isinstance(c, Thinking) for c in visited)
@@ -2517,8 +2434,8 @@ def test_apply_finds_wrapped_capability_by_type():
 
 def test_apply_empty_combined():
     """CombinedCapability with no children visits nothing."""
-    combined = CombinedCapability[None]([])
-    visited: list[AbstractCapability[None]] = []
+    combined = CombinedCapability([])
+    visited: list[AbstractCapability] = []
     combined.apply(visited.append)
     assert visited == []
 
@@ -2537,14 +2454,14 @@ async def test_for_run_with_different_toolset():
     def tool_b() -> str:
         return 'b'  # pragma: no cover
 
-    class SwitchingCap(AbstractCapability[None]):
+    class SwitchingCap(AbstractCapability):
         def __init__(self, use_b: bool = False):
             self.use_b = use_b
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return SwitchingCap(use_b=True)
 
-        def get_toolset(self) -> AbstractToolset[None]:
+        def get_toolset(self) -> AbstractToolset:
             return toolset_b if self.use_b else toolset_a
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2562,11 +2479,11 @@ async def test_for_run_with_different_toolset():
 async def test_for_run_with_different_instructions():
     """When for_run returns a capability with different get_instructions(), per-run instructions are used."""
 
-    class DynamicInstructionsCap(AbstractCapability[None]):
+    class DynamicInstructionsCap(AbstractCapability):
         def __init__(self, run_instructions: str = 'init-time'):
             self._run_instructions = run_instructions
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return DynamicInstructionsCap(run_instructions='per-run')
 
         def get_instructions(self) -> str:
@@ -2595,8 +2512,8 @@ async def test_for_run_receives_populated_run_context():
 
     captured: dict[str, Any] = {}
 
-    class CapturingCap(AbstractCapability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+    class CapturingCap(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             captured['run_id'] = ctx.run_id
             captured['conversation_id'] = ctx.conversation_id
             captured['metadata'] = ctx.metadata
@@ -2606,7 +2523,7 @@ async def test_for_run_receives_populated_run_context():
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('done')])
 
-    def metadata_factory(ctx: RunContext[None]) -> dict[str, Any]:
+    def metadata_factory(ctx: RunContext) -> dict[str, Any]:
         # Factory should be able to read run_id/conversation_id from the early ctx.
         return {'run_id_seen': ctx.run_id, 'conversation_id_seen': ctx.conversation_id}
 
@@ -2623,16 +2540,16 @@ async def test_for_run_receives_populated_run_context():
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
-    class CountingCap(AbstractCapability[None]):
+    class CountingCap(AbstractCapability):
         def __init__(self) -> None:
             self.request_count = 0
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return CountingCap()
 
         async def before_model_request(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext,
             request_context: ModelRequestContext,
         ) -> ModelRequestContext:
             self.request_count += 1
@@ -2664,9 +2581,9 @@ async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice:
     Forces the tool on step 1, then steps aside so the agent can produce a final response.
     """
 
-    class ForceFirstStep(AbstractCapability[None]):
+    class ForceFirstStep(AbstractCapability):
         def get_model_settings(self) -> Any:
-            def settings(ctx: RunContext[None]) -> _ModelSettings:
+            def settings(ctx: RunContext) -> _ModelSettings:
                 tool_called = any(
                     isinstance(part, ToolReturnPart) and part.tool_name == 'get_weather'
                     for message in ctx.messages
@@ -4631,18 +4548,24 @@ class TestWrapNodeRunHook:
 
 
 class TestWebSearchCapability:
-    def test_websearch_default_with_supporting_model(self):
-        """WebSearch(local='duckduckgo') with a supporting model → native used, local removed."""
-        cap = WebSearch(local='duckduckgo')
+    def test_websearch_default_no_local(self):
+        """WebSearch() defaults to builtin-only — no local fallback unless explicitly requested."""
+        cap = WebSearch()
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
-        toolset = cap.get_toolset()
-        # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
-        assert toolset is not None
+        # No local fallback by default in v2
+        assert cap.get_toolset() is None
 
-    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
+
+    def test_websearch_local_string_strategy(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
         from unittest.mock import patch
 
@@ -4650,7 +4573,6 @@ class TestWebSearchCapability:
         from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # When called with tools, call the first one
             for msg in messages:
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart):
@@ -4670,8 +4592,12 @@ class TestWebSearchCapability:
         fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
         with patch.object(DDGS, 'text', return_value=fake_results):
             result = agent.run_sync('search for something')
-        # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
+
+    def test_websearch_unknown_strategy_raises(self):
+        """WebSearch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
@@ -4680,12 +4606,17 @@ class TestWebSearchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
-    def test_websearch_native_false(self):
-        """WebSearch(native=False, local='duckduckgo') → only local, no native tool registered."""
+    def test_websearch_native_false_without_local_raises(self):
+        """WebSearch(native=False) without an explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebSearch(native=False)
+
+    def test_websearch_native_false_with_local_string(self):
+        """WebSearch(native=False, local='duckduckgo') → only local, no native registered."""
         cap = WebSearch(native=False, local='duckduckgo')
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
-        # Should have a plain toolset (no PreparedToolset wrapping)
+        # Plain toolset (no PreparedToolset wrapping since native is disabled)
         assert toolset is not None
 
     def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
@@ -4701,9 +4632,9 @@ class TestWebSearchCapability:
             WebSearch(native=False, local=False)
 
     def test_websearch_native_false_with_constraints_raises(self):
-        """WebSearch(native=False, allowed_domains=...) → UserError at construction."""
+        """WebSearch(native=False, local='duckduckgo', allowed_domains=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebSearch(native=False, allowed_domains=['example.com'], local='duckduckgo')
+            WebSearch(native=False, local='duckduckgo', allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4757,24 +4688,40 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
             XSearch(native=False, local=False)
 
-    def test_xsearch_native_false_with_constraints_raises(self):
-        """XSearch(native=False, allowed_x_handles=...) → UserError."""
+    def test_xsearch_native_false_raises(self):
+        """XSearch(native=False) → UserError (no local fallback for X search)."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False)
+
+    def test_xsearch_native_false_with_local_constraints_raises(self):
+        """XSearch(native=False, local=callable, allowed_x_handles=...) → UserError (constraint requires native)."""
+
+        def local_x_search(query: str) -> str:
+            return query  # pragma: no cover
+
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            XSearch(native=False, allowed_x_handles=['handle1'])
+            XSearch(native=False, allowed_x_handles=['handle1'], local=local_x_search)
 
 
 class TestWebFetchCapability:
-    def test_webfetch_default(self):
-        """WebFetch(local=True) provides native and the default local fallback."""
-        cap = WebFetch(local=True)
+    def test_webfetch_default_no_local(self):
+        """WebFetch() defaults to builtin-only — no local fallback unless explicitly requested."""
+        cap = WebFetch()
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # Default local fallback is auto-detected (markdownify-based)
-        assert cap.local is not None
-        assert cap.get_toolset() is not None
+        # No local fallback by default in v2
+        assert cap.local is None
+        assert cap.get_toolset() is None
 
-    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+    def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
@@ -4810,7 +4757,6 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch something')
-        # Verify the web_fetch fallback tool was actually called
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4821,6 +4767,11 @@ class TestWebFetchCapability:
         assert len(tool_calls) == 1
         assert tool_calls[0].tool_name == 'web_fetch'
 
+    def test_webfetch_unknown_strategy_raises(self):
+        """WebFetch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebFetch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
@@ -4828,8 +4779,13 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_native_false(self):
-        """WebFetch(native=False, local=True) → only local, no native tool registered."""
+    def test_webfetch_native_false_without_local_raises(self):
+        """WebFetch(native=False) without explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            WebFetch(native=False)
+
+    def test_webfetch_native_false_with_local_string(self):
+        """WebFetch(native=False, local=True) → only local, no native registered."""
         cap = WebFetch(native=False, local=True)
         assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
@@ -4843,7 +4799,7 @@ class TestWebFetchCapability:
             agent.run_sync('fetch')
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
-        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4878,7 +4834,6 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch example.com')
-        # Verify the web_fetch fallback tool was actually called with domain filtering
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4895,9 +4850,9 @@ class TestWebFetchCapability:
             WebFetch(native=False, local=False)
 
     def test_webfetch_native_false_with_max_uses_raises(self):
-        """WebFetch(native=False, max_uses=...) → UserError at construction."""
+        """WebFetch(native=False, local=True, max_uses=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
-            WebFetch(native=False, max_uses=5, local=True)
+            WebFetch(native=False, local=True, max_uses=5)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -5034,9 +4989,6 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
 
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
         from pydantic_ai.messages import BinaryImage, FilePart
@@ -5048,7 +5000,7 @@ class TestImageGenerationCapability:
 
         inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
 
-        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+        async def model_factory(ctx: RunContext) -> FunctionModel:
             return inner_model
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5109,7 +5061,7 @@ class TestImageGenerationCapability:
     async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
         """Callable fallback_model returning an image-only model name is caught at call time."""
 
-        def model_factory(ctx: RunContext[None]) -> str:
+        def model_factory(ctx: RunContext) -> str:
             return 'openai-responses:gpt-image-1'
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5120,9 +5072,6 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
 
@@ -5198,11 +5147,6 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -5283,11 +5227,6 @@ class TestImageGenerationCapability:
         )
 
     @pytest.mark.vcr()
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
-    @pytest.mark.filterwarnings(
-        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-    )
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
@@ -5361,33 +5300,47 @@ try:
 
     has_mcp = True
     del _mcp
-except ImportError:
+except ImportError:  # pragma: no cover
     has_mcp = False
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
-    def test_mcp_default(self):
-        """MCP(url=..., native=True) provides native + local fallback."""
-        cap = MCP(url='https://mcp.example.com/api', native=True)
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], MCPServerTool)
-        assert builtins[0].url == 'https://mcp.example.com/api'
+    def test_mcp_default_local_only(self):
+        """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
+        cap = MCP(url='https://mcp.example.com/api')
+        assert cap.get_native_tools() == []
         assert cap.get_toolset() is not None
+
+    def test_mcp_native_true_advertises_both(self):
+        """MCP(url=..., native=True) advertises native + keeps local as fallback."""
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
+        assert native_tools[0].url == 'https://mcp.example.com/api'
+        assert cap.get_toolset() is not None
+
+    def test_mcp_native_only(self):
+        """MCP(url=..., native=True, local=False) advertises only the native tool."""
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=False)
+        native_tools = cap.get_native_tools()
+        assert len(native_tools) == 1
+        assert isinstance(native_tools[0], MCPServerTool)
+        assert cap.get_toolset() is None
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
         cap = MCP(url='https://mcp.example.com/api', native=True)
-        builtin = cap.get_native_tools()[0]
-        assert isinstance(builtin, MCPServerTool)
-        assert builtin.id == 'mcp.example.com-api'
+        native = cap.get_native_tools()[0]
+        assert isinstance(native, MCPServerTool)
+        assert native.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
         cap_sse = MCP(url='https://server1.example.com/sse', native=True)
-        builtin_sse = cap_sse.get_native_tools()[0]
-        assert isinstance(builtin_sse, MCPServerTool)
-        assert builtin_sse.id == 'server1.example.com-sse'
+        native_sse = cap_sse.get_native_tools()[0]
+        assert isinstance(native_sse, MCPServerTool)
+        assert native_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
@@ -5431,13 +5384,15 @@ class TestMCPCapability:
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
         assert isinstance(toolset, FilteredToolset)
 
-    def test_mcp_url_required(self):
-        """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
-            MCP()  # type: ignore[call-arg]
+    def test_mcp_no_url_no_local_raises(self):
+        """MCP() with neither `url=` nor `local=` raises — no way to construct a usable capability."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            MCP()
 
     def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
         """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
         from fastmcp import FastMCP
 
         from pydantic_ai.mcp import MCPToolset
@@ -5480,9 +5435,7 @@ class TestPrepareToolsCapability:
         """PrepareTools capability filters tools using the provided callable."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def hide_secret_tools(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition] | None:
+        async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5506,7 +5459,7 @@ class TestPrepareToolsCapability:
         """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5528,7 +5481,7 @@ class TestPrepareToolsCapability:
 
         from pydantic_ai.capabilities import PrepareTools
 
-        async def set_strict(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [dc_replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5557,7 +5510,7 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
         from pydantic_ai.exceptions import UserError
 
-        async def rename(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def rename(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [dc_replace(td, name='renamed') for td in tool_defs]
 
         agent = Agent('test', capabilities=[PrepareTools(rename)])
@@ -5578,7 +5531,7 @@ class TestPrepareToolsCapability:
 
         executed: list[str] = []
 
-        async def hide_secret(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         call_count = 0
@@ -5656,7 +5609,7 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
-        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5677,7 +5630,7 @@ class TestPrepareOutputToolsCapability:
 
         seen_kinds: list[str] = []
 
-        async def capture(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def capture(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             seen_kinds.extend(td.kind for td in tool_defs)
             return tool_defs
 
@@ -6419,7 +6372,7 @@ class TestRunWithSpecAdditional:
 
         agent = Agent(FunctionModel(model_fn))
 
-        def dynamic_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+        def dynamic_metadata(ctx: RunContext) -> dict[str, Any]:
             return {'dynamic': 'value'}
 
         result = await agent.run(
@@ -6441,7 +6394,7 @@ class TestRunWithSpecAdditional:
 
         agent = Agent(FunctionModel(model_fn))
 
-        def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
+        def dynamic_settings(ctx: RunContext) -> _ModelSettings:
             return {'temperature': 0.9}
 
         result = await agent.run(
@@ -6569,8 +6522,8 @@ def test_web_search_with_constraints():
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch() silently produces a builtin-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
+def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch(local='duckduckgo') raises with install hint when [duckduckgo] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6581,17 +6534,12 @@ def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.Mon
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    # Defaults path with no DDG: no deprecation warning (auto-fallback can't run), but main's
-    # base-class still emits a `UserWarning` heads-up via `_default_local()` when the user explicitly
-    # disables the native tool. Here we leave the native default in place, so it's silent.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        cap = WebSearch()
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[duckduckgo\]'):
+        WebSearch(local='duckduckgo')
 
 
-def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch() silently produces a native-only capability when markdownify isn't installed — user isn't on the deprecated path, no warning."""
+def test_web_fetch_local_true_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch(local=True) raises with install hint when [web-fetch] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6602,30 +6550,35 @@ def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.Monk
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        cap = WebFetch()
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[web-fetch\]'):
+        WebFetch(local=True)
 
 
-def test_mcp_default_builtin():
-    """MCP capability constructs the default native MCPServerTool."""
+def test_mcp_default_local_only():
+    """MCP(url=...) defaults to local-only via the MCP SDK — no native advertised."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    cap = MCP(url='http://example.com/mcp', id='my-mcp')
+    assert cap.get_native_tools() == []
+    assert cap.get_toolset() is not None
+
+
+def test_mcp_native_true_default_construction():
+    """MCP(url=..., native=True) constructs MCPServerTool with id from url."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
-    builtin_tools = cap.get_native_tools()
-    assert len(builtin_tools) == 1
-    tool = builtin_tools[0]
+    native_tools = cap.get_native_tools()
+    assert len(native_tools) == 1
+    tool = native_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
 
 
-@pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
-def test_mcp_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
-    """`MCP(url=...)` must construct cleanly when the MCP extra isn't installed.
+def test_mcp_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=...)` raises a `UserError` with install hint when the MCP extra is missing.
 
-    The native tool always works; the local default just resolves to None. The user gets
-    a clear `UserError` at request time if the model doesn't support native MCP either.
+    MCP defaults to running the server locally, so the extra is required. To run without it,
+    the user must opt into native-only (`native=True, local=False`).
     """
     import builtins
 
@@ -6637,8 +6590,16 @@ def test_mcp_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = MCP(url='http://example.com/mcp')
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp')
+
+
+def test_mcp_native_only_constructs_without_mcp_extra():
+    """`MCP(url=..., native=True, local=False)` constructs cleanly — local resolution is skipped."""
+    # Note: no need to mock the import. `local=False` short-circuits before `_build_local()`,
+    # so the test exercises the same path whether or not the MCP extra is installed.
+    cap = MCP(url='http://example.com/mcp', native=True, local=False)
+    assert cap.local is False
     assert len(cap.get_native_tools()) == 1
 
 
@@ -6674,71 +6635,72 @@ def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: 
         MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
 
 
-@pytest.mark.filterwarnings(
-    'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
-def test_web_search_v2_deprecation_warning():
-    """WebSearch() with duckduckgo installed warns about v2 default change."""
-    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match='WebSearch will stop auto-selecting'):
-        WebSearch()
+def test_mcp_native_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., native=True)` (default `local`) now raises when `[mcp]` is missing.
 
-
-def test_web_search_v2_deprecation_silenced_with_explicit_local():
-    """WebSearch(local=False) does not emit the v2 deprecation warning."""
-
-    def noop_search(q: str) -> str:
-        return q  # pragma: no cover
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        WebSearch(local=False)
-        WebSearch(native=False, local=noop_search)
-
-
-def test_web_fetch_v2_deprecation_warning():
-    """WebFetch() with web-fetch extra installed warns about v2 default change."""
-    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match='WebFetch will stop auto-selecting'):
-        WebFetch()
-
-
-def test_web_fetch_v2_deprecation_silenced_with_explicit_local():
-    """WebFetch(local=False) does not emit the v2 deprecation warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        WebFetch(local=False)
-
-
-def test_mcp_v2_deprecation_warning():
-    """MCP(url=...) with no explicit native/local warns about v2 default change."""
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp')
-
-
-def test_mcp_v2_deprecation_silenced_with_explicit_native():
-    """MCP(url=..., native=...) does not emit the v2 deprecation warning.
-
-    `local=False` alone still warns since it relies on the v1 native default flipping in v2.
+    Previously `_default_local` swallowed `ImportError` and returned None, so
+    `MCP(url=..., native=True)` would silently work as native-only. Locking in the new
+    construction-time error so users get a clear migration to `native=True, local=False`.
     """
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
         MCP(url='http://example.com/mcp', native=True)
-        MCP(url='http://example.com/mcp', native=False)
-        MCP(url='http://example.com/mcp', native=True, local=False)
 
 
-def test_mcp_v2_deprecation_warns_for_local_false_alone():
-    """MCP(url=..., local=False) still warns because the user relies on the v1 default of native=True.
-
-    In v2, native defaults to False, so `MCP(url=..., local=False)` would raise "both can't be False"
-    without an explicit native=True. The warning surfaces this silent breaking change.
-    """
+def test_mcp_without_url_with_local_toolset():
+    """`MCP(local=MCPToolset(...))` constructs without `url=` — the primary path for non-URL clients."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp', local=False)
+    from pydantic_ai.mcp import MCPToolset
+
+    toolset = MCPToolset('http://example.com/mcp', include_instructions=True)
+    cap = MCP(local=toolset)
+    assert cap.url is None
+    assert cap.local is toolset
+    assert cap.get_native_tools() == []
+
+
+def test_mcp_without_url_with_native_true_raises():
+    """`MCP(native=True)` without `url=` raises — capability needs a URL to auto-construct an MCPServerTool."""
+    with pytest.raises(UserError, match=r'MCP\(native=True\) requires `url=`'):
+        MCP(native=True, local=False)
+
+
+def test_mcp_without_url_with_explicit_native_instance():
+    """`MCP(native=MCPServerTool(...))` constructs without capability `url=` — the instance carries the URL."""
+    cap = MCP(
+        native=MCPServerTool(id='my-mcp', url='http://example.com/mcp'),
+        local=False,
+    )
+    assert cap.url is None
+    natives = cap.get_native_tools()
+    assert len(natives) == 1
+    assert isinstance(natives[0], MCPServerTool)
+    assert natives[0].url == 'http://example.com/mcp'
+
+
+def test_mcp_without_url_local_true_raises():
+    """`MCP(local=True)` without `url=` raises — no URL to derive the local transport from."""
+    with pytest.raises(UserError, match=r'requires `url=`'):
+        MCP(local=True)
+
+
+def test_native_or_local_constraint_check_precedes_no_local_check():
+    """`WebSearch(native=False, allowed_domains=...)` raises the constraint error, not the no-local error.
+
+    Regression test for validation-order bug — the constraint case is unfixable by adding `local=`,
+    so it must fire before the `requires an explicit local tool` check.
+    """
+    with pytest.raises(UserError, match='constraint fields require the native tool'):
+        WebSearch(native=False, allowed_domains=['example.com'])
 
 
 def test_web_search_local_string_strategy_silent():
@@ -8387,7 +8349,7 @@ async def test_prefix_tools_with_callable_toolset():
     def dynamic_tool() -> str:
         return 'dynamic'  # pragma: no cover
 
-    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+    def toolset_func(ctx: RunContext) -> FunctionToolset:
         return toolset
 
     cap = PrefixTools(wrapped=Toolset(toolset_func), prefix='dyn')
@@ -8426,11 +8388,11 @@ async def test_wrapper_capability_delegates_hooks():
     hook_calls: list[str] = []
 
     @dataclass
-    class HookCap(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class HookCap(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
             hook_calls.append('before_run')
 
-        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
             hook_calls.append('after_run')
             return result
 
@@ -8461,13 +8423,13 @@ async def test_wrapper_capability_for_run_replaces():
         return 'b'  # pragma: no cover
 
     @dataclass
-    class SwitchCap(AbstractCapability[None]):
+    class SwitchCap(AbstractCapability):
         use_b: bool = False
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
             return SwitchCap(use_b=True)
 
-        def get_toolset(self) -> AbstractToolset[None]:
+        def get_toolset(self) -> AbstractToolset:
             return toolset_b if self.use_b else toolset_a
 
     wrapper = WrapperCapability(wrapped=SwitchCap())
@@ -8488,8 +8450,8 @@ async def test_wrapper_capability_has_wrap_node_run():
     assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
 
     @dataclass
-    class NodeRunCap(AbstractCapability[None]):
-        async def wrap_node_run(self, ctx: RunContext[None], *, node: Any, handler: Any) -> Any:
+    class NodeRunCap(AbstractCapability):
+        async def wrap_node_run(self, ctx: RunContext, *, node: Any, handler: Any) -> Any:
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
@@ -8500,15 +8462,15 @@ async def test_wrapper_capability_delegates_model_request_hooks():
     hook_calls: list[str] = []
 
     @dataclass
-    class ModelRequestHookCap(AbstractCapability[None]):
+    class ModelRequestHookCap(AbstractCapability):
         async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
+            self, ctx: RunContext, request_context: ModelRequestContext
         ) -> ModelRequestContext:
             hook_calls.append('before_model_request')
             return request_context
 
         async def after_model_request(
-            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+            self, ctx: RunContext, *, request_context: ModelRequestContext, response: ModelResponse
         ) -> ModelResponse:
             hook_calls.append('after_model_request')
             return response
@@ -10278,14 +10240,6 @@ class TestCompaction:
 
         with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
             OpenAICompaction(stateless=True)
-
-    def test_openai_compaction_instructions_deprecated(self):
-        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
-        pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction
-
-        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
-            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""
@@ -14962,7 +14916,7 @@ async def test_deferred_tool_handler_approve():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done!')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -14971,7 +14925,7 @@ async def test_deferred_tool_handler_approve():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10
@@ -15027,7 +14981,7 @@ async def test_deferred_tool_handler_deny():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Understood, denied.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied('Not allowed.') for call in requests.approvals}
         )
@@ -15038,7 +14992,7 @@ async def test_deferred_tool_handler_deny():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10  # pragma: no cover
@@ -15061,7 +15015,7 @@ async def test_deferred_tool_handler_no_output_type_needed():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 3}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Result received.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     # Note: output_type is just str, no DeferredToolRequests
@@ -15072,7 +15026,7 @@ async def test_deferred_tool_handler_no_output_type_needed():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 100
@@ -15106,7 +15060,7 @@ async def test_deferred_tool_handler_partial_resolution():
             ]
         )
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Only approve tool_a, leave tool_b unresolved
         results = DeferredToolResults()
         for call in requests.approvals:
@@ -15121,13 +15075,13 @@ async def test_deferred_tool_handler_partial_resolution():
     )
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a done'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b done'  # pragma: no cover
@@ -15146,7 +15100,7 @@ async def test_deferred_tool_handler_sync_handler():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('OK')])
 
-    def handle_deferred_sync(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handle_deferred_sync(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -15155,7 +15109,7 @@ async def test_deferred_tool_handler_sync_handler():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -15177,14 +15131,14 @@ async def test_deferred_tool_handler_accumulation():
             )
         return ModelResponse(parts=[TextPart('Both done.')])
 
-    def handler_a(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handler_a(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         results = DeferredToolResults()
         for call in requests.approvals:
             if call.tool_name == 'tool_a':
                 results.approvals[call.tool_call_id] = True
         return results
 
-    def handler_b(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handler_b(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # handler_a resolved tool_a, so we only see tool_b
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
@@ -15197,13 +15151,13 @@ async def test_deferred_tool_handler_accumulation():
     )
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a result'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b result'
@@ -15219,7 +15173,7 @@ async def test_deferred_tool_handler_unresolved_no_output_type_error():
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
     # Handler returns None → does not resolve
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults()  # Empty results → nothing resolved
 
     agent = Agent(
@@ -15229,7 +15183,7 @@ async def test_deferred_tool_handler_unresolved_no_output_type_error():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -15249,7 +15203,7 @@ async def test_deferred_tool_handler_external_call():
     from pydantic_ai.exceptions import CallDeferred
     from pydantic_ai.messages import ToolReturn
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Simulate external execution: return a ToolReturn with metadata
         return DeferredToolResults(
             calls={
@@ -15274,7 +15228,7 @@ async def test_deferred_tool_handler_external_call():
 async def test_deferred_tool_handler_via_handle_call():
     """handle_call(resolve_deferred=True) resolves deferred tools inline via ToolManager."""
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15288,7 +15242,7 @@ async def test_deferred_tool_handler_via_handle_call():
     )
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext) -> str:
         """A tool that internally calls another tool via ToolManager.handle_call."""
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
@@ -15296,7 +15250,7 @@ async def test_deferred_tool_handler_via_handle_call():
         return f'inner returned: {result}'
 
     @agent.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved inner result'
@@ -15314,7 +15268,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
     as-is, not wrapped as `ToolRetryError`.
     """
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15328,7 +15282,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
     )
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext) -> str:
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
         try:
@@ -15338,7 +15292,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
         return 'no error'  # pragma: no cover
 
     @agent.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         raise ModelRetry('post-approval retry')
@@ -15368,7 +15322,7 @@ async def test_deferred_tool_handler_via_handle_call_no_handler():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved inner result'  # pragma: no cover
@@ -15381,7 +15335,7 @@ async def test_deferred_tool_handler_via_handle_call_no_handler():
     agent = Agent(FunctionModel(llm), toolsets=[inner_toolset])
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext) -> str:
         """A tool that internally calls another tool via ToolManager.handle_call."""
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
@@ -15403,7 +15357,7 @@ async def test_deferred_tool_handler_build_results_helper():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -15412,7 +15366,7 @@ async def test_deferred_tool_handler_build_results_helper():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -15470,7 +15424,7 @@ async def test_deferred_tool_handler_wrapper_capability():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     # PrefixTools wraps HandleDeferredToolCalls — tests WrapperCapability delegation
@@ -15481,7 +15435,7 @@ async def test_deferred_tool_handler_wrapper_capability():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -15500,7 +15454,7 @@ async def test_deferred_tool_handler_external_call_plain_value():
 
     from pydantic_ai.exceptions import CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: 'plain string result' for call in requests.calls})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
@@ -15521,7 +15475,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -15531,7 +15485,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         nonlocal call_count
         call_count += 1
         # Always requires approval — even when approved, raises again with metadata
@@ -15552,7 +15506,7 @@ async def test_deferred_tool_handler_denied_via_batch():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Understood.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied('Policy denied.') for call in requests.approvals}
         )
@@ -15560,7 +15514,7 @@ async def test_deferred_tool_handler_denied_via_batch():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -15586,7 +15540,7 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
             )
         return ModelResponse(parts=[TextPart('ok')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={
                 'bool_false': False,
@@ -15597,7 +15551,7 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def needs_approval(ctx: RunContext[None], x: int) -> int:
+    def needs_approval(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x  # pragma: no cover
@@ -15620,13 +15574,13 @@ async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
             return ModelResponse(parts=[ToolCallPart('needs_approval', {'x': 7}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('done')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def needs_approval(ctx: RunContext[None], x: int) -> int:
+    def needs_approval(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 2
@@ -15648,7 +15602,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('done')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: _ToolReturn(
@@ -15661,7 +15615,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15689,13 +15643,13 @@ async def test_deferred_tool_handler_batch_external_model_retry():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('retried')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: ModelRetry('try again') for call in requests.calls})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15720,7 +15674,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('retried')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
@@ -15731,7 +15685,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15755,7 +15709,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={call.tool_call_id: _ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
         )
@@ -15774,7 +15728,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -15804,12 +15758,12 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved result'
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15824,7 +15778,7 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         assert ctx.tool_manager is not None
         # Call inner_tool via handle_call — exercises _resolve_single_deferred
         result = await ctx.tool_manager.handle_call(
@@ -15856,13 +15810,13 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]):
+    def my_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return _ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
@@ -15893,13 +15847,13 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Retried and done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         raise ModelRetry('try again')
@@ -15924,7 +15878,7 @@ async def test_deferred_tool_handler_approved_tool_override_args():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Override the args: replace x=5 with x=42
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolApproved(override_args={'x': 42}) for call in requests.approvals}
@@ -15933,7 +15887,7 @@ async def test_deferred_tool_handler_approved_tool_override_args():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         nonlocal received_x
         if not ctx.tool_call_approved:
             raise ApprovalRequired
@@ -15954,14 +15908,14 @@ async def test_deferred_tool_handler_via_handle_call_retry():
     retry_count = 0
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         nonlocal retry_count
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         retry_count += 1
         raise ModelRetry('try again')
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15976,7 +15930,7 @@ async def test_deferred_tool_handler_via_handle_call_retry():
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         assert ctx.tool_manager is not None
         try:
             await ctx.tool_manager.handle_call(
@@ -15998,7 +15952,7 @@ async def test_deferred_tool_handler_re_deferred_without_metadata():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -16008,7 +15962,7 @@ async def test_deferred_tool_handler_re_deferred_without_metadata():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         nonlocal call_count
         call_count += 1
         # No metadata
@@ -16032,7 +15986,7 @@ async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
             ]
         )
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Only approve the re-raising one; leave unhandled_tool unresolved
         return DeferredToolResults(
             approvals={call.tool_call_id: True for call in requests.approvals if call.tool_name == 're_raising_tool'}
@@ -16045,12 +15999,12 @@ async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
     )
 
     @agent.tool
-    def re_raising_tool(ctx: RunContext[None]) -> str:
+    def re_raising_tool(ctx: RunContext) -> str:
         # Always raises — even after approval
         raise ApprovalRequired
 
     @agent.tool
-    def unhandled_tool(ctx: RunContext[None]) -> str:
+    def unhandled_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -16072,7 +16026,7 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -16082,7 +16036,7 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -16111,12 +16065,12 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]):
+    def inner_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return _ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16133,7 +16087,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         result = await ctx.tool_manager.handle_call(
@@ -16157,12 +16111,12 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'never'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16179,7 +16133,7 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
     captured: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured
         assert ctx.tool_manager is not None
         captured = await ctx.tool_manager.handle_call(
@@ -16200,12 +16154,12 @@ async def test_deferred_tool_handler_via_handle_call_override_args():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None], x: int) -> str:
+    def inner_tool(ctx: RunContext, x: int) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return f'x={x}'
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolApproved(override_args={'x': 42}) for call in requests.approvals}
         )
@@ -16224,7 +16178,7 @@ async def test_deferred_tool_handler_via_handle_call_override_args():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -16247,7 +16201,7 @@ async def test_deferred_tool_handler_via_handle_call_external_plain_value():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: 'external value' for call in requests.calls})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16264,7 +16218,7 @@ async def test_deferred_tool_handler_via_handle_call_external_plain_value():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -16287,7 +16241,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: ModelRetry('retry please') for call in requests.calls})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16304,7 +16258,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
     caught: ToolRetryError | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal caught
         assert ctx.tool_manager is not None
         try:
@@ -16334,7 +16288,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
@@ -16356,7 +16310,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     caught: ToolRetryError | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal caught
         assert ctx.tool_manager is not None
         try:
@@ -16383,12 +16337,12 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'never'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied(message='not today') for call in requests.approvals}
         )
@@ -16407,7 +16361,7 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
     captured: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal captured
         assert ctx.tool_manager is not None
         captured = await ctx.tool_manager.handle_call(
@@ -16429,7 +16383,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     call_count = 0
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -16437,7 +16391,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
         # After approval, raise a *different* deferral type with new metadata
         raise CallDeferred(metadata={'reason': 'external-after-approval'})
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16455,7 +16409,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     caught_metadata: dict[str, Any] | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         nonlocal caught_exc_type, caught_metadata
         assert ctx.tool_manager is not None
         try:
@@ -16482,12 +16436,12 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Resolve a non-existent ID — our tool's ID stays in remaining
         return DeferredToolResults(approvals={'wrong_id': True})
 
@@ -16503,7 +16457,7 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext) -> str:
         assert ctx.tool_manager is not None
         try:
             await ctx.tool_manager.handle_call(
@@ -16525,16 +16479,16 @@ async def test_deferred_tool_handler_via_hooks_decorator():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done!')])
 
-    hooks = Hooks[None]()
+    hooks = Hooks()
 
     @hooks.on.deferred_tool_calls
-    async def handler(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handler(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[hooks])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10
@@ -16557,23 +16511,23 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
             )
         return ModelResponse(parts=[TextPart('All done.')])
 
-    def handle_a(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    def handle_a(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         results = DeferredToolResults()
         for call in requests.approvals:
             if call.tool_name == 'tool_a':
                 results.approvals[call.tool_call_id] = True
         return results
 
-    hooks = Hooks[None](deferred_tool_calls=handle_a)
+    hooks = Hooks(deferred_tool_calls=handle_a)
 
     @hooks.on.deferred_tool_calls
-    async def handle_rest(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def handle_rest(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # tool_a was already resolved by handle_a; this handler sees only tool_b and tool_c
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     @hooks.on.deferred_tool_calls
     async def never_called(  # pragma: no cover
-        ctx: RunContext[None], *, requests: DeferredToolRequests
+        ctx: RunContext, *, requests: DeferredToolRequests
     ) -> DeferredToolResults | None:
         # All calls should already be resolved by the previous handler — this is the early-break path
         raise AssertionError('Should not be called: all requests already resolved')
@@ -16581,19 +16535,19 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
     agent = Agent(FunctionModel(llm), capabilities=[hooks])
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b'
 
     @agent.tool
-    def tool_c(ctx: RunContext[None]) -> str:
+    def tool_c(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'c'
@@ -16608,14 +16562,14 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    hooks = Hooks[None]()
+    hooks = Hooks()
 
     @hooks.on.deferred_tool_calls
-    async def declines(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def declines(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         return None
 
     @hooks.on.deferred_tool_calls
-    async def empty(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def empty(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # Empty results count as "didn't handle"
         return DeferredToolResults()
 
@@ -16626,7 +16580,7 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -16678,7 +16632,7 @@ async def test_dynamic_capability_async_factory() -> None:
     """Async factories are awaited."""
     calls = 0
 
-    async def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    async def factory(ctx: RunContext) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='async')
@@ -16691,7 +16645,7 @@ async def test_dynamic_capability_async_factory() -> None:
 async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     """A factory returning None is a no-op for the run."""
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any] | None:
+    def factory(ctx: RunContext) -> AbstractCapability[Any] | None:
         return None
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16721,14 +16675,14 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 async def test_dynamic_capability_contributes_toolset() -> None:
     """Resolved capability's toolset is exposed to the model and its tools execute."""
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def special() -> str:
         return 'used'
 
     @dataclass
-    class ToolCap(AbstractCapability[None]):
+    class ToolCap(AbstractCapability):
         def get_toolset(self):
             return toolset
 
@@ -16768,7 +16722,7 @@ async def test_dynamic_capability_hooks_fire() -> None:
     """Hooks contributed by the resolved capability fire during the run."""
     cap = _RecordingCapability(label='dyn')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return cap
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16781,7 +16735,7 @@ async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> 
     """The factory is called once at for_run, not on every model request."""
     calls = 0
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='once')
@@ -16792,7 +16746,7 @@ async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> 
             return ModelResponse(parts=[ToolCallPart('echo', {'text': 'hi'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def echo(text: str) -> str:
@@ -16808,16 +16762,16 @@ async def test_dynamic_capability_returning_combined() -> None:
     fired: list[str] = []
 
     @dataclass
-    class A(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class A(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
             fired.append('A')
 
     @dataclass
-    class B(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class B(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
             fired.append('B')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return CombinedCapability([A(), B()])
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16829,7 +16783,7 @@ async def test_dynamic_capability_in_run_call() -> None:
     """`agent.run(capabilities=[factory])` accepts callables as well."""
     calls = 0
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='run-time')
@@ -16846,16 +16800,16 @@ async def test_dynamic_capability_composes_with_static() -> None:
     fired: list[str] = []
 
     @dataclass
-    class Static(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class Static(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
             fired.append('static')
 
     @dataclass
-    class Dynamic(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class Dynamic(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
             fired.append('dynamic')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return Dynamic()
 
     agent = Agent(TestModel(), capabilities=[Static(), factory])
@@ -16883,7 +16837,7 @@ async def test_dynamic_capability_per_run_isolation() -> None:
 async def test_dynamic_capability_wraps_func_in_constructor() -> None:
     """Constructor wraps a bare function into a `DynamicCapability`, and the factory runs at run time."""
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')
 
     agent = Agent(TestModel(), capabilities=[factory])

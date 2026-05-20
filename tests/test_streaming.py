@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import datetime
+import gc
 import json
 import re
-import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -19,7 +19,6 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
-    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -67,12 +66,7 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.filterwarnings(
-        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
-    ),
-]
+pytestmark = pytest.mark.anyio
 
 
 class Foo(BaseModel):
@@ -934,7 +928,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -965,7 +959,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -985,7 +979,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -1013,7 +1007,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1045,7 +1039,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1068,7 +1062,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1099,7 +1093,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1147,7 +1141,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1184,7 +1178,7 @@ class TestStreamingCachedOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1211,7 +1205,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1235,7 +1229,7 @@ class TestStreamingCachedOutput:
         a deep copy, so mutations to one don't affect subsequent retrievals.
         """
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -1297,7 +1291,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1531,7 +1525,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2158,7 +2152,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2289,7 +2283,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -3039,7 +3033,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
+    agent = Agent[object, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -3227,29 +3221,6 @@ async def test_output_tool_events():
                         ),
                     ],
                     tool_name='final_result',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                )
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'bad_value': 'invalid'},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=False,
-            ),
-            FunctionToolResultEvent(
-                part=RetryPromptPart(
-                    tool_name='final_result',
-                    content=[
-                        {
-                            'type': 'missing',
-                            'loc': ('value',),
-                            'msg': 'Field required',
-                            'input': {'bad_value': 'invalid'},
-                        }
-                    ],
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 )
@@ -3454,24 +3425,6 @@ def test_function_tool_event_tool_call_id_properties():
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
-def test_function_tool_result_event_deprecated_result_alias():
-    """`FunctionToolResultEvent(result=...)` and `event.result` keep working with a `DeprecationWarning`."""
-    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='ret_1')
-
-    with pytest.warns(DeprecationWarning, match=r'`result=\.\.\.` to `FunctionToolResultEvent` is deprecated'):
-        event = FunctionToolResultEvent(result=return_part)
-    assert event.part is return_part
-
-    with pytest.warns(DeprecationWarning, match=r'`result` is deprecated, use `part` instead\.'):
-        assert event.result is return_part  # pyright: ignore[reportDeprecated]
-
-    with pytest.raises(TypeError, match='either `part` or `result`'):
-        FunctionToolResultEvent(part=return_part, result=return_part)
-
-    with pytest.raises(TypeError, match='missing required argument'):
-        FunctionToolResultEvent()
-
-
 async def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
@@ -3521,7 +3474,7 @@ async def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -3592,7 +3545,7 @@ async def test_tool_raises_approval_required():
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    async def prepare_tool(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
@@ -3748,7 +3701,7 @@ async def test_run_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3798,7 +3751,7 @@ async def test_event_stream_handler_propagates_tool_error():
 
     events: list[AgentStreamEvent] = []
 
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         # Suppress the error to simulate UIEventStream.transform_stream behavior,
         # which catches exceptions and doesn't re-raise them.
         try:
@@ -3826,7 +3779,7 @@ def test_run_sync_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3874,7 +3827,7 @@ async def test_run_stream_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3922,7 +3875,7 @@ async def test_stream_tool_returning_user_content():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3985,7 +3938,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as event_stream:
+        events = [event async for event in event_stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -4155,8 +4109,9 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4227,8 +4182,9 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4281,8 +4237,9 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -4314,8 +4271,9 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
-            events.append(event)
+        async with agent.run_stream_events('call add_numbers', deps=42) as event_stream:
+            async for event in event_stream:  # pragma: no branch
+                events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -4361,19 +4319,20 @@ async def test_args_validator_run_stream_event_handler():
 async def test_event_ordering_call_before_result():
     """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(TestModel(call_tools=['my_tool']))
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         """A tool."""
         return x * 2
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -4420,12 +4379,13 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4459,12 +4419,13 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4480,7 +4441,7 @@ async def test_args_valid_none_for_tool_denied():
 async def test_deferred_tool_validation_event_in_stream():
     """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(
@@ -4489,12 +4450,13 @@ async def test_deferred_tool_validation_event_in_stream():
     )
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
@@ -4615,7 +4577,7 @@ async def test_completed_streamed_response_cancel_noop():
     await streamed_response.cancel()
 
     assert streamed_response.cancelled
-    assert streamed_response.get() is response
+    assert streamed_response.response is response
     assert response.state == 'complete'
 
 
@@ -4661,67 +4623,74 @@ async def test_stream_response_state_incomplete_after_early_break():
                 return
 
 
-async def test_run_stream_events_aclose():
-    agent = Agent(TestModel())
-
-    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-    async with agent.run_stream_events('Hello') as stream:
-        async for event in stream:  # pragma: no branch
-            events.append(event)
-            if isinstance(event, PartStartEvent):  # pragma: no branch
-                await stream.aclose()
-                break
-
-        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
-        assert [e async for e in stream] == []
-
-        # Double close is a no-op.
-        await stream.aclose()
-
-    assert len(events) >= 1
-
-
 async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
-    async with agent.run_stream_events('Hello') as stream:
-        await anext(stream)
+    async with agent.run_stream_events('Hello') as events:
+        await anext(events)
 
-    # __aexit__ closed the generator (because _closed was False);
-    # no task leak, no error.
+    # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
-async def test_agent_event_stream_standalone_break_cleanup():
-    cleanup_finished = asyncio.Event()
+async def test_run_stream_events_unstarted_iterator_cleanup():
+    """Entering and exiting the CM without advancing the iterator must still drain the background task."""
+    never = asyncio.Event()
+    producer_finalized = asyncio.Event()
 
-    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
         try:
-            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+            yield 'hello'
+            await never.wait()  # pragma: no cover  # blocks until cancelled
         finally:
-            cleanup_finished.set()
+            producer_finalized.set()
 
-    stream = AgentEventStream(generator())
-    async for _ in stream:  # pragma: no branch
-        break
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
 
-    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+    async with agent.run_stream_events(''):
+        # Let the background task start and block on send_stream.send(); we never advance the iterator.
+        await asyncio.sleep(0.05)
+
+    # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
+    # drain the background task; otherwise the producer's `finally` never runs.
+    await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
 
 
-async def test_run_stream_events_standalone_deprecation():
-    agent = Agent(TestModel())
+async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
+    """Breaking on the documented final-result event must still retrieve background task errors."""
+    producer_finished = asyncio.Event()
 
-    stream = agent.run_stream_events('Hello')
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        async for _ in stream:  # pragma: no branch
-            break
-    await stream.aclose()
+    async def stream_that_fails_after_final_result(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello'
+        try:
+            raise RuntimeError('producer boom')
+        finally:
+            producer_finished.set()
 
-    assert len(caught) == 1
-    assert issubclass(caught[0].category, DeprecationWarning)
-    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
-        caught[0].message
-    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    handle_exception = MagicMock()
+
+    loop.set_exception_handler(handle_exception)
+    try:
+        agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
+
+        async with agent.run_stream_events('') as events:
+            async for event in events:  # pragma: no branch
+                if isinstance(event, FinalResultEvent):
+                    # This mirrors the documented "stop once final result is known" pattern.
+                    # The producer task can still finish with an exception before the CM exits.
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.sleep(0)
+                    break
+
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    handle_exception.assert_not_called()
 
 
 async def test_run_stream_events_external_task_cancellation():
@@ -4758,7 +4727,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
             messages: list[ModelMessage],
             model_settings: models.ModelSettings | None,
             model_request_parameters: models.ModelRequestParameters,
-            run_context: RunContext[None] | None = None,
+            run_context: RunContext | None = None,
         ) -> AsyncIterator[models.StreamedResponse]:
             async with super().request_stream(
                 messages,
@@ -4802,10 +4771,10 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     started = asyncio.Event()
     never_finishes = asyncio.Future[ModelResponse]()
 
-    class WrapModelRequestCapability(AbstractCapability[None]):
+    class WrapModelRequestCapability(AbstractCapability):
         async def wrap_model_request(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext,
             *,
             request_context: ModelRequestContext,
             handler: WrapModelRequestHandler,

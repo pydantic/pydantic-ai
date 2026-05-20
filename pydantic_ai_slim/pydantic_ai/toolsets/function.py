@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
@@ -266,15 +265,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            # TODO(v2): Remove this deprecation fallback
-            #  and let takes_ctx=True propagate, which will raise a runtime error
-            #  in function_schema if the function doesn't accept RunContext.
-
-            # Is the func actually taking RunContext or is it a plain function in disguise?
-
-            tool = self.add_function(
+            self.add_function(
                 func=func_,
-                takes_ctx=None,
+                takes_ctx=True,
                 name=name,
                 description=description,
                 retries=retries,
@@ -291,13 +284,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
-            if not tool.function_schema.takes_ctx:
-                warnings.warn(
-                    'Passing a function without `RunContext` to `FunctionToolset.tool()` is deprecated, use `tool_plain()` instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
