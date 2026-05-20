@@ -6341,7 +6341,7 @@ class TestMultipleToolCalls:
         async def fast_second() -> str:
             return 'fast'
 
-        result_order: list[str] = []
+        result_order: list[str | None] = []
         with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
             async with agent.iter('test') as run:
                 async for node in run:
