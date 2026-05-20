@@ -193,9 +193,9 @@ def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
     assert_type(result, AgentRunResult[str])
     assert_type(result.output, str)
-    # `result.usage` is a callable-property: pyright must see a concrete type, not `Any` (issue #5525)
+    # `result.usage` must resolve to a concrete type, not `Any` (issue #5525)
     _usage: RunUsage = result.usage
-    assert_type(result.usage(), RunUsage)
+    assert_type(result.usage, RunUsage)
 
 
 async def run_stream() -> None:

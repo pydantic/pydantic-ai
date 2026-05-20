@@ -477,7 +477,7 @@ def test_add_run_usages_does_not_mutate_original():
 def test_add_usage_repeated_calls_stable():
     """Test that repeated __add__ calls return consistent results (issue #4605).
 
-    This simulates AgentStream.usage at result.py:169 being read multiple times:
+    This simulates `AgentStream.usage` being read multiple times:
         return self._initial_run_ctx_usage + self._raw_stream_response.usage()
     """
     initial = RunUsage(requests=1, input_tokens=500, details={})

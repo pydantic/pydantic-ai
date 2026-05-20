@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -307,20 +306,18 @@ class Response:
     answers: list[Answer]
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    complex_agent = Agent(
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-        ],
-        tools=[get_weather],
-        name='complex_agent',
-    )
+complex_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='country'),
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+    ],
+    tools=[get_weather],
+    name='complex_agent',
+)
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(

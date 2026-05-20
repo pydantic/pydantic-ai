@@ -172,8 +172,8 @@ See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatu
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
-| `prepare_tools` | `prepare_tools=` | `prepare_tools` |
-| `prepare_output_tools` | `prepare_output_tools=` | `prepare_output_tools` |
+| `prepare_tools` | — | `prepare_tools` |
+| `prepare_output_tools` | — | `prepare_output_tools` |
 
 Filters or modifies tool definitions the model sees on each step.
 

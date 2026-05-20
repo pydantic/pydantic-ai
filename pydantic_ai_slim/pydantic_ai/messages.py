@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import TypeAliasType, TypeVar
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -2152,10 +2152,6 @@ class ModelResponse:
             for call_part in calls
             if call_part.tool_call_id in returns_by_id
         ]
-
-    @deprecated('`price` is deprecated, use `cost` instead')
-    def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
-        return self.cost()
 
     def cost(self) -> genai_types.PriceCalculation:
         """Calculate the cost of the usage.

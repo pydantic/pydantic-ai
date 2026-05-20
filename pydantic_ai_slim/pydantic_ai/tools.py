@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import inspect
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
@@ -14,7 +13,6 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
@@ -871,18 +869,4 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated alias for read access to the renamed `unless_native` field (was `prefer_native`).
-        if name == 'prefer_native':
-            warnings.warn(
-                '`ToolDefinition.prefer_native` is deprecated, use `ToolDefinition.unless_native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.unless_native
-        raise AttributeError(name)
-
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
