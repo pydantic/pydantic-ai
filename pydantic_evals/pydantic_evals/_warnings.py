@@ -15,6 +15,9 @@ class PydanticEvalsDeprecationWarning(UserWarning):
     """
 
 
+# TODO(v2): drop this helper alongside the matching `@warn_positional_dataclass_init`
+# wrappers in `evaluators/evaluator.py` — `EvaluationResult` / `EvaluatorFailure` become
+# `@dataclass(kw_only=True)` in v2 and the warning is no longer needed.
 def warn_positional_dataclass_init(cls: _T) -> _T:
     """Wrap a dataclass `__init__` so positional construction emits a deprecation warning.
 
