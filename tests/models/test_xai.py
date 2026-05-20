@@ -388,6 +388,58 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
     )
 
 
+async def test_xai_thinking_tool_call_in_history_stays_on_same_message(allow_model_requests: None):
+    response = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run tool')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Need current data', signature='encrypted_reasoning', provider_name='xai'),
+                ToolCallPart(tool_name='search', args={'query': 'weather'}, tool_call_id='call_search'),
+            ],
+            finish_reason='tool_call',
+        ),
+    ]
+
+    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'Run tool'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'reasoning_content': 'Need current data',
+                        'encrypted_content': 'encrypted_reasoning',
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'call_search',
+                                'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'search', 'arguments': '{"query":"weather"}'},
+                            }
+                        ],
+                    },
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
 async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_requests: None):
     response = create_response(
         content='done',
