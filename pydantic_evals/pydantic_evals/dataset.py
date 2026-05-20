@@ -87,6 +87,51 @@ _REPORT_CASE_FAILURES_ADAPTER = TypeAdapter(list[ReportCaseFailure])
 _REPORT_CASE_AGGREGATE_ADAPTER = TypeAdapter(ReportCaseAggregate)
 
 
+# TODO(v2): drop this helper and the `*_deprecated_positional` parameter on
+# `Dataset.evaluate` / `Dataset.evaluate_sync`; the remaining params will become keyword-only.
+_LEGACY_POSITIONAL_EVALUATE_NAMES = (
+    'name',
+    'max_concurrency',
+    'progress',
+    'retry_task',
+    'retry_evaluators',
+)
+
+
+def _resolve_positional_evaluate_args(
+    positional: tuple[Any, ...],
+    *,
+    name: str | None,
+    max_concurrency: int | None,
+    progress: bool,
+    retry_task: RetryConfig | None,
+    retry_evaluators: RetryConfig | None,
+) -> tuple[str | None, int | None, bool, RetryConfig | None, RetryConfig | None]:
+    """Fold deprecated positional args back onto their named slots, warning if any were passed."""
+    if not positional:
+        return name, max_concurrency, progress, retry_task, retry_evaluators
+    if len(positional) > len(_LEGACY_POSITIONAL_EVALUATE_NAMES):
+        raise TypeError(
+            f'evaluate() takes at most {1 + len(_LEGACY_POSITIONAL_EVALUATE_NAMES)} positional '
+            f'arguments but {1 + len(positional)} were given'
+        )
+    warnings.warn(
+        'Passing `name`, `max_concurrency`, `progress`, `retry_task`, or `retry_evaluators` '
+        'positionally to `Dataset.evaluate` / `Dataset.evaluate_sync` is deprecated; pass them '
+        'as keyword arguments. Positional support will be removed in pydantic-evals v2.',
+        PydanticEvalsDeprecationWarning,
+        stacklevel=3,
+    )
+    overrides = dict(zip(_LEGACY_POSITIONAL_EVALUATE_NAMES, positional))
+    return (
+        overrides.get('name', name),
+        overrides.get('max_concurrency', max_concurrency),
+        overrides.get('progress', progress),
+        overrides.get('retry_task', retry_task),
+        overrides.get('retry_evaluators', retry_evaluators),
+    )
+
+
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
     """Internal model for a case, used for serialization/deserialization."""
 
@@ -286,16 +331,17 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         else:
             return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
 
-    # TODO in v2: Make everything not required keyword-only
+    # TODO(v2): drop `*_deprecated_positional` and the `_resolve_positional_evaluate_args` call;
+    # `name`, `max_concurrency`, `progress`, `retry_task`, `retry_evaluators` will be keyword-only.
     async def evaluate(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *_deprecated_positional: Any,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
@@ -327,6 +373,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
+        name, max_concurrency, progress, retry_task, retry_evaluators = _resolve_positional_evaluate_args(
+            _deprecated_positional,
+            name=name,
+            max_concurrency=max_concurrency,
+            progress=progress,
+            retry_task=retry_task,
+            retry_evaluators=retry_evaluators,
+        )
         if repeat < 1:
             raise ValueError(f'repeat must be >= 1, got {repeat}')
 
@@ -417,15 +471,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             _set_experiment_span_attributes(eval_span, report, metadata, len(self.cases), repeat)
         return report
 
+    # TODO(v2): drop `*_deprecated_positional`; see the matching note on `Dataset.evaluate`.
     def evaluate_sync(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *_deprecated_positional: Any,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
@@ -456,6 +511,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
+        name, max_concurrency, progress, retry_task, retry_evaluators = _resolve_positional_evaluate_args(
+            _deprecated_positional,
+            name=name,
+            max_concurrency=max_concurrency,
+            progress=progress,
+            retry_task=retry_task,
+            retry_evaluators=retry_evaluators,
+        )
         return get_event_loop().run_until_complete(
             self.evaluate(
                 task,
@@ -543,7 +606,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
-        else:  # pragma: no cover
+        else:  # pragma: lax no cover
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
@@ -781,7 +844,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context)
-            content = yaml.dump(dumped_data, sort_keys=False)
+            content = yaml.dump(dumped_data, sort_keys=False, allow_unicode=True)
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
@@ -1103,7 +1166,7 @@ async def _run_task_and_evaluators(
         A ReportCase containing the evaluation results.
     """
     lc: CaseLifecycle[Any, Any, Any] | None = None
-    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None = None
     trace_id: str | None = None
     span_id: str | None = None
     with logfire_span(
@@ -1194,19 +1257,20 @@ async def _run_task_and_evaluators(
                 trace_id=trace_id,
                 span_id=span_id,
             )
-
-        # Teardown exceptions are intentionally not caught here — they propagate
-        # to the caller. If your teardown may raise and you don't want it to crash
-        # the evaluation, handle exceptions within your teardown() implementation.
-        # If you don't like this behavior, let us know and we can change it.
-        if lc is not None:
-            await lc.teardown(result)
+        finally:
+            # Teardown exceptions are intentionally not caught here — they propagate
+            # to the caller. If your teardown may raise and you don't want it to crash
+            # the evaluation, handle exceptions within your teardown() implementation.
+            # If you don't like this behavior, let us know and we can change it.
+            if lc is not None:
+                await lc.teardown(result)
 
     if isinstance(result, ReportCase):
         # Update the total duration to reflect the teardown time.
         # Note this means that modifications to this field inside the teardown will not be reflected.
         result.total_duration = _get_span_duration(case_span, time.time() - t0)
 
+    assert result is not None
     return result
 
 

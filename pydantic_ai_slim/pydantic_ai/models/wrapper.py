@@ -8,6 +8,7 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._deprecated_callable import deprecated_callable_property
 from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
@@ -34,9 +35,16 @@ class CompletedStreamedResponse(StreamedResponse):
         # noinspection PyUnreachableCode
         yield
 
+    async def close_stream(self) -> None:
+        # The stream was already consumed by the durable execution wrapper.
+        pass
+
     def get(self) -> ModelResponse:
         return self.response
 
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         return self.response.usage  # pragma: no cover
 
@@ -124,6 +132,9 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        return self.wrapped.prepare_messages(messages)
 
     @property
     def provider(self) -> Provider[Any] | None:

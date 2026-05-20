@@ -6,6 +6,7 @@
             - Agent
             - AbstractAgent
             - WrapperAgent
+            - AgentRetries
             - AgentRun
             - AgentRunResult
             - EndStrategy
