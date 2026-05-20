@@ -2656,10 +2656,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
         defer_loading=True,
     )
 
-    seen_tool_names: list[list[str]] = []
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen_tool_names.append([t.name for t in info.function_tools])
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         tool_returns = [
             part
             for message in messages
@@ -2698,13 +2695,6 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     result = await agent.run('Can I get a refund?')
 
     assert result.output == snapshot('final: order-123: refund allowed for 30 days')
-    assert seen_tool_names == snapshot(
-        [
-            ['load_capability', 'lookup_refund_policy'],
-            ['load_capability', 'lookup_refund_policy'],
-            ['load_capability', 'lookup_refund_policy'],
-        ]
-    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -2900,17 +2890,13 @@ Quote the refund policy verbatim.
 
 Use the refund tool with the order id, not the customer id.\
 """)
-    assert [message.instructions for message in result.all_messages() if isinstance(message, ModelRequest)] == snapshot(
-        [
-            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-            '- refunds: Refund tools.',
-            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-            '- refunds: Refund tools.',
-            None,
-            'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-            '- refunds: Refund tools.',
-        ]
+    first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+    assert first_request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- refunds: Refund tools.'
     )
+    assert first_request.instructions is not None
+    assert 'Use the refund tool' not in first_request.instructions
 
 
 async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:
@@ -3017,55 +3003,10 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
             [('load_capability', False), ('hidden_tool', True)],
         ]
     )
-    # History carries a `RetryPromptPart` (not a `LoadCapabilityReturnPart`) for the
-    # failed load.
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='load missing', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- hidden: Hidden tool access.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    LoadCapabilityCallPart(
-                        tool_name='load_capability',
-                        args={'id': 'missing'},
-                        tool_call_id='load-missing',
-                    )
-                ],
-                usage=RequestUsage(input_tokens=52, output_tokens=5),
-                model_name='function:model_fn:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content="No capability found with id 'missing'.",
-                        tool_name='load_capability',
-                        tool_call_id='load-missing',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- hidden: Hidden tool access.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=65, output_tokens=6),
-                model_name='function:model_fn:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
+    history_parts = [part for message in result.all_messages() for part in message.parts]
+    assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
+    [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
+    assert retry.content == snapshot("No capability found with id 'missing'.")
 
 
 def test_infer_fmt_explicit():

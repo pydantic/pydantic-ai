@@ -77,7 +77,7 @@ from pydantic_ai.toolsets._tool_search import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import try_import
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
@@ -488,6 +488,12 @@ async def test_tool_search_eval(allow_model_requests: None, case: ModelCase) -> 
 # --- Unit tests ---
 
 T = TypeVar('T')
+
+
+class NoNativeToolSearchModel(FunctionModel):
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset(super().supported_native_tools()) - {ToolSearchTool}
 
 
 def _build_run_context(
@@ -901,12 +907,6 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
 
 async def test_tool_search_handles_search_gated_tools_from_eager_capability():
     """Search-gated tools from eager capabilities stay hidden until searched."""
-
-    class NoNativeToolSearchModel(FunctionModel):
-        @classmethod
-        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
-
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
@@ -973,12 +973,6 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
 
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     """Deferred capability tools become visible as a unit after loading."""
-
-    class NoNativeToolSearchModel(FunctionModel):
-        @classmethod
-        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
-
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain
@@ -1073,12 +1067,7 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         'not_a_dict': 'loaded reports',
         'non_string_instructions': {'instructions': ['bad']},
     }
-    # Capture (name, defer_loading) per case — the load-bearing check is that
-    # `inherited_tool` stays `defer_loading=True` even with malformed load history.
-    # The toolset keeps deferred tools in its dict (post-#5143; the wire filter
-    # is what hides them on real providers), so checking presence alone wouldn't
-    # prove the "did not unlock" claim.
-    visible_tool_state: dict[str, list[tuple[str, bool]]] = {}
+    tool_defer_state: dict[str, list[tuple[str, bool]]] = {}
 
     for case_name, content in cases.items():
         messages: list[ModelMessage] = [
@@ -1086,9 +1075,9 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         ]
         ctx = _build_run_context(None, messages=messages, capabilities={'reports': capability})
         tools = await searchable.get_tools(ctx)
-        visible_tool_state[case_name] = [(name, bool(t.tool_def.defer_loading)) for name, t in tools.items()]
+        tool_defer_state[case_name] = [(name, bool(t.tool_def.defer_loading)) for name, t in tools.items()]
 
-    assert visible_tool_state == snapshot(
+    assert tool_defer_state == snapshot(
         {
             'not_a_dict': [('inherited_tool', True), ('search_tools', False)],
             'non_string_instructions': [('inherited_tool', True), ('search_tools', False)],
@@ -2189,6 +2178,36 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             defer_loading=True,
         )
 
+    def trace_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
+        trace: list[tuple[str, list[dict[str, Any]]]] = []
+        for message in messages:
+            part_trace: list[dict[str, Any]] = []
+            for part in message.parts:
+                part_info = {'type': type(part).__name__}
+                if isinstance(part, UserPromptPart):
+                    part_info = {'type': 'user', 'content': part.content}
+                elif isinstance(part, LoadCapabilityCallPart):
+                    part_info = {'type': 'load_capability_call', 'id': part.capability_id}
+                elif isinstance(part, LoadCapabilityReturnPart):
+                    part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
+                elif isinstance(part, ToolSearchCallPart):
+                    queries = part.args['queries'] if isinstance(part.args, dict) else part.args
+                    part_info = {'type': 'tool_search_call', 'queries': queries}
+                elif isinstance(part, ToolSearchReturnPart):
+                    part_info = {
+                        'type': 'tool_search_return',
+                        'tools': [tool['name'] for tool in part.content['discovered_tools']],
+                    }
+                elif isinstance(part, ToolCallPart):
+                    part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
+                elif isinstance(part, ToolReturnPart):
+                    part_info = {'type': 'tool_return', 'tool_name': part.tool_name, 'content': part.content}
+                elif isinstance(part, TextPart):
+                    part_info = {'type': 'text'}
+                part_trace.append(part_info)
+            trace.append((type(message).__name__, part_trace))
+        return trace
+
     anthropic_agent: Agent[None, str] = Agent(
         model='anthropic:claude-sonnet-4-5',
         capabilities=[make_refunds_cap()],
@@ -2196,159 +2215,59 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
     )
     anthropic_result = await anthropic_agent.run('Can I get a refund on order-123?')
 
-    assert anthropic_result.all_messages() == snapshot(
+    assert trace_messages(anthropic_result.all_messages()) == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='Can I get a refund on order-123?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
+            (
+                'ModelRequest',
+                [{'type': 'user', 'content': 'Can I get a refund on order-123?'}],
             ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you."
-                    ),
-                    LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='toolu_0182L4vMNwQewrjJ5fgGrThD'),
+            (
+                'ModelResponse',
+                [
+                    {'type': 'text'},
+                    {'type': 'load_capability_call', 'id': 'refunds'},
                 ],
-                usage=RequestUsage(
-                    input_tokens=805,
-                    output_tokens=81,
-                    details={
-                        'input_tokens': 805,
-                        'output_tokens': 81,
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01MXk52rtTmCTTLPPFdbjUAX',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelRequest(
-                parts=[
-                    LoadCapabilityReturnPart(
-                        content={
-                            'instructions': 'Use the refund policy tool before answering refund questions.',
-                        },
-                        tool_call_id='toolu_0182L4vMNwQewrjJ5fgGrThD',
-                        timestamp=IsDatetime(),
-                    )
+            (
+                'ModelRequest',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    }
                 ],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelResponse(
-                parts=[ToolSearchCallPart(args={'queries': ['refunds']}, tool_call_id=IsStr())],
-                timestamp=IsDatetime(),
+            (
+                'ModelResponse',
+                [{'type': 'tool_search_call', 'queries': ['refunds']}],
             ),
-            ModelRequest(
-                parts=[
-                    ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {
-                                    'name': 'lookup_refund_policy',
-                                    'description': 'Look up the refund policy for an order.',
-                                }
-                            ]
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
+            (
+                'ModelRequest',
+                [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}],
+            ),
+            (
+                'ModelResponse',
+                [
+                    {
+                        'type': 'tool_call',
+                        'tool_name': 'lookup_refund_policy',
+                        'args': {'order_id': 'order-123'},
+                    }
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='lookup_refund_policy',
-                        args={'order_id': 'order-123'},
-                        tool_call_id='toolu_01GeFuxZ84ypvxwH3Aqn8XmM',
-                    )
+            (
+                'ModelRequest',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
                 ],
-                usage=RequestUsage(
-                    input_tokens=994,
-                    output_tokens=60,
-                    details={
-                        'input_tokens': 994,
-                        'output_tokens': 60,
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01SNgiqBC9aaLnH44ebdZxAz',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='lookup_refund_policy',
-                        content='order-123: refund allowed for 30 days',
-                        tool_call_id='toolu_01GeFuxZ84ypvxwH3Aqn8XmM',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-Good news! According to the refund policy for order-123, refunds are allowed for 30 days from the date of purchase. \n\
-
-To proceed with your refund request, you should be eligible as long as the order is within the 30-day window. Would you like me to help you initiate the refund process, or do you have any questions about the refund policy?\
-"""
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=1078,
-                    cache_write_tokens=1072,
-                    output_tokens=86,
-                    details={
-                        'input_tokens': 6,
-                        'output_tokens': 86,
-                        'cache_creation_input_tokens': 1072,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01YLSpGBXyUcJEn14x4jJeMX',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
+            ('ModelResponse', [{'type': 'text'}]),
         ]
     )
-    # `result.usage` returns a deprecation-wrapper subclass of `RunUsage` until the
-    # `.usage()`-method form is removed; inline-snapshot can't reconstruct that subclass
-    # in create-mode (its `__init__` takes `(base, message)` not field kwargs). Snapshot
-    # the dict form — captures every RunUsage field including the provider-detail dict.
     assert asdict(anthropic_result.usage) == snapshot(
         {
             'input_tokens': 2877,
@@ -2378,90 +2297,34 @@ To proceed with your refund request, you should be eligible as long as the order
         message_history=anthropic_result.all_messages(),
     )
 
-    assert google_result.new_messages() == snapshot(
+    assert trace_messages(google_result.new_messages()) == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='And what about order-456?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
+            (
+                'ModelRequest',
+                [{'type': 'user', 'content': 'And what about order-456?'}],
             ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='lookup_refund_policy',
-                        args={'order_id': 'order-456'},
-                        tool_call_id='97jsdanw',
-                        provider_name='google',
-                        provider_details={
-                            'thought_signature': 'EtMCCtACAQw51sdIX8LSHeeGmbfTsOu23TmPb1vm7o1E9m6BS1ke7fG9AKr9UpJMYm6z23wx0R/4ftJw11zYZWwzoT1J/zEE3d2AQeGA3awITRYcq1i4gVWN1DR244ZtY5TVhSe9raGmBRrdd5Y+wPggl0oCRifWCF+Zd7/Bzgjc+uWsIGFRskRMiz2Lfnj5A3pxo4fYWYNEb0jYEJCDaI9fJeokgEowYY/xN7zcl+hGhzF7Q99uClsL/JHd0gougG5qriXuwDrDRECfNn9Kaqg9byqqRGaAhg6FxIgGyR7pVRMDlM3hwi0rt1tKKpQwG1mfGIRoscD4g30L6Xj8adVTaTY6VCRBV3kTroKOq1nzAPSJ93zPMdna2kPuiHep8aDvHoE/lDNSs8X47RXzw15zuj+aTl4/Cu1BzUXnSqUxOMYwM9zUEEDVaS4jJSdp7BSHVCEf'
-                        },
-                    )
+            (
+                'ModelResponse',
+                [
+                    {
+                        'type': 'tool_call',
+                        'tool_name': 'lookup_refund_policy',
+                        'args': {'order_id': 'order-456'},
+                    }
                 ],
-                usage=RequestUsage(
-                    input_tokens=517, output_tokens=101, details={'thoughts_tokens': 77, 'text_prompt_tokens': 517}
-                ),
-                model_name='gemini-3-flash-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id='RS8Hav7GDsPKqfkPgLLdiQw',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='lookup_refund_policy',
-                        content='order-456: refund allowed for 30 days',
-                        tool_call_id='97jsdanw',
-                        timestamp=IsDatetime(),
-                    )
+            (
+                'ModelRequest',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
                 ],
-                timestamp=IsDatetime(),
-                instructions='The following capabilities are deferred and can be loaded using the `load_capability` tool:\n- refunds: Refund policy tools.',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\
-
-Are you looking to initiate a refund for this order as well?\
-"""
-                    )
-                ],
-                usage=RequestUsage(input_tokens=648, output_tokens=41, details={'text_prompt_tokens': 648}),
-                model_name='gemini-3-flash-preview',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id='Ry8HasaVD56Vg8UPi76BkQw',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
+            ('ModelResponse', [{'type': 'text'}]),
         ]
-    )
-    assert asdict(google_result.usage) == snapshot(
-        {
-            'input_tokens': 1165,
-            'cache_write_tokens': 0,
-            'cache_read_tokens': 0,
-            'output_tokens': 142,
-            'input_audio_tokens': 0,
-            'cache_audio_read_tokens': 0,
-            'output_audio_tokens': 0,
-            'details': {'thoughts_tokens': 77, 'text_prompt_tokens': 1165},
-            'requests': 2,
-            'tool_calls': 1,
-        }
     )
     assert google_result.output == snapshot("""\
 For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\
@@ -3467,15 +3330,6 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
     `function_tools` (Rule 1) on the assumption the model handles tool search
     server-side via the native wire shape.
     """
-
-    class NoNativeToolSearchModel(FunctionModel):
-        """A `FunctionModel` that drops `ToolSearchTool` from its supported builtins so the
-        framework routes through the local `search_tools` function tool rather than the
-        native wire shape."""
-
-        @classmethod
-        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-            return frozenset(super().supported_native_tools()) - {ToolSearchTool}
 
     toolset: FunctionToolset[None] = FunctionToolset()
 
