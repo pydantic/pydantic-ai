@@ -5586,7 +5586,6 @@ async def test_adapter_load_messages_text_with_provider_metadata():
     )
 
 
-
 async def test_adapter_load_messages_reasoning_streaming_omits_signature():
     """Test that ReasoningUIPart with state='streaming' omits signature to avoid Anthropic 400 errors."""
     ui_messages = [
@@ -5669,6 +5668,7 @@ async def test_adapter_load_messages_reasoning_done_preserves_signature():
             )
         ]
     )
+
 
 async def test_adapter_tool_call_part_with_provider_metadata():
     """Test ToolCallPart with provider_name and provider_details preserves metadata and roundtrips."""

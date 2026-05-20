@@ -355,8 +355,7 @@ def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningD
             summary=thinking_part.content,
         )
     elif data.type == 'reasoning.encrypted':
-        if thinking_part.signature is None:
-            return None
+        assert thinking_part.signature is not None
         return _ReasoningEncrypted(
             type=data.type,
             id=thinking_part.id,
@@ -366,6 +365,7 @@ def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningD
         )
     else:
         assert_never(data.type)
+
 
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
     """File annotation from OpenRouter.
