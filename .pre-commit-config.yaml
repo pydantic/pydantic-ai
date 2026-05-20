@@ -48,9 +48,10 @@ repos:
         name: No RST syntax (use Markdown in docstrings and docs)
         description: |
           Bans RST-only constructs that mkdocstrings/Markdown won't render:
-          `` ``foo`` `` (use single backticks) and trailing `::` (use ```` ```python ```` fences).
+          `` ``foo`` `` (use single backticks), trailing `::` (use ```` ```python ```` fences),
+          and Sphinx roles like `:mod:`foo`` / `:class:`Bar`` (use `[Bar][pkg.mod.Bar]` reference links).
         language: pygrep
-        entry: '(?<!`)``(?!`)|::\s*$'
+        entry: '(?<!`)``(?!`)|::\s*$|:[a-z][a-z_:]*:`'
         types_or: [python, markdown]
       - id: clai-help
         name: clai help output
