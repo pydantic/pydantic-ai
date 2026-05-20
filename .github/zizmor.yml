@@ -20,6 +20,20 @@ rules:
       - ci.yml
       - docs-preview.yml
       - manually-deploy-docs.yml
+      # gh-aw-generated agentic workflow lockfiles (see
+      # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
+      # GitHub secrets as job-level env by design; they are held by the AWF
+      # proxy sidecar and excluded from the agent container, not exposed to
+      # shell interpolation. The *.lock.yml files are compiled artifacts —
+      # the corresponding .md sources are the editable surface.
+      - pydantic-ai-bug-hunter.lock.yml
+      - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-pr-review.lock.yml
+      - pydantic-ai-provider-mapping-sweep.lock.yml
+      - pydantic-ai-provider-parity-explore.lock.yml
+      - pydantic-ai-regression-detector.lock.yml
+      - pydantic-ai-roundtrip-sweep.lock.yml
+      - pydantic-ai-streaming-resilience-sweep.lock.yml
 
   # `harness-compat.yml` calls a reusable workflow in `pydantic/pydantic-ai-harness`, an
   # org-internal repo under the same maintenance group. SHA-pinning the cross-repo reference
