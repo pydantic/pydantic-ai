@@ -42,7 +42,7 @@ from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 
 async def handle_deferred(
-    ctx: RunContext[None], requests: DeferredToolRequests
+    ctx: RunContext, requests: DeferredToolRequests
 ) -> DeferredToolResults:
     approvals: dict[str, bool | ToolDenied] = {}
     for call in requests.approvals:

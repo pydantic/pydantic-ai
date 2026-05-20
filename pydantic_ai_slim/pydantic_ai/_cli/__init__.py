@@ -280,7 +280,7 @@ def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
     """Handle the chat command."""
-    agent: Agent[None, str] = cli_agent
+    agent: Agent[object, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)
         if loaded is None:

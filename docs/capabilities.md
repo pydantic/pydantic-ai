@@ -106,7 +106,7 @@ from pydantic_ai.capabilities import Hooks
 hooks = Hooks()
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     agent_name = ctx.agent.name if ctx.agent else 'unknown'
     print(f'[{agent_name}] Sending {len(request_context.messages)} messages')
     return request_context
@@ -293,7 +293,7 @@ from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
 
 
-async def hide_dangerous(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+async def hide_dangerous(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [td for td in tool_defs if not td.name.startswith('delete_')]
 
 
@@ -627,11 +627,11 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class ThinkingOnRetry(AbstractCapability[None]):
+class ThinkingOnRetry(AbstractCapability):
     """Enables thinking mode when the agent is retrying."""
 
     def get_model_settings(self):
-        def resolve(ctx: RunContext[None]) -> ModelSettings:
+        def resolve(ctx: RunContext) -> ModelSettings:
             if ctx.run_step > 1:
                 return ModelSettings(thinking='high')
             return ModelSettings()

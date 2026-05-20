@@ -928,7 +928,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -959,7 +959,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -979,7 +979,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -1007,7 +1007,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1039,7 +1039,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1062,7 +1062,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1093,7 +1093,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1141,7 +1141,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1178,7 +1178,7 @@ class TestStreamingCachedOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1205,7 +1205,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1229,7 +1229,7 @@ class TestStreamingCachedOutput:
         a deep copy, so mutations to one don't affect subsequent retrievals.
         """
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -1291,7 +1291,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1525,7 +1525,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2152,7 +2152,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2283,7 +2283,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -3033,7 +3033,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
+    agent = Agent[object, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -3474,7 +3474,7 @@ async def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -3545,7 +3545,7 @@ async def test_tool_raises_approval_required():
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    async def prepare_tool(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
@@ -3701,7 +3701,7 @@ async def test_run_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3751,7 +3751,7 @@ async def test_event_stream_handler_propagates_tool_error():
 
     events: list[AgentStreamEvent] = []
 
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         # Suppress the error to simulate UIEventStream.transform_stream behavior,
         # which catches exceptions and doesn't re-raise them.
         try:
@@ -3779,7 +3779,7 @@ def test_run_sync_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3827,7 +3827,7 @@ async def test_run_stream_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3875,7 +3875,7 @@ async def test_stream_tool_returning_user_content():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -4319,13 +4319,13 @@ async def test_args_validator_run_stream_event_handler():
 async def test_event_ordering_call_before_result():
     """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(TestModel(call_tools=['my_tool']))
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         """A tool."""
         return x * 2
 
@@ -4441,7 +4441,7 @@ async def test_args_valid_none_for_tool_denied():
 async def test_deferred_tool_validation_event_in_stream():
     """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(
@@ -4450,7 +4450,7 @@ async def test_deferred_tool_validation_event_in_stream():
     )
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         raise ApprovalRequired()
 
     events: list[Any] = []
@@ -4727,7 +4727,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
             messages: list[ModelMessage],
             model_settings: models.ModelSettings | None,
             model_request_parameters: models.ModelRequestParameters,
-            run_context: RunContext[None] | None = None,
+            run_context: RunContext | None = None,
         ) -> AsyncIterator[models.StreamedResponse]:
             async with super().request_stream(
                 messages,
@@ -4771,10 +4771,10 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     started = asyncio.Event()
     never_finishes = asyncio.Future[ModelResponse]()
 
-    class WrapModelRequestCapability(AbstractCapability[None]):
+    class WrapModelRequestCapability(AbstractCapability):
         async def wrap_model_request(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext,
             *,
             request_context: ModelRequestContext,
             handler: WrapModelRequestHandler,

@@ -10,13 +10,13 @@ from typing_extensions import Never, TypeVar
 __all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'DepsT', 'StateT', 'RunEndT'
 
 
-StateT = TypeVar('StateT', default=None)
+StateT = TypeVar('StateT', default=object)
 """Type variable for the state in a graph."""
-RunEndT = TypeVar('RunEndT', covariant=True, default=None)
+RunEndT = TypeVar('RunEndT', covariant=True, default=object)
 """Covariant type variable for the return type of a graph [`run`][pydantic_graph.graph_builder.Graph.run]."""
 NodeRunEndT = TypeVar('NodeRunEndT', covariant=True, default=Never)
 """Covariant type variable for the return type of a node [`run`][pydantic_graph.basenode.BaseNode.run]."""
-DepsT = TypeVar('DepsT', default=None, contravariant=True)
+DepsT = TypeVar('DepsT', default=object, contravariant=True)
 """Type variable for the dependencies of a graph and node."""
 
 

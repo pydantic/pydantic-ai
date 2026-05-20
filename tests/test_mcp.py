@@ -277,7 +277,7 @@ async def fastmcp_server() -> FastMCP[None]:
 
 
 @pytest.fixture
-def run_context() -> RunContext[None]:
+def run_context() -> RunContext:
     return RunContext(
         deps=None,
         model=TestModel(),
@@ -315,7 +315,7 @@ class TestMCPToolsetIntegration:
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
 
-    async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
         async with toolset:
             tools_first = await toolset.get_tools(run_context)
@@ -324,7 +324,7 @@ class TestMCPToolsetIntegration:
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
-    async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
         async with toolset:
             part = await toolset.get_instructions(run_context)
@@ -333,42 +333,38 @@ class TestMCPToolsetIntegration:
         assert part.dynamic is False
 
     async def test_get_instructions_returns_none_when_disabled(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
     ):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             assert await toolset.get_instructions(run_context) is None
 
-    async def test_get_instructions_returns_none_pre_init(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
-    ):
+    async def test_get_instructions_returns_none_pre_init(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
         # Without entering, instructions aren't populated yet.
         assert await toolset.get_instructions(run_context) is None
 
-    async def test_tools_no_caching_when_disabled(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_tools_no_caching_when_disabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, cache_tools=False)
         async with toolset:
             await toolset.get_tools(run_context)
             assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
-    async def test_call_tool_returns_structured_content(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
-    ):
+    async def test_call_tool_returns_structured_content(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('add', {'a': 2, 'b': 3}, run_context, tools['add'])
         assert result == {'sum': 5}
 
-    async def test_call_tool_returns_text(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_call_tool_returns_text(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
         assert result == 'Echo: hi'
 
-    async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -376,7 +372,7 @@ class TestMCPToolsetIntegration:
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
     async def test_tool_error_raises_tool_error_when_configured(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
     ):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
         async with toolset:
@@ -384,7 +380,7 @@ class TestMCPToolsetIntegration:
             with pytest.raises(ToolError):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
-    async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         seen: list[tuple[str, dict[str, Any]]] = []
 
         async def hook(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
@@ -476,9 +472,7 @@ class TestMCPToolsetIntegration:
         await handler(RuntimeError('transport error'))
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
-    async def test_message_handler_invalidates_caches(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
-    ):
+    async def test_message_handler_invalidates_caches(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
         toolset = MCPToolset(fastmcp_server)
@@ -517,7 +511,7 @@ class TestMCPToolsetIntegration:
         await handler(notification)
         assert seen == [notification]
 
-    async def test_call_tool_returns_image(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_call_tool_returns_image(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         from pydantic_ai.messages import BinaryContent
 
         toolset = MCPToolset(fastmcp_server)
@@ -527,7 +521,7 @@ class TestMCPToolsetIntegration:
         assert isinstance(result, BinaryContent)
         assert result.media_type == 'image/png'
 
-    async def test_call_tool_returns_embedded_blob(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+    async def test_call_tool_returns_embedded_blob(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         from pydantic_ai.messages import BinaryContent
 
         toolset = MCPToolset(fastmcp_server)
@@ -536,9 +530,7 @@ class TestMCPToolsetIntegration:
             result = await toolset.call_tool('embedded_blob_tool', {}, run_context, tools['embedded_blob_tool'])
         assert isinstance(result, BinaryContent)
 
-    async def test_call_tool_returns_resource_link_uri(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
-    ):
+    async def test_call_tool_returns_resource_link_uri(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)

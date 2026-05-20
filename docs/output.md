@@ -96,7 +96,7 @@ Here's an example of using a union return type, which will register multiple out
 ```python {title="colors_or_sizes.py"}
 from pydantic_ai import Agent
 
-agent = Agent[None, list[str] | list[int]](
+agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
@@ -175,7 +175,7 @@ def run_sql_query(query: str) -> list[Row]:
     raise ModelRetry(f"Unsupported query: '{query}'.")
 
 
-sql_agent = Agent[None, list[Row] | SQLFailure](
+sql_agent = Agent[object, list[Row] | SQLFailure](
     'openai:gpt-5.2',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
@@ -207,7 +207,7 @@ class RouterFailure(BaseModel):
     explanation: str
 
 
-router_agent = Agent[None, list[Row] | RouterFailure](
+router_agent = Agent[object, list[Row] | RouterFailure](
     'openai:gpt-5.2',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
