@@ -8,6 +8,7 @@ import random
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -3978,6 +3979,18 @@ async def test_google_optional_fields_native_output_gemini_2_0(
     assert result2.output.city == snapshot('Paris')
 
 
+async def test_google_decimal_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
+
+
 async def test_google_integer_enum_native_output(allow_model_requests: None, google_provider: GoogleProvider):
     """Test integer enums work natively without string conversion using gemini-2.5-flash."""
     from enum import IntEnum
@@ -6469,6 +6482,50 @@ async def test_google_vertex_service_tier_flex_stream(
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'STOP', 'traffic_type': 'ON_DEMAND_FLEX'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-3.5-flash', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run('What is 2 + 2? Reply with just the number.')
+    assert result.output == snapshot('4')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2 + 2? Reply with just the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='4',
+                        provider_name='google',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=15, output_tokens=73, details={'thoughts_tokens': 72, 'text_prompt_tokens': 15}
+                ),
+                model_name='gemini-3.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
