@@ -50,6 +50,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
     "pydantic-evals=={{ version }}",
+    "pydantic-ai-harness[sql-mode]",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
     "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",

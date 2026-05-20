@@ -69,6 +69,7 @@ nav:
   - Pydantic AI Harness:
       - Overview: harness/overview.md
       - Code Mode: harness/code-mode.md
+      - SQL Mode: harness/sql-mode.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -132,6 +133,7 @@ nav:
           - examples/bank-support.md
       - Data & Analytics:
           - examples/sql-gen.md
+          - examples/sql-mode.md
           - examples/data-analyst.md
           - examples/rag.md
       - Streaming:
