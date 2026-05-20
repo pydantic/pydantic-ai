@@ -28,11 +28,11 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ImageUrl, InstructionPart, SystemPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -505,7 +505,7 @@ async def test_openrouter_binary_content_video_public_api(
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', tool_retries=1, output_retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
@@ -516,11 +516,11 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', tool_retries=1, output_retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
 
     result = await agent.run('Tell me about Venus')
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
     )
 
@@ -528,7 +528,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Mars', model_settings=settings)
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
@@ -960,9 +960,9 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-async def test_openrouter_supported_builtin_tools() -> None:
+async def test_openrouter_supported_native_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
-    supported = OpenRouterModel.supported_builtin_tools()
+    supported = OpenRouterModel.supported_native_tools()
     assert WebSearchTool in supported
 
 
@@ -973,7 +973,7 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     new_settings, _ = model.prepare_request(None, model_request_parameters)
@@ -1006,7 +1006,7 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
@@ -1029,7 +1029,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     web_tool = WebSearchTool(search_context_size='medium')
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[non_web_tool, web_tool],
+        native_tools=[non_web_tool, web_tool],
     )
 
     with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
@@ -1089,7 +1089,7 @@ async def test_openrouter_cache_point_gemini_omits_ttl() -> None:
 
 
 async def test_openrouter_cache_point_tilde_providers_use_downstream_cache_capabilities() -> None:
-    """Test OpenRouter ``~provider`` aliases use the same cache controls as their downstream provider."""
+    """Test OpenRouter `~provider` aliases use the same cache controls as their downstream provider."""
     anthropic_model = OpenRouterModel(
         '~anthropic/claude-sonnet-latest', provider=OpenRouterProvider(api_key='test-key')
     )
@@ -1652,7 +1652,7 @@ async def test_openrouter_limit_cache_points_anthropic() -> None:
         messages, params, model_settings=settings
     )
 
-    # System message uses 1 slot, tool def uses 1 slot → 2 remaining for messages.
+    # System message uses 1 slot, tool def uses 1 slot -> 2 remaining for messages.
     # 3 CachePoints in user messages, only the 2 newest should survive.
     system_msg = next(m for m in mapped if m.get('role') in ('system', 'developer'))
     system_content = system_msg.get('content')
@@ -2105,7 +2105,7 @@ async def test_openrouter_cache_messages_anthropic_real_api(
     result1 = await agent.run(
         'Analyze the architectural patterns used in distributed database systems and their tradeoffs. ' * 200
     )
-    usage1 = result1.usage()
+    usage1 = result1.usage
 
     assert usage1.requests == 1
     assert usage1.input_tokens > 2000
@@ -2114,7 +2114,7 @@ async def test_openrouter_cache_messages_anthropic_real_api(
 
     # Second call continues the conversation — the previous cached message is still in the request
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    usage2 = result2.usage()
+    usage2 = result2.usage
 
     # cache_read_tokens > 0 proves caching actually worked end-to-end
     assert usage2.requests == 1
@@ -2150,7 +2150,7 @@ async def test_openrouter_cache_instructions_gemini_real_api(
 
     # First call populates the cache with the long system instructions
     result1 = await agent.run('What is the CAP theorem?')
-    usage1 = result1.usage()
+    usage1 = result1.usage
 
     assert usage1.requests == 1
     assert usage1.input_tokens > 1000
@@ -2159,7 +2159,7 @@ async def test_openrouter_cache_instructions_gemini_real_api(
 
     # Second call reuses the same system instructions — should hit cache
     result2 = await agent.run('What is eventual consistency?')
-    usage2 = result2.usage()
+    usage2 = result2.usage
 
     assert usage2.requests == 1
     assert usage2.cache_read_tokens > 0
@@ -2267,7 +2267,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
         return 'result'
 
     result1 = await agent.run('What is 123 * 456?')
-    usage1 = result1.usage()
+    usage1 = result1.usage
 
     assert usage1.requests >= 1
     assert usage1.input_tokens > 2000
@@ -2276,7 +2276,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
 
     # Second call with same agent — system instructions + tools should be cached
     result2 = await agent.run('What is 789 + 321?')
-    usage2 = result2.usage()
+    usage2 = result2.usage
 
     assert usage2.requests >= 1
     assert usage2.cache_read_tokens > 0

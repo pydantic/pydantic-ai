@@ -272,6 +272,7 @@ def test_var_args():
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
+            'tool_kind': None,
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
@@ -516,7 +517,7 @@ async def test_stream_text():
                 ),
             ]
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
 
 
 class Foo(BaseModel):
@@ -538,7 +539,7 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_output() == snapshot(Foo(x=1))
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=1,
                 input_tokens=50,

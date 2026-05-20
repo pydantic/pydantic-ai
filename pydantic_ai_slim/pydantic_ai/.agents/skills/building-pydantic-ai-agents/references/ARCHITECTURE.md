@@ -29,7 +29,7 @@ If the user already knows what they want to do, load the narrower task guide ins
 - [AGENTS-CORE.md](./AGENTS-CORE.md)
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md)
 - [TOOLS-CORE.md](./TOOLS-CORE.md)
-- [BUILTIN-TOOLS.md](./BUILTIN-TOOLS.md)
+- [NATIVE-TOOLS.md](./NATIVE-TOOLS.md)
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md)
 - [INPUT-AND-HISTORY.md](./INPUT-AND-HISTORY.md)
 - [TESTING-AND-DEBUGGING.md](./TESTING-AND-DEBUGGING.md)
@@ -142,8 +142,8 @@ Need deterministic, fast tests?
 |----------|--------|---------|
 | OpenAI | `openai:` | `openai:gpt-5.2` |
 | Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-6` |
-| Google (AI Studio) | `google-gla:` | `google-gla:gemini-3-pro-preview` |
-| Google (Vertex) | `google-vertex:` | `google-vertex:gemini-3-pro-preview` |
+| Google (Gemini API) | `google:` | `google:gemini-3-pro-preview` |
+| Google Cloud | `google-cloud:` | `google-cloud:gemini-3-pro-preview` |
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
@@ -176,15 +176,15 @@ Need deterministic, fast tests?
 |---|---|:---:|
 | `Thinking` | Model thinking/reasoning at configurable effort | Yes |
 | `Hooks` | Decorator-based lifecycle hook registration | No |
-| `WebSearch` | Web search — builtin when supported, local fallback | Yes |
-| `WebFetch` | URL fetching — builtin when supported, custom fallback | Yes |
-| `ImageGeneration` | Image generation — builtin when supported, custom fallback | Yes |
-| `MCP` | MCP server — builtin when supported, direct connection | Yes |
+| `WebSearch` | Web search — native when supported, local fallback | Yes |
+| `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
+| `MCP` | MCP server — native when supported, direct connection | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
-| `BuiltinTool` | Registers a builtin tool with the agent | Yes |
+| `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
-| `HistoryProcessor` | Wraps a history processor function | No |
+| `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
 
 ### When to Use Each Agent Method
 
@@ -220,7 +220,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
 
-**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google-gla:gemini-3-pro-preview"`)
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 
 **Output modes:**
 

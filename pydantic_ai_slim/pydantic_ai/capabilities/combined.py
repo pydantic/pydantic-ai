@@ -13,8 +13,8 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -42,6 +42,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
+        # Splat any nested `CombinedCapability` so leaves participate as siblings in the
+        # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
+        # span both `outermost` and `innermost` tiers would force `_effective_ordering`
+        # to merge them into a single position and raise `Conflicting positions`.
+        flat: list[AbstractCapability[AgentDepsT]] = []
+        for cap in self.capabilities:
+            if isinstance(cap, CombinedCapability):
+                flat.extend(cap.capabilities)
+            else:
+                flat.append(cap)
+        self.capabilities = flat
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 
@@ -113,11 +124,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
         return CombinedToolset(toolsets) if toolsets else None
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        native_tools: list[AgentNativeTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            builtin_tools.extend(capability.get_builtin_tools() or [])
-        return builtin_tools
+            native_tools.extend(capability.get_native_tools() or [])
+        return native_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

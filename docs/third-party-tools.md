@@ -24,7 +24,7 @@ search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     tools=[search_tool],
 )
 
@@ -52,6 +52,9 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ## ACI.dev Tools {#aci-tools}
 
+!!! warning "Deprecated in 1.x, removed in 2.0"
+    `pydantic_ai.ext.aci` (`tool_from_aci` and `ACIToolset`) is deprecated and will be removed in 2.0 (see [#5467](https://github.com/pydantic/pydantic-ai/pull/5467)). Wrap ACI.dev tools yourself using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] against `aci.ACI().functions.get_definition(...)`, or call the upstream `aci-sdk` integration directly.
+
 If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`tool_from_aci`][pydantic_ai.ext.aci.tool_from_aci] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
 
 You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
@@ -70,7 +73,7 @@ tavily_search = tool_from_aci(
 )
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     tools=[tavily_search],
 )
 

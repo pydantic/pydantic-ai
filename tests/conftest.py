@@ -25,14 +25,14 @@ from vcr import VCR, request as vcr_request
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -489,7 +489,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
-    companion ``close_httpx_clients`` fixture handles async cleanup first.
+    companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
     original = pydantic_ai.models.create_async_http_client
@@ -836,13 +836,14 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+        from pydantic_ai.providers.google import GoogleCloudLocation
+        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
-    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
+    yield GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))
 
 
 @pytest.fixture()
@@ -910,17 +911,22 @@ def model(
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
         elif request.param == 'outlines':
+            import warnings
+
             from outlines.models.transformers import from_transformers
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            from pydantic_ai.models.outlines import OutlinesModel
+            from pydantic_ai._warnings import PydanticAIDeprecationWarning
+            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
 
-            return OutlinesModel(
-                from_transformers(
-                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+                return OutlinesModel(  # pyright: ignore[reportDeprecated]
+                    from_transformers(
+                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    )
                 )
-            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
@@ -936,7 +942,7 @@ def mock_snapshot_id(mocker: MockerFixture):
         i += 1
         return f'{node_id}:{i}'
 
-    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture
@@ -966,7 +972,7 @@ def disable_ssrf_protection_for_vcr():
 _RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
-    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
 )
 
 

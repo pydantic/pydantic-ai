@@ -9,7 +9,6 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
 from .. import usage
-from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -21,6 +20,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -272,7 +272,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """
 
     openrouter_cache_instructions: bool | Literal['5m', '1h']
-    """Whether to add ``cache_control`` to stable system instructions.
+    """Whether to add `cache_control` to stable system instructions.
 
     When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
     system instructions and reduce costs. If dynamic instructions are present, the cache
@@ -280,7 +280,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     For Gemini models, this setting is ignored when dynamic instructions are present because
     OpenRouter normalizes system/developer messages into a single immutable `systemInstruction`.
     Ignored for other downstream providers.
-    If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
@@ -289,29 +289,29 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     openrouter_cache_messages: bool | Literal['5m', '1h']
     """Convenience setting to enable caching for the last message in the conversation.
 
-    When enabled, this automatically adds ``cache_control`` to the last content block
+    When enabled, this automatically adds `cache_control` to the last content block
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
     Ignored for downstream providers that do not support explicit cache control.
-    If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
     Note: OpenRouter uses only the last breakpoint across normal message content for
     Gemini caching. Use this when caching the final message boundary is intentional;
-    use ``openrouter_cache_instructions`` for stable system context. Anthropic supports
+    use `openrouter_cache_instructions` for stable system context. Anthropic supports
     prefix-based caching across multi-turn conversations with this setting.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
 
     openrouter_cache_tool_definitions: bool | Literal['5m', '1h']
-    """Whether to add ``cache_control`` to the last tool definition.
+    """Whether to add `cache_control` to the last tool definition.
 
-    When enabled, the last tool in the ``tools`` array will have ``cache_control`` set,
+    When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing supported downstream providers to cache tool definitions and reduce costs.
     Ignored for downstream providers that do not support explicit tool definition caching.
-    If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models.
 
     Currently only effective for Anthropic models via OpenRouter, as tool definition
@@ -657,14 +657,14 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     # Note: openrouter_cache_instructions, openrouter_cache_messages, and
-    # openrouter_cache_tool_definitions are intentionally NOT popped here — they are consumed
+    # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
     # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
 
-    for builtin_tool in model_request_parameters.builtin_tools:
-        if isinstance(builtin_tool, WebSearchTool):
+    for native_tool in model_request_parameters.native_tools:
+        if isinstance(native_tool, WebSearchTool):
             extra_body.setdefault('plugins', []).append({'id': 'web'})
-            extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
+            extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -698,10 +698,10 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterModelProfile.from_profile(self.profile)
 
     def _build_cache_control(self, ttl: bool | Literal['5m', '1h'] = '5m') -> dict[str, str]:
-        """Build a ``cache_control`` dict for the downstream provider.
+        """Build a `cache_control` dict for the downstream provider.
 
         Args:
-            ttl: The cache time-to-live. ``True`` is treated as ``'5m'``.
+            ttl: The cache time-to-live. `True` is treated as `'5m'`.
                 Only included for providers that support it (Anthropic).
         """
         resolved_ttl: Literal['5m', '1h'] = '5m' if isinstance(ttl, bool) else ttl
@@ -722,15 +722,15 @@ class OpenRouterModel(OpenAIChatModel):
         is exceeded, excess breakpoints are removed from messages (oldest first), preserving
         tool and system/developer cache points which are typically more valuable.
 
-        Follows the same strategy as the Anthropic and Bedrock models' ``_limit_cache_points``:
-        1. Reserve slots for tool cache points (known from ``has_tool_cache_point``)
+        Follows the same strategy as the Anthropic and Bedrock models' `_limit_cache_points`:
+        1. Reserve slots for tool cache points (known from `has_tool_cache_point`)
         2. Count cache points in system/developer messages (always preserved)
         3. Calculate remaining budget for user/assistant message cache points
         4. Traverse remaining messages newest-first, removing excess cache points
 
         Args:
             openai_messages: The mapped OpenAI messages to limit.
-            has_tool_cache_point: Whether a tool definition cache point was added by ``_get_tool_choice``.
+            has_tool_cache_point: Whether a tool definition cache point was added by `_get_tool_choice`.
         """
         max_points = self._cache_profile.openrouter_max_cache_points
         if max_points is None:
@@ -769,16 +769,16 @@ class OpenRouterModel(OpenAIChatModel):
     def _add_cache_control(
         self, params: list[ChatCompletionContentPartParam], ttl: bool | Literal['5m', '1h'] = '5m'
     ) -> None:
-        """Add ``cache_control`` to the last content part.
+        """Add `cache_control` to the last content part.
 
-        Mirrors the Anthropic model's ``_add_cache_control_to_last_param`` behavior for
+        Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
         OpenRouter's Anthropic and Gemini providers.
 
         See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
 
         Args:
             params: List of content parts to modify.
-            ttl: The cache time-to-live (``True`` → ``'5m'``, or ``'5m'``/``'1h'``).
+            ttl: The cache time-to-live (`True` -> `'5m'`, or `'5m'`/`'1h'`).
                 Ignored for providers that don't support it.
         """
         if not self._cache_profile.openrouter_supports_cache_control:
@@ -796,7 +796,7 @@ class OpenRouterModel(OpenAIChatModel):
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: bool | Literal['5m', '1h'] = '5m'
     ) -> None:
-        """Add ``cache_control`` to the last content block in a mapped chat message."""
+        """Add `cache_control` to the last content block in a mapped chat message."""
         content = message.get('content')
         if isinstance(content, str):
             message['content'] = [  # type: ignore[typeddict-unknown-key]
@@ -851,7 +851,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @classmethod
     @override
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle.
 
         OpenRouter supports web search via its plugins system.
@@ -1029,11 +1029,11 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
-        """Map a user prompt, translating CachePoint markers into ``cache_control`` for supported providers."""
+        """Map a user prompt, translating CachePoint markers into `cache_control` for supported providers."""
         if isinstance(part.content, str):
             return chat.ChatCompletionUserMessageParam(role='user', content=part.content)
 
-        # ``super()`` would drop CachePoint before we can use its TTL or position.
+        # `super()` would drop CachePoint before we can use its TTL or position.
         content: list[ChatCompletionContentPartParam] = []
         for item in part.content:
             if isinstance(item, CachePoint):

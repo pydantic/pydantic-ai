@@ -54,7 +54,7 @@ report = dataset.evaluate_sync(my_classifier)
 # report.analyses contains the ConfusionMatrix result
 ```
 
-## Built-in Report Evaluators
+## Native Report Evaluators
 
 ### ConfusionMatrixEvaluator
 
@@ -598,7 +598,7 @@ report_evaluators:
       positive_key: is_correct
 ```
 
-Built-in report evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`,
+Native report evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`,
 `ROCAUCEvaluator`, `KolmogorovSmirnovEvaluator`) are recognized automatically. For custom report evaluators, pass them via `custom_report_evaluator_types`:
 
 ```python {test="skip" lint="skip"}
@@ -750,6 +750,6 @@ for analysis in report.analyses:
 
 ## Next Steps
 
-- **[Built-in Evaluators](built-in.md)** — Case-level evaluator reference
+- **[Native Evaluators](built-in.md)** — Case-level evaluator reference
 - **[Custom Evaluators](custom.md)** — Writing case-level evaluators
 - **[Logfire Integration](../how-to/logfire-integration.md)** — Viewing analyses in the Logfire UI
