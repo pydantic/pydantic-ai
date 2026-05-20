@@ -214,7 +214,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             ctx, request_context.model_request_parameters.function_tools
         )
 
-        in_history = ToolSearchToolset._parse_discovered_tools(ctx)  # pyright: ignore[reportPrivateUsage]
+        in_history = ToolSearchToolset.parse_discovered_tools(ctx.messages)
         newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
         if not newly_loaded:
             return request_context
