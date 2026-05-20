@@ -46,6 +46,8 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    apply_message_metadata,
+    dump_message_metadata,
     dump_provider_metadata,
     iter_metadata_chunks,
     iter_tool_approval_responses,
@@ -213,7 +215,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(
-            self.run_input, accept=self.accept, sdk_version=self.sdk_version, server_message_id=self.server_message_id
+            self.run_input,
+            accept=self.accept,
+            sdk_version=self.sdk_version,
+            server_message_id=self.server_message_id,
         )
 
     @cached_property
@@ -247,6 +252,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         builder = MessagesBuilder()
 
         for msg in messages:
+            checkpoint = builder.checkpoint()
+
             if msg.role == 'system':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
@@ -459,6 +466,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         assert_never(part)
             else:
                 assert_never(msg.role)
+
+            # Apply metadata to the role-corresponding `ModelMessage`: assistant UIMessages
+            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we
+            # skip via the type filter so metadata lands on the response, not the tool returns.
+            target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
+            if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
+                apply_message_metadata(target, msg.metadata)
 
         return builder.messages
 
@@ -794,15 +808,28 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
+                # Metadata only goes on the trailing UIMessage of a split request so reload
+                # applies it once to the merged ModelRequest.
+                request_metadata = dump_message_metadata(msg) or None
                 if system_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'system', message_index),
+                            role='system',
+                            metadata=None if user_ui_parts else request_metadata,
+                            parts=system_ui_parts,
+                        )
                     )
                     message_index += 1
 
                 if user_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'user', message_index),
+                            role='user',
+                            metadata=request_metadata,
+                            parts=user_ui_parts,
+                        )
                     )
                     message_index += 1
 
@@ -812,7 +839,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
                 if ui_parts:  # pragma: no branch
                     result.append(
-                        UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'assistant', message_index),
+                            role='assistant',
+                            metadata=dump_message_metadata(msg),
+                            parts=ui_parts,
+                        )
                     )
                     message_index += 1
             else:

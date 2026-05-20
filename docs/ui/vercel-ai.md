@@ -124,6 +124,14 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+## Message metadata
+
+[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores response-side fields like timestamp, usage, and provider details under a reserved `pydantic_ai` key for lossless round-trips. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those fields on the way back.
+
+When streaming, response metadata is emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. The chunk fires once per run from `AgentRunResultEvent`, so it only carries fields that are known at run completion (timestamp, usage, provider details, finish reason); to attach metadata mid-stream, yield a [`MessageMetadataChunk`][pydantic_ai.ui.vercel_ai.response_types.MessageMetadataChunk] yourself from a custom event source.
+
+`UIMessage.metadata` is fully client-controlled. Behavior-shaping fields are not loaded back from it: `instructions` is re-resolved by the agent on every request and is intentionally never restored from history, mirroring the [`manage_system_prompt`](./overview.md#trust-model-for-client-submitted-messages) filter on `SystemPromptPart`s.
+
 ## Trust model
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
