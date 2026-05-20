@@ -62,7 +62,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.messages import FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -6318,6 +6318,41 @@ class TestMultipleToolCalls:
             await task
 
         assert pending_cancelled.is_set()
+
+    async def test_exhaustive_parallel_ordered_events(self):
+        """Under `parallel_ordered_events`, exhaustive emits function-tool result events in emission
+        order even though tasks complete out of order (needed for `DBOSAgent` replay determinism)."""
+
+        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='slow_first'), ToolCallPart(tool_name='fast_second')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive')
+
+        @agent.tool_plain
+        async def slow_first() -> str:
+            await asyncio.sleep(0.03)
+            return 'slow'
+
+        @agent.tool_plain
+        async def fast_second() -> str:
+            return 'fast'
+
+        result_order: list[str] = []
+        with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
+            async with agent.iter('test') as run:
+                async for node in run:
+                    if Agent.is_call_tools_node(node):
+                        async with node.stream(run.ctx) as event_stream:
+                            async for event in event_stream:
+                                if isinstance(event, FunctionToolResultEvent):
+                                    result_order.append(event.part.tool_name)
+
+        # `fast_second` completes first, but events are emitted in emission order.
+        assert result_order == ['slow_first', 'fast_second']
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order

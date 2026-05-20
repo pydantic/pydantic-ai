@@ -1561,6 +1561,8 @@ async def _run_output_tool_call(
         validated = await tool_manager.validate_output_tool_call(call, schema=schema)
     except exceptions.UnexpectedModelBehavior as e:
         tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None
+        # Defensive: an output tool is always present in the toolset, so the `None` fallback to
+        # the agent-level budget isn't expected in normal operation.
         max_retries = tool.max_retries if tool is not None else max_output_retries
         wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
         wrapped.__cause__ = e.__cause__ or e
@@ -1592,6 +1594,28 @@ class _ExhaustiveState(Generic[NodeRunEndT]):
 
     final_result: result.FinalResult[NodeRunEndT] | None = None
     retry_wins_triggered: bool = False
+
+
+def _segment_by_barriers(indices: list[int], is_barrier: Callable[[int], bool]) -> list[list[int]]:
+    """Split `indices` into execution segments around barrier tools.
+
+    Each barrier index becomes a single-element segment; consecutive non-barrier indices form a
+    parallel segment. Segments run in order, so a barrier completes before later tools start and
+    starts only after earlier tools finish.
+    """
+    segments: list[list[int]] = []
+    current: list[int] = []
+    for i in indices:
+        if is_barrier(i):
+            if current:
+                segments.append(current)
+                current = []
+            segments.append([i])
+        else:
+            current.append(i)
+    if current:
+        segments.append(current)
+    return segments
 
 
 async def _validate_function_calls(
@@ -1680,25 +1704,20 @@ async def _process_exhaustive(  # noqa: C901
             output_results[i] = _OutputCallResult(call=tool_calls[i], args_valid=True, final_result=state.final_result)
 
     # Segment by barriers: a `sequential=True` tool (or run-scoped 'sequential' mode) runs alone.
-    global_sequential = tool_manager.get_parallel_execution_mode() == 'sequential'
-    segments: list[list[int]] = []
-    current: list[int] = []
-    for i in executable_indices:
-        if i in output_results:
-            # Pre-committed streamed output: no task to launch.
-            continue
-        if global_sequential or tool_manager.is_sequential(tool_calls[i]):
-            if current:
-                segments.append(current)
-                current = []
-            segments.append([i])
-        else:
-            current.append(i)
-    if current:
-        segments.append(current)
+    # Pre-committed streamed outputs have no task to launch, so they're excluded from segmentation.
+    mode = tool_manager.get_parallel_execution_mode()
+    global_sequential = mode == 'sequential'
+    ordered_events = mode == 'parallel_ordered_events'
+    task_indices = [i for i in executable_indices if i not in output_results]
+    segments = _segment_by_barriers(
+        task_indices, lambda i: global_sequential or tool_manager.is_sequential(tool_calls[i])
+    )
 
     function_parts: dict[int, _messages.ModelRequestPart] = {}
     function_user_parts: dict[int, _messages.UserPromptPart] = {}
+    # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
+    # emission order at the end (alongside output events) instead of streaming as tasks complete.
+    function_events: dict[int, _messages.FunctionToolResultEvent] = {}
     deferred_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_meta_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -1753,7 +1772,11 @@ async def _process_exhaustive(  # noqa: C901
                             # unknown/hallucinated tools don't suppress an otherwise-valid output.
                             if isinstance(tool_part, _messages.RetryPromptPart) and call_kinds[index] == 'function':
                                 state.retry_wins_triggered = True
-                            yield _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+                            result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+                            if ordered_events:
+                                function_events[index] = result_event
+                            else:
+                                yield result_event
             except asyncio.CancelledError as e:
                 await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
                 raise
@@ -1795,6 +1818,10 @@ async def _process_exhaustive(  # noqa: C901
                         yield event
             elif i in function_parts:
                 output_parts.append(function_parts[i])
+                # Under `parallel_ordered_events`, emit the buffered result event here so events
+                # stream in emission order; otherwise it was already yielded as the task completed.
+                if ordered_events and i in function_events:
+                    yield function_events[i]
         for i in executable_indices:
             if i in function_user_parts:
                 output_parts.append(function_user_parts[i])
@@ -2279,18 +2306,10 @@ async def _call_tools(  # noqa: C901
     # Segment by barriers: a `sequential=True` tool (or the run-scoped 'sequential' mode) runs
     # alone, with tools emitted before it completing first and tools after it starting only once
     # it finishes. Non-barrier tools parallelize within their segment.
-    segments: list[list[int]] = []
-    current: list[int] = []
-    for index, call in enumerate(tool_calls):
-        if global_sequential or tool_manager.is_sequential(call):
-            if current:
-                segments.append(current)
-                current = []
-            segments.append([index])
-        else:
-            current.append(index)
-    if current:
-        segments.append(current)
+    segments = _segment_by_barriers(
+        list(range(len(tool_calls))),
+        lambda i: global_sequential or tool_manager.is_sequential(tool_calls[i]),
+    )
 
     try:
         for segment in segments:

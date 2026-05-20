@@ -2785,9 +2785,104 @@ class TestMultipleToolCalls:
             ]
         )
 
+    async def test_sequential_tool_is_a_per_tool_barrier(self):
+        """A `sequential=True` tool runs alone; other tools parallelize around it (streaming path)."""
+        active = 0
+        barrier_ran_alone = True
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='parallel_a')}
+                yield {1: DeltaToolCall(name='parallel_b')}
+                yield {2: DeltaToolCall(name='barrier')}
+                yield {3: DeltaToolCall(name='parallel_c')}
+            else:
+                yield 'done'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async def track() -> str:
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0.02)
+            active -= 1
+            return 'ok'
+
+        @agent.tool_plain
+        async def parallel_a() -> str:
+            return await track()
+
+        @agent.tool_plain
+        async def parallel_b() -> str:
+            return await track()
+
+        @agent.tool_plain(sequential=True)
+        async def barrier() -> str:
+            nonlocal barrier_ran_alone
+            if active != 0:
+                barrier_ran_alone = False  # pragma: no cover
+            await asyncio.sleep(0.02)
+            return 'barrier'
+
+        @agent.tool_plain
+        async def parallel_c() -> str:
+            return await track()
+
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+        assert barrier_ran_alone
+
+    async def test_outer_cancellation_cancels_pending_tools(self):
+        """Outer cancellation during streamed tool execution cancels still-pending tool tasks."""
+        first_done = asyncio.Event()
+        pending_started = asyncio.Event()
+        pending_cancelled = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='fast_tool')}
+                yield {1: DeltaToolCall(name='slow_tool')}
+            else:
+                yield 'done'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        async def fast_tool() -> str:
+            first_done.set()
+            return 'done'
+
+        @agent.tool_plain
+        async def slow_tool() -> str:
+            pending_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pending_cancelled.set()
+                raise
+            return 'done'  # pragma: no cover
+
+        async def run() -> None:
+            async with agent.run_stream('test') as result:
+                await result.get_output()  # pragma: no cover
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert pending_cancelled.is_set()
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # The retry-wins tests (a function-tool `ModelRetry` suppressing an output result) have no
+    # streaming counterpart: under `run_stream` the streamed output is committed as soon as it's
+    # detected, so retry-wins doesn't apply (see `docs/output.md`).
 
 
 async def test_custom_output_type_default_str() -> None:

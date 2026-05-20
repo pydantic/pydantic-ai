@@ -16,7 +16,7 @@ The default [`end_strategy`][pydantic_ai.agent.EndStrategy] changed from `'early
 
 `sequential=True` on a tool is now a per-tool **barrier** rather than a batch-wide serial switch: a sequential tool runs alone, but other tools in the same response still run in parallel around it. To run *all* of a run's tools serially, wrap the run in [`agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
-See [Parallel Output Tool Calls](output.md#tool-output) for the full behavior of all three strategies.
+See [Parallel Output Tool Calls](output.md#parallel-output-tool-calls) for the full behavior of all three strategies.
 
 #### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
