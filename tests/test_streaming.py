@@ -3002,6 +3002,36 @@ class TestMultipleToolCalls:
             async with agent.run_stream('test') as result:
                 await result.get_output()
 
+    async def test_early_multiple_outputs_and_function_tools(self):
+        """Early streaming with several output tools: the first streamed output wins, later outputs
+        are skipped, and function tools are stubbed (not run) once an output succeeds."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {1: DeltaToolCall('second_output', '{"value": "b"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert called == []
+
     async def test_graceful_function_tool_retry_does_not_suppress_committed_output(self):
         """Retry-wins doesn't apply when streaming: the output is committed as it streams, so a
         function tool's `ModelRetry` in the same response can't revoke it (`graceful`)."""

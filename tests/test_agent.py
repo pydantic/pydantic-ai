@@ -37,6 +37,7 @@ from pydantic_ai import (
     ModelResponsePart,
     ModelRetry,
     PrefixedToolset,
+    RequestUsage,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
@@ -76,7 +77,6 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
 
 if TYPE_CHECKING:
     from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -5813,18 +5813,81 @@ class TestMultipleToolCalls:
         # The first round's output was suppressed so the model could address the retry.
         assert result.output.value == 'corrected'
         assert rounds == ['first', 'second']
-
-        messages = result.all_messages()
-        # The suppressed output's return part is rewritten to signal it wasn't used.
-        suppressed = next(
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'final_result'
-        )
-        assert suppressed.content == snapshot(
-            'Output not used as the final result - addressing tool retries from this round first.'
+        # The function-tool retry appears before the suppressed output's rewritten return part.
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='flaky_tool',
+                            args={'x': 1},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'premature'},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=9),
+                    model_name='function:return_model:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='not yet',
+                            tool_name='flaky_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output not used as the final result - addressing tool retries from this round first.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'corrected'},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=76, output_tokens=14),
+                    model_name='function:return_model:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
         )
 
     def test_exhaustive_function_tool_retry_suppresses_output(self):
@@ -5855,18 +5918,80 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test')
         assert result.output.value == 'corrected'
         assert rounds == ['first', 'second']
-
-        messages = result.all_messages()
-        # The suppressed output's return part is rewritten to signal it wasn't used.
-        suppressed = next(
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'final_result'
-        )
-        assert suppressed.content == snapshot(
-            'Output not used as the final result - addressing tool retries from this round first.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='flaky_tool',
+                            args={'x': 1},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'premature'},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=9),
+                    model_name='function:return_model:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='not yet',
+                            tool_name='flaky_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output not used as the final result - addressing tool retries from this round first.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'corrected'},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=76, output_tokens=14),
+                    model_name='function:return_model:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
         )
 
     def test_early_function_tool_retry_does_not_suppress_output(self):
