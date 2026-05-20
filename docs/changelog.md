@@ -6,11 +6,29 @@ In September 2025, Pydantic AI reached V1, which means we're committed to API st
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
-### v2.0.0 (unreleased)
+### v2.0.0 (beta)
 
-- Drop `pydantic_ai.providers.grok.GrokProvider` (use `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel('grok-N', ...)` instead). The `'grok:'` model-string prefix is also removed; use `'xai:'` instead. `pydantic_ai.providers.grok.GrokModelName` is removed; use `pydantic_ai.models.xai.XaiModelName`.
+V2 is the first release in which we remove functionality deprecated during V1 and make behavior changes that V1's stability guarantee didn't allow. See the [Version Policy](version-policy.md#v2-beta) for the recommended upgrade path; in short: upgrade to the latest V1, resolve every deprecation warning, then upgrade to V2.
 
-#### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
+The breaking changes below are split into two groups:
+
+- [**Changes not covered by deprecation warnings**](#changes-not-covered-by-deprecation-warnings) — removals and behavior changes that couldn't be announced via a V1 deprecation warning. Review these even if you're already on the latest V1 with no warnings.
+- [**Changes covered by deprecation warnings**](#changes-covered-by-deprecation-warnings) — if you upgraded to the latest V1 and resolved every deprecation warning, you've already made these. They're listed with full before → after for reference.
+
+Message history serialized with V1 (via [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]) continues to deserialize in V2: the token and `vendor_*`→`provider_*` field renames, the built-in→native tool-part rename, and the `openai:`/`openai-chat:` model-name change all retain backward-compatible validation aliases. The two exceptions are called out below (`url_context` native-tool payloads, and `ModelRequestParameters` payloads that used a `builtin_tools` key).
+
+#### Changes not covered by deprecation warnings
+
+These removals and behavior changes could not be announced via a V1 deprecation warning, so review them even if you've resolved every deprecation warning on the latest V1.
+
+**Code changes** — code that must be updated by hand:
+
+- Generic type parameter defaults changed from `None` to `object`: an un-parameterized `Agent(...)` now infers `Agent[object, str]` instead of `Agent[None, str]`, and the `pydantic_graph` `StateT`/`RunEndT`/`DepsT` defaults changed to match. Update explicit `Agent[None, ...]`, `RunContext[None]`, and `Tool[None]` annotations that don't actually require `None` dependencies to use `object`. This is a type-checking-only change; runtime behavior is unchanged. See [#5307](https://github.com/pydantic/pydantic-ai/pull/5307).
+- The `pydantic_graph.persistence` package and the `pydantic_graph.mermaid` module are removed, with no V2 equivalent for graph state persistence or standalone Mermaid generation (render diagrams with `Graph.render()`). The move of the [`GraphBuilder`][pydantic_graph.GraphBuilder] API out of `pydantic_graph.beta` to the top-level `pydantic_graph` *was* deprecation-announced; see [below](#changes-covered-by-deprecation-warnings). See [#5470](https://github.com/pydantic/pydantic-ai/pull/5470).
+
+The biggest code change is the [`ModelProfile`](#modelprofile-is-now-a-typeddict) redesign, described next.
+
+##### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
 See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
 
@@ -38,13 +56,92 @@ Migration recipes:
 2. `Provider.model_profile(model_name)` — provider/model-specific resolution.
 3. The user's `profile=` argument — either a partial dict (merged on top) or a `Callable[[ModelProfile], ModelProfile]` (full control: receives the resolved default, returns the final profile).
 
-#### Resolved profiles now carry cross-class fields
+##### Resolved profiles now carry cross-class fields
 
 In v1, `ModelProfile.update()` silently filtered out fields not declared on the target class. In v2, dict-spread preserves every key.
 
 This means e.g. a Bedrock-hosted Anthropic model's resolved profile now carries the upstream `anthropic_*` fields alongside the `bedrock_*` fields, where v1 dropped them. No in-tree model class reads cross-class fields, so behavior is unchanged in the standard providers; but custom model classes that do `profile.get('anthropic_supports_adaptive_thinking', False)` on a non-Anthropic route will now see the value the upstream Anthropic profile set, where v1 always returned the default.
 
 See [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full ModelProfile redesign.
+
+**Default behavior changes** — same API, different runtime behavior:
+
+- The default `end_strategy` changed from `'early'` to `'graceful'`, and tool calls now run in the order the model emitted them. See [Parallel tool-call execution order](#parallel-tool-call-execution-runs-in-emission-order) below. ([#5339](https://github.com/pydantic/pydantic-ai/pull/5339)) **⚠️ NOT YET MERGED — PENDING [#5339]. UPDATE OR REMOVE THIS ENTRY (AND THE SUBSECTION BELOW) IF IT DOESN'T LAND IN THE BETA.**
+- A bare `pip install pydantic-ai` now installs a slimmer set of extras (frontier providers plus minimal integrations). See [Slimmer default extras](#slimmer-default-pydantic-ai-extras) below. ([#5467](https://github.com/pydantic/pydantic-ai/pull/5467))
+- The default instrumentation format is now version 5, and agent run spans report token usage under `gen_ai.aggregated_usage.*`. See [Instrumentation defaults](#instrumentation-defaults-to-version-5-with-aggregated-usage-attributes) below. ([#5523](https://github.com/pydantic/pydantic-ai/pull/5523))
+- The `vertexai` slim extra is removed and folded into the `google` extra; install `pydantic-ai-slim[google]` for Google Cloud / Vertex. See [#5479](https://github.com/pydantic/pydantic-ai/pull/5479).
+- [`capture_run_messages()`][pydantic_ai.capture_run_messages] now also captures the partial `ModelRequest`/`ModelResponse` from an interrupted run, marked with `state='interrupted'`, and a new `ModelRequest.state` field is added. Code that asserts on exact captured-message counts on error paths may need updating. See [#5364](https://github.com/pydantic/pydantic-ai/pull/5364).
+- Native (built-in) tool calls and returns no longer emit the wrapper `FunctionToolCallEvent`/`FunctionToolResultEvent` (and the `BuiltinToolCallEvent`/`BuiltinToolResultEvent` shims are removed); consume them via the standard `PartStartEvent`/`PartDeltaEvent`, and output tools via the dedicated `OutputToolCallEvent`/`OutputToolResultEvent`. See [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) and [#5476](https://github.com/pydantic/pydantic-ai/pull/5476).
+
+##### Parallel tool-call execution runs in emission order
+
+> **⚠️ NOT YET MERGED — this subsection documents [#5339](https://github.com/pydantic/pydantic-ai/pull/5339), which is still open. Update or remove it if the PR doesn't land in the beta.**
+
+In V1, when a model requested function tools and an output tool in the same response, a successful output tool ended the run immediately and the function tool calls were silently skipped (`end_strategy='early'`). In V2 the default is `end_strategy='graceful'`:
+
+| Strategy | Function tools | Output tools |
+|---|---|---|
+| `'graceful'` (default) | Run, in parallel where possible, interleaved in emission order | Run in emission order; first success wins; later ones skipped |
+| `'early'` | Run only if *every* output tool fails | Run in emission order; stop at first success |
+| `'exhaustive'` | Run, in parallel | All run; first valid by emission order wins; others marked "ran but not selected" |
+
+Two related behavior changes ship with this:
+
+- A function tool that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or whose arguments fail validation) in the same response as a successful output tool now suppresses the output and surfaces the retry to the model on the next request, instead of the retry being silently discarded. (Does not apply under `'early'` or `run_stream()`.)
+- `sequential=True` on a tool is now a per-tool barrier — tools emitted before it complete first, it runs alone, and tools emitted after it start once it finishes, while other tools still parallelize around it — rather than forcing the entire response to run serially. `ToolOutput(sequential=True)` is newly supported.
+
+To keep the V1 behavior:
+
+- Restore output-wins skipping: pass `end_strategy='early'`.
+- Restore whole-response serial execution: wrap the run in `agent.parallel_tool_call_execution_mode('sequential')`, or set `parallel_tool_calls=False` in the model settings.
+
+See [#5339](https://github.com/pydantic/pydantic-ai/pull/5339) and the [output documentation](output.md).
+
+##### Slimmer default `pydantic-ai` extras
+
+A bare `pip install pydantic-ai` now installs `pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]`. Providers and integrations that were previously bundled are no longer installed by default: `bedrock`, `groq`, `mistral`, `cohere`, `xai`, `huggingface`, `vertexai`, `temporal`, `ag-ui`, `ui`, `fastmcp`, and `spec`. Install the ones you need explicitly, e.g. `pip install 'pydantic-ai[bedrock,groq]'`. The `pydantic-ai-slim` extras themselves are unchanged. See [#5467](https://github.com/pydantic/pydantic-ai/pull/5467).
+
+##### Instrumentation defaults to version 5 with aggregated usage attributes
+
+The default instrumentation format is now version 5 (versions 2–4 still work but emit a deprecation warning; version 1 is removed). [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]'s `use_aggregated_usage_attribute_names` now defaults to `True`: agent run spans report token usage under `gen_ai.aggregated_usage.*` while model request spans keep `gen_ai.usage.*`, which avoids double-counting in backends that sum parent and child usage. Dashboards and alerts that read token usage from run spans must be updated, or set `use_aggregated_usage_attribute_names=False` to keep the V1 attribute names. In version 5, deferred tool calls (`CallDeferred`/`ApprovalRequired`) are no longer recorded as span errors. See [#5523](https://github.com/pydantic/pydantic-ai/pull/5523).
+
+#### Changes covered by deprecation warnings
+
+These changes were announced in the latest V1 releases via deprecation warnings that name the replacement API. If you upgraded to the latest V1 and resolved every warning, you've already made them; they're listed here with full before → after for reference.
+
+**Behavior changes that flip silently if the V1 deprecation warning was not addressed** — even though these were announced, an unaddressed warning means the behavior changes without raising an error, so confirm you've handled them:
+
+- The bare `openai:` model prefix now uses the OpenAI Responses API ([`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]) instead of the Chat Completions API ([`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]). Use `openai-chat:` to keep Chat Completions, or `openai-responses:` to opt into the new default explicitly. Announced via [#5334](https://github.com/pydantic/pydantic-ai/pull/5334); flipped in [#5469](https://github.com/pydantic/pydantic-ai/pull/5469).
+- Provider-adaptive `WebSearch` and `WebFetch` capabilities are now native-only and raise on models that don't support them, and `MCP(url=...)` runs the server locally by default. Restore the V1 fallbacks with `WebSearch(local='duckduckgo')`, `WebFetch(local=True)`, and `MCP(url=..., native=True)`. Announced via [#5331](https://github.com/pydantic/pydantic-ai/pull/5331); changed in [#5333](https://github.com/pydantic/pydantic-ai/pull/5333).
+
+**API removals and renames:**
+
+- `pydantic_ai.providers.grok.GrokProvider` and `pydantic_ai.providers.grok.GrokModelName` are removed; use `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel` (and `pydantic_ai.models.xai.XaiModelName`). The `grok:` model prefix is removed; use `xai:`. See [#5460](https://github.com/pydantic/pydantic-ai/pull/5460).
+- `GoogleGLAProvider`, `GoogleVertexProvider`, and `GeminiModel` (the whole `pydantic_ai.models.gemini` module) are removed; use `pydantic_ai.providers.google.GoogleProvider` (Gemini API) or `pydantic_ai.providers.google_cloud.GoogleCloudProvider` (Vertex) with `pydantic_ai.models.google.GoogleModel`. Provider prefixes: `google-gla:`→`google:`, `google-vertex:`→`google-cloud:`, `vertexai:`→`google-cloud:`, and `gateway/gemini:`/`gateway/google-vertex:`→`gateway/google-cloud:`. `GoogleProvider(vertexai=, location=, project=, credentials=)` → `GoogleCloudProvider(...)`. `GoogleModelSettings` keys `google_vertex_service_tier`/`google_service_tier` → `google_cloud_service_tier`. Announced via [#5336](https://github.com/pydantic/pydantic-ai/pull/5336) and [#5543](https://github.com/pydantic/pydantic-ai/pull/5543); removed in [#5479](https://github.com/pydantic/pydantic-ai/pull/5479).
+- `OpenAIModel` → `OpenAIChatModel`, `OpenAIModelSettings` → `OpenAIChatModelSettings`; the `OpenAIChatModel(system_prompt_role=...)` kwarg → `OpenAIModelProfile(openai_system_prompt_role=...)`; `OpenAICompaction(instructions=...)` removed; `OpenAIModelProfile.openai_supports_sampling_settings` → `openai_unsupported_model_settings`. See [#5468](https://github.com/pydantic/pydantic-ai/pull/5468).
+- Built-in tools are renamed to "native" tools: `pydantic_ai.builtin_tools` → `pydantic_ai.native_tools`; `BuiltinToolCallPart`/`BuiltinToolReturnPart`/`AgentBuiltinTool` → `NativeToolCallPart`/`NativeToolReturnPart`/`AgentNativeTool`; `Agent(builtin_tools=[...])` → `capabilities=[NativeTool(...)]`; `builtin=` → `native=`; `OpenAIModelProfile.openai_builtin_tools` → `openai_native_tools`. The serialized `part_kind` wire values are unchanged, so message history still deserializes; `ModelRequestParameters` payloads that used the `builtin_tools` key do not. Announced via [#5338](https://github.com/pydantic/pydantic-ai/pull/5338); removed in [#5396](https://github.com/pydantic/pydantic-ai/pull/5396).
+- MCP: `MCPServerStdio`/`MCPServerSSE`/`MCPServerStreamableHTTP`/`MCPServerHTTP`, `FastMCPToolset`, `load_mcp_servers`, `Agent.run_mcp_servers()`, and `Agent.set_mcp_sampling_model()` are removed; use `pydantic_ai.mcp.MCPToolset`, `pydantic_ai.mcp.load_mcp_toolsets`, `async with agent:`, and `MCPToolset(sampling_model=...)`. Note that the new `MCPToolset` defaults differ (e.g. `max_retries`, `read_timeout`, `init_timeout`, `elicitation_handler`). Announced via [#5325](https://github.com/pydantic/pydantic-ai/pull/5325); removed in [#5337](https://github.com/pydantic/pydantic-ai/pull/5337).
+- `Agent(instrument=...)`, `Agent.from_spec(instrument=...)`, `Agent.from_file(instrument=...)`, and `AgentSpec.instrument` are removed; use `capabilities=[Instrumentation(...)]`. (The `Agent.instrument` property, `Agent.instrument_all()`, and `InstrumentedModel` are unchanged.) See [#5434](https://github.com/pydantic/pydantic-ai/pull/5434).
+- `Agent(event_stream_handler=...)` → `capabilities=[ProcessEventStream(...)]`; `Agent(prepare_tools=...)` → `capabilities=[PrepareTools(...)]`. The `event_stream_handler=` argument on `run()`/`run_sync()`/`run_stream()`/`iter()` is unchanged. Announced via [#5335](https://github.com/pydantic/pydantic-ai/pull/5335); removed in [#5475](https://github.com/pydantic/pydantic-ai/pull/5475).
+- `Agent(history_processors=...)` → `capabilities=[ProcessHistory(...)]`. See [#5425](https://github.com/pydantic/pydantic-ai/pull/5425).
+- `Agent(mcp_servers=[...])` → `Agent(toolsets=[...])`; `Agent.sequential_tool_calls()` → `agent.parallel_tool_call_execution_mode('sequential')`. See [#5466](https://github.com/pydantic/pydantic-ai/pull/5466).
+- `Agent.to_a2a()` and the bundled `fasta2a` integration (and the `[a2a]` extra) are removed; install `fasta2a[pydantic-ai]>=0.6.1` and use `from fasta2a.pydantic_ai import agent_to_a2a`. Announced via [#5426](https://github.com/pydantic/pydantic-ai/pull/5426); removed in [#5502](https://github.com/pydantic/pydantic-ai/pull/5502).
+- `Agent.to_ag_ui()`, `AGUIApp`, and the `pydantic_ai.ag_ui` shim are removed; use `pydantic_ai.ui.ag_ui.AGUIAdapter`. `pydantic_ai.models.cached_async_http_client` is removed; use `pydantic_ai.models.create_async_http_client()` or your own `httpx.AsyncClient`. Announced via [#5345](https://github.com/pydantic/pydantic-ai/pull/5345); removed in [#5464](https://github.com/pydantic/pydantic-ai/pull/5464).
+- `pydantic_ai.ext.aci` (`tool_from_aci`, `ACIToolset`) is removed with no upstream replacement; wrap ACI tools with `Tool.from_schema`. Announced via [#5510](https://github.com/pydantic/pydantic-ai/pull/5510); removed in [#5467](https://github.com/pydantic/pydantic-ai/pull/5467).
+- `pydantic_ai.output.DeferredToolCalls` → `DeferredToolRequests`; `pydantic_ai.toolsets.external.DeferredToolset` → `ExternalToolset`. See [#5459](https://github.com/pydantic/pydantic-ai/pull/5459).
+- `FunctionToolset.tool()` now raises if the decorated callable's first parameter is not a `RunContext`; use `FunctionToolset.tool_plain()` for context-free tools. See [#5462](https://github.com/pydantic/pydantic-ai/pull/5462).
+- Usage/token renames: `request_tokens` → `input_tokens`, `response_tokens` → `output_tokens`, `Usage` → `RunUsage`, `UsageLimits(request_tokens_limit=)` → `input_tokens_limit=`, `UsageLimits(response_tokens_limit=)` → `output_tokens_limit=`. Response field renames: `ModelResponse.vendor_details` → `provider_details`, `vendor_id`/`provider_request_id` → `provider_response_id`. Removed event-class shims `BuiltinToolCallEvent`/`BuiltinToolResultEvent`, and `FunctionToolCallEvent.call_id` → `.tool_call_id`. Message history serialized with the old field names still deserializes via retained validation aliases. See [#5476](https://github.com/pydantic/pydantic-ai/pull/5476).
+- Output tool calls now emit dedicated `OutputToolCallEvent`/`OutputToolResultEvent` rather than `FunctionToolCallEvent`/`FunctionToolResultEvent`; `FunctionToolResultEvent(result=...)`/`.result` → `(part=...)`/`.part`. See [#5332](https://github.com/pydantic/pydantic-ai/pull/5332).
+- `StreamedRunResult.stream` → `stream_output`, `StreamedRunResult.stream_structured` → `stream_response`, `StreamedRunResult.validate_structured_output` → `validate_response_output`; the plural `stream_responses()` → singular `stream_response()` (which yields a bare `ModelResponse`; read the old `is_last` flag as `response.state != 'incomplete'`). Announced via [#5296](https://github.com/pydantic/pydantic-ai/pull/5296); removed in [#5463](https://github.com/pydantic/pydantic-ai/pull/5463).
+- `result.usage()` → `result.usage`, `result.timestamp()` → `result.timestamp`, and `stream.get()` → `stream.response` (method-style accessors become properties). See [#5263](https://github.com/pydantic/pydantic-ai/pull/5263).
+- `StreamedResponse.usage()` → `StreamedResponse.usage`: the model-adapter streaming base class (`pydantic_ai.models.StreamedResponse`) now exposes `usage` as a property rather than a method. Relevant if you've subclassed `Model` and call `.usage()` on a streamed response. See [#5546](https://github.com/pydantic/pydantic-ai/pull/5546).
+- `pydantic_graph.beta` imports move to the top-level `pydantic_graph` (e.g. `from pydantic_graph import GraphBuilder`). Announced via [#5306](https://github.com/pydantic/pydantic-ai/pull/5306); removed in [#5470](https://github.com/pydantic/pydantic-ai/pull/5470).
+- Instrumentation format `version=1` and its version-1-only `InstrumentationSettings(event_mode=...)` and `InstrumentationSettings(logger_provider=...)` arguments are removed (deprecated in V1); `version=2`/`3`/`4` still work but now emit a deprecation warning. The default is `version=5` — see [Instrumentation defaults](#instrumentation-defaults-to-version-5-with-aggregated-usage-attributes) above for the default-behavior changes that ship with it. See [#5523](https://github.com/pydantic/pydantic-ai/pull/5523).
+- The Outlines integration (`pydantic_ai.models.outlines.OutlinesModel`, `pydantic_ai.providers.outlines.OutlinesProvider`, and the `outlines-*` extras) is removed with no replacement. See [#5444](https://github.com/pydantic/pydantic-ai/pull/5444).
+- `pydantic_ai.native_tools.UrlContextTool` is removed; use `pydantic_ai.native_tools.WebFetchTool`. (Message history that serialized the `url_context` native-tool kind no longer deserializes — rare, since it requires having persisted `ModelRequestParameters` — and must be rewritten to the `WebFetchTool` kind.) See [#5458](https://github.com/pydantic/pydantic-ai/pull/5458).
+- Iterating [`Agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] directly is no longer supported; it is now an async context manager only: `async with agent.run_stream_events(...) as events: async for event in events: ...`. See [#5440](https://github.com/pydantic/pydantic-ai/pull/5440).
+- The bare (provider-prefix-less) model-name fallback is removed: `Agent('gpt-5')` now raises a `UserError` instead of inferring the provider; pass a provider-prefixed model name like `Agent('openai:gpt-5')`. (V1 emitted a deprecation warning for prefix-less legacy model names.) See [#5464](https://github.com/pydantic/pydantic-ai/pull/5464).
+- Pydantic Evals: `EvaluationResult` and `EvaluatorFailure` are now keyword-only; `Dataset.evaluate()`/`evaluate_sync()` make `name`/`max_concurrency`/`progress`/`retry_task`/`retry_evaluators` keyword-only; `Dataset(name=...)` is now required; the `Evaluator.name` classmethod → `Evaluator.get_serialization_name()`. Announced via [#5547](https://github.com/pydantic/pydantic-ai/pull/5547); changed in [#5548](https://github.com/pydantic/pydantic-ai/pull/5548).
 
 ### v1.0.1 (2025-09-05)
 

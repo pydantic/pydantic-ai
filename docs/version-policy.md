@@ -1,10 +1,26 @@
 ## Version Policy
 
-We will not intentionally make breaking changes in minor releases of V1. V2 will be released in April 2026 at the earliest, 6 months after the release of V1 in September 2025.
+We will not intentionally make breaking changes in minor releases of V1, which was released in September 2025.
 
-Once we release V2, we'll continue to provide security fixes for V1 for another 6 months minimum, so you have time to upgrade your applications.
+Functionality marked as deprecated in a V1 release will not be removed until V2.
 
-Functionality marked as deprecated will not be removed until V2.
+Once V2 is released as stable, we'll continue to provide security fixes for V1 for another 6 months minimum, so you have time to upgrade your applications.
+
+## V2 Beta
+
+V2 is now available as a beta pre-release (`pip install pydantic-ai==2.0.0bN` / `uv add pydantic-ai==2.0.0bN`). It collects the breaking changes and behavior changes that we couldn't make under the V1 stability guarantee, alongside a more capable, more coherent foundation for building agents.
+
+During the beta period the V2 API and behaviors are not yet covered by the stability guarantee above: while we don't expect major changes, we may still make adjustments in response to feedback before the stable V2.0 release. We encourage you to try the beta, [report issues](https://github.com/pydantic/pydantic-ai/issues), and pin an exact pre-release version (`==2.0.0bN`) rather than a range.
+
+### Upgrading to V2
+
+To make the upgrade as smooth as possible, we recommend the following path:
+
+1. **Upgrade to the latest V1 release** (`pydantic-ai<2`) first.
+2. **Resolve every deprecation warning.** Most of V2's breaking changes were announced in V1 via deprecation warnings that name the new API and, where possible, include a migration snippet. Running your test suite (or app) with warnings visible and addressing each one migrates you across the bulk of V2 ahead of time.
+3. **Upgrade to V2** and address the remaining changes that could not be pre-announced via a deprecation — primarily default-behavior changes and a handful of removals that have no V1 deprecation. These are listed explicitly in the [Upgrade Guide](changelog.md), separated from the deprecation-driven changes so you know what still needs your attention.
+
+Jumping straight from an older V1 to V2 without first resolving deprecation warnings is possible but will be considerably more work, since you'll be reconstructing the migration guidance the warnings would have given you.
 
 Of course, some apparently safe changes and bug fixes will inevitably break some users' code &mdash; obligatory link to [xkcd](https://xkcd.com/1172/).
 
