@@ -6,27 +6,35 @@ In September 2025, Pydantic AI reached V1, which means we're committed to API st
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
-### v2.0.0 (beta)
+### v2.0.0b1 (2026-05-20)
 
-V2 is the first release in which we remove functionality deprecated during V1 and make behavior changes that V1's stability guarantee didn't allow. See the [Version Policy](version-policy.md#v2-beta) for the recommended upgrade path; in short: upgrade to the latest V1, resolve every deprecation warning, then upgrade to V2.
+The first V2 beta. V2 removes functionality deprecated during V1 and makes behavior changes that V1's stability guarantee didn't allow. See the [Version Policy](version-policy.md#v2-beta) for the recommended upgrade path; in short: upgrade to the latest V1, resolve every deprecation warning, then upgrade to V2.
 
 The breaking changes below are split into two groups:
 
 - [**Changes not covered by deprecation warnings**](#changes-not-covered-by-deprecation-warnings) — removals and behavior changes that couldn't be announced via a V1 deprecation warning. Review these even if you're already on the latest V1 with no warnings.
 - [**Changes covered by deprecation warnings**](#changes-covered-by-deprecation-warnings) — if you upgraded to the latest V1 and resolved every deprecation warning, you've already made these. They're listed with full before → after for reference.
 
-Message history serialized with V1 (via [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]) continues to deserialize in V2: the token and `vendor_*`→`provider_*` field renames, the built-in→native tool-part rename, and the `openai:`/`openai-chat:` model-name change all retain backward-compatible validation aliases. The two exceptions are called out below (`url_context` native-tool payloads, and `ModelRequestParameters` payloads that used a `builtin_tools` key).
+Message history serialized with V1 (via [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]) continues to deserialize in V2.
 
 #### Changes not covered by deprecation warnings
 
 These removals and behavior changes could not be announced via a V1 deprecation warning, so review them even if you've resolved every deprecation warning on the latest V1.
 
-**Code changes** — code that must be updated by hand:
+**Code changes:**
 
 - Generic type parameter defaults changed from `None` to `object`: an un-parameterized `Agent(...)` now infers `Agent[object, str]` instead of `Agent[None, str]`, and the `pydantic_graph` `StateT`/`RunEndT`/`DepsT` defaults changed to match. Update explicit `Agent[None, ...]`, `RunContext[None]`, and `Tool[None]` annotations that don't actually require `None` dependencies to use `object`. This is a type-checking-only change; runtime behavior is unchanged. See [#5307](https://github.com/pydantic/pydantic-ai/pull/5307).
 - The `pydantic_graph.persistence` package and the `pydantic_graph.mermaid` module are removed, with no V2 equivalent for graph state persistence or standalone Mermaid generation (render diagrams with `Graph.render()`). The move of the [`GraphBuilder`][pydantic_graph.GraphBuilder] API out of `pydantic_graph.beta` to the top-level `pydantic_graph` *was* deprecation-announced; see [below](#changes-covered-by-deprecation-warnings). See [#5470](https://github.com/pydantic/pydantic-ai/pull/5470).
+- [`ModelProfile`][pydantic_ai.profiles.ModelProfile] and its subclasses are now `TypedDict`s instead of dataclasses. Passing `profile=OpenAIModelProfile(field=value)` into a model still works unchanged; the migration only matters if you read or mutate profile fields, or call `.update()`/`.from_profile()`. See [`ModelProfile` is now a `TypedDict`](#modelprofile-is-now-a-typeddict) below. ([#5481](https://github.com/pydantic/pydantic-ai/pull/5481))
 
-The biggest code change is the [`ModelProfile`](#modelprofile-is-now-a-typeddict) redesign, described next.
+**Default behavior changes** — same API, different runtime behavior (roughly ordered by how many users they affect):
+
+- A bare `uv add pydantic-ai` / `pip install pydantic-ai` now installs a slimmer set of extras (frontier providers plus minimal integrations); providers like `bedrock`, `groq`, and `mistral` are no longer included by default, so you'll need to add the extras you use. See [Slimmer default extras](#slimmer-default-pydantic-ai-extras) below. ([#5467](https://github.com/pydantic/pydantic-ai/pull/5467))
+- The default `end_strategy` changed from `'early'` to `'graceful'`: when a model calls function tools in the same response as a successful output tool, those function tools now run (and their side effects happen) instead of being skipped, and tool calls run in the order the model emitted them. See [Parallel tool-call execution order](#parallel-tool-call-execution-runs-in-emission-order) below. ([#5339](https://github.com/pydantic/pydantic-ai/pull/5339)) **⚠️ NOT YET MERGED — PENDING [#5339]. UPDATE OR REMOVE THIS ENTRY (AND THE SUBSECTION BELOW) IF IT DOESN'T LAND IN THE BETA.**
+- The default instrumentation format is now version 5, and agent run spans report token usage under `gen_ai.aggregated_usage.*`. See [Instrumentation defaults](#instrumentation-defaults-to-version-5-with-aggregated-usage-attributes) below. ([#5523](https://github.com/pydantic/pydantic-ai/pull/5523))
+- [`capture_run_messages()`][pydantic_ai.capture_run_messages] now also captures the partial `ModelRequest`/`ModelResponse` from an interrupted run, marked with `state='interrupted'` (a new `ModelRequest.state` field is added). Code that asserts on exact captured-message counts on error paths may need updating. See [#5364](https://github.com/pydantic/pydantic-ai/pull/5364).
+- Output tool calls and returns now emit dedicated `OutputToolCallEvent`/`OutputToolResultEvent` instead of `FunctionToolCallEvent`/`FunctionToolResultEvent`. Separately, native tool calls and returns no longer emit dedicated events at all — the `BuiltinToolCallEvent`/`BuiltinToolResultEvent` classes are removed and they surface only via the standard `PartStartEvent`/`PartDeltaEvent`. See [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) and [#5476](https://github.com/pydantic/pydantic-ai/pull/5476).
+- The `vertexai` slim extra is removed and folded into the `google` extra; install `pydantic-ai-slim[google]` for Google Cloud / Vertex. See [#5479](https://github.com/pydantic/pydantic-ai/pull/5479).
 
 ##### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict`
 
@@ -64,38 +72,15 @@ This means e.g. a Bedrock-hosted Anthropic model's resolved profile now carries 
 
 See [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full ModelProfile redesign.
 
-**Default behavior changes** — same API, different runtime behavior:
-
-- The default `end_strategy` changed from `'early'` to `'graceful'`, and tool calls now run in the order the model emitted them. See [Parallel tool-call execution order](#parallel-tool-call-execution-runs-in-emission-order) below. ([#5339](https://github.com/pydantic/pydantic-ai/pull/5339)) **⚠️ NOT YET MERGED — PENDING [#5339]. UPDATE OR REMOVE THIS ENTRY (AND THE SUBSECTION BELOW) IF IT DOESN'T LAND IN THE BETA.**
-- A bare `pip install pydantic-ai` now installs a slimmer set of extras (frontier providers plus minimal integrations). See [Slimmer default extras](#slimmer-default-pydantic-ai-extras) below. ([#5467](https://github.com/pydantic/pydantic-ai/pull/5467))
-- The default instrumentation format is now version 5, and agent run spans report token usage under `gen_ai.aggregated_usage.*`. See [Instrumentation defaults](#instrumentation-defaults-to-version-5-with-aggregated-usage-attributes) below. ([#5523](https://github.com/pydantic/pydantic-ai/pull/5523))
-- The `vertexai` slim extra is removed and folded into the `google` extra; install `pydantic-ai-slim[google]` for Google Cloud / Vertex. See [#5479](https://github.com/pydantic/pydantic-ai/pull/5479).
-- [`capture_run_messages()`][pydantic_ai.capture_run_messages] now also captures the partial `ModelRequest`/`ModelResponse` from an interrupted run, marked with `state='interrupted'`, and a new `ModelRequest.state` field is added. Code that asserts on exact captured-message counts on error paths may need updating. See [#5364](https://github.com/pydantic/pydantic-ai/pull/5364).
-- Native (built-in) tool calls and returns no longer emit the wrapper `FunctionToolCallEvent`/`FunctionToolResultEvent` (and the `BuiltinToolCallEvent`/`BuiltinToolResultEvent` shims are removed); consume them via the standard `PartStartEvent`/`PartDeltaEvent`, and output tools via the dedicated `OutputToolCallEvent`/`OutputToolResultEvent`. See [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) and [#5476](https://github.com/pydantic/pydantic-ai/pull/5476).
-
 ##### Parallel tool-call execution runs in emission order
 
 > **⚠️ NOT YET MERGED — this subsection documents [#5339](https://github.com/pydantic/pydantic-ai/pull/5339), which is still open. Update or remove it if the PR doesn't land in the beta.**
 
-In V1, when a model requested function tools and an output tool in the same response, a successful output tool ended the run immediately and the function tool calls were silently skipped (`end_strategy='early'`). In V2 the default is `end_strategy='graceful'`:
+The default [`end_strategy`][pydantic_ai.agent.EndStrategy] changed from `'early'` to `'graceful'`. This only affects responses where a model calls function tools in the *same* response as an [output tool](output.md#tool-output) (the call that ends the run). When that output tool **succeeds**, the function tools requested alongside it now **run** by default instead of being skipped, so their side effects happen and their results reach the model if the run continues; and a function tool's [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] now suppresses the output result so the model can correct itself on the next round. The case where *every* output tool fails is unchanged: function tools run and the run continues either way. Most agents don't need any change. If you relied on the run ending the instant an output tool succeeds — skipping any function tools requested in the same response — set `end_strategy='early'` explicitly.
 
-| Strategy | Function tools | Output tools |
-|---|---|---|
-| `'graceful'` (default) | Run, in parallel where possible, interleaved in emission order | Run in emission order; first success wins; later ones skipped |
-| `'early'` | Run only if *every* output tool fails | Run in emission order; stop at first success |
-| `'exhaustive'` | Run, in parallel | All run; first valid by emission order wins; others marked "ran but not selected" |
+`sequential=True` on a tool is now a per-tool **barrier** rather than a batch-wide serial switch: a sequential tool runs alone, but other tools in the same response still run in parallel around it. To run *all* of a run's tools serially, wrap the run in [`agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
-Two related behavior changes ship with this:
-
-- A function tool that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or whose arguments fail validation) in the same response as a successful output tool now suppresses the output and surfaces the retry to the model on the next request, instead of the retry being silently discarded. (Does not apply under `'early'` or `run_stream()`.)
-- `sequential=True` on a tool is now a per-tool barrier — tools emitted before it complete first, it runs alone, and tools emitted after it start once it finishes, while other tools still parallelize around it — rather than forcing the entire response to run serially. `ToolOutput(sequential=True)` is newly supported.
-
-To keep the V1 behavior:
-
-- Restore output-wins skipping: pass `end_strategy='early'`.
-- Restore whole-response serial execution: wrap the run in `agent.parallel_tool_call_execution_mode('sequential')`, or set `parallel_tool_calls=False` in the model settings.
-
-See [#5339](https://github.com/pydantic/pydantic-ai/pull/5339) and the [output documentation](output.md).
+See [Parallel Output Tool Calls](output.md#parallel-output-tool-calls) for the full behavior of all three strategies, and [#5339](https://github.com/pydantic/pydantic-ai/pull/5339).
 
 ##### Slimmer default `pydantic-ai` extras
 
