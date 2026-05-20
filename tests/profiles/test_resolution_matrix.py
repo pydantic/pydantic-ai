@@ -44,6 +44,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -430,10 +431,13 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_send_back_thinking_parts': True,
+            'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'bedrock_thinking_variant': 'anthropic',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': True,
         }
     )
 
@@ -450,8 +454,11 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_send_back_thinking_parts': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_tool_caching': True,
+            'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'bedrock_thinking_variant': 'anthropic',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': True,
         }
     )
 
@@ -471,6 +478,8 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'bedrock_thinking_variant': 'anthropic',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
         }
     )
 
@@ -479,7 +488,12 @@ def test_bedrock_anthropic_legacy_claude_3():
 def test_bedrock_mistral_large():
     profile = BedrockProvider.model_profile('mistral.mistral-large-2407-v1:0')
     assert _normalize(profile) == snapshot(
-        {'supported_native_tools': frozenset(), 'bedrock_tool_result_format': 'json'}
+        {
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+        }
     )
 
 
@@ -565,8 +579,12 @@ def test_bedrock_qwen_qwq():
     profile = BedrockProvider.model_profile('qwen.qwq-32b-v1:0')
     assert _normalize(profile) == snapshot(
         {
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supported_native_tools': frozenset(),
             'supports_thinking': True,
             'bedrock_thinking_variant': 'qwen',
+            'bedrock_supports_strict_tool_definition': False,
         }
     )
 

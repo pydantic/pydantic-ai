@@ -5033,9 +5033,6 @@ temporal = [
 ui = [
     { name = "pydantic-ai-slim", extra = ["ui"] },
 ]
-vertexai = [
-    { name = "pydantic-ai-slim", extra = ["vertexai"] },
-]
 voyageai = [
     { name = "pydantic-ai-slim", extra = ["voyageai"] },
 ]
@@ -5113,12 +5110,11 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["tavily"], marker = "extra == 'tavily'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["ui"], marker = "extra == 'ui'", editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["vertexai"], marker = "extra == 'vertexai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["voyageai"], marker = "extra == 'voyageai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5181,7 +5177,7 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "modal" },
     { name = "pandas" },
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "groq", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "google", "groq", "openai"] },
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
@@ -5200,7 +5196,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.25.0,<2.0" },
     { name = "modal", specifier = ">=1.0.4" },
     { name = "pandas", specifier = ">=2.2.3" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "google", "groq", "openai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
@@ -5301,10 +5297,6 @@ temporal = [
 ui = [
     { name = "starlette" },
 ]
-vertexai = [
-    { name = "google-auth" },
-    { name = "requests" },
-]
 voyageai = [
     { name = "voyageai", marker = "python_full_version < '3.14'" },
 ]
@@ -5333,7 +5325,6 @@ requires-dist = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0" },
     { name = "genai-prices", specifier = ">=0.0.48" },
-    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
@@ -5355,7 +5346,6 @@ requires-dist = [
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
     { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "sentence-transformers", marker = "python_full_version < '3.14' and extra == 'sentence-transformers'", specifier = ">=5.2.0" },
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
@@ -5370,7 +5360,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai"]
 
 [[package]]
 name = "pydantic-core"
