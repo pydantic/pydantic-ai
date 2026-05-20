@@ -199,7 +199,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
             defer_loading = self.defer_loading
         except AttributeError as e:
             raise UserError(
-                'Capability subclasses must initialize the base dataclass fields. '
+                'Capability subclasses must initialize base dataclass fields. '
                 'Use `@dataclass` with the generated `__init__`, or set `self.id`, '
                 '`self.description`, and `self.defer_loading` before calling '
                 '`self.__post_init__()` from a custom `__init__`.'
