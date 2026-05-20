@@ -1019,7 +1019,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
     @agent.tool_plain()
     def get_location(loc_name: str) -> str:
-        return f'Location for {loc_name}'  # pragma: no cover
+        return f'Location for {loc_name}'
 
     async with agent.run_stream('Hello') as result:
         data = await result.get_output()
@@ -1059,7 +1059,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolReturnPart(
                         tool_name='get_location',
-                        content='Tool not executed - a final result was already processed.',
+                        content='Location for San Fransisco',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
