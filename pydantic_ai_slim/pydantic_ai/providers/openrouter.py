@@ -37,22 +37,22 @@ except ImportError as _import_error:  # pragma: no cover
 class OpenRouterModelProfile(OpenAIModelProfile):
     """Profile for models used with OpenRouterModel.
 
-    ALL FIELDS MUST BE ``openrouter_`` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
     openrouter_supports_cache_control: bool = False
-    """Whether the downstream provider supports explicit ``cache_control`` breakpoints via OpenRouter."""
+    """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
     openrouter_supports_cache_ttl: bool = False
-    """Whether the downstream provider supports TTL in ``cache_control``."""
+    """Whether the downstream provider supports TTL in `cache_control`."""
     openrouter_supports_tool_cache: bool = False
-    """Whether the downstream provider supports ``cache_control`` on tool definitions."""
+    """Whether the downstream provider supports `cache_control` on tool definitions."""
     openrouter_supports_dynamic_instruction_cache: bool = False
     """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
     openrouter_max_cache_points: int | None = None
-    """Maximum number of ``cache_control`` breakpoints the downstream provider allows per request.
+    """Maximum number of `cache_control` breakpoints the downstream provider allows per request.
 
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
-    from messages (newest kept first). ``None`` means no limit."""
+    from messages (newest kept first). `None` means no limit."""
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
