@@ -253,6 +253,13 @@ def normalize_gateway_provider(provider: str) -> str:
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )
+    elif provider == 'gemini':
+        warnings.warn(
+            "The 'gateway/gemini:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
 
     if provider in ('openai', 'openai-chat', 'chat'):
         return 'openai'

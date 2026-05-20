@@ -153,6 +153,18 @@ def test_gateway_google_vertex_prefix_warns_and_routes_to_google_cloud_provider(
     assert isinstance(provider, GoogleCloudProvider)
 
 
+def test_gateway_gemini_prefix_warns_and_routes_to_google_cloud_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`gateway/gemini` is a user-facing alias that warns + routes to the Google Cloud path."""
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-key')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/gemini.' prefix is deprecated"):
+        assert infer_provider_class('gateway/gemini') is GoogleCloudProvider
+    with pytest.warns(PydanticAIDeprecationWarning, match=r"'gateway/gemini.' prefix is deprecated"):
+        provider = infer_provider('gateway/gemini')
+    assert isinstance(provider, GoogleCloudProvider)
+
+
 def test_gateway_google_cloud_prefix_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     """`gateway/google-cloud` is the new canonical user-facing prefix — no deprecation warning."""
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-key')
