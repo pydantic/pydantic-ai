@@ -9,6 +9,7 @@ from typing import Any, Generic, cast
 from typing_extensions import TypeVar, deprecated
 
 from .._utils import get_event_loop
+from .._warnings import warn_positional_dataclass_init
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -56,10 +57,10 @@ EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covar
 T = TypeVar('T')
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
-# without shifting positional-argument bindings, and consider reordering the existing
-# fields into a more logical grouping (e.g. identity → value → source metadata) while
-# we're free to rearrange.
+# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
+# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
+# identity → value → source metadata) while we're free to rearrange.
+@warn_positional_dataclass_init
 @dataclass
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
@@ -103,10 +104,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
-# without shifting positional-argument bindings, and consider reordering the existing
-# fields into a more logical grouping (e.g. identity → error detail → source metadata)
-# while we're free to rearrange.
+# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
+# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
+# identity → error detail → source metadata) while we're free to rearrange.
+@warn_positional_dataclass_init
 @dataclass
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
