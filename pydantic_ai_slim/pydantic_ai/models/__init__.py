@@ -822,6 +822,14 @@ class Model(ABC, Generic[InterfaceClient]):
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
+        # Apply examples to description if not natively supported by the model
+        if not self.profile.supports_tool_examples:
+            params = replace(
+                params,
+                function_tools=[self._append_tool_examples(t) for t in params.function_tools],
+                output_tools=[self._append_tool_examples(t) for t in params.output_tools],
+            )
+
         if native_tools := params.native_tools:
             # Deduplicate native tools
             params = replace(
@@ -886,6 +894,16 @@ class Model(ABC, Generic[InterfaceClient]):
 
             return synthesize_local_tool_search_messages(messages)
         return messages
+
+    def _append_tool_examples(self, tool_def: ToolDefinition) -> ToolDefinition:
+        """Append structured examples to the tool's text description as a fallback."""
+        if not tool_def.examples:
+            return tool_def
+
+        examples_str = json.dumps(tool_def.examples, indent=2)
+        desc = tool_def.description or ''
+        new_desc = f'{desc}\n\nExamples:\n{examples_str}' if desc else f'Examples:\n{examples_str}'
+        return replace(tool_def, description=new_desc, examples=None)
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Swap native tools and function-tool fallbacks/corpus based on profile support.

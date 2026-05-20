@@ -62,7 +62,19 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        # TODO update when new models are released that support tool examples
+        # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#providing-tool-use-examples
+        models_that_support_tool_examples = (
+            'claude-sonnet-4-5',
+            'claude-sonnet-4-6',
+            'claude-opus-4-5',
+            'claude-opus-4-6',
+        )
+        supports_tool_examples = model_name.startswith(models_that_support_tool_examples)
+        return AnthropicModelProfile(
+            json_schema_transformer=AnthropicJsonSchemaTransformer,
+            supports_tool_examples=supports_tool_examples,
+        ).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
