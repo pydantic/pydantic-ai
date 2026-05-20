@@ -682,7 +682,8 @@ async def test_prefect_agent_run_stream(allow_model_requests: None):
 
 async def test_prefect_agent_run_stream_events(allow_model_requests: None):
     """Test that agent.run_stream_events() works."""
-    events = [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+    async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as event_stream:
+        events = [event async for event in event_stream]
     assert events == snapshot(
         [AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.'))]
     )
@@ -746,7 +747,8 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
 
     @flow(name='test_run_stream_events_in_flow')
     async def run_stream_events_workflow():
-        return [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+        async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as event_stream:
+            return [event async for event in event_stream]
 
     with flow_raises(
         UserError,
@@ -859,13 +861,13 @@ hitl_agent = Agent(
 
 @task(name='create_file')
 @hitl_agent.tool
-def create_file(ctx: RunContext[None], path: str) -> None:
+def create_file(ctx: RunContext, path: str) -> None:
     raise CallDeferred
 
 
 @task(name='delete_file')
 @hitl_agent.tool
-def delete_file(ctx: RunContext[None], path: str) -> bool:
+def delete_file(ctx: RunContext, path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
@@ -994,8 +996,8 @@ test_model = TestModel()
 dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
 
 
-@dynamic_agent.toolset  # type: ignore
-def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+@dynamic_agent.toolset
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset:
     if ctx.deps.active == 'weather':
         return weather_toolset
     else:

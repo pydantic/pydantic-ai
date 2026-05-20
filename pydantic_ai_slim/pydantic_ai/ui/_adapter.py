@@ -545,8 +545,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=run_capabilities,
-            ) as stream:
-                async for event in stream:
+            ) as events:
+                async for event in events:
                     yield event
 
         return stream_events()

@@ -25,32 +25,32 @@ async def test_basenode_in_builder_graph():
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
 
     @g.step
-    async def prepare_input(ctx: StepContext[IntegrationState, None, int]) -> V1StartNode:
+    async def prepare_input(ctx: StepContext[IntegrationState, object, int]) -> V1StartNode:
         ctx.state.log.append('V2Step: prepare')
         return V1StartNode(ctx.inputs + 1)
 
     @g.step
-    async def process_result(ctx: StepContext[IntegrationState, None, str]) -> str:
+    async def process_result(ctx: StepContext[IntegrationState, object, str]) -> str:
         ctx.state.log.append('V2Step: process')
         return ctx.inputs.upper()
 
     @dataclass
-    class V1StartNode(BaseNode[IntegrationState, None, str]):
+    class V1StartNode(BaseNode[IntegrationState, object, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> V1MiddleNode:
             ctx.state.log.append(f'V1StartNode: {self.value}')
             return V1MiddleNode(self.value * 2)
 
     @dataclass
-    class V1MiddleNode(BaseNode[IntegrationState, None, str]):
+    class V1MiddleNode(BaseNode[IntegrationState, object, str]):
         value: int
 
         async def run(
-            self, ctx: GraphRunContext[IntegrationState, None]
-        ) -> Annotated[StepNode[IntegrationState, None], process_result]:
+            self, ctx: GraphRunContext[IntegrationState, object]
+        ) -> Annotated[StepNode[IntegrationState, object], process_result]:
             ctx.state.log.append(f'V1MiddleNode: {self.value}')
-            return process_result.as_node(f'Result: {self.value}')
+            return process_result.as_node(f'Result: {self.value}')  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder deps_type inference (v2 typevar default)
 
     g.add(
         g.node(V1StartNode),
@@ -72,24 +72,24 @@ async def test_step_to_basenode():
 
     # `BaseNode` subclasses
     @dataclass
-    class V1StartNode(BaseNode[IntegrationState, None, str]):
+    class V1StartNode(BaseNode[IntegrationState, object, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:  # pragma: no cover
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> V1MiddleNode:  # pragma: no cover
             ctx.state.log.append(f'V1StartNode: {self.value}')
             return V1MiddleNode(self.value * 2)
 
     @dataclass
-    class V1MiddleNode(BaseNode[IntegrationState, None, str]):
+    class V1MiddleNode(BaseNode[IntegrationState, object, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:  # pragma: no cover
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> End[str]:  # pragma: no cover
             ctx.state.log.append(f'V1MiddleNode: {self.value}')
             return End(f'Result: {self.value}')
 
     @g.step
     async def step(
-        ctx: StepContext[IntegrationState, None, None],
+        ctx: StepContext[IntegrationState, object, None],
     ) -> V1StartNode:  # pragma: no cover
         ctx.state.log.append('V2Step')
         # Return a StepNode to transition to a BaseNode
@@ -109,25 +109,25 @@ async def test_basenode_returning_basenode():
     """Test BaseNodes that return other BaseNodes."""
 
     @dataclass
-    class FirstNode(BaseNode[IntegrationState, None, int]):
+    class FirstNode(BaseNode[IntegrationState, object, int]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> SecondNode:
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> SecondNode:
             ctx.state.log.append('FirstNode')
             return SecondNode(self.value * 2)
 
     @dataclass
-    class SecondNode(BaseNode[IntegrationState, None, int]):
+    class SecondNode(BaseNode[IntegrationState, object, int]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> End[int]:
             ctx.state.log.append('SecondNode')
             return End(self.value + 10)
 
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
 
     @g.step
-    async def create_first(ctx: StepContext[IntegrationState, None, int]) -> FirstNode:
+    async def create_first(ctx: StepContext[IntegrationState, object, int]) -> FirstNode:
         return FirstNode(ctx.inputs)
 
     g.add(
@@ -149,21 +149,21 @@ async def test_mixed_step_and_basenode_with_broadcast():
     collect = g.join(reduce_list_append, initial_factory=list[int])
 
     @dataclass
-    class ProcessNode(BaseNode[IntegrationState, None, Any]):
+    class ProcessNode(BaseNode[IntegrationState, object, Any]):
         value: int
 
         async def run(
-            self, ctx: GraphRunContext[IntegrationState, None]
-        ) -> Annotated[JoinNode[IntegrationState, None], collect]:
+            self, ctx: GraphRunContext[IntegrationState, object]
+        ) -> Annotated[JoinNode[IntegrationState, object], collect]:
             ctx.state.log.append(f'ProcessNode: {self.value}')
-            return collect.as_node(self.value * 2)
+            return collect.as_node(self.value * 2)  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder deps_type inference (v2 typevar default)
 
     @g.step
-    async def generate_values(ctx: StepContext[IntegrationState, None, None]) -> list[int]:
+    async def generate_values(ctx: StepContext[IntegrationState, object, None]) -> list[int]:
         return [1, 2, 3]
 
     @g.step
-    async def create_node(ctx: StepContext[IntegrationState, None, int]) -> ProcessNode:
+    async def create_node(ctx: StepContext[IntegrationState, object, int]) -> ProcessNode:
         return ProcessNode(ctx.inputs)
 
     g.add(
@@ -184,16 +184,16 @@ async def test_basenode_type_hints_inferred():
     """Test that BaseNode type hints are properly inferred for edges."""
 
     @dataclass
-    class StartNode(BaseNode[IntegrationState, None, str]):
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> MiddleNode | End[str]:
+    class StartNode(BaseNode[IntegrationState, object, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> MiddleNode | End[str]:
             if ctx.state.log:
                 return End('early exit')  # pragma: no cover
             ctx.state.log.append('StartNode')
             return MiddleNode()
 
     @dataclass
-    class MiddleNode(BaseNode[IntegrationState, None, str]):
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+    class MiddleNode(BaseNode[IntegrationState, object, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> End[str]:
             ctx.state.log.append('MiddleNode')
             return End('normal exit')
 
@@ -216,29 +216,29 @@ async def test_basenode_conditional_return():
     """Test BaseNodes with conditional returns creating implicit decisions."""
 
     @dataclass
-    class RouterNode(BaseNode[IntegrationState, None, str]):
+    class RouterNode(BaseNode[IntegrationState, object, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> PathA | PathB:
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> PathA | PathB:
             if self.value < 10:
                 return PathA()
             else:
                 return PathB()
 
     @dataclass
-    class PathA(BaseNode[IntegrationState, None, str]):
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+    class PathA(BaseNode[IntegrationState, object, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> End[str]:
             return End('Path A')
 
     @dataclass
-    class PathB(BaseNode[IntegrationState, None, str]):
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+    class PathB(BaseNode[IntegrationState, object, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, object]) -> End[str]:
             return End('Path B')
 
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
 
     @g.step
-    async def create_router(ctx: StepContext[IntegrationState, None, int]) -> RouterNode:
+    async def create_router(ctx: StepContext[IntegrationState, object, int]) -> RouterNode:
         return RouterNode(ctx.inputs)
 
     g.add(

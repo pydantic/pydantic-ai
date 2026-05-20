@@ -152,7 +152,8 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        route = normalize_gateway_provider(upstream_provider)
+        canonical = normalize_gateway_provider(upstream_provider)
+        route = _gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -238,31 +239,49 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def normalize_gateway_provider(provider: str) -> str:
-    """Normalize a gateway provider name.
+# Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
+# (the output of `normalize_gateway_provider`); defaults to identity. Only providers
+# whose Gateway wire value differs from the canonical name are listed.
+# PAIG's canonical OpenAI route is `openai` (per the gateway's own 404 list of
+# supported values). The Chat-vs-Responses API flavor is selected by the OpenAI
+# SDK appending `/chat/completions` or `/responses` on top of the base URL, so all
+# OpenAI flavors share the same wire route.
+_GATEWAY_ROUTE_REMAP: dict[str, str] = {
+    'openai-chat': 'openai',
+    'openai-responses': 'openai',
+    # GLA-style Gemini API is called `gemini` on Gateway.
+    'google': 'gemini',
+    # Gateway team still uses the old name; flip this entry when they rename their side.
+    'google-cloud': 'google-vertex',
+}
 
-    Args:
-        provider: The provider name to normalize.
+
+def _gateway_route(provider: str) -> str:
+    """Translate a canonical provider name into the Gateway URL route segment."""
+    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+
+
+def normalize_gateway_provider(provider: str) -> str:
+    """Strip the `gateway/` prefix and resolve user-facing aliases to a canonical class-lookup name.
+
+    Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
-
     if provider == 'google-vertex':
         warnings.warn(
             "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
             "Use 'gateway/google-cloud:' instead.",
             PydanticAIDeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
-
-    if provider in ('openai', 'openai-chat', 'chat'):
-        return 'openai'
-    elif provider in ('openai-responses', 'responses'):
+        return 'google-cloud'
+    if provider == 'chat':
+        return 'openai-chat'
+    if provider == 'responses':
         return 'openai-responses'
-    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
-        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
-        # When the Gateway team renames their side, flip this to `google-cloud`.
-        return 'google-vertex'
-    elif provider in ('bedrock', 'converse'):
+    if provider == 'gemini':
+        return 'google'
+    if provider == 'converse':
         return 'bedrock'
     return provider
 

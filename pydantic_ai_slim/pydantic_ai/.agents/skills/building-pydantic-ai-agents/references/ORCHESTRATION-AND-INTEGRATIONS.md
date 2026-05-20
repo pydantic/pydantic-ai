@@ -14,7 +14,7 @@ researcher = Agent('openai:gpt-5.2', output_type=str)
 
 
 @parent.tool
-async def research(ctx: RunContext[None], topic: str) -> str:
+async def research(ctx: RunContext, topic: str) -> str:
     result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
     return result.output
 ```

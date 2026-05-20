@@ -1717,7 +1717,7 @@ async def test_google_instructions_only_with_tool_calls(allow_model_requests: No
     role=user. The fix prepends an empty user turn when the first content is a model response.
     """
     m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
-    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+    agent: Agent[object, list[str]] = Agent(m, output_type=list[str])
 
     @agent.instructions
     def agent_instructions() -> str:
@@ -5371,11 +5371,12 @@ async def test_google_streaming_tool_call_thought_signature(
 
     events: list[AgentStreamEvent] = []
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events('What is the capital of the user country? Call the tool'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
-        else:
-            events.append(event)
+    async with agent.run_stream_events('What is the capital of the user country? Call the tool') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                events.append(event)
 
     assert result is not None
     assert result.all_messages() == snapshot(
