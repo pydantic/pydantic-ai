@@ -359,19 +359,21 @@ _(This example is complete, it can be run "as is")_
 
 ##### Parallel Output Tool Calls
 
-When a model calls function tools in the same response as an output tool, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] controls how those tool calls are run and which one determines the final result. Tools run in the order the model emitted them.
+An [output tool](#tool-output) call is what ends a run and produces its final result. When a model emits one in the *same* response as other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to the rest. Most agents never need to think about this, since most responses don't mix an output tool with other tools — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.
 
-| Strategy | Function tools | Output tools |
-|---|---|---|
-| `'graceful'` (default) | Run, in parallel where possible | Run in order; stop at the first that succeeds, skipping the rest |
-| `'early'` | Run only if no output tool succeeds | Run in order; stop at the first that succeeds |
-| `'exhaustive'` | Run, in parallel | All run; the first valid result by emission order is used |
+| Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
+|---|---|---|---|
+| `'graceful'` (default) | Run in emission order; first success is the final result, later output tools skipped | Run, in parallel where possible, in emission order | Run; the run continues |
+| `'early'` | Run in emission order; the run ends at the first success | Skipped | Run; the run continues |
+| `'exhaustive'` | All run, in parallel; first valid result by emission order wins | Run, in parallel | Run; the run continues |
 
 `'graceful'` is the default and the right choice for most agents: function tools the model requested alongside an output tool still run, so their side effects happen and their results are available to the model if the run continues. Only the first successful output tool is used; later output tools are skipped so their side effects don't fire more than once.
 
-Choose `'early'` to end the run the instant an output tool succeeds — function tools requested in the same response are then skipped entirely. This is the fastest option when you never need those function tools to run once you have a result. If *every* output tool fails, the function tools run so the model can react on the next round.
+Choose `'early'` to end the run the instant an output tool succeeds — function tools requested in the same response are then skipped entirely. This is the fastest option when you never need those function tools to run once you have a result.
 
 Choose `'exhaustive'` to run every tool, including additional output tools whose results won't be used. This gives the model full visibility that each tool ran, at the cost of executing output-tool side effects that are ultimately discarded.
+
+When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round. `run_stream()` behaves like `'early'` in this respect: it commits the first matching output the instant it streams, so that result is locked in regardless of `end_strategy`.
 
 #### Retrying after a tool failure
 
