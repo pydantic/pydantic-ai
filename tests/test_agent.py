@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -18,7 +18,6 @@ from typing_extensions import Self
 from pydantic_ai import (
     AbstractToolset,
     Agent,
-    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -8372,13 +8371,7 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
-@pytest.mark.filterwarnings(
-    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
 async def test_wrapper_agent():
-    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
-        pass  # pragma: no cover
-
     foo_toolset = FunctionToolset()
 
     @foo_toolset.tool_plain
@@ -8386,12 +8379,11 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(  # pyright: ignore[reportDeprecated]
+    agent = Agent(
         test_model,
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
-        event_stream_handler=event_stream_handler,
     )
     wrapper_agent = WrapperAgent(agent)
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
