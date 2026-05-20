@@ -164,6 +164,14 @@ def test_from_dict_without_name_raises():
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(data)
 
 
+def test_from_dict_without_generic_params_warns():
+    """Calling `from_dict` on the bare `Dataset` class (no generic params) warns and falls back to `Any`."""
+    data = {'name': 'demo', 'cases': [{'name': 'c1', 'inputs': {'q': 'hi'}}]}
+    with pytest.warns(UserWarning, match='Could not determine the generic parameters'):
+        dataset = Dataset.from_dict(data)
+    assert dataset.name == 'demo'
+
+
 async def test_dataset_init(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
