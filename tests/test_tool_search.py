@@ -3311,7 +3311,7 @@ async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name(
         ),
     ]
 
-    discovered = ToolSearchToolset.parse_discovered_tools(_build_run_context(None, messages=history))
+    discovered = ToolSearchToolset.parse_discovered_tools(history)
     assert 'calculate_mortgage' in discovered
     assert 'should_not_surface' not in discovered
 
@@ -3454,7 +3454,7 @@ async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
             ],
         ),
     ]
-    discovered = ToolSearchToolset.parse_discovered_tools(_build_run_context(None, messages=history))
+    discovered = ToolSearchToolset.parse_discovered_tools(history)
     assert discovered == {'calculate_mortgage'}
 
 
@@ -3511,7 +3511,7 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
 
     # And the toolset's parser surfaces the discovery off the translated history.
-    discovered = ToolSearchToolset.parse_discovered_tools(_build_run_context(None, messages=translated))
+    discovered = ToolSearchToolset.parse_discovered_tools(translated)
     assert discovered == {'calculate_mortgage'}
 
 
