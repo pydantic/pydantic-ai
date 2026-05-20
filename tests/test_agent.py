@@ -5799,6 +5799,280 @@ class TestMultipleToolCalls:
         assert isinstance(result.output, OutputType)
         assert result.output.value == 'valid'
 
+    def test_graceful_function_tool_retry_suppresses_output(self):
+        """Retry-wins: a function-tool `ModelRetry` suppresses the output result under `graceful`."""
+        rounds: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            if not rounds:
+                rounds.append('first')
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('flaky_tool', {'x': 1}),
+                        ToolCallPart('final_result', {'value': 'premature'}),
+                    ]
+                )
+            rounds.append('second')
+            return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'corrected'})])
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            if len(rounds) == 1:
+                raise ModelRetry('not yet')
+            return x  # pragma: no cover
+
+        result = agent.run_sync('test')
+        # The first round's output was suppressed so the model could address the retry.
+        assert result.output.value == 'corrected'
+        assert rounds == ['first', 'second']
+
+        messages = result.all_messages()
+        # The suppressed output's return part is rewritten to signal it wasn't used.
+        suppressed = next(
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'final_result'
+        )
+        assert suppressed.content == snapshot(
+            'Output not used as the final result - addressing tool retries from this round first.'
+        )
+
+    def test_exhaustive_function_tool_retry_suppresses_output(self):
+        """Retry-wins also applies under `exhaustive`."""
+        rounds: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            if not rounds:
+                rounds.append('first')
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('flaky_tool', {'x': 1}),
+                        ToolCallPart('final_result', {'value': 'premature'}),
+                    ]
+                )
+            rounds.append('second')
+            return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'corrected'})])
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            if len(rounds) == 1:
+                raise ModelRetry('not yet')
+            return x  # pragma: no cover
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'corrected'
+        assert rounds == ['first', 'second']
+
+    def test_early_function_tool_retry_does_not_suppress_output(self):
+        """Under `early`, a successful output ends the run and function tools never run, so there's
+        no retry to suppress it."""
+        called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('flaky_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'kept'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='early')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:  # pragma: no cover
+            called.append('flaky_tool')
+            raise ModelRetry('not yet')
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'kept'
+        assert called == []
+
+    def test_unknown_tool_retry_does_not_suppress_output(self):
+        """An unknown/hallucinated tool's retry doesn't trigger retry-wins; the output still wins."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('hallucinated_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'kept'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'kept'
+
+    def test_graceful_runs_function_tools_before_output(self):
+        """Function tools the model emitted before an output tool complete before it validates."""
+        events: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}),
+                    ToolCallPart('tool_b', {}),
+                    ToolCallPart('final_result', {'value': 'done'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            events.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            events.append('tool_b')
+            return 'b'
+
+        @agent.output_validator
+        def check(data: OutputType) -> OutputType:
+            # Both function tools have run by the time the output is validated.
+            assert sorted(events) == ['tool_a', 'tool_b']
+            return data
+
+        result = agent.run_sync('call tool A and B before the final result')
+        assert result.output.value == 'done'
+
+    def test_sequential_tool_is_a_per_tool_barrier(self):
+        """A `sequential=True` tool runs alone; other tools parallelize around it."""
+        active = 0
+        max_concurrent_with_barrier = 0
+        barrier_ran_alone = True
+
+        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('parallel_a', {}),
+                        ToolCallPart('parallel_b', {}),
+                        ToolCallPart('barrier', {}),
+                        ToolCallPart('parallel_c', {}),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(return_model))
+
+        async def track(name: str) -> str:
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0.02)
+            active -= 1
+            return name
+
+        @agent.tool_plain
+        async def parallel_a() -> str:
+            return await track('a')
+
+        @agent.tool_plain
+        async def parallel_b() -> str:
+            return await track('b')
+
+        @agent.tool_plain(sequential=True)
+        async def barrier() -> str:
+            nonlocal barrier_ran_alone
+            # No other tool should be in-flight while the barrier runs.
+            if active != 0:
+                barrier_ran_alone = False  # pragma: no cover
+            await asyncio.sleep(0.02)
+            return 'barrier'
+
+        @agent.tool_plain
+        async def parallel_c() -> str:
+            return await track('c')
+
+        agent.run_sync('test')
+        assert barrier_ran_alone
+
+    def test_exhaustive_tool_output_sequential_barrier(self):
+        """`ToolOutput(sequential=True)` makes the output a barrier: function tools emitted before
+        it complete before it runs, even under `exhaustive`'s parallel-by-default execution."""
+        events: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}),
+                    ToolCallPart('do_output', {'value': 'done'}),
+                ]
+            )
+
+        def do_output(output: OutputType) -> OutputType:
+            events.append('output')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=ToolOutput(do_output, name='do_output', sequential=True),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            await asyncio.sleep(0.02)
+            events.append('tool_a')
+            return 'a'
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'done'
+        # The barrier output ran only after the preceding function tool completed.
+        assert events == ['tool_a', 'output']
+
+    def test_early_runs_function_tools_when_all_outputs_fail(self):
+        """Under `early`, if every output tool fails, function tools run so the model can correct."""
+        called: list[str] = []
+        rounds = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            if rounds == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('regular_tool', {'x': 1}),
+                        ToolCallPart('bad_output', {'value': 'x'}),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart('bad_output', {'value': 'ok'})])
+
+        def bad_output(output: OutputType) -> OutputType:
+            if output.value == 'x':
+                raise ModelRetry('bad')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=ToolOutput(bad_output, name='bad_output'),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test')
+        assert result.output.value == 'ok'
+        # The first-round output failed, so the function tool ran rather than being skipped.
+        assert called == ['regular_tool']
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
     # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well

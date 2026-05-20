@@ -121,6 +121,13 @@ class ToolOutput(Generic[OutputDataT]):
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    sequential: bool
+    """Whether this output tool must run as a barrier, not overlapping with other tool calls.
+
+    Only meaningful under `end_strategy='exhaustive'`, where tools otherwise run in parallel: a
+    `sequential=True` output tool runs alone, so function tools the model emitted before it complete
+    first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
+    """
 
     def __init__(
         self,
@@ -130,12 +137,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        sequential: bool = False,
     ):
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.sequential = sequential
 
 
 @dataclass(init=False)
