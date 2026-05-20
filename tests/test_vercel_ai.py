@@ -4940,7 +4940,6 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
                     'timestamp': '2026-04-15T12:00:00Z',
                     'run_id': 'run-123',
                     'conversation_id': 'conversation-456',
-                    'instructions': 'Use terse answers.',
                 },
             },
             {
@@ -4963,7 +4962,7 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
 
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
-    # `instructions` is intentionally not restored: see `apply_message_metadata` docstring.
+    # `instructions` is neither dumped nor restored: see `apply_message_metadata` docstring.
     expected = [replace(original_messages[0], instructions=None), original_messages[1]]
     _sync_timestamps(expected, reloaded_messages)
     assert reloaded_messages == expected

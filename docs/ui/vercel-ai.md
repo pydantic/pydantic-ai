@@ -130,7 +130,7 @@ async def search_docs(query: str) -> ToolReturn:
 
 When streaming, response metadata is emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. The chunk fires once per run from `AgentRunResultEvent`, so it only carries fields that are known at run completion (timestamp, usage, provider details, finish reason); to attach metadata mid-stream, yield a [`MessageMetadataChunk`][pydantic_ai.ui.vercel_ai.response_types.MessageMetadataChunk] yourself from a custom event source.
 
-`UIMessage.metadata` is fully client-controlled. Behavior-shaping fields are not loaded back from it: `instructions` is re-resolved by the agent on every request and is intentionally never restored from history, mirroring the [`manage_system_prompt`](./overview.md#trust-model-for-client-submitted-messages) filter on `SystemPromptPart`s.
+`UIMessage.metadata` is fully client-controlled, so behavior-shaping fields are kept out of it entirely: `instructions` is neither written to `UIMessage.metadata` nor read back from it. The agent re-resolves `instructions` on every request, so client-submitted history is never a source of truth for it — mirroring the [`manage_system_prompt`](./overview.md#trust-model-for-client-submitted-messages) filter on `SystemPromptPart`s.
 
 ## Trust model
 

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+from typing_extensions import assert_never
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
@@ -58,10 +59,12 @@ class _PydanticAIMessageMetadata(BaseModel):
 
     model_config = ConfigDict(extra='ignore')
 
+    # `instructions` is deliberately absent: it's a server-side behavior-shaping field
+    # re-resolved by the agent on every request, not message state to round-trip.
+    # Carrying it here would expose confidential prompt guidance to the client.
     timestamp: datetime | None = None
     run_id: str | None = None
     conversation_id: str | None = None
-    instructions: str | None = None
 
     usage: RequestUsage | None = None
     model_name: str | None = None
@@ -132,9 +135,8 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
             timestamp=message.timestamp,
             run_id=message.run_id,
             conversation_id=message.conversation_id,
-            instructions=message.instructions,
         )
-    else:
+    elif isinstance(message, ModelResponse):
         pydantic_metadata = _PydanticAIMessageMetadata(
             timestamp=message.timestamp,
             run_id=message.run_id,
@@ -147,6 +149,8 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
             provider_response_id=message.provider_response_id,
             finish_reason=message.finish_reason,
         )
+    else:
+        assert_never(message)
 
     if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
         metadata[PROVIDER_METADATA_KEY] = pydantic_metadata_dump
@@ -156,10 +160,10 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
 def apply_message_metadata(message: ModelMessage, metadata: Any) -> None:
     """Load UIMessage.metadata back onto a Pydantic AI message.
 
-    `instructions` is intentionally not restored: it's a behavior-shaping field that
-    the agent re-resolves on every request (see `_agent_graph.LLMNode.run`), so client-controlled
-    history must not be the source of truth for it. Mirrors the `manage_system_prompt` filter on
-    `SystemPromptPart`s.
+    Behavior-shaping fields like `instructions` are neither dumped nor restored: the agent
+    re-resolves them per request, so client-controlled history must not be a source of truth
+    for them. A crafted `pydantic_ai` payload carrying such a field is dropped by the
+    `_PydanticAIMessageMetadata` schema (`extra='ignore'`).
     """
     if not is_str_dict(metadata):
         return
