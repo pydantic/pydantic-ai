@@ -16,7 +16,7 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
+    from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
         EvaluationResult,
@@ -139,16 +139,16 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     return SimpleEvaluator
 
 
-def test_dataset_name_deprecation_warning(
+def test_dataset_name_required(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ):
-    """Test that omitting the name parameter emits a deprecation warning."""
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
-        Dataset(cases=example_cases)
+    """Test that omitting the name parameter raises a validation error."""
+    with pytest.raises(Exception, match='name'):
+        Dataset(cases=example_cases)  # pyright: ignore[reportCallIssue]
 
 
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
-    """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
+    """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
     yaml_path.write_text(yaml_content)
