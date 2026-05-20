@@ -180,7 +180,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4-1-fast', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -200,7 +200,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -925,7 +925,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4-1-fast',
+        'xai:grok-4.3',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 

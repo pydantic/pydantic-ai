@@ -68,24 +68,32 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 @pytest.mark.parametrize(
     'model_name,expected_thinking',
     [
-        # grok-4 reasoning models always reason but reject the reasoning_effort parameter,
-        # so pydantic-ai treats them as not supporting the unified `thinking` setting.
-        ('grok-4-fast-reasoning', False),
-        ('grok-4-1-reasoning', False),
-        ('grok-4-fast-non-reasoning', False),
-        ('grok-4-1-fast-non-reasoning', False),
+        ('grok-4.3', True),
+        ('grok-4-fast-reasoning', True),
+        ('grok-4-fast-non-reasoning', True),
+        ('grok-4-1-fast-non-reasoning', True),
+        ('grok-code-fast-1', True),
+        ('grok-3', True),
         ('grok-3-mini', True),
         ('grok-3-mini-fast', True),
-        ('grok-3', False),
+        ('grok-3-fast', False),
+        ('grok-4-1-reasoning', False),
+        ('grok-4.20', False),
+        ('grok-4.20-multi-agent', False),
     ],
     ids=[
+        'grok-4.3',
         'grok-4-fast-reasoning',
-        'grok-4-1-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-code-fast-1',
+        'grok-3',
         'grok-3-mini',
         'grok-3-mini-fast',
-        'grok-3',
+        'grok-3-fast',
+        'grok-4-1-reasoning',
+        'grok-4.20',
+        'grok-4.20-multi-agent',
     ],
 )
 def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:
@@ -95,11 +103,8 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -
     assert profile.thinking_always_enabled is False
 
 
-async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:
-    """grok-4 reasoning models reject `reasoning_effort` with INVALID_ARGUMENT, so the profile
-    treats them as unsupported thinking targets and passing `thinking` must not forward the param
-    to the SDK. See https://docs.x.ai/docs/guides/reasoning.
-    """
+async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:
+    """Retired grok-4 reasoning slugs redirect to grok-4.3 and accept `reasoning_effort`."""
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
@@ -110,7 +115,7 @@ async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_mo
 
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
-    assert 'reasoning_effort' not in kwargs[0]
+    assert kwargs[0]['reasoning_effort'] == 'low'
 
 
 def test_grok_model_profile_builtin_tools() -> None:
