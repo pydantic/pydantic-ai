@@ -44,7 +44,6 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -53,7 +52,7 @@ with try_import() as anthropic_imports:
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
 with try_import() as bedrock_imports:
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer, BedrockProvider
 
 with try_import() as cohere_imports:
     from pydantic_ai.providers.cohere import CohereProvider
