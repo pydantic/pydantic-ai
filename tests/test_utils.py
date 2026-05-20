@@ -5,6 +5,7 @@ import contextvars
 import functools
 import os
 import threading
+import warnings
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
@@ -847,3 +848,67 @@ def test_validate_empty_kwargs_preserves_order():
     assert '`first`' in error_msg
     assert '`second`' in error_msg
     assert '`third`' in error_msg
+
+
+def test_get_first_param_type_warns_on_unresolvable_annotation():
+    """A `NameError` while resolving annotations should produce a `UserWarning`, not silent `None`.
+
+    Reproduces #5358: with `from __future__ import annotations` plus a `TYPE_CHECKING`-only import,
+    a `RunContext` annotation is left as a string that can't be resolved at runtime. Previously this
+    was swallowed silently, causing `takes_run_context` to misclassify the callable.
+    """
+    import types
+
+    from pydantic_ai._utils import get_first_param_type, takes_run_context
+
+    source = (
+        'from __future__ import annotations\n'
+        'from typing import TYPE_CHECKING\n'
+        'if TYPE_CHECKING:\n'
+        '    from pydantic_ai import RunContext\n'
+        '\n'
+        'def processor(ctx: RunContext[None], messages):\n'
+        '    return messages\n'
+    )
+    module = types.ModuleType('_test_5358_typecheck_module')
+    exec(source, module.__dict__)
+    processor = module.processor
+
+    with pytest.warns(UserWarning, match='TYPE_CHECKING'):
+        result = get_first_param_type(processor)
+    assert result is None
+
+    with pytest.warns(UserWarning, match='TYPE_CHECKING'):
+        assert takes_run_context(processor) is False
+
+
+def test_get_first_param_type_silent_on_unrelated_nameerror():
+    """A `NameError` for a name other than `RunContext` should stay silent and return `None`.
+
+    This preserves the prior behavior for callables that legitimately have unresolvable annotations
+    so we don't generate spurious warnings outside the #5358 footgun.
+    """
+    import types
+
+    from pydantic_ai._utils import get_first_param_type
+
+    source = 'from __future__ import annotations\ndef processor(x: SomeUnknownType, messages):\n    return messages\n'
+    module = types.ModuleType('_test_unrelated_nameerror_module')
+    exec(source, module.__dict__)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert get_first_param_type(module.processor) is None
+
+
+def test_get_first_param_type_silent_on_typeerror_or_attributeerror():
+    """`TypeError` / `AttributeError` from annotation introspection should return `None` silently.
+
+    These cover legitimate "can't introspect" cases (e.g. builtins without resolvable type hints).
+    """
+    from pydantic_ai._utils import get_first_param_type
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        # Builtins like `len` raise TypeError from `get_type_hints`, exercising the silent branch.
+        assert get_first_param_type(len) is None
