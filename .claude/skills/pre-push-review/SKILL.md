@@ -1,5 +1,5 @@
 ---
-description: Lightweight CI-prompt-style branch review for simple branches or when local review tooling is unavailable.
+description: Review the current branch against main, simulating the automated CI review from the bots workflow.
 allowed-tools:
   - Read
   - Glob
@@ -16,8 +16,6 @@ allowed-tools:
 # Pre-push Review
 
 Simulate the automated CI review job locally before pushing or opening a PR.
-
-Use this skill as the lightweight fallback for simple branches or when local lane-based review tooling is unavailable.
 
 ## How it works
 
