@@ -17,7 +17,7 @@ You can set the `OPENROUTER_API_KEY` environment variable and use [`OpenRouterPr
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openrouter:anthropic/claude-sonnet-4-5')
+agent = Agent('openrouter:anthropic/claude-sonnet-4.6')
 ...
 ```
 
@@ -29,7 +29,7 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 model = OpenRouterModel(
-    'anthropic/claude-sonnet-4-5',
+    'anthropic/claude-sonnet-4.6',
     provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
@@ -73,6 +73,74 @@ model = OpenRouterModel('openai/gpt-5.2')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Prompt Caching
+
+OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it. Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
+
+1. **Cache System Instructions**: Set [`OpenRouterModelSettings.openrouter_cache_instructions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_instructions] to `True` or specify `'5m'` / `'1h'` directly
+2. **Cache the Last Message**: Set [`OpenRouterModelSettings.openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages] to `True` to automatically cache the last message in the conversation
+3. **Cache Tool Definitions**: Set [`OpenRouterModelSettings.openrouter_cache_tool_definitions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_tool_definitions] to `True` or specify `'5m'` / `'1h'` directly
+4. **Fine-Grained Control with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in user messages to cache everything before it
+
+!!! note "Provider Differences"
+    - **Anthropic** models support prefix-based caching for both system instructions and message content. TTL values (`'5m'`, `'1h'`) are passed through to the provider.
+    - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
+      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
+      Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
+    - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
+
+### Caching via Model Settings
+
+Use [`OpenRouterModelSettings`][pydantic_ai.models.openrouter.OpenRouterModelSettings] to enable explicit caching for system instructions, the last conversation message, and tool definitions:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+model = OpenRouterModel('anthropic/claude-sonnet-4.6')
+agent = Agent(
+    model,
+    instructions='You are a specialized assistant with deep domain knowledge...',
+    model_settings=OpenRouterModelSettings(
+        openrouter_cache_instructions=True,  # Cache system instructions (broadly supported)
+        openrouter_cache_messages=True,  # Cache the last message (best with Anthropic)
+        openrouter_cache_tool_definitions=True,  # Cache tool definitions (Anthropic only)
+    ),
+)
+
+
+@agent.tool
+def search_docs(ctx: RunContext, query: str) -> str:
+    """Search documentation."""
+    return f'Results for {query}'
+...
+```
+
+Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` sends Anthropic's default `'5m'` TTL for Anthropic models; Gemini ignores TTL values and manages cache lifetime itself. Check `result.usage().cache_write_tokens` on initial writes and `result.usage().cache_read_tokens` on reuse, including subsequent calls with `message_history=result.all_messages()`.
+
+OpenRouter uses [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) after prompt-cached requests to improve cache locality. For cache-sensitive workflows that need stricter provider control or disabled fallbacks, also set [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider], for example with `{'order': ['anthropic'], 'allow_fallbacks': False}`.
+
+### Fine-Grained Control with CachePoint
+
+Use [`CachePoint`][pydantic_ai.messages.CachePoint] markers to control exactly where cache boundaries are placed:
+
+```python
+from pydantic_ai import Agent, CachePoint
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+model = OpenRouterModel('anthropic/claude-sonnet-4.6')
+agent = Agent(model)
+
+prompt = [
+    'Long reference document or context to cache...',
+    CachePoint(),  # Cache everything before this point
+    'Now answer my question about the context above',
+]
+...
+```
+
+Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
 
 ## Web Search
 

@@ -969,7 +969,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
 
-        openai_messages = await self._map_messages(messages, model_request_parameters)
+        openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1430,7 +1430,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
