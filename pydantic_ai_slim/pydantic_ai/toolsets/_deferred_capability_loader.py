@@ -42,7 +42,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=('Load a capability to access its full instructions and tools.'),
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            # Enables typed call/return promotion without matching on tool name.
             tool_kind='capability-load',
         )
 
@@ -83,7 +82,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         return ToolReturn(return_value=content)
 
     async def _collect_owned_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> str | None:
-        """Collect toolset instructions owned by the loaded capability."""
         owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:

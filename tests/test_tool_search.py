@@ -496,15 +496,7 @@ def _build_run_context(
     messages: list[ModelMessage] | None = None,
     capabilities: dict[str, AbstractCapability[T]] | None = None,
 ) -> RunContext[T]:
-    """Build a `RunContext` for unit tests using `TestModel`.
-
-    Mirrors what `_agent_graph._prepare_request` does in production: derives
-    `discovered_tools` from message history via `parse_discovered_tools`, so unit
-    tests that exercise consumers of `ctx.discovered_tools` (e.g.
-    `ToolSearchToolset.get_tools`) see the same set the agent loop would build.
-    The capability-load side of the union (`tool_defs_for_loaded_capabilities`) is
-    not added here — tests that need that path build the ctx explicitly.
-    """
+    """Build a `RunContext` for unit tests using `TestModel`."""
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -908,17 +900,7 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
 
 
 async def test_tool_search_handles_search_gated_tools_from_eager_capability():
-    """Search-gated tool from an eager capability is hidden until the model searches for it.
-
-    Drives through `Agent` so the test exercises the same setup path as production:
-    eager capabilities are pre-loaded by `Agent.run`, so `capability_search_tool`
-    is hidden purely behind tool-level `defer_loading=True` and is unlocked by a
-    `search_tools` call — no `load_capability` involved.
-
-    Forces the local-fallback path so the framework's `search_tools` function
-    tool reaches `info.function_tools` instead of being swap-dropped in favor
-    of the native `ToolSearchTool` builtin.
-    """
+    """Search-gated tools from eager capabilities stay hidden until searched."""
 
     class NoNativeToolSearchModel(FunctionModel):
         @classmethod
@@ -980,10 +962,6 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
     result = await agent.run('find the gated tool')
 
     assert result.output == 'final: search-gated-result'
-    # Step 1: only the search facade is visible (gated tool hidden behind tool-search).
-    # Step 2: search has unlocked the gated tool; the facade stays for prompt-cache
-    # stability — see `test_tool_search_toolset_keeps_search_tool_after_all_discovered`.
-    # Step 3: same toolset; model returns final text.
     assert seen_tool_names == snapshot(
         [
             ['search_tools'],
@@ -994,16 +972,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
 
 
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
-    """A deferred capability gates its tools as a unit: all hidden when unloaded, all
-    visible once loaded. Tool-level `defer_loading` inside a deferred cap is moot — the
-    cap's flag is the authority. Drives through `Agent` so message-history →
-    `loaded_capability_ids` translation happens via the real `Agent.run` setup; tools
-    the model sees at each step are captured from `AgentInfo.function_tools`.
-
-    Forces the local-fallback path so the framework's `search_tools` function tool
-    reaches `info.function_tools` instead of being swap-dropped in favor of the
-    native `ToolSearchTool` builtin.
-    """
+    """Deferred capability tools become visible as a unit after loading."""
 
     class NoNativeToolSearchModel(FunctionModel):
         @classmethod
@@ -1071,11 +1040,6 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     result = await agent.run('use the special tool')
 
     assert result.output == 'final: also-deferred-result'
-    # Step 1: cap deferred → both tools hidden; only `load_capability` and the search
-    # facade reach the model.
-    # Step 2: cap loaded → both tools visible regardless of tool-level defer flag;
-    # `load_capability` and the search facade stay present for prompt-cache stability.
-    # Step 3: same toolset; model returns final text.
     assert seen_tool_names == snapshot(
         [
             ['load_capability', 'search_tools'],
@@ -2205,17 +2169,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
     anthropic_api_key: str,
     gemini_api_key: str,
 ) -> None:
-    """End-to-end: a deferred capability is loaded on Anthropic (with automatic prompt
-    caching enabled), then the resulting history is replayed on Google. Google has no
-    native tool-search, so it depends entirely on the local-shape `ToolSearchReturnPart`
-    that `ToolSearch.before_model_request` synthesizes when `load_capability` fires —
-    that synthetic return is what makes `lookup_refund_policy` visible on Google's
-    first turn without a fresh `load_capability` call.
-
-    Snapshots capture the full trace (both providers' messages, usage including
-    `cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic side,
-    and Google's final output) so the cross-provider semantics are visible at a glance.
-    """
+    """Deferred capability loads replay across native and local tool-search paths."""
     pytest.importorskip('anthropic')
     pytest.importorskip('google.genai')
 

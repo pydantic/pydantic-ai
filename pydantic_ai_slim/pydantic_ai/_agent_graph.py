@@ -493,11 +493,8 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
-    # Splice in native tools owned by deferred capabilities that have since been loaded.
-    # `CombinedCapability.get_native_tools` filters them out of the baseline, so they only
-    # appear here once `loaded_capability_ids` contains the owning cap id. The mid-run
-    # append intentionally invalidates the prompt cache for that turn — see `defer_loading`
-    # on `AbstractCapability`.
+    # Loaded deferred native tools are added here because they are absent from
+    # the baseline native-tool list.
     raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
 
     def add_loaded_native_tools(capability: AbstractCapability[DepsT]) -> None:

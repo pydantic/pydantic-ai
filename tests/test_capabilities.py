@@ -2577,7 +2577,7 @@ async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     ],
 )
 def test_load_capability_call_part_typed_args(args: Any, expected_id: str | None) -> None:
-    """`typed_args` parses `args` into a `LoadCapabilityArgs` dict, returning `None` for streaming-partial or non-conforming payloads."""
+    """`typed_args` handles valid, partial, and invalid payloads."""
     part = LoadCapabilityCallPart(tool_call_id='c', args=args)
     assert part.capability_id == expected_id
     if expected_id is None:
@@ -2587,7 +2587,7 @@ def test_load_capability_call_part_typed_args(args: Any, expected_id: str | None
 
 
 def test_load_capability_return_part_accessors() -> None:
-    """`LoadCapabilityReturnPart.instructions` is a typed view over `content['instructions']`, `None` when the key is absent."""
+    """`instructions` reads the optional return payload field."""
     with_instructions = LoadCapabilityReturnPart(
         tool_call_id='c',
         content={'instructions': 'Use refunds carefully.'},
@@ -2602,7 +2602,7 @@ def test_load_capability_return_part_accessors() -> None:
 
 
 def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
-    """`narrow_type` promotes a base part tagged `capability-load` and is a no-op on an already-typed part."""
+    """Capability-load narrowing is idempotent."""
     base_call = ToolCallPart(
         tool_name='load_capability',
         tool_call_id='c',
@@ -2914,11 +2914,7 @@ Use the refund tool with the order id, not the customer id.\
 
 
 async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:
-    """Empty/whitespace instructions returned by a deferred capability's toolset are filtered out of the load return.
-
-    Mirrors the filter applied to live (already-loaded) toolset instructions in `_agent_graph._get_instructions`,
-    keeping the emitted hint set consistent between the just-loaded and steady-state phases.
-    """
+    """Empty toolset instructions are filtered from load returns."""
     from dataclasses import dataclass
 
     from pydantic_ai.messages import InstructionPart
@@ -2926,8 +2922,6 @@ async def test_deferred_capability_load_drops_empty_toolset_instructions() -> No
 
     @dataclass
     class _LiteralInstructionsToolset(WrapperToolset[None]):
-        """Returns its `raw` instructions verbatim — bypasses `FunctionToolset`'s upstream empty-content filter."""
-
         raw: tuple[str | InstructionPart, ...] = ()
 
         async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart]:
@@ -7870,7 +7864,7 @@ def test_custom_init_capability_can_initialize_metadata() -> None:
 
 
 def test_combined_capability_rejects_deferred_capability_with_auto_id() -> None:
-    """CombinedCapability validates deferred capability metadata even if custom init skipped `__post_init__`."""
+    """CombinedCapability validates deferred capability metadata."""
 
     @dataclass(init=False)
     class BrokenDeferredCap(AbstractCapability[None]):
@@ -9400,7 +9394,7 @@ def test_prefix_tools_can_override_metadata():
 
 
 async def test_prefix_tools_registration_matches_wrapper_metadata_cases():
-    """Wrappers register themselves, using wrapped metadata unless explicit wrapper metadata is provided."""
+    """Wrappers register themselves with delegated or explicit metadata."""
 
     async def registered_capabilities(capability: AbstractCapability[None]) -> dict[str, AbstractCapability[None]]:
         captured: dict[str, AbstractCapability[None]] = {}
@@ -9602,7 +9596,7 @@ async def test_wrapper_capability_for_run_replaces():
 
 
 async def test_wrapper_capability_for_run_preserves_explicit_metadata() -> None:
-    """WrapperCapability.for_run preserves explicit wrapper metadata when the wrapped capability changes."""
+    """WrapperCapability.for_run preserves explicit wrapper metadata."""
 
     @dataclass
     class SwitchCap(AbstractCapability[None]):

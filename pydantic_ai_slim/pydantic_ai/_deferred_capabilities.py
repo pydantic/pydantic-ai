@@ -11,8 +11,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from ._utils import copy_dataclass_fields
 
-# Imported late by `messages.py`; keep this module limited to base part classes
-# and registration tables to avoid circular imports.
+# Imported late by `messages.py`; avoid imports that would re-enter it.
 from .messages import (
     _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
@@ -32,17 +31,17 @@ class LoadCapabilityArgs(TypedDict):
     id: Annotated[
         str,
         pydantic.Field(
-            description='The id of the capability to load, as shown in the available capabilities list.',
+            description='The id of the capability to load.',
         ),
     ]
-    """ID of the capability to load, as listed in the agent's capability registry."""
+    """ID of the capability to load."""
 
 
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for `load_capability`."""
 
     instructions: NotRequired[str]
-    """Instructions for the model to follow when using the loaded capability. Omitted when the capability declared none."""
+    """Instructions for the loaded capability."""
 
 
 @dataclass(repr=False)
@@ -50,18 +49,13 @@ class LoadCapabilityCallPart(ToolCallPart):
     """Typed `ToolCallPart` for `load_capability`."""
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+    """Tool name for the typed subclass."""
 
     args: str | LoadCapabilityArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Load-capability call payload.
-
-    Narrows the parent's `str | dict[str, Any] | None` to a typed
-    [`LoadCapabilityArgs`][pydantic_ai.messages.LoadCapabilityArgs] when parsed.
-    Streaming / partial-args still arrive as `str` until they're complete.
-    """
+    """Load-capability call payload."""
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (framework-emitted `load_capability` call)."""
+    """Discriminator for the typed subclass."""
 
     @property
     def typed_args(self) -> LoadCapabilityArgs | None:
@@ -94,10 +88,10 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     """
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+    """Tool name for the typed subclass."""
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (framework-emitted `load_capability` return)."""
+    """Discriminator for the typed subclass."""
 
     @property
     def instructions(self) -> str | None:
@@ -131,7 +125,6 @@ def _narrow_load_capability_return(part: ToolReturnPart) -> LoadCapabilityReturn
 _TOOL_CALL_NARROWERS['capability-load'] = _narrow_load_capability_call
 _TOOL_RETURN_NARROWERS['capability-load'] = _narrow_load_capability_return
 
-# Register discriminator tags for typed-part serialization.
 _TYPED_PART_TAGS[('tool-call', 'capability-load')] = 'capability-load-call'
 _TYPED_PART_TAGS[('tool-return', 'capability-load')] = 'capability-load-return'
 
