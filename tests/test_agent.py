@@ -9219,21 +9219,22 @@ async def test_central_content_filter_handling():
 
 async def test_central_content_filter_with_partial_content():
     """
-    Test that the agent graph returns partial content (does not raise exception)
-    even if finish_reason='content_filter', provided parts are not empty.
+    Test that ContentFilterError is raised even when finish_reason='content_filter'
+    accompanies non-empty parts (e.g. a plain-text refusal from OpenAI/Azure).
     """
 
     async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
-            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
+            parts=[TextPart("I'm sorry, but I cannot assist with that request.")],
+            model_name='test-model',
+            finish_reason='content_filter',
         )
 
     model = FunctionModel(function=filtered_response, model_name='test-model')
     agent = Agent(model)
 
-    # Should NOT raise ContentFilterError
-    result = await agent.run('Trigger filter')
-    assert result.output == 'Partially generated content...'
+    with pytest.raises(ContentFilterError, match='Content filter triggered.'):
+        await agent.run('Trigger filter')
 
 
 async def test_agent_allows_none_output_empty_response():
