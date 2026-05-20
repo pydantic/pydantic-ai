@@ -5587,7 +5587,7 @@ async def test_adapter_load_messages_text_with_provider_metadata():
 
 
 async def test_adapter_load_messages_reasoning_streaming_omits_signature():
-    """Test that ReasoningUIPart with state='streaming' omits signature to avoid Anthropic 400 errors."""
+    """Regression test for #5532: streaming reasoning parts omit signatures."""
     ui_messages = [
         UIMessage(
             id='msg1',
@@ -5629,7 +5629,7 @@ async def test_adapter_load_messages_reasoning_streaming_omits_signature():
 
 
 async def test_adapter_load_messages_reasoning_done_preserves_signature():
-    """Test that ReasoningUIPart with state='done' preserves signature."""
+    """Regression test for #5532: completed reasoning parts preserve signatures."""
     ui_messages = [
         UIMessage(
             id='msg1',
