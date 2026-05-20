@@ -101,7 +101,17 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
 
 
-ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, Literal['low', 'medium', 'high', 'xhigh', 'max']] = {
+AnthropicEffort: TypeAlias = Literal['low', 'medium', 'high', 'xhigh', 'max']
+"""Effort values Anthropic accepts at `output_config.effort`.
+
+Distinct from [`ThinkingEffort`][pydantic_ai.settings.ThinkingEffort] (the unified pydantic-ai
+input vocabulary, which has `'minimal'` but no `'max'`): this is Anthropic's wire-level
+vocabulary. Use [`ANTHROPIC_THINKING_EFFORT_MAP`][pydantic_ai.profiles.anthropic.ANTHROPIC_THINKING_EFFORT_MAP]
+to translate between the two.
+"""
+
+
+ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
     'minimal': 'low',
     'low': 'low',
     'medium': 'medium',

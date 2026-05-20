@@ -67,6 +67,7 @@ from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     ANTHROPIC_THINKING_EFFORT_MAP,
     AnthropicCodeExecutionToolVersion,
+    AnthropicEffort,
     AnthropicModelProfile,
 )
 from ..providers import Provider, infer_provider
@@ -348,7 +349,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     for more information.
     """
 
-    anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None
+    anthropic_effort: AnthropicEffort | None
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
@@ -1917,7 +1918,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             assert model_request_parameters.output_object is not None
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
-        effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None = model_settings.get('anthropic_effort')
+        effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
