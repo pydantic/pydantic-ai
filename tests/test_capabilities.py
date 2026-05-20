@@ -45,7 +45,7 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, auto_capability_id, is_auto_capability_id
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
@@ -7826,6 +7826,23 @@ def test_deferred_custom_init_capability_must_initialize_id() -> None:
         DeferredCap()
 
 
+def test_custom_init_capability_must_initialize_base_metadata() -> None:
+    """Custom capability init must initialize `defer_loading` before base validation."""
+
+    @dataclass(init=False)
+    class BrokenCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.__post_init__()
+
+        def __getattribute__(self, name: str) -> Any:
+            if name == 'defer_loading':
+                raise AttributeError(name)
+            return super().__getattribute__(name)
+
+    with pytest.raises(UserError, match='must initialize base dataclass fields'):
+        BrokenCap()
+
+
 def test_custom_init_capability_can_initialize_metadata() -> None:
     """Custom capability init can initialize base metadata without relying on `__new__`."""
 
@@ -7842,6 +7859,29 @@ def test_custom_init_capability_can_initialize_metadata() -> None:
 
     assert cap.id == 'stable'
     assert cap.defer_loading is True
+
+    non_deferred_cap = DeferredCap()
+    assert not hasattr(non_deferred_cap, 'id')
+    assert non_deferred_cap.description is None
+    assert non_deferred_cap.defer_loading is False
+
+
+def test_combined_capability_rejects_deferred_capability_with_auto_id() -> None:
+    """CombinedCapability validates deferred capability metadata even if custom init skipped `__post_init__`."""
+
+    @dataclass(init=False)
+    class BrokenDeferredCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.id = auto_capability_id()
+            self.description = None
+            self.defer_loading = False
+
+    cap = BrokenDeferredCap()
+    cap.defer_loading = True
+
+    assert is_auto_capability_id(cap.id)
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        CombinedCapability([cap])
 
 
 # --- Node run lifecycle hook tests ---
@@ -9556,6 +9596,34 @@ async def test_wrapper_capability_for_run_replaces():
     result = await agent.run('Hello')
     # for_run switches to toolset_b
     assert 'tool_b' in result.output
+
+
+async def test_wrapper_capability_for_run_preserves_explicit_metadata() -> None:
+    """WrapperCapability.for_run preserves explicit wrapper metadata when the wrapped capability changes."""
+
+    @dataclass
+    class SwitchCap(AbstractCapability[None]):
+        name: str = 'before'
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchCap(name='after')
+
+    wrapper = WrapperCapability(
+        wrapped=SwitchCap(),
+        id='explicit-wrapper',
+        description='Explicit wrapper metadata.',
+        defer_loading=False,
+    )
+
+    result = await wrapper.for_run(_build_run_context())
+
+    assert result is not wrapper
+    assert isinstance(result, WrapperCapability)
+    assert result.id == 'explicit-wrapper'
+    assert result.description == 'Explicit wrapper metadata.'
+    assert result.defer_loading is False
+    assert isinstance(result.wrapped, SwitchCap)
+    assert result.wrapped.name == 'after'
 
 
 async def test_wrapper_capability_has_wrap_node_run():
