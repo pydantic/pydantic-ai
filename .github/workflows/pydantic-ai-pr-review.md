@@ -10,6 +10,10 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
+# Mutually exclusive with the legacy `auto-review`-label-triggered reviewer in
+# `bots.yml`: if a PR carries that label, the user has opted into the old
+# reviewer, so skip this one.
+if: ${{ !contains(github.event.pull_request.labels.*.name, 'auto-review') }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
