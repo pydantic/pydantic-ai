@@ -105,6 +105,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.bedrock_supports_tool_choice is True
     # claude-3-5-sonnet predates Anthropic's native structured output support
     assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
     assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert anthropic_profile.supported_native_tools == frozenset()
 
@@ -113,6 +114,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
     assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is True
     assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert anthropic_profile.supported_native_tools == frozenset()
 
@@ -121,6 +123,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
     assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
     assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert anthropic_profile.supported_native_tools == frozenset()
 
@@ -128,6 +131,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-1-20250805')
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
@@ -135,6 +139,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert mistral_profile.bedrock_tool_result_format == 'json'
     assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert mistral_profile.supports_json_schema_output is False
+    assert mistral_profile.bedrock_supports_strict_tool_definition is False
     assert mistral_profile.supported_native_tools == frozenset()
 
     mistral_profile = provider.model_profile('mistral.mistral-large-3-675b-instruct')
@@ -143,6 +148,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert mistral_profile.bedrock_tool_result_format == 'json'
     assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert mistral_profile.supports_json_schema_output is True
+    assert mistral_profile.bedrock_supports_strict_tool_definition is True
     assert mistral_profile.supported_native_tools == frozenset()
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')
@@ -167,6 +173,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(qwen_profile, BedrockModelProfile)
     assert qwen_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.bedrock_supports_strict_tool_definition is True
     assert qwen_profile.supported_native_tools == frozenset()
 
     google_profile = provider.model_profile('google.gemma-3-27b-it')
@@ -174,6 +181,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(google_profile, BedrockModelProfile)
     assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert google_profile.supports_json_schema_output is True
+    assert google_profile.bedrock_supports_strict_tool_definition is True
     assert google_profile.supported_native_tools == frozenset()
 
     # gemma-3-4b-it is NOT in the structured output supported list
@@ -182,18 +190,21 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(google_profile, BedrockModelProfile)
     assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert google_profile.supports_json_schema_output is False
+    assert google_profile.bedrock_supports_strict_tool_definition is False
     assert google_profile.supported_native_tools == frozenset()
 
     minimax_profile = provider.model_profile('minimax.minimax-m2')
     assert isinstance(minimax_profile, BedrockModelProfile)
     assert minimax_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert minimax_profile.supports_json_schema_output is True
+    assert minimax_profile.bedrock_supports_strict_tool_definition is True
     assert minimax_profile.supported_native_tools == frozenset()
 
     nvidia_profile = provider.model_profile('nvidia.nemotron-nano-12b-v2')
     assert isinstance(nvidia_profile, BedrockModelProfile)
     assert nvidia_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert nvidia_profile.supports_json_schema_output is True
+    assert nvidia_profile.bedrock_supports_strict_tool_definition is True
     assert nvidia_profile.supported_native_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')

@@ -392,7 +392,7 @@ def test_bedrock_native_output_format_structure():
                 'structure': {
                     'jsonSchema': {
                         'name': 'CityInfo',
-                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"]}',
+                        'schema': '{"type":"object","properties":{"city":{"type":"string"},"country":{"type":"string"}},"required":["city","country"]}',
                         'description': 'Information about a city',
                     }
                 },
@@ -428,7 +428,7 @@ def test_bedrock_native_output_format_without_name_description():
                 'structure': {
                     'jsonSchema': {
                         'name': 'final_result',
-                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}}}',
+                        'schema': '{"type":"object","properties":{"city":{"type":"string"}}}',
                     }
                 },
             }

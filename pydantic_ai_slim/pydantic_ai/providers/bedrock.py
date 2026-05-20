@@ -126,6 +126,14 @@ class BedrockModelProfile(ModelProfile):
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
     bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
+    bedrock_supports_strict_tool_definition: bool = False
+    """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
+
+    Tracked separately from `supports_json_schema_output` (which gates `NativeOutput` /
+    `outputConfig`) because AWS could in principle ship a model that supports one without the
+    other; today both features track the same per-model allowlist per the Bedrock structured-output
+    docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html.
+    """
 
     bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
     """Which thinking API shape to use for unified thinking translation.
@@ -150,12 +158,14 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         bedrock_thinking_variant='anthropic',
     ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+    supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
+        bedrock_structured_output_unsupported
+    )
     return replace(
         profile,
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=(
-            profile.supports_json_schema_output and not model_name.startswith(bedrock_structured_output_unsupported)
-        ),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
     )
 
 
@@ -184,26 +194,30 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
-    models_that_support_json_schema_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
+    models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
+    supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return replace(
         BedrockModelProfile(
             bedrock_tool_result_format='json',
         ).update(_without_builtin_tools(mistral_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
     )
 
 
 def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
-    models_that_support_json_schema_output = ('qwen3',)
+    models_that_support_structured_output = ('qwen3',)
+    supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return replace(
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
             supports_thinking='qwq' in model_name or 'qwen3' in model_name,
         ).update(_without_builtin_tools(qwen_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
         # Bedrock Converse API doesn't support JSON object mode
         supports_json_object_output=False,
     )
@@ -211,11 +225,13 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model used via Bedrock."""
-    models_that_support_json_schema_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
+    models_that_support_structured_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
+    supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return replace(
         BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
         # Bedrock Converse API doesn't support JSON object mode
         supports_json_object_output=False,
         # Bedrock Converse API doesn't support tool return schemas natively
@@ -232,23 +248,27 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
-    models_that_support_json_schema_output = ('minimax-m2',)
+    models_that_support_structured_output = ('minimax-m2',)
+    supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return replace(
         BedrockModelProfile(),
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
     )
 
 
 def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an NVIDIA model used via Bedrock."""
-    models_that_support_json_schema_output = ('nemotron-nano',)
+    models_that_support_structured_output = ('nemotron-nano',)
+    supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return replace(
         BedrockModelProfile(),
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        supports_json_schema_output=supports_structured_output,
+        bedrock_supports_strict_tool_definition=supports_structured_output,
     )
 
 

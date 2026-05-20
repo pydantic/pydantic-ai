@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import json
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
+from pydantic_core import to_json
 from typing_extensions import ParamSpec, assert_never
 
 try:
@@ -479,15 +479,14 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
-        # AWS Bedrock requires strict mode for NativeOutput so we force it here. AWS co-defines
-        # strict tool calls and structured output as one capability per model
-        # (https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html), so the
-        # same `supports_json_schema_output` flag also gates the strict tool path below.
         if (
             self.profile.supports_json_schema_output
             and model_request_parameters.output_mode == 'native'
             and model_request_parameters.output_object is not None
         ):
+            # Bedrock's structured-output API requires `strict: true` on the output object — see
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+            # so we force it regardless of the caller's setting. Mirrors Anthropic's behavior.
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
@@ -500,7 +499,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
-        if f.strict and self.profile.supports_json_schema_output:
+        if f.strict and self.profile.bedrock_supports_strict_tool_definition:
             tool_spec['strict'] = f.strict
 
         return {'toolSpec': tool_spec}
@@ -519,7 +518,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         json_schema_config: JsonSchemaDefinitionTypeDef = {
             'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
-            'schema': json.dumps(output_object.json_schema),
+            'schema': to_json(output_object.json_schema).decode(),
         }
         if output_object.description:
             json_schema_config['description'] = output_object.description
