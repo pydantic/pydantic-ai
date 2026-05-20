@@ -1104,27 +1104,14 @@ async def test_tool_manager_sequential_tool_call():
 
     prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
 
-    assert (
-        prepared_tool_manager.get_parallel_execution_mode([ToolCallPart(tool_name='tool_a', args={'x': 1})])
-        == 'sequential'
-    )
-    assert (
-        not prepared_tool_manager.get_parallel_execution_mode([ToolCallPart(tool_name='tool_b', args={'x': 1})])
-        == 'sequential'
-    )
+    # A `sequential=True` tool is a per-tool barrier; it no longer forces the whole batch serial.
+    assert prepared_tool_manager.is_sequential(ToolCallPart(tool_name='tool_a', args={'x': 1}))
+    assert not prepared_tool_manager.is_sequential(ToolCallPart(tool_name='tool_b', args={'x': 1}))
 
-    assert (
-        prepared_tool_manager.get_parallel_execution_mode(
-            [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
-        )
-        == 'sequential'
-    )
-    assert (
-        prepared_tool_manager.get_parallel_execution_mode(
-            [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
-        )
-        == 'sequential'
-    )
+    # The run-scoped mode defaults to parallel and isn't affected by per-tool barriers.
+    assert prepared_tool_manager.get_parallel_execution_mode() == 'parallel'
+    with ToolManager.parallel_execution_mode('sequential'):
+        assert prepared_tool_manager.get_parallel_execution_mode() == 'sequential'
 
 
 async def test_visit_and_replace():
