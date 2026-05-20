@@ -29,6 +29,7 @@ from pydantic_graph.basenode import End, NodeRunEndT
 from pydantic_graph.graph_builder import Graph
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._deferred_capabilities import parse_loaded_capabilities
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
@@ -861,6 +862,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        _refresh_loaded_capability_ids(ctx)
+
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
@@ -1430,6 +1433,17 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
+
+
+def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh loaded capability ids from the current graph state."""
+    loaded_capability_ids = {
+        capability.id for capability in ctx.deps.capabilities.values() if capability.defer_loading is not True
+    }
+    loaded_capability_ids.update(parse_loaded_capabilities(ctx.state.message_history))
+
+    ctx.deps.loaded_capability_ids.clear()
+    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
 
 
 def build_validation_context(

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, Union, cast
+from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
 
 import pydantic
 from typing_extensions import NotRequired, TypedDict
@@ -20,6 +21,9 @@ from .messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+if TYPE_CHECKING:
+    from .messages import ModelMessage
 
 
 class LoadCapabilityArgs(TypedDict):
@@ -133,3 +137,19 @@ _TYPED_PART_TAGS[('tool-return', 'capability-load')] = 'capability-load-return'
 
 _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityCallPart] = 'capability-load-call'
 _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityReturnPart] = 'capability-load-return'
+
+
+def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
+    """Parse message history to find capabilities loaded via `load_capability`."""
+    call_id_by_tool_call_id: dict[str, str] = {}
+    loaded: set[str] = set()
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, LoadCapabilityCallPart):
+                if part.capability_id is not None:
+                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
+            elif isinstance(part, LoadCapabilityReturnPart):
+                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
+                if cap_id is not None:
+                    loaded.add(cap_id)
+    return loaded

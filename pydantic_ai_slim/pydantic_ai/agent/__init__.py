@@ -104,22 +104,6 @@ if TYPE_CHECKING:
     from ..ui._web import ModelsParam
 
 
-def _parse_loaded_capabilities(messages: Sequence[_messages.ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via `load_capability`."""
-    call_id_by_tool_call_id: dict[str, str] = {}
-    loaded: set[str] = set()
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, _messages.LoadCapabilityCallPart):
-                if part.capability_id is not None:
-                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
-            elif isinstance(part, _messages.LoadCapabilityReturnPart):
-                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
-                if cap_id is not None:
-                    loaded.add(cap_id)
-    return loaded
-
-
 __all__ = (
     'AbstractAgent',
     'Agent',
@@ -1494,9 +1478,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_capability.apply(_register)
 
         loaded_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
-
-        parsed_loaded_capability_ids = _parse_loaded_capabilities(state.message_history)
-        loaded_capability_ids.update(parsed_loaded_capability_ids)
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,

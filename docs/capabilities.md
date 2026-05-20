@@ -579,7 +579,7 @@ On-demand capabilities currently support instructions, model settings, and funct
 
 Tools in an on-demand capability are hidden until the capability is loaded. Capability-level `defer_loading=True` gates the bundle as a unit, so individual tool `defer_loading` values do not expose tools before loading or keep them behind `search_tools` after loading.
 
-Loaded capability state comes from the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) removes the `load_capability` tool return, the model may need to load the capability again.
+Loaded capability state comes from the [message history](message-history.md) before each model-request step. If you pass in history that already contains a completed `load_capability` call and return, the capability is treated as loaded for the next model request. By the time a [history processor](message-history.md#processing-message-history) or [`before_model_request` hook](hooks.md#model-request-hooks) runs, Pydantic AI has already prepared the tool definitions for the current model request. Inserting or removing `load_capability` parts at that point does not change the current request's tool definitions; the updated history is used when the agent loops into a later model request or the next run. If you synthesize capability-load parts yourself, include both the call and return parts so replay can identify the loaded capability.
 
 [Deferred tool calls](deferred-tools.md#deferred-tools) are separate: they control when a tool call is executed, not whether the model can see a capability.
 
