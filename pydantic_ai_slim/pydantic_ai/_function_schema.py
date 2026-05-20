@@ -344,14 +344,13 @@ def _validate_single_arg(
     *,
     name: str,
 ) -> dict[str, Any]:
-    try:
-        return {name: handler(value)}
-    except ValidationError:
-        # Fall back to unwrapping the `{name: value}` shape produced by a previous validation pass
-        # (e.g. after Temporal serialization/deserialization of already-validated args).
-        if isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]:
-            return {name: handler(value[name])}
-        raise
+    if isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]:
+        # Unwrap the `{name: value}` shape — either from a previous validation pass
+        # or from an LLM that didn't honor the flattened single-arg schema.
+        # Checking shape first avoids the case where pydantic's extra="ignore" (default)
+        # silently drops the wrapper key and the outer handler never raises ValidationError.
+        return {name: handler(value[name])}
+    return {name: handler(value)}
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
