@@ -11,7 +11,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..native_tools._tool_search import ToolSearchTool
-from ..settings import ThinkingLevel
+from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
@@ -99,6 +99,22 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     'xhigh': 32768,
 }
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
+
+
+ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, Literal['low', 'medium', 'high', 'xhigh', 'max']] = {
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'max',
+}
+"""Maps unified thinking effort levels to Anthropic's `output_config.effort` values.
+
+`xhigh` defaults to `'max'` because most Anthropic models accept `'max'` but not `'xhigh'`
+(Bedrock Converse also accepts `'max'` but not `'xhigh'`). Models that natively support
+`'xhigh'` (per [`AnthropicModelProfile.anthropic_supports_xhigh_effort`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_xhigh_effort])
+should pass it through at the call site rather than mapping to `'max'`.
+"""
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:

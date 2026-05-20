@@ -63,11 +63,11 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, ANTHROPIC_THINKING_EFFORT_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel, merge_model_settings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -657,14 +657,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         and isinstance(thinking, str)
                         and 'output_config' not in existing
                     ):
-                        effort_map: dict[ThinkingEffort, str] = {
-                            'minimal': 'low',
-                            'low': 'low',
-                            'medium': 'medium',
-                            'high': 'high',
-                            'xhigh': 'max',
-                        }
-                        existing['output_config'] = {'effort': effort_map[thinking]}
+                        existing['output_config'] = {'effort': ANTHROPIC_THINKING_EFFORT_MAP[thinking]}
             elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
