@@ -4,13 +4,11 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -279,14 +277,6 @@ def normalize_gateway_provider(provider: str) -> str:
     Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
-    if provider == 'google-vertex':
-        warnings.warn(
-            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
-            "Use 'gateway/google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=3,
-        )
-        return 'google-cloud'
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 

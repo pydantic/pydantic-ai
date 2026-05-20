@@ -9,7 +9,7 @@ import pytest
 
 from pydantic_ai import Agent, UserError
 
-from .._inline_snapshot import raises, snapshot
+from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
@@ -109,9 +109,12 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
 
 
 @patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
-def test_gateway_provider_unknown():
-    with raises(snapshot('UserError: Unknown upstream provider: foo')):
-        gateway_provider('foo')
+@pytest.mark.parametrize('removed_alias', ['foo', 'google-vertex', 'gemini'])
+def test_gateway_provider_unknown(removed_alias: str):
+    # `google-vertex` and `gemini` were removed in v2 alongside their bare-prefix counterparts —
+    # `gateway/google-vertex:` and `gateway/gemini:` raise the same `UserError` as any other unknown alias.
+    with pytest.raises(UserError, match=f'Unknown upstream provider: {removed_alias}'):
+        gateway_provider(removed_alias)
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
