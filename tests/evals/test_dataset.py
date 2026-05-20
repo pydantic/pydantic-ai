@@ -178,8 +178,8 @@ async def test_evaluate_too_many_positional_args_raises(
 ):
     """More positionals than legacy slots should still be a TypeError."""
 
-    async def task(inputs: TaskInput) -> TaskOutput:
-        return TaskOutput(answer=inputs.query)
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        raise AssertionError('task should not be called when evaluate() rejects bad positional args')
 
     with pytest.raises(TypeError, match='takes at most'):
         await example_dataset.evaluate(task, 'n', None, True, None, None, 'extra')
