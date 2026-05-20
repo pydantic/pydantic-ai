@@ -1,43 +1,63 @@
 # Pydantic AI Harness
 
-## Local setup
+## Repository purpose
 
-On first session, if `CLAUDE.local.md` does not exist, create it with the following content:
+`pydantic-ai-harness` is the first-party capability library for Pydantic AI.
 
-```markdown
-This file is checked into the repository but ignored, any changes made stay local.
+Pydantic AI core owns the primitive runtime: agent loop semantics, normalized
+messages, model/provider/profile behavior, tool execution semantics, durable
+execution primitives, and generic capability hooks.
 
-Use this file only to persist information about the specific workstation you are used on.
+Harness owns optional, batteries-included compositions built from those
+primitives: coding-agent tools, guardrails, memory, context management, repo
+tools, verification loops, skills, planning, sub-agents, and other reusable
+agent behaviors.
 
-Capabilities branch is checked out at: <absolute path to the capabilities branch checkout on this system>
-```
-
-Fill in the absolute path where the `capabilities` branch of `pydantic-ai` is checked out on your system. If unknown, ask the user.
+When a change needs new core semantics, stop and propose the Pydantic AI core
+change instead of reimplementing core behavior in harness.
 
 ## Vocabulary
 
-- **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-ai-harness
+- **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-ai-harness.
 - **Hook**: a lifecycle method on `AbstractCapability` that intercepts agent graph execution (e.g. `before_model_request`, `wrap_run`, `after_tool_execute`)
 - **Toolset**: a collection of tools that a capability can provide to the agent
 - **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuardrail`, `CostGuard`)
-- **Harness**: this package -- a collection of pre-made capabilities for pydantic-ai
+- **Harness**: this package -- a collection of pre-made capabilities for Pydantic AI.
 - **AICA**: AI Code Assistant -- the automated agent that implements issues, reviews plans, and handles PR feedback
 - **Ralph loop**: the state-machine-based workflow that drives AICA through phases (TRIAGE -> GOALS -> PLAN -> CODE -> VERIFY -> REVIEW -> PUBLISH)
 - **DDD+ protocol**: classification system for PR review comments (do, dismiss, discuss, waiting, done)
 
+## AICA preflight
+
+Before implementing or reviewing a capability change:
+
+1. Read `agent_docs/index.md`.
+2. Read the linked `agent_docs/` guide for the task.
+3. Read the public Pydantic AI docs for every integration point you touch:
+   - capabilities: <https://pydantic.dev/docs/ai/core-concepts/capabilities/>
+   - hooks: <https://pydantic.dev/docs/ai/core-concepts/hooks/>
+   - toolsets: <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/>
+   - advanced tools: <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/>
+   - agents: <https://pydantic.dev/docs/ai/core-concepts/agent/>
+   - testing: <https://pydantic.dev/docs/ai/guides/testing/>
+4. Inspect the installed `pydantic_ai` package source for exact hook/toolset
+   signatures when needed. Do not assume a contributor's local checkout layout.
+5. Use `pydantic_ai_harness.code_mode` as the exemplar for capability shape,
+   docs, tests, and public exports until another capability becomes a better
+   example.
+
 ## Capabilities API reference
 
-When implementing a new capability, reference these docs in the pydantic-ai repo (path in `CLAUDE.local.md`):
+When implementing a new capability, reference these docs:
 
-- `docs/capabilities.md` -- main capabilities documentation, usage patterns, built-in capabilities
-- `docs/hooks.md` -- lifecycle hooks reference, hook ordering, all hook categories
-- `docs/extensibility.md` -- publishing capabilities as packages, spec serialization
-- `docs/toolsets.md` -- toolset abstraction, building tools for capabilities
-- `docs/tools-advanced.md` -- tool hooks, prepare_tools, tool validation
-- `docs/agent.md` -- agent configuration, instructions, model settings
-- `pydantic_ai_slim/pydantic_ai/capabilities/abstract.py` -- the `AbstractCapability` base class (all hook methods)
-- `pydantic_ai_slim/pydantic_ai/capabilities/hooks.py` -- decorator-based `Hooks` capability
-- `pydantic_ai_slim/pydantic_ai/capabilities/combined.py` -- `CombinedCapability` for composition
+- <https://pydantic.dev/docs/ai/core-concepts/capabilities/> -- main capabilities documentation, usage patterns, built-in capabilities
+- <https://pydantic.dev/docs/ai/core-concepts/hooks/> -- lifecycle hooks reference, hook ordering, all hook categories
+- <https://pydantic.dev/docs/ai/guides/extensibility/> -- publishing capabilities as packages, spec serialization
+- <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/> -- toolset abstraction, building tools for capabilities
+- <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/> -- tool hooks, prepare tools, tool validation
+- <https://pydantic.dev/docs/ai/core-concepts/agent/> -- agent configuration, instructions, model settings
+- Installed `pydantic_ai.capabilities` source -- `AbstractCapability`, hook signatures, and composition behavior
+- Installed `pydantic_ai.toolsets` source -- `AbstractToolset`, `WrapperToolset`, and `ToolsetTool`
 
 ## Coding standards
 
@@ -84,12 +104,19 @@ tests/
     test_<capability>.py
 ```
 
+Do not add placeholder template files for new capabilities. Start from the
+existing `CodeMode` package shape, then delete what the new capability does not
+need.
+
 ## Testing patterns
 
 - Use `pydantic_ai.models.TestModel` for all tests (no real API calls)
 - `ALLOW_MODEL_REQUESTS = False` is set globally in `conftest.py`
 - Tests use `pytest-anyio` for async support
 - Each capability test class follows: `TestCapabilityName` with methods `test_<scenario>`
+- Prefer tests through `Agent(..., capabilities=[...])` when that is the public
+  behavior. Use direct `Toolset`/`RunContext` tests for lower-level lifecycle,
+  schema, retry, or wrapper behavior that is hard to isolate through `Agent`.
 
 ## Contributing rules for AICAs
 
