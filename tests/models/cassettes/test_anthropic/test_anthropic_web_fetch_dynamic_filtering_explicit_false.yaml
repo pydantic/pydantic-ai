@@ -1,0 +1,113 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '445'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Fetch https://example.com and reply with only the page title.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        citations: null
+        max_content_tokens: null
+        max_uses: null
+        name: web_fetch
+        type: web_fetch_20250910
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1332'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6b46a3aa399d78179e4a4fdc5a79f161-45a732253b6de0a3-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - id: srvtoolu_012enTdpDSLmWLQWjop3RAxj
+        input:
+          url: https://example.com
+        name: web_fetch
+        type: server_tool_use
+      - caller:
+          type: direct
+        content:
+          content:
+            source:
+              data: |-
+                ---
+                meta-viewport: width=device-width, initial-scale=1
+                title: Example Domain
+                ---
+
+
+                # Example Domain
+
+                This domain is for use in documentation examples without needing permission. Avoid use in operations.
+
+                [Learn more](https://iana.org/domains/example)
+              media_type: text/plain
+              type: text
+            title: Example Domain
+            type: document
+          retrieved_at: '2026-05-13T01:09:14.925000+00:00'
+          type: web_fetch_result
+          url: https://example.com
+        tool_use_id: srvtoolu_012enTdpDSLmWLQWjop3RAxj
+        type: web_fetch_tool_result
+      - text: '**Example Domain**'
+        type: text
+      id: msg_01WBKZJrHTGWrcPZotwwT4cF
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 5753
+        output_tokens: 65
+        server_tool_use:
+          web_fetch_requests: 1
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

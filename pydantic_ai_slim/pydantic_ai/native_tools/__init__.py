@@ -170,6 +170,19 @@ class WebSearchTool(AbstractNativeTool):
     * Anthropic
     """
 
+    dynamic_filtering: bool | None = None
+    """Whether to use dynamic filtering (Anthropic `web_search_20260209`).
+
+    When ``True``, requires ``CodeExecutionTool`` to also be enabled and the model
+    must support the ``20260209`` tool version.  When ``None`` (the default), dynamic
+    filtering is auto-enabled when both conditions are met.  ``False`` forces the
+    older ``web_search_20250305`` version.
+
+    Supported by:
+
+    * Anthropic
+    """
+
     kind: str = 'web_search'
     """The kind of tool."""
 
@@ -354,6 +367,19 @@ class WebFetchTool(AbstractNativeTool):
 
     max_content_tokens: int | None = None
     """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    dynamic_filtering: bool | None = None
+    """Whether to use dynamic filtering (Anthropic `web_fetch_20260209`).
+
+    When ``True``, requires ``CodeExecutionTool`` to also be enabled and the model
+    must support the ``20260209`` tool version.  When ``None`` (the default), dynamic
+    filtering is auto-enabled when both conditions are met.  ``False`` forces the
+    older ``web_fetch_20250910`` version.
 
     Supported by:
 

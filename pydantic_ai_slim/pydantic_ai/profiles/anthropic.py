@@ -89,6 +89,15 @@ class AnthropicModelProfile(ModelProfile):
     Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
     """
 
+    anthropic_supports_dynamic_filtering: bool = False
+    """Whether the model supports the `web_search_20260209` / `web_fetch_20260209` tool versions
+    with dynamic filtering.
+
+    Dynamic filtering requires `CodeExecutionTool` to be present. When `True` and
+    `dynamic_filtering` is `None` (auto), the newer tool versions are used automatically
+    if `CodeExecutionTool` is also enabled.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -133,6 +142,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         model_name
     )
     supports_task_budgets = model_name.startswith('claude-opus-4-7')
+    supports_dynamic_filtering = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7'))
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
@@ -164,6 +174,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
+        anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         supported_native_tools=supported_native_tools,
     )
 

@@ -91,6 +91,7 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
+                    'dynamic_filtering': None,
                 },
                 {'kind': 'code_execution', 'optional': False},
                 {
@@ -101,6 +102,7 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'enable_citations': False,
                     'max_content_tokens': None,
+                    'dynamic_filtering': None,
                 },
                 {
                     'kind': 'image_generation',
