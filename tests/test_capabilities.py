@@ -1834,6 +1834,11 @@ Supported by:
                     'title': 'Capabilities',
                     'type': 'array',
                 },
+                'import_capability_types': {
+                    'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Import Capability Types',
+                },
                 '$schema': {'type': 'string'},
             },
             'title': 'AgentSpec',
