@@ -5951,7 +5951,6 @@ class TestMultipleToolCalls:
     def test_sequential_tool_is_a_per_tool_barrier(self):
         """A `sequential=True` tool runs alone; other tools parallelize around it."""
         active = 0
-        max_concurrent_with_barrier = 0
         barrier_ran_alone = True
 
         def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6072,6 +6071,46 @@ class TestMultipleToolCalls:
         assert result.output.value == 'ok'
         # The first-round output failed, so the function tool ran rather than being skipped.
         assert called == ['regular_tool']
+
+    def test_exhaustive_tool_exception_captures_partial_request(self):
+        """Under `exhaustive`, a tool raising mid-batch still surfaces completed tool returns in the
+        partial `state='interrupted'` request."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('good_tool', {'x': 1}, tool_call_id='call_good'),
+                    ToolCallPart('bad_tool', {'x': 2}, tool_call_id='call_bad'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(return_model), end_strategy='exhaustive')
+
+        @agent.tool_plain(sequential=True)
+        def good_tool(x: int) -> int:
+            return x * 10
+
+        @agent.tool_plain(sequential=True)
+        def bad_tool(x: int) -> int:
+            raise RuntimeError('tool-failure')
+
+        with capture_run_messages() as messages:
+            with pytest.raises(RuntimeError, match='tool-failure'):
+                agent.run_sync('test')
+
+        interrupted = messages[-1]
+        assert isinstance(interrupted, ModelRequest)
+        assert interrupted.state == 'interrupted'
+        assert interrupted.parts == snapshot(
+            [
+                ToolReturnPart(
+                    tool_name='good_tool',
+                    content=10,
+                    tool_call_id='call_good',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order

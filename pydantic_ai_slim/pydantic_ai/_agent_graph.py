@@ -1653,9 +1653,7 @@ async def _process_exhaustive(  # noqa: C901
     output_results: dict[int, _OutputCallResult[NodeRunEndT]] = {}
     for i in output_indices:
         if externally_won_id is not None and tool_calls[i].tool_call_id == externally_won_id:
-            output_results[i] = _OutputCallResult(
-                call=tool_calls[i], args_valid=True, final_result=state.final_result
-            )
+            output_results[i] = _OutputCallResult(call=tool_calls[i], args_valid=True, final_result=state.final_result)
 
     # Segment by barriers: a `sequential=True` tool (or run-scoped 'sequential' mode) runs alone.
     global_sequential = tool_manager.get_parallel_execution_mode() == 'sequential'
@@ -1762,9 +1760,7 @@ async def _process_exhaustive(  # noqa: C901
                 r = output_results.get(i)
                 if r is None:
                     continue  # pragma: no cover  # every output index is populated above
-                is_winner = (
-                    state.final_result is not None and r.call.tool_call_id == state.final_result.tool_call_id
-                )
+                is_winner = state.final_result is not None and r.call.tool_call_id == state.final_result.tool_call_id
                 if is_winner and final_result_was_set_externally:
                     # Streamed-in winner: record "processed" without claiming it was selected here.
                     part = _make_output_status_part(r.call, 'Final result processed.', output_parts)
@@ -1790,9 +1786,7 @@ async def _process_exhaustive(  # noqa: C901
                 if i in function_user_parts:
                     output_parts.append(function_user_parts[i])
 
-    _populate_deferred_calls(
-        tool_calls, deferred_by_index, deferred_meta_by_index, deferred_calls, deferred_metadata
-    )
+    _populate_deferred_calls(tool_calls, deferred_by_index, deferred_meta_by_index, deferred_calls, deferred_metadata)
 
 
 async def process_tool_calls(  # noqa: C901
@@ -1951,7 +1945,9 @@ async def process_tool_calls(  # noqa: C901
                 if tool_def is not None and tool_def.kind == 'function':
                     retry_wins_triggered = True
 
-    def emit_settled_output(r: _OutputCallResult[NodeRunEndT], *, is_winner: bool) -> Iterator[_messages.HandleResponseEvent]:
+    def emit_settled_output(
+        r: _OutputCallResult[NodeRunEndT], *, is_winner: bool
+    ) -> Iterator[_messages.HandleResponseEvent]:
         """Append the message-history part and emit events for a settled output result."""
         if r.final_result is not None:
             if is_winner:
@@ -2295,8 +2291,7 @@ async def _call_tools(  # noqa: C901
                     yield event
             else:
                 tasks_by_index = {
-                    index: asyncio.create_task(call_tool(index), name=tool_calls[index].tool_name)
-                    for index in segment
+                    index: asyncio.create_task(call_tool(index), name=tool_calls[index].tool_name) for index in segment
                 }
                 index_by_task = {task: index for index, task in tasks_by_index.items()}
                 try:
