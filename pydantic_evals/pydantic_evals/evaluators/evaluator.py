@@ -6,10 +6,9 @@ from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, cast
 
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
-from .._warnings import warn_positional_dataclass_init
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -57,11 +56,7 @@ EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covar
 T = TypeVar('T')
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
-# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
-# identity → value → source metadata) while we're free to rearrange.
-@warn_positional_dataclass_init
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
 
@@ -104,11 +99,7 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
-# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
-# identity → error detail → source metadata) while we're free to rearrange.
-@warn_positional_dataclass_init
-@dataclass
+@dataclass(kw_only=True)
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
 
@@ -182,12 +173,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
     ```
     """
 
-    @classmethod
-    @deprecated('`name` has been renamed, use `get_serialization_name` instead.')
-    def name(cls) -> str:
-        """`name` has been renamed, use `get_serialization_name` instead."""
-        return cls.get_serialization_name()
-
     def get_default_evaluation_name(self) -> str:
         """Return the default name to use in reports for the output of this evaluator.
 
@@ -199,13 +184,9 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
-        # TODO(v2): declare `evaluation_name: ClassVar[str | None] = None` on the
-        # base (alongside `evaluator_version`) and read it directly.
         evaluation_name = getattr(self, 'evaluation_name', None)
         if isinstance(evaluation_name, str):
-            # If the evaluator has an attribute `name` of type string, use that
             return evaluation_name
-
         return self.get_serialization_name()
 
     @abstractmethod
