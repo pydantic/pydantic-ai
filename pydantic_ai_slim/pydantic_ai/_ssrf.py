@@ -29,12 +29,30 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.IPv4Network('169.254.0.0/16'),  # Link-local (includes cloud metadata)
     ipaddress.IPv4Network('0.0.0.0/8'),  # "This" network
     ipaddress.IPv4Network('100.64.0.0/10'),  # CGNAT (RFC 6598), includes Alibaba Cloud metadata
-    # IPv6 private ranges
+    # IPv4 IANA-reserved / special-purpose ranges (not globally routable)
+    ipaddress.IPv4Network('192.0.0.0/24'),  # IETF Protocol Assignments (RFC 6890)
+    ipaddress.IPv4Network('192.0.2.0/24'),  # TEST-NET-1 (RFC 5737)
+    ipaddress.IPv4Network('198.18.0.0/15'),  # Network benchmarking (RFC 2544)
+    ipaddress.IPv4Network('198.51.100.0/24'),  # TEST-NET-2 (RFC 5737)
+    ipaddress.IPv4Network('203.0.113.0/24'),  # TEST-NET-3 (RFC 5737)
+    ipaddress.IPv4Network('224.0.0.0/4'),  # Multicast (RFC 5771)
+    ipaddress.IPv4Network('240.0.0.0/4'),  # Reserved + limited broadcast 255.255.255.255 (RFC 1112)
+    # IPv6 private ranges (6to4 — 2002::/16 — is handled via normalization in _normalize_ip)
     ipaddress.IPv6Network('::1/128'),  # Loopback
     ipaddress.IPv6Network('fe80::/10'),  # Link-local
     ipaddress.IPv6Network('fc00::/7'),  # Unique local address
-    ipaddress.IPv6Network('2002::/16'),  # 6to4 (can embed private IPv4 addresses)
+    # IPv6 IANA-reserved / special-purpose ranges
+    ipaddress.IPv6Network('::/128'),  # Unspecified address
+    ipaddress.IPv6Network('100::/64'),  # Discard prefix (RFC 6666)
+    ipaddress.IPv6Network('2001::/32'),  # Teredo tunneling (RFC 4380)
+    ipaddress.IPv6Network('2001:db8::/32'),  # Documentation (RFC 3849)
+    ipaddress.IPv6Network('ff00::/8'),  # Multicast (RFC 4291)
 )
+
+# NAT64 well-known prefix (RFC 6052): 64:ff9b::/96 embeds an IPv4 address in
+# its low 32 bits and, in NAT64-configured networks, transparently translates
+# to that IPv4 endpoint. We normalize these so the embedded IPv4 is checked.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network('64:ff9b::/96')
 
 # Cloud metadata IPs - always blocked, even with allow_local=True
 # These need to be checked explicitly because when allow_local=True,
@@ -72,12 +90,41 @@ class ResolvedUrl:
     """The path including query string and fragment."""
 
 
+def _normalize_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Parse `ip_str`, unwrapping IPv6 transition addresses to their embedded IPv4 form.
+
+    Dual-stack and translated networks route the IPv6 forms below to the underlying
+    IPv4 endpoint, so the IPv6 wrapper must not be allowed to disguise an
+    otherwise-blocked IPv4 address. Handles:
+
+    - IPv4-mapped IPv6 (e.g., `::ffff:1.2.3.4`) — RFC 4291 §2.5.5.2
+    - 6to4 (e.g., `2002:0102:0304::`) — RFC 3056
+    - NAT64 well-known prefix (e.g., `64:ff9b::1.2.3.4`) — RFC 6052
+
+    Raises:
+        ValueError: If `ip_str` is not a valid IP address.
+    """
+    ip = ipaddress.ip_address(ip_str)
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            return ip.ipv4_mapped
+        if ip.sixtofour:
+            return ip.sixtofour
+        if ip in _NAT64_WELL_KNOWN_PREFIX:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def is_cloud_metadata_ip(ip_str: str) -> bool:
     """Check if an IP address is a cloud metadata endpoint.
 
     These are always blocked for security reasons, even with allow_local=True.
     """
-    return ip_str in _CLOUD_METADATA_IPS
+    try:
+        ip = _normalize_ip(ip_str)
+    except ValueError:
+        return False
+    return str(ip) in _CLOUD_METADATA_IPS
 
 
 def is_private_ip(ip_str: str) -> bool:
@@ -86,16 +133,11 @@ def is_private_ip(ip_str: str) -> bool:
     Handles both IPv4 and IPv6 addresses, including IPv4-mapped IPv6 addresses.
     """
     try:
-        ip = ipaddress.ip_address(ip_str)
-
-        # Handle IPv4-mapped IPv6 addresses (e.g., ::ffff:192.168.1.1)
-        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-            ip = ip.ipv4_mapped
-
-        return any(ip in network for network in _PRIVATE_NETWORKS)
+        ip = _normalize_ip(ip_str)
     except ValueError:
         # Invalid IP address, treat as potentially dangerous
         return True
+    return any(ip in network for network in _PRIVATE_NETWORKS)
 
 
 async def resolve_hostname(hostname: str) -> list[str]:
