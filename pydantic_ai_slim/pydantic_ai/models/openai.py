@@ -397,6 +397,47 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _is_invalid_encrypted_content_error(e: APIStatusError) -> bool:
+    body_any: object = e.body
+
+    if e.status_code != 400 or not isinstance(body_any, dict):
+        return False
+
+    body = cast(dict[str, object], body_any)
+    error = body.get('error')
+    if not isinstance(error, dict):
+        return False
+
+    error_data = cast(dict[str, object], error)
+    return error_data.get('code') == 'invalid_encrypted_content'
+
+
+def _has_encrypted_reasoning_content(openai_messages: list[responses.ResponseInputItemParam]) -> bool:
+    return any(
+        isinstance(message, dict) and message.get('type') == 'reasoning' and bool(message.get('encrypted_content'))
+        for message in openai_messages
+    )
+
+
+def _should_retry_invalid_encrypted_content(
+    e: APIStatusError,
+    *,
+    stream: bool,
+    model_settings: OpenAIResponsesModelSettings,
+    profile: OpenAIModelProfile,
+    openai_messages: list[responses.ResponseInputItemParam],
+) -> bool:
+    send_reasoning_ids = model_settings.get(
+        'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
+    )
+    return (
+        send_reasoning_ids
+        and not stream
+        and _is_invalid_encrypted_content_error(e)
+        and _has_encrypted_reasoning_content(openai_messages)
+    )
+
+
 def _merge_leading_system_messages(
     openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
 ) -> list[chat.ChatCompletionMessageParam]:
@@ -2294,7 +2335,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         profile = OpenAIModelProfile.from_profile(self.profile)
-
+        original_messages = messages
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
             include.append('reasoning.encrypted_content')
@@ -2353,6 +2394,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                     return model_response
+                if _should_retry_invalid_encrypted_content(
+                    e,
+                    stream=stream,
+                    model_settings=model_settings,
+                    profile=profile,
+                    openai_messages=request_params.input,
+                ):
+                    retry_model_settings: OpenAIResponsesModelSettings = {
+                        **model_settings,
+                        'openai_send_reasoning_ids': False,
+                    }
+                    return await self._responses_create(
+                        original_messages, stream, retry_model_settings, model_request_parameters
+                    )
                 raise
 
     def _translate_thinking(
