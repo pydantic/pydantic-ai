@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '150'
+      - '405'
       content-type:
       - application/json
       host:
@@ -17,23 +17,34 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is 2+2?
+        - text: 'Return exactly this payment amount: 12.34'
         role: user
       generationConfig:
-        thinking_config:
-          includeThoughts: true
-          thinkingBudget: 1024
+        responseJsonSchema:
+          properties:
+            amount:
+              anyOf:
+              - type: number
+              - pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+                type: string
+          required:
+          - amount
+          title: Payment
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1025'
+      - '417'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1380
+      - gfet4t7; dur=998
       transfer-encoding:
       - chunked
       vary:
@@ -44,25 +55,21 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |
-              **Calculating the Simple**
-
-              Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
-            thought: true
-          - text: 2 + 2 = 4
+          - text: '{"amount": 12.34}'
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: lghYaaSmK7eomtkP_KDT6A0
+      responseId: NMoLaoiyAvKIz7IPyp6DkQE
       usageMetadata:
-        candidatesTokenCount: 8
-        promptTokenCount: 8
+        candidatesTokenCount: 10
+        promptTokenCount: 13
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 8
-        thoughtsTokenCount: 16
-        totalTokenCount: 32
+          tokenCount: 13
+        serviceTier: standard
+        thoughtsTokenCount: 61
+        totalTokenCount: 84
     status:
       code: 200
       message: OK

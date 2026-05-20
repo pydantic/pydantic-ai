@@ -82,6 +82,18 @@ class TestIsPrivateIp:
             '100.64.0.1',
             '100.127.255.255',
             '100.100.100.200',  # Alibaba Cloud metadata
+            # IPv4 IANA-reserved / special-purpose ranges
+            '192.0.0.1',  # IETF Protocol Assignments (RFC 6890)
+            '192.0.0.170',  # NAT64 well-known address
+            '192.0.2.1',  # TEST-NET-1
+            '198.18.0.1',  # Network benchmarking (RFC 2544)
+            '198.19.255.255',
+            '198.51.100.1',  # TEST-NET-2
+            '203.0.113.1',  # TEST-NET-3
+            '224.0.0.1',  # Multicast (RFC 5771)
+            '239.255.255.255',
+            '240.0.0.1',  # Reserved for future use
+            '255.255.255.255',  # Limited broadcast
             # IPv6 loopback
             '::1',
             # IPv6 link-local
@@ -94,6 +106,15 @@ class TestIsPrivateIp:
             '2002::1',
             '2002:c0a8:0101::1',  # Embeds 192.168.1.1
             '2002:0a00:0001::1',  # Embeds 10.0.0.1
+            # IPv6 IANA-reserved / special-purpose ranges
+            '::',  # Unspecified
+            '100::1',  # Discard prefix (RFC 6666)
+            '2001::1',  # Teredo tunneling (RFC 4380)
+            '2001:db8::1',  # Documentation (RFC 3849)
+            'ff02::1',  # Multicast (RFC 4291)
+            # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
+            '64:ff9b::192.168.1.1',
+            '64:ff9b::a9fe:a9fe',  # Wraps 169.254.169.254
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -105,8 +126,8 @@ class TestIsPrivateIp:
             # Public IPv4
             '8.8.8.8',
             '1.1.1.1',
-            '203.0.113.50',
-            '198.51.100.1',
+            '93.184.215.14',  # example.com
+            '140.82.114.4',  # github.com
             # Public IPv6
             '2001:4860:4860::8888',
             '2606:4700:4700::1111',
@@ -172,6 +193,58 @@ class TestIsCloudMetadataIp:
     )
     def test_non_metadata_ips(self, ip: str) -> None:
         assert is_cloud_metadata_ip(ip) is False
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '::ffff:169.254.169.254',  # IPv4-mapped form of AWS/GCP/Azure metadata
+            '::ffff:a9fe:a9fe',  # Same IP, hex-encoded last 32 bits
+            '::ffff:100.100.100.200',  # IPv4-mapped form of Alibaba metadata
+        ],
+    )
+    def test_ipv4_mapped_ipv6_metadata_detected(self, ip: str) -> None:
+        """IPv4-mapped IPv6 forms of metadata IPs must be blocked.
+
+        Dual-stack hosts route `::ffff:a.b.c.d` to the underlying IPv4 address,
+        so allowing these would bypass the cloud-metadata blocklist when callers
+        opt into `allow_local=True`. Regression test for the incomplete fix of
+        GHSA-2jrp-274c-jhv3.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '64:ff9b::169.254.169.254',  # NAT64 wrap of AWS/GCP/Azure metadata
+            '64:ff9b::a9fe:a9fe',  # Same, hex form of low 32 bits
+            '64:ff9b::100.100.100.200',  # NAT64 wrap of Alibaba metadata
+        ],
+    )
+    def test_nat64_metadata_detected(self, ip: str) -> None:
+        """NAT64-wrapped (RFC 6052) metadata IPs must be blocked.
+
+        In NAT64-configured networks, `64:ff9b::a.b.c.d` translates transparently
+        to the IPv4 endpoint, so the wrapper must not disguise a metadata IP.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '2002:a9fe:a9fe::',  # 6to4 embedding 169.254.169.254 (AWS/GCP/Azure)
+            '2002:6464:64c8::',  # 6to4 embedding 100.100.100.200 (Alibaba)
+        ],
+    )
+    def test_6to4_metadata_detected(self, ip: str) -> None:
+        """6to4-encoded (RFC 3056) metadata IPs must be blocked.
+
+        On hosts with 6to4 routing, `2002:WWXX:YYZZ::` translates to the embedded
+        IPv4 `W.X.Y.Z`, so the wrapper must not disguise a metadata IP.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    def test_invalid_ip_not_metadata(self) -> None:
+        assert is_cloud_metadata_ip('not-an-ip') is False
 
 
 class TestValidateUrlProtocol:
@@ -378,6 +451,45 @@ class TestValidateAndResolveUrl:
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
 
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'http://[::ffff:169.254.169.254]/latest/meta-data/',  # IPv4-mapped IPv6 literal
+            'http://[::ffff:a9fe:a9fe]/latest/meta-data/',  # Same address, hex form
+            'http://[::ffff:100.100.100.200]/latest/meta-data/',  # Alibaba via IPv4-mapped IPv6
+            'http://[64:ff9b::169.254.169.254]/latest/meta-data/',  # NAT64 wrap of metadata IP
+            'http://[64:ff9b::a9fe:a9fe]/latest/meta-data/',  # Same, hex form
+            'http://[2002:a9fe:a9fe::]/latest/meta-data/',  # 6to4 wrap of metadata IP
+        ],
+    )
+    async def test_transition_address_metadata_url_blocked_with_allow_local(self, url: str) -> None:
+        """IPv6-encoded transition forms of metadata URLs must be blocked even with `allow_local=True`.
+
+        Regression test for the incomplete fix of GHSA-2jrp-274c-jhv3: previously the
+        cloud-metadata check did a string-only comparison, so IPv6 wrappers (IPv4-mapped
+        IPv6, NAT64 well-known prefix) bypassed it while dual-stack / NAT64 routing
+        still delivered the request to the underlying IPv4 metadata endpoint.
+        """
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url(url, allow_local=True)
+
+    async def test_ipv4_mapped_ipv6_metadata_dns_blocked_with_allow_local(self, mock_dns: AsyncMock) -> None:
+        """A hostname that resolves to the IPv4-mapped IPv6 form of a metadata IP is still blocked."""
+        mock_dns.return_value = [(10, 1, 6, '', ('::ffff:169.254.169.254', 0, 0, 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://attacker.example.com/path', allow_local=True)
+
+    async def test_iana_reserved_ipv4_blocked(self, mock_dns: AsyncMock) -> None:
+        """IANA-reserved IPv4 ranges (TEST-NETs, benchmarking, etc.) are blocked by default."""
+        mock_dns.return_value = [(2, 1, 6, '', ('198.18.0.1', 0))]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://benchmark.example.com/path', allow_local=False)
+
+    async def test_nat64_private_ipv4_blocked(self) -> None:
+        """NAT64-wrapped private IPv4 addresses are blocked by default."""
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://[64:ff9b::192.168.1.1]/path', allow_local=False)
+
     async def test_literal_ip_address_in_url(self) -> None:
         resolved = await validate_and_resolve_url('http://8.8.8.8/path', allow_local=False)
         assert resolved.resolved_ip == '8.8.8.8'
@@ -442,7 +554,7 @@ class TestSafeDownload:
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('203.0.113.50', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
         mock_client = AsyncMock()
@@ -532,7 +644,7 @@ class TestSafeDownload:
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('203.0.113.50', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
         mock_client = AsyncMock()
@@ -691,7 +803,7 @@ class TestSafeDownload:
         """Test that redirects to blocked domains are caught."""
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('198.51.100.1', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
@@ -709,7 +821,7 @@ class TestSafeDownload:
         """Test that redirects to non-allowed domains are caught."""
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('198.51.100.1', 0))],
+            [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True

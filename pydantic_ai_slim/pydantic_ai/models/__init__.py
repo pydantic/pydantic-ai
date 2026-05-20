@@ -26,7 +26,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
+from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -193,6 +193,17 @@ KnownModelName = TypeAliasType(
         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3.1-pro-preview',
         'gateway/google-cloud:gemini-3.5-flash',
+        'gateway/google:gemini-2.5-flash-image',
+        'gateway/google:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google:gemini-2.5-flash-lite',
+        'gateway/google:gemini-2.5-flash',
+        'gateway/google:gemini-2.5-pro',
+        'gateway/google:gemini-3-flash-preview',
+        'gateway/google:gemini-3-pro-image-preview',
+        'gateway/google:gemini-3.1-flash-image-preview',
+        'gateway/google:gemini-3.1-flash-lite-preview',
+        'gateway/google:gemini-3.1-pro-preview',
+        'gateway/google:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -1414,13 +1425,6 @@ def infer_model(  # noqa: C901
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
 
-    if provider_name == 'vertexai':  # pragma: no cover
-        warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
-            PydanticAIDeprecationWarning,
-        )
-        provider_name = 'google-cloud'
-
     provider = provider_factory(provider_name)
 
     model_kind = provider_name
@@ -1451,7 +1455,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

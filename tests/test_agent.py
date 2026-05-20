@@ -89,8 +89,6 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -145,16 +143,6 @@ else:
         GoogleProvider = None
 
     try:
-        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleGLAProvider = None
-
-    try:
-        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
-    except ImportError:  # pragma: lax no cover
-        GoogleVertexProvider = None
-
-    try:
         from pydantic_ai.providers.groq import GroqProvider
     except ImportError:  # pragma: lax no cover
         GroqProvider = None
@@ -178,8 +166,6 @@ requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not 
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-genai not installed')  # pyright: ignore[reportUnnecessaryComparison]
-requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
-requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -7212,50 +7198,6 @@ async def test_provider_reentry_after_close():
         second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert not second_client.is_closed
         assert second_client is not first_client
-    assert second_client.is_closed
-
-
-@requires_google_gla
-@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
-async def test_google_gla_provider_reentry_after_close():
-    """GoogleGLAProvider restores base_url and API key header on re-entry."""
-    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
-        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
-    assert second_client.is_closed
-
-
-@requires_google_vertex
-@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
-async def test_google_vertex_provider_reentry_after_close():
-    """GoogleVertexProvider restores auth and base_url on re-entry."""
-    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
-
-    async with provider:
-        first_client = provider.client
-        assert not first_client.is_closed
-        assert first_client.auth is not None
-        assert 'us-central1' in str(first_client.base_url)
-    assert first_client.is_closed
-
-    async with provider:
-        second_client = provider.client
-        assert not second_client.is_closed
-        assert second_client is not first_client
-        assert second_client.auth is not None
-        assert 'us-central1' in str(second_client.base_url)
     assert second_client.is_closed
 
 
