@@ -3,20 +3,12 @@
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before
 providing its final answer.
 
-This capability is typically disabled by default and depends on the specific model being used.
-See the sections below for how to enable thinking for each provider.
+The simplest way to enable thinking across supported providers is the [`Thinking`][pydantic_ai.capabilities.Thinking] capability.
+Provider-specific settings are available for advanced usage when you need direct access to a provider's native thinking controls.
 
 ## Unified thinking settings
 
-The simplest way to enable thinking across any supported provider is the `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings]:
-
-```python {title="unified_thinking.py"}
-from pydantic_ai import Agent
-
-agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
-```
-
-Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
+Use the [`Thinking` capability](capabilities.md#thinking) to enable thinking:
 
 ```python {title="thinking_capability.py"}
 from pydantic_ai import Agent
@@ -25,19 +17,28 @@ from pydantic_ai.capabilities import Thinking
 agent = Agent('anthropic:claude-opus-4-7', capabilities=[Thinking(effort='high')])
 ```
 
-The `thinking` setting accepts:
+You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings] directly:
+
+```python {title="unified_thinking.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
+```
+
+The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 
 - `True` — enable thinking with the provider's default effort level
 - `False` — disable thinking (silently ignored on always-on models)
 - `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
+These are the same values accepted by the underlying `thinking` model setting.
 When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
 
 ### Provider translation
 
-The unified `thinking` setting maps to each provider's native format:
+The `Thinking` capability maps each effort value to the selected provider's native format:
 
-| Provider | `thinking=True` | `thinking='high'` | Notes |
+| Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
 | Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 also supports `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
@@ -149,17 +150,19 @@ Thinking tokens count against Anthropic's loop-wide [task budgets](models/anthro
 
 ## Google
 
-To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agent.md#model-run-settings).
+For advanced usage, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agent.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-model = GoogleModel('gemini-3-pro-preview')
-settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
+model = GoogleModel('gemini-3.5-flash')
+settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+See the [Google model docs](models/google.md#configure-thinking) for more details.
 
 ## xAI
 
