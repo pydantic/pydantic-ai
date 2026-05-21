@@ -217,7 +217,22 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
-        return self._task_to_node(task)
+        node = self._task_to_node(task)
+        if isinstance(node, End) and self._graph_run.state.pending_messages:
+            # `asap` messages drain in `before_model_request` (which fires either way), but
+            # `when_idle` messages and end-of-run redirects drain in `after_node_run`, which
+            # bare iteration skips. Reaching `End` with a non-empty queue means those were
+            # silently stranded — flag the misconfigured driving.
+            warnings.warn(
+                'The agent run ended with undrained pending messages enqueued via `enqueue`. '
+                'Bare `async for node in agent_run` does not drain `when_idle` messages or '
+                'end-of-run redirects, because they fire in `after_node_run`, which bare iteration '
+                'skips. Use `agent_run.next(node)` to advance the run, or `agent.run()` which drives '
+                'via `next()` automatically.',
+                UserWarning,
+                stacklevel=2,
+            )
+        return node
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]

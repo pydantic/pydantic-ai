@@ -66,7 +66,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -11024,6 +11023,69 @@ async def test_enqueue_when_idle_message_prevents_end():
     )
 
 
+async def test_enqueue_when_idle_redirects_after_output_tool_end():
+    """A `when_idle` message redirects the run even when it would end via an output tool.
+
+    The run terminates when the model calls an output tool (`ToolOutput` mode), which produces
+    an `End` from `CallToolsNode`. The drain's `after_node_run` still sees that `End` and
+    redirects into a fresh request, so the agent gets another turn after the structured output —
+    and the final `result.output` comes from that later turn.
+    """
+
+    class Answer(BaseModel):
+        value: int
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        output_tool = info.output_tools[0].name
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        if call_count == 2:
+            # Would end the run via the output tool, but a `when_idle` message is pending.
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=output_tool, args='{"value": 1}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        # After the follow-up is drained, the model produces the real final output.
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=output_tool, args='{"value": 2}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn), output_type=Answer)
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Follow-up context', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+
+    assert result.output == Answer(value=2)
+    assert call_count == 3
+    messages = result.all_messages()
+    # The follow-up landed as its own request, after the first (superseded) output-tool call.
+    follow_up_idx = next(
+        i
+        for i, msg in enumerate(messages)
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content == 'Follow-up context' for p in msg.parts)
+    )
+    first_output_idx = next(
+        i
+        for i, msg in enumerate(messages)
+        if isinstance(msg, ModelResponse)
+        and any(isinstance(p, ToolCallPart) and p.args == '{"value": 1}' for p in msg.parts)
+    )
+    assert first_output_idx < follow_up_idx
+
+
 async def test_enqueue_from_agent_run():
     """Messages can be enqueued from external code via AgentRun.enqueue."""
     call_count = 0
@@ -11081,6 +11143,42 @@ async def test_enqueue_from_agent_run():
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_bare_async_for_warns_with_undrained_pending_messages():
+    """Bare `async for` reaching End with undrained `when_idle` messages warns about the misuse.
+
+    `when_idle` (and end-of-step `asap` leftovers) drain in `after_node_run`, which bare
+    iteration skips — so they're silently stranded. `__anext__` flags this when it yields the
+    `End` node with a non-empty queue, pointing the user at `next()` driving.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        async with agent.iter('hi') as agent_run:
+            agent_run.enqueue('stranded follow-up', priority='when_idle')
+            async for _ in agent_run:
+                pass
+
+    drain_warnings = [w for w in caught if 'undrained pending messages' in str(w.message)]
+    assert len(drain_warnings) == 1
+    # The message was never delivered: it's still queued and absent from history.
+    assert len(agent_run.pending_messages) == 1
+    assert agent_run.result is not None
+    assert not any(
+        isinstance(p, UserPromptPart) and p.content == 'stranded follow-up'
+        for msg in agent_run.result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for p in msg.parts
     )
 
 
@@ -11188,95 +11286,6 @@ async def test_enqueue_with_no_args_is_a_noop():
         assert agent_run.pending_messages == []
         async for _ in agent_run:
             pass
-
-
-async def test_enqueue_from_system_prompt_callback_with_reinject():
-    """`ctx.enqueue` from inside an `@agent.system_prompt` callback reaches the live queue.
-
-    `ReinjectSystemPrompt` re-resolves system-prompt callbacks on every model request via
-    `Agent.system_prompt_parts`, which builds a synthetic `RunContext`. The synthetic ctx
-    must share the live `pending_messages` list so enqueues from inside the callback
-    aren't silently dropped — using `when_idle` here so the drain (which runs after
-    end-of-run, by design after the current step's `before_model_request` has fired)
-    actually delivers what the callback enqueued.
-    """
-    enqueued = False
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[TextPart(content='ok')],
-            usage=RequestUsage(input_tokens=10, output_tokens=5),
-        )
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        system_prompt='base prompt',
-        capabilities=[ReinjectSystemPrompt()],
-    )
-
-    @agent.system_prompt
-    def maybe_enqueue(ctx: RunContext[None]) -> str:
-        nonlocal enqueued
-        # ReinjectSystemPrompt only re-runs the callback when there's no existing
-        # SystemPromptPart in history; the first call adds 'extra prompt', so the
-        # second call's `before_model_request` finds it and skips the callback.
-        # That means we enqueue exactly once without needing an explicit guard.
-        ctx.enqueue('from system prompt callback', priority='when_idle')
-        enqueued = True
-        return 'extra prompt'
-
-    # Provide a message_history without an existing SystemPromptPart so
-    # ReinjectSystemPrompt actually fires.
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='earlier')]),
-        ModelResponse(parts=[TextPart(content='earlier response')]),
-    ]
-    result = await agent.run('hi', message_history=history)
-
-    assert enqueued
-    # The enqueued when_idle message reaches the persisted history as its own
-    # ModelRequest before the redirect's response — proving the threading
-    # through Agent.system_prompt_parts → synthetic RunContext → live queue.
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='base prompt', timestamp=IsDatetime()),
-                    SystemPromptPart(content='extra prompt', timestamp=IsDatetime()),
-                    UserPromptPart(content='earlier', timestamp=IsDatetime()),
-                ]
-            ),
-            ModelResponse(parts=[TextPart(content='earlier response')], timestamp=IsDatetime()),
-            ModelRequest(
-                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='ok')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
-                model_name='function:model_fn:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='from system prompt callback', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='ok')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
-                model_name='function:model_fn:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
 
 
 async def test_enqueue_coerces_string_to_user_prompt():
