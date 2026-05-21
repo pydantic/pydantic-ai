@@ -2472,6 +2472,125 @@ async def test_capability_function_tools_shortcuts_in_agent():
     assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
 
 
+async def test_capability_instructions_decorator_without_parenthesis():
+    """A Capability can register instructions with a bare decorator."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[None]()
+
+    @cap.instructions
+    def instructions() -> str:
+        return 'Use the capability runbook.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Help me')
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.']
+    )
+
+
+async def test_capability_instructions_decorator_with_parenthesis():
+    """A Capability can register instructions with a called decorator."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[None]()
+
+    @cap.instructions()
+    def instructions_2() -> str:
+        return 'Use the capability runbook.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Help me')
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.']
+    )
+
+
+async def test_capability_instructions_decorator_combines_with_constructor_instructions():
+    """Constructor instructions and decorator instructions are combined."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[int](instructions='Use the capability runbook.')
+
+    @cap.instructions
+    def add_deps(ctx: RunContext[int]) -> str:
+        return f'The current account id is {ctx.deps}.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap], deps_type=int)
+    result = await agent.run('Help me', deps=123)
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.\n\nThe current account id is 123.']
+    )
+
+
+async def test_deferred_capability_instructions_decorator_resolves_on_load() -> None:
+    """A deferred capability returns decorator-registered instructions when loaded."""
+    cap = Capability[int](
+        id='account',
+        description='Account-specific guidance.',
+        defer_loading=True,
+    )
+
+    @cap.instructions
+    def account_instructions(ctx: RunContext[int]) -> str:
+        return f'Use account id {ctx.deps}.'
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'account'},
+                        tool_call_id='load-account',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap], deps_type=int)
+    result = await agent.run('Help me', deps=123)
+
+    assert result.output == 'done'
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == 'Use account id 123.'
+    first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+    assert first_request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- account: Account-specific guidance.'
+    )
+
+
 async def test_deferred_capability_partitions_native_tools() -> None:
     """Deferred native tools are kept out of the baseline request until loaded."""
     native_cap = NativeTool[None](

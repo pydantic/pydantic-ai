@@ -409,7 +409,10 @@ Every on-demand capability needs:
 
 A short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description], is optional. Add one when the `id` alone is not enough for the model to choose the right capability.
 
-[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make static instructions and function tools available on demand.
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to make instructions and function tools available on demand.
+Pass static instructions with `instructions=`, or use the [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] decorator for dynamic instructions that need the current run [context][pydantic_ai.tools.RunContext].
+
+After construction, use [`get_instructions()`][pydantic_ai.capabilities.Capability.get_instructions] to inspect a capability's instructions; `capability.instructions` is the decorator method.
 
 There are a number of ways to register function tools with a capability:
 
@@ -439,6 +442,11 @@ refunds = Capability(
     instructions='Use the refund policy before answering refund questions.',
     defer_loading=True,
 )
+
+
+@refunds.instructions
+def account_context() -> str:
+    return 'Use order history when evaluating refund eligibility.'
 
 
 @refunds.tool_plain

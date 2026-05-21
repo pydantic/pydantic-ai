@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Any, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._utils import UNSET, Unset, is_set
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    SystemPromptFunc,
     Tool,
     ToolFuncContext,
     ToolFuncEither,
@@ -28,15 +30,13 @@ from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 class Capability(AbstractCapability[AgentDepsT]):
     """Convenience capability for bundling instructions and a toolset without subclassing.
 
-    Use this when you just need to attach static instructions, a toolset, or a description
-    to an agent. For dynamic behavior or lifecycle hooks, subclass
+    Use this when you just need to attach instructions, a toolset, or a description
+    to an agent. Instructions passed via `instructions=` are available through
+    [`get_instructions`][pydantic_ai.capabilities.Capability.get_instructions];
+    [`instructions`][pydantic_ai.capabilities.Capability.instructions] is the decorator
+    for registering instruction functions. For dynamic behavior or lifecycle hooks, subclass
     [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
     """
-
-    _: KW_ONLY
-
-    instructions: AgentInstructions[AgentDepsT] | None = None
-    """Instructions contributed by this capability."""
 
     toolset: AgentToolset[AgentDepsT] | None = None
     """Toolset to register with the agent."""
@@ -48,18 +48,34 @@ class Capability(AbstractCapability[AgentDepsT]):
     """Human-readable description, surfaced in the `load_capability` catalog when `defer_loading=True`."""
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
+    _instructions: list[str | SystemPromptFunc[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.toolset and self.tools:
+    def __init__(
+        self,
+        *,
+        instructions: AgentInstructions[AgentDepsT] | None = None,
+        toolset: AgentToolset[AgentDepsT] | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        id: str | Unset = UNSET,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> None:
+        if toolset is not None and tools:
             raise UserError(
                 'Cannot use both `toolset` and `tools` on the same capability. '
                 'Use `toolset` to register a toolset, or `tools` to register individual tools.'
             )
-        self._function_toolset = FunctionToolset[AgentDepsT](self.tools)
+        if is_set(id):
+            super().__init__(id=id, description=description, defer_loading=defer_loading)
+        else:
+            super().__init__(description=description, defer_loading=defer_loading)
+        self.toolset = toolset
+        self.tools = tools
+        self._function_toolset = FunctionToolset[AgentDepsT](tools)
+        self._instructions = list(normalize_instructions(instructions))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return self.instructions
+        return list(self._instructions) if self._instructions else None
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.toolset or self._function_toolset
@@ -202,3 +218,57 @@ class Capability(AbstractCapability[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         return decorator if func is None else decorator(func)
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, /) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+
+    def instructions(
+        self,
+        func: SystemPromptFunc[AgentDepsT] | None = None,
+        /,
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
+        """Decorator to register an instructions function on this capability.
+
+        Mirrors [`Agent.instructions`][pydantic_ai.Agent.instructions]: the function may take
+        [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments), may be sync or async, and is
+        appended to any instructions provided via the `instructions=` field.
+
+        Example:
+        ```python
+        from pydantic_ai import Capability, RunContext
+
+        cap = Capability[str](instructions='base instructions')
+
+        @cap.instructions
+        async def dynamic(ctx: RunContext[str]) -> str:
+            return f'extra: {ctx.deps}'
+        ```
+        """
+        if func is None:
+
+            def decorator(
+                func_: SystemPromptFunc[AgentDepsT],
+            ) -> SystemPromptFunc[AgentDepsT]:
+                self._instructions.append(func_)
+                return func_
+
+            return decorator
+        else:
+            self._instructions.append(func)
+            return func
