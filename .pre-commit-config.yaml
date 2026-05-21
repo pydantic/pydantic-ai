@@ -6,13 +6,15 @@ repos:
       - id: check-yaml
         args: ["--unsafe"]
       - id: check-toml
-      # gh-aw compiles *.md agentic workflows into *.lock.yml. Those are
-      # generated artifacts (like uv.lock) and must stay byte-identical to
-      # `gh aw compile` output, so the whitespace/text hooks skip them.
+      # gh-aw compiles *.md agentic workflows into *.lock.yml, and also
+      # auto-generates `.github/workflows/agentics-maintenance.yml` as a
+      # standalone maintenance workflow. Both are generated artifacts (like
+      # uv.lock) and must stay byte-identical to `gh aw compile` output, so
+      # the whitespace/text hooks skip them.
       - id: end-of-file-fixer
-        exclude: ^\.github/workflows/[^/]*\.lock\.yml$
+        exclude: ^\.github/workflows/(agentics-maintenance\.yml|[^/]*\.lock\.yml)$
       - id: trailing-whitespace
-        exclude: ^\.github/workflows/[^/]*\.lock\.yml$
+        exclude: ^\.github/workflows/(agentics-maintenance\.yml|[^/]*\.lock\.yml)$
       - id: check-added-large-files
         args:
           - --maxkb=1024 # 1MB
@@ -28,11 +30,11 @@ repos:
     rev: 0.6.8
     hooks:
       - id: fix-smartquotes
-        exclude: (?x)(cassettes/|^\.github/workflows/[^/]*\.lock\.yml$)
+        exclude: (?x)(cassettes/|^\.github/workflows/(agentics-maintenance\.yml|[^/]*\.lock\.yml)$)
       - id: fix-spaces
-        exclude: (?x)(cassettes/|^\.github/workflows/[^/]*\.lock\.yml$)
+        exclude: (?x)(cassettes/|^\.github/workflows/(agentics-maintenance\.yml|[^/]*\.lock\.yml)$)
       - id: fix-ligatures
-        exclude: (?x)(cassettes/|^\.github/workflows/[^/]*\.lock\.yml$)
+        exclude: (?x)(cassettes/|^\.github/workflows/(agentics-maintenance\.yml|[^/]*\.lock\.yml)$)
 
   - repo: https://github.com/codespell-project/codespell
     # Configuration for codespell is in pyproject.toml

@@ -70,14 +70,17 @@ pre-steps:
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
     run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.25.46
-  # Stage the committed launcher script at gh-aw's exec-able /tmp/gh-aw/bin/
-  # path (the checked-out workspace is mounted no-exec in the AWF sandbox).
+
+pre-agent-steps:
+  # Stage the committed launcher script at gh-aw's exec-able
+  # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
+  # gh-aw's repository checkout happens between pre-steps and
+  # pre-agent-steps, and this step reads from .github/scripts/ in the
+  # workspace.
   - name: Stage Pydantic AI harness launcher
     run: |
       mkdir -p /tmp/gh-aw/bin
       install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
-
-pre-agent-steps:
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
   - name: Pre-warm Pydantic AI harness uv environment
