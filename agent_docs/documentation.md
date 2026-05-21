@@ -27,7 +27,7 @@
 <!-- rule:386 -->
 - Keep docs and implementation in sync — when they conflict, explicitly decide which to update and fix it — Prevents user confusion and wasted debugging time when documented behavior doesn't match actual behavior; applies to params, config options, component characteristics, and especially test docstrings which must describe what's actually validated
 <!-- rule:106 -->
-- Document provider feature support with 'Supported by:' sections — link each provider, list supported/unsupported, distinguish variants (Google Gemini vs Vertex AI), include syntax/config/permissions — Prevents users from attempting unsupported features and enables quick evaluation of provider capabilities without trial-and-error testing across multiple providers
+- Document provider feature support with 'Supported by:' sections — link each provider, list supported/unsupported, distinguish variants (Google Gemini vs Google Cloud (formerly known as Vertex AI)), include syntax/config/permissions — Prevents users from attempting unsupported features and enables quick evaluation of provider capabilities without trial-and-error testing across multiple providers
 <!-- rule:750 -->
 - Document all defaults comprehensively: explicit values, fallback chains, compatibility tradeoffs (backward/forward), and implicit/conditional defaults from parameter interactions — Prevents API confusion and misuse by making fallback behavior, override precedence, and compatibility constraints discoverable in docstrings rather than requiring code archaeology
 <!-- rule:150 -->

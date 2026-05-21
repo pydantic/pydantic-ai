@@ -229,6 +229,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
+    "tests/v2/test_aci_deprecation.py",                      # imports aci-sdk under try_import; SDK not installed in CI lint env
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -253,6 +254,13 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
+    # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
+    # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
+    # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in
+    # `tests/test_capabilities.py`) cover the deprecation warning itself.
+    "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
+    # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
+    "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
@@ -298,6 +306,7 @@ include = [
 omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
+    "tests/v2/test_aci_deprecation.py",  # paired with the omit above; aci-sdk isn't installed in the coverage env
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
@@ -305,6 +314,7 @@ omit = [
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
+    "pydantic_ai_slim/pydantic_ai/_a2a.py",  # deprecated in 1.x, removed in v2; equivalent code now lives in `fasta2a.pydantic_ai` and is exercised through `tests/test_a2a.py` against that import. `tests/v2/test_a2a_deprecation.py` covers the deprecation warning path.
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

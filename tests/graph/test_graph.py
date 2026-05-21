@@ -8,18 +8,10 @@ from typing import Union
 
 import pytest
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    FullStatePersistence,
-    Graph,
-    GraphRunContext,
-    GraphRuntimeError,
-    GraphSetupError,
-    NodeSnapshot,
-    SimpleStatePersistence,
-)
+from pydantic_graph import BaseNode, End, GraphRunContext, GraphRuntimeError, GraphSetupError
+from pydantic_graph.graph import Graph
+from pydantic_graph.persistence import EndSnapshot, NodeSnapshot
+from pydantic_graph.persistence.in_mem import FullStatePersistence, SimpleStatePersistence
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow, IsStr
@@ -305,6 +297,7 @@ async def test_iter():
     node_reprs: list[str] = []
     async with my_graph.iter(Float2String(3.14)) as graph_iter:
         assert repr(graph_iter) == snapshot('<GraphRun graph=my_graph>')
+        assert graph_iter.result is None  # not finished yet
         async for node in graph_iter:
             node_reprs.append(repr(node))
         # len('3.14') * 2 == 8

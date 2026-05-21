@@ -18,6 +18,7 @@ rules:
       - at-claude.yml
       - bots.yml
       - ci.yml
+      - docs-preview.yml
       - manually-deploy-docs.yml
 
   # `harness-compat.yml` calls a reusable workflow in `pydantic/pydantic-ai-harness`, an

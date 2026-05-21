@@ -21,8 +21,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -33,6 +31,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -50,7 +50,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -60,6 +60,8 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -77,6 +79,7 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
@@ -136,7 +139,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
+    AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -146,10 +149,10 @@ pytestmark = [
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -302,7 +305,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -315,7 +318,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -383,7 +386,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=13,
@@ -569,6 +572,86 @@ def test_build_cache_control_includes_ttl():
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+def _mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
+    from unittest.mock import MagicMock
+
+    client = MagicMock(spec=client_cls)
+    client.base_url = base_url
+    return client
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic.claude-haiku-4-5',
+        'anthropic.claude-haiku-4-5-20251001-v1:0',
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    ],
+)
+@pytest.mark.parametrize(
+    'client_cls,base_url',
+    [
+        pytest.param(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', id='bedrock'),
+        pytest.param(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', id='bedrock-mantle'),
+    ],
+)
+def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str, client_cls: Any, base_url: str):
+    """A Bedrock-shaped model id resolves to the right capability profile, while the full id still goes on the wire."""
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.model_name == model_name
+    assert m.profile.supports_json_schema_output is True
+    assert ToolSearchTool in m.profile.supported_native_tools
+
+
+def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
+    m = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
+    )
+    return cast('dict[str, Any]', next(t for t in tools if str(t.get('name', '')).startswith('tool_search_tool_')))
+
+
+def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
+    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+    # An explicit `regex` is honored.
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool(strategy='regex'))
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+
+
+def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
+    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
+    m = AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+    with pytest.raises(
+        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
+    ):
+        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
+        )
+
+
+def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
+    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
+    param = _tool_search_param(
+        AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
+    )
+    assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
 
 
 @pytest.mark.parametrize(
@@ -1212,7 +1295,7 @@ async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_req
 
     agent = Agent(
         model,
-        builtin_tools=[MemoryTool()],
+        capabilities=[NativeTool(MemoryTool())],
         output_type=NativeOutput(CityLocation),
     )
 
@@ -1329,6 +1412,18 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     betas = completion_kwargs['betas']
     assert 'interleaved-thinking-2025-05-14' in betas
     assert 'custom-feature-1' in betas
+
+
+async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 def _single_request_body(vcr: Cassette) -> dict[str, Any]:
@@ -1745,7 +1840,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=3,
@@ -2312,7 +2407,7 @@ async def test_stream_structured(allow_model_requests: None):
         # the block starts and once when it ends.
         assert chunks == snapshot(['FINAL_PAYLOAD', 'FINAL_PAYLOAD'])
         assert result.is_complete
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=20,
@@ -2322,21 +2417,20 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='FINAL_PAYLOAD')],
-                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
-                        model_name='claude-3-5-haiku-123',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                        provider_url='https://api.anthropic.com',
-                        provider_details={'finish_reason': 'end_turn'},
-                        provider_response_id='msg_123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='FINAL_PAYLOAD')],
+                    usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                    model_name='claude-3-5-haiku-123',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_url='https://api.anthropic.com',
+                    provider_details={'finish_reason': 'end_turn'},
+                    provider_response_id='msg_123',
+                    finish_reason='stop',
                 )
+            )
 
 
 async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
@@ -4279,7 +4373,7 @@ What specific information about potatoes would be most helpful to you?\
 async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -4301,13 +4395,13 @@ I should search for San Francisco weather today to get the most current informat
                         signature='Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today'},
                         tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4509,13 +4603,13 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         signature='EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'Mexico City weather today'},
                         tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4694,7 +4788,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
 async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -4730,13 +4824,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather today"}',
                         tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4817,13 +4911,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     TextPart(
                         content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather September 16 2025"}',
                         tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -5045,7 +5139,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
                 ),
                 previous_part_kind='thinking',
@@ -5081,7 +5175,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
@@ -5091,7 +5185,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -5192,7 +5286,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
                 ),
                 previous_part_kind='text',
@@ -5237,7 +5331,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=4,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
@@ -5247,7 +5341,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=5,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -5545,7 +5639,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
@@ -5553,7 +5647,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -5633,7 +5727,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
@@ -5641,7 +5735,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -5728,7 +5822,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -5762,13 +5856,13 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -5847,13 +5941,13 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -5974,7 +6068,7 @@ async def test_anthropic_web_fetch_tool_stream(
 
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     # Iterate through the stream to ensure streaming code paths are covered
     event_parts: list[Any] = []
@@ -5987,7 +6081,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     async for event in request_stream:  # pragma: lax no cover
                         if (  # pragma: lax no cover
                             isinstance(event, PartStartEvent)
-                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                            and isinstance(event.part, NativeToolCallPart | NativeToolReturnPart)
                         ) or isinstance(event, PartDeltaEvent):
                             event_parts.append(event)
 
@@ -6016,13 +6110,13 @@ async def test_anthropic_web_fetch_tool_stream(
                         signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -6095,7 +6189,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=NativeToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -6121,7 +6215,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_fetch',
                     content={
                         'content': {
@@ -6449,7 +6543,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
 
 
 async def test_anthropic_web_fetch_tool_message_replay():
-    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for WebFetchTool are correctly serialized."""
+    """Test that NativeToolCallPart and NativeToolReturnPart for WebFetchTool are correctly serialized."""
     from typing import cast
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -6458,18 +6552,18 @@ async def test_anthropic_web_fetch_tool_message_replay():
     # Create a model instance
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
-    # Create message history with BuiltinToolCallPart and BuiltinToolReturnPart
+    # Create message history with NativeToolCallPart and NativeToolReturnPart
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Test')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name=WebFetchTool.kind,
                     args={'url': 'https://example.com'},
                     tool_call_id='test_id_1',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name=WebFetchTool.kind,
                     content={
@@ -6489,7 +6583,7 @@ async def test_anthropic_web_fetch_tool_message_replay():
     model_settings = {}
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool()],
+        native_tools=[WebFetchTool()],
         output_tools=[],
     )
 
@@ -6539,12 +6633,12 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[web_fetch_tool],
+        native_tools=[web_fetch_tool],
         output_tools=[],
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -6574,12 +6668,12 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[web_fetch_tool],
+        native_tools=[web_fetch_tool],
         output_tools=[],
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -6601,13 +6695,13 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
         ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='mcp_server:clock',
                     tool_call_id='mcptoolu_123',
                     args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
                     provider_name='anthropic',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='mcp_server:clock',
                     tool_call_id='mcptoolu_123',
                     content={'content': [{'type': 'text', 'text': '2026-05-06T00:00:00Z'}], 'is_error': False},
@@ -6623,7 +6717,7 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
         messages,
         {},
         ModelRequestParameters(
-            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+            native_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
         ),
     )
 
@@ -6639,10 +6733,12 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                )
             )
         ],
         model_settings=settings,
@@ -6670,7 +6766,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -6683,7 +6779,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6760,7 +6856,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         signature='EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -6773,7 +6869,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6883,11 +6979,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                allowed_tools=['ask_question'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    allowed_tools=['ask_question'],
+                )
             )
         ],
         model_settings=settings,
@@ -6903,7 +7001,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                     async for event in request_stream:
                         if (
                             isinstance(event, PartStartEvent)
-                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                            and isinstance(event.part, NativeToolCallPart | NativeToolReturnPart)
                         ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
                             event_parts.append(event)
 
@@ -6929,13 +7027,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         signature='EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6994,7 +7092,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
         [
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
@@ -7077,7 +7175,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content={
                         'content': [
@@ -7173,7 +7271,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=settings,
         instructions='Always use the code execution tool for math.',
     )
@@ -7198,14 +7296,14 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         signature='EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'echo $((3 * 12390))'},
                         tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -7265,14 +7363,14 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         signature='EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'echo $((4 * 12390))'},
                         tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -7321,7 +7419,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
@@ -7353,14 +7451,14 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                         provider_name='anthropic',
                     ),
                     TextPart(content="I'll calculate that expression for you right away!"),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                         tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -7454,7 +7552,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
@@ -7499,7 +7597,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
@@ -7510,7 +7608,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': [],
@@ -7597,7 +7695,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
@@ -7606,7 +7704,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': [],
@@ -7636,7 +7734,7 @@ async def test_anthropic_code_execution_tool_version_unsupported(allow_model_req
         provider=AnthropicProvider(anthropic_client=mock_client),
         settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
     )
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     with pytest.raises(
         UserError,
@@ -7671,7 +7769,7 @@ async def test_anthropic_code_execution_tool_version_auto(
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     await agent.run('hello')
 
@@ -7701,7 +7799,7 @@ async def test_anthropic_code_execution_tool_version_setting(
         provider=AnthropicProvider(anthropic_client=mock_client),
         settings=AnthropicModelSettings(anthropic_code_execution_tool_version=tool_version),
     )
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     await agent.run('hello')
 
@@ -7718,7 +7816,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot('Today is November 19, 2025.')
@@ -7765,21 +7863,21 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
     anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(builtin_tools=[CodeExecutionTool()])
+    agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
             ],
         ]
@@ -7790,18 +7888,18 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
             ],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )
 
@@ -8305,14 +8403,14 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     # First run to get server tool history
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -8365,14 +8463,14 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # First run to get server tool history
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
@@ -8388,7 +8486,7 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         instructions=(
             'Use only the text editor `create` and `view` commands from the code execution sandbox. '
             'Do not run any shell commands.'
@@ -8418,21 +8516,21 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                     TextPart(
                         content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'error_code': 'unavailable',
@@ -8444,7 +8542,7 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'error_code': 'unavailable',
@@ -8457,14 +8555,14 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'is_file_update': False,
@@ -8476,14 +8574,14 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(content="File created! Now let's view it."),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': 'Hello, world!',
@@ -8539,7 +8637,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         instructions=(
             'Use only the text editor `create` and `view` commands from the code execution sandbox. '
             'Do not run any shell commands.'
@@ -8578,7 +8676,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
@@ -8637,7 +8735,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
@@ -8648,7 +8746,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
@@ -8687,7 +8785,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
@@ -8698,7 +8796,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
                     timestamp=IsDatetime(),
@@ -8710,7 +8808,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'error_code': 'unavailable',
@@ -8753,7 +8851,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=6,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
@@ -8792,7 +8890,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartEndEvent(
                 index=6,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
@@ -8803,7 +8901,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             ),
             PartStartEvent(
                 index=7,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': 'Hello, world!',
@@ -8868,7 +8966,7 @@ Everything looks perfect! The file contains the text you specified.\
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
@@ -8877,7 +8975,7 @@ Everything looks perfect! The file contains the text you specified.\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
@@ -8886,7 +8984,7 @@ Everything looks perfect! The file contains the text you specified.\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
@@ -8896,7 +8994,7 @@ Everything looks perfect! The file contains the text you specified.\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'error_code': 'unavailable',
@@ -8910,7 +9008,7 @@ Everything looks perfect! The file contains the text you specified.\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
@@ -8919,7 +9017,7 @@ Everything looks perfect! The file contains the text you specified.\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': 'Hello, world!',
@@ -8947,20 +9045,20 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay(allow_mo
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='View the file.')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     args={'command': 'view', 'path': '/tmp/hello.txt'},
                     tool_call_id='srvtoolu_text_editor_1',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={
@@ -9020,20 +9118,20 @@ async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_req
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Run a shell command.')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     args={'command': 'echo hello'},
                     tool_call_id='srvtoolu_bash_1',
                     provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={
@@ -9093,19 +9191,19 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name='text_editor_code_execution',
                     args={'command': 'view', 'path': '/tmp/hello.txt'},
                     tool_call_id='srvtoolu_legacy_text_editor_call',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={
@@ -9118,13 +9216,13 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
                     },
                     tool_call_id='srvtoolu_legacy_text_editor_call',
                 ),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name='bash_code_execution',
                     args={'command': 'echo hello'},
                     tool_call_id='srvtoolu_legacy_bash_call',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={
@@ -9137,14 +9235,14 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
                     tool_call_id='srvtoolu_legacy_bash_call',
                     provider_details={'anthropic_tool_name': 'not_a_code_execution_tool'},
                 ),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     args={'code': 'print(2 + 2)'},
                     tool_call_id='srvtoolu_default_code_call',
                     provider_details={'anthropic_tool_name': 123},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={
@@ -9156,7 +9254,7 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
                     },
                     tool_call_id='srvtoolu_default_code_call',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name='code_execution',
                     content={'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
@@ -9241,7 +9339,7 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
@@ -9255,7 +9353,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
                 ),
             ),
@@ -9284,7 +9382,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
@@ -9294,7 +9392,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -9390,7 +9488,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
                 ),
                 previous_part_kind='text',
@@ -9424,7 +9522,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
@@ -9434,7 +9532,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -9768,7 +9866,7 @@ These stories represent major international diplomatic developments, significant
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
@@ -9776,7 +9874,7 @@ These stories represent major international diplomatic developments, significant
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -9856,7 +9954,7 @@ These stories represent major international diplomatic developments, significant
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
@@ -9864,7 +9962,7 @@ These stories represent major international diplomatic developments, significant
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -9951,7 +10049,7 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requ
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert result.output == snapshot("""\
@@ -10125,9 +10223,9 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
         provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
-    agent = Agent(anthropic_model, builtin_tools=[MemoryTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
-    with pytest.raises(UserError, match="Built-in `MemoryTool` requires a 'memory' tool to be defined."):
+    with pytest.raises(UserError, match="Native `MemoryTool` requires a 'memory' tool to be defined."):
         await agent.run('Where do I live?')
 
     class FakeMemoryTool(BetaAbstractMemoryTool):
@@ -10288,7 +10386,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -10304,7 +10402,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=1532,
             cache_read_tokens=1111,
@@ -10341,7 +10439,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
         'Please explain what Python is and its main use cases. ' * 100,
         usage_limits=UsageLimits(input_tokens_limit=5000, count_tokens_before_request=True),
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -10393,7 +10491,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
         'including major PEPs, typing improvements, performance enhancements, and ecosystem growth. '
     ) * 250
     result1 = await agent.run(long_prompt)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=9514,
             cache_read_tokens=9511,
@@ -10409,7 +10507,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=11470,
             cache_write_tokens=1956,
@@ -10607,7 +10705,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     )
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         instructions='Always use the code execution tool for math.',
     )
 
@@ -10635,14 +10733,14 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'echo $((3 * 12390))'},
                         tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -10687,14 +10785,14 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'command': 'echo $((4 * 12390))'},
                         tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
@@ -10919,7 +11017,14 @@ def _anthropic_vcr_request_body(vcr: Any) -> dict[str, Any]:
 @pytest.mark.vcr()
 async def test_anthropic_dynamic_filtering_auto_detection(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool(), WebFetchTool(), CodeExecutionTool()])
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(WebSearchTool()),
+            NativeTool(WebFetchTool()),
+            NativeTool(CodeExecutionTool()),
+        ],
+    )
 
     result = await agent.run('Reply with exactly: ok')
 
@@ -10935,10 +11040,10 @@ async def test_anthropic_dynamic_filtering_explicit_true(allow_model_requests: N
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
-        builtin_tools=[
-            WebSearchTool(dynamic_filtering=True),
-            WebFetchTool(dynamic_filtering=True),
-            CodeExecutionTool(),
+        capabilities=[
+            NativeTool(WebSearchTool(dynamic_filtering=True)),
+            NativeTool(WebFetchTool(dynamic_filtering=True)),
+            NativeTool(CodeExecutionTool()),
         ],
     )
 
@@ -10956,10 +11061,10 @@ async def test_anthropic_dynamic_filtering_explicit_false(allow_model_requests: 
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
-        builtin_tools=[
-            WebSearchTool(dynamic_filtering=False),
-            WebFetchTool(dynamic_filtering=False),
-            CodeExecutionTool(),
+        capabilities=[
+            NativeTool(WebSearchTool(dynamic_filtering=False)),
+            NativeTool(WebFetchTool(dynamic_filtering=False)),
+            NativeTool(CodeExecutionTool()),
         ],
     )
 
@@ -10978,10 +11083,10 @@ async def test_anthropic_dynamic_filtering_explicit_false_adds_web_fetch_beta(al
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[
-            WebSearchTool(dynamic_filtering=False),
-            WebFetchTool(dynamic_filtering=False),
-            CodeExecutionTool(),
+        capabilities=[
+            NativeTool(WebSearchTool(dynamic_filtering=False)),
+            NativeTool(WebFetchTool(dynamic_filtering=False)),
+            NativeTool(CodeExecutionTool()),
         ],
     )
 
@@ -10996,7 +11101,7 @@ async def test_anthropic_dynamic_filtering_explicit_false_adds_web_fetch_beta(al
 
 async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_requests: None):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-api-key'))
-    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=True)])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool(dynamic_filtering=True))])
 
     with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
         await agent.run('hello')
@@ -11348,7 +11453,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=55376,
             cache_write_tokens=55096,
@@ -11387,7 +11492,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
     async with agent.run_stream(f'Remember this context: {padding}\n\nNow say hello.') as result:
         async for _ in result.stream_text():
             pass
-        usage = result.usage()
+        usage = result.usage
     assert usage == snapshot(
         RunUsage(
             input_tokens=55368,

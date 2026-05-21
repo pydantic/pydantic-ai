@@ -292,7 +292,7 @@ def test_output_tool_retry_error_handled():
         x: int
         y: str
 
-    agent = Agent('test', output_type=OutputModel, tool_retries=2, output_retries=2)
+    agent = Agent('test', output_type=OutputModel, retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
@@ -319,7 +319,7 @@ async def test_multiple_concurrent_tool_retries():
         x: int
         y: str
 
-    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, tool_retries=2, output_retries=2)
+    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries={'tools': 2, 'output': 2})
     retried_run_ids = set[int]()
     event = Event()
 
@@ -343,7 +343,7 @@ def test_output_tool_retry_error_handled_with_custom_args():
         x: int
         y: str
 
-    agent = Agent('test', output_type=ResultModel, tool_retries=2, output_retries=2)
+    agent = Agent('test', output_type=ResultModel, retries={'tools': 2, 'output': 2})
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))
@@ -483,4 +483,4 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     agent = Agent()
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
