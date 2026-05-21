@@ -10,6 +10,7 @@ from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
 
 if TYPE_CHECKING:
+    from ..capabilities import AbstractCapability
     from ..tools import ToolDefinition
 
 
@@ -17,12 +18,12 @@ if TYPE_CHECKING:
 class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     """Binds a contributed toolset to the capability that owns it."""
 
-    capability_id: str
+    capability: AbstractCapability[AgentDepsT]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
-        cap = ctx.capabilities.get(self.capability_id)
-        defer_loading = cap.defer_loading is True if cap is not None else False
+        capability_id = _capability_id(ctx, self.capability)
+        defer_loading = self.capability.defer_loading is True
         return {
             name: replace(
                 tool,
@@ -30,7 +31,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
                     tool.tool_def,
                     capability_id=tool.tool_def.capability_id
                     if tool.tool_def.capability_id is not None
-                    else self.capability_id,
+                    else capability_id,
                     defer_loading=defer_loading or tool.tool_def.defer_loading,
                 ),
             )
@@ -40,14 +41,21 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        cap = ctx.capabilities.get(self.capability_id)
-        if cap is not None and cap.defer_loading is True:
+        if self.capability.defer_loading is True:
             return None
         return await self.wrapped.get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)
         self.wrapped.apply(visitor)
+
+
+def _capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str:
+    return next(
+        capability_id
+        for capability_id, registered_capability in ctx.capabilities.items()
+        if registered_capability is capability
+    )
 
 
 def tool_defs_for_loaded_capabilities(

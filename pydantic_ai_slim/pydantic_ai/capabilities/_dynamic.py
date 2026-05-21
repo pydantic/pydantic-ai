@@ -34,8 +34,8 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     `defer_loading` on the wrapper itself is rejected because `for_run` replaces
     the wrapper with the factory's return value. Set it on the returned
     capability instead.
-    The `id` defaults to a fresh UUID per construction; for history replay, set a
-    stable `id` on the capability the factory returns rather than on the wrapper.
+    For history replay, set a stable `id` on the capability the factory returns
+    rather than on the wrapper.
     """
 
     capability_func: CapabilityFunc[AgentDepsT]
@@ -49,7 +49,6 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
                 '`defer_loading` is not supported on `DynamicCapability` — '
                 'set it on the capability the factory returns instead.'
             )
-        super().__post_init__()
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = self.capability_func(ctx)

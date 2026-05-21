@@ -115,7 +115,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
-    """The capabilities that are available for the current run."""
+    """All capabilities registered for the current run, including deferred ones."""
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """IDs of the deferred capabilities the model has explicitly loaded via `load_capability`.

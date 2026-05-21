@@ -28,10 +28,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        assert any(entry.defer_loading is True for entry in ctx.capabilities.values()), (
-            'DeferredCapabilityLoaderToolset should only be installed when deferred capabilities exist.'
-        )
-
         if LOAD_CAPABILITY_TOOL_NAME in all_tools:
             raise UserError(
                 f"Tool name '{LOAD_CAPABILITY_TOOL_NAME}' is reserved for deferred capability loading. "
@@ -85,7 +81,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(ts, CapabilityOwnedToolset) and ts.capability_id == capability_id:
+            if isinstance(ts, CapabilityOwnedToolset) and ctx.capabilities[capability_id] is ts.capability:
                 owned.append(ts)
 
         self.apply(collect)

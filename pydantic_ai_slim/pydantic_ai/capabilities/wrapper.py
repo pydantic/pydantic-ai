@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -22,7 +22,6 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from .abstract import (
     AbstractCapability,
     AgentNode,
-    CapabilityDescription,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -34,8 +33,6 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
-    auto_capability_id,
-    is_auto_capability_id,
 )
 
 if TYPE_CHECKING:
@@ -54,26 +51,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     """
 
     wrapped: AbstractCapability[AgentDepsT]
-    _metadata_delegated: bool = field(init=False, repr=False)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
 
-    def __post_init__(self) -> None:
-        self._metadata_delegated = is_auto_capability_id(self.id)
-        if self._metadata_delegated:
-            self.id = self.wrapped.id
-            self.defer_loading = self.wrapped.defer_loading
-        if self.description is None:
-            self.description = self.wrapped.description
-        super().__post_init__()
-
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
-
-    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
-        return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
     def has_wrap_node_run(self) -> bool:
@@ -90,8 +74,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_wrapped = await self.wrapped.for_run(ctx)
         if new_wrapped is self.wrapped:
             return self
-        if self._metadata_delegated:
-            return replace(self, wrapped=new_wrapped, id=auto_capability_id(), description=None)
         return replace(self, wrapped=new_wrapped)
 
     # --- Get methods ---

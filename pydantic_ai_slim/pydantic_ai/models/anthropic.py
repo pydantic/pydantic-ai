@@ -16,7 +16,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
-from ..capabilities.abstract import AbstractCapability, auto_capability_id
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
@@ -2017,10 +2017,6 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
             pause_after_compaction: If `True`, the response will stop after the compaction block
                 with `stop_reason='compaction'`, allowing explicit handling.
         """
-        self.id = auto_capability_id()
-        self.description = None
-        self.defer_loading = False
-        self.__post_init__()
         self.token_threshold = token_threshold
         self.instructions = instructions
         self.pause_after_compaction = pause_after_compaction

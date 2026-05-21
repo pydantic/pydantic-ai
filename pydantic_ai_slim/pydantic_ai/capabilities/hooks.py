@@ -48,7 +48,6 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
-    auto_capability_id,
 )
 
 if TYPE_CHECKING:
@@ -796,7 +795,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         description: str | None = None,
         defer_loading: bool = False,
     ):
-        self.id = id if id is not None else auto_capability_id()
+        self.id = id
         self.description = description
         self.defer_loading = defer_loading
         self._ordering = ordering
@@ -840,7 +839,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
         for key, func in _kwargs.items():
             if func is not None:
                 self._registry.setdefault(key, []).append(_HookEntry(func))
-        self.__post_init__()
 
     @cached_property
     def on(self) -> _HookRegistration[AgentDepsT]:

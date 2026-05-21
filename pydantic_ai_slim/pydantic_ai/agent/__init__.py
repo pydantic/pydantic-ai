@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
+from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
@@ -1371,15 +1372,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
-        deferred_caps: list[AbstractCapability[AgentDepsT]] = []
-
-        def _collect_deferred(cap: AbstractCapability[AgentDepsT]) -> None:
-            if cap.defer_loading is True:
-                deferred_caps.append(cap)
-
-        run_capability.apply(_collect_deferred)
-        if deferred_caps:
+        capabilities_dict = _build_run_capabilities(run_capability)
+        if any(capability.defer_loading is True for capability in capabilities_dict.values()):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+            capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1469,13 +1465,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     parts.append(_messages.InstructionPart(content=text, dynamic=True))
 
             return parts or None
-
-        capabilities_dict: dict[str, AbstractCapability[AgentDepsT]] = {}
-
-        def _register(cap: AbstractCapability[AgentDepsT]) -> None:
-            capabilities_dict.setdefault(cap.id, cap)
-
-        run_capability.apply(_register)
 
         # The deferred capabilities the model has already loaded in prior steps; the graph
         # refreshes this from history before each model request, so the seed only matters
@@ -2931,6 +2920,43 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
             capabilities.append(cap_type())
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(capabilities.append)
+
+    explicit_ids: set[str] = set()
+    for capability in capabilities:
+        if capability.id is None:
+            continue
+        if capability.id in explicit_ids:
+            raise exceptions.UserError(
+                f'Capability id {capability.id!r} is used by multiple capabilities. '
+                'Capability ids must be unique within a run.'
+            )
+        explicit_ids.add(capability.id)
+
+    result: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for capability in capabilities:
+        capability_id = capability.id
+        if capability.defer_loading is True and capability_id is None:
+            raise exceptions.UserError(
+                'Deferred capabilities must use stable explicit `id` values. '
+                'Pass `id=...` when using `defer_loading=True`.'
+            )
+
+        if capability_id is None:
+            base_id = to_snake(type(capability).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in result or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+
+        result[capability_id] = capability
+
+    return result
 
 
 def _validate_spec(

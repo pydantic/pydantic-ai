@@ -9,7 +9,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import UNSET, Unset, is_set
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
@@ -51,6 +51,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
     _instructions: list[str | SystemPromptFunc[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
+    _description: CapabilityDescription[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __init__(
         self,
@@ -60,7 +61,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         id: str | Unset = UNSET,
-        description: str | None = None,
+        description: CapabilityDescription[AgentDepsT] | None = None,
         defer_loading: bool = False,
     ) -> None:
         if toolset is not None and toolsets is not None:
@@ -80,14 +81,17 @@ class Capability(AbstractCapability[AgentDepsT]):
                 'Cannot use both `toolsets` and `tools` on the same capability. '
                 'Use `toolsets` to register toolsets, or `tools` to register individual tools.'
             )
-        if is_set(id):
-            super().__init__(id=id, description=description, defer_loading=defer_loading)
-        else:
-            super().__init__(description=description, defer_loading=defer_loading)
+        self.id = id if is_set(id) else None
+        self.description = description if isinstance(description, str) else None
+        self._description = description
+        self.defer_loading = defer_loading
         self.toolsets = resolved_toolsets
         self.tools = tools
         self._function_toolset = FunctionToolset[AgentDepsT](tools)
         self._instructions = list(normalize_instructions(instructions))
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        return self._description
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return list(self._instructions) if self._instructions else None

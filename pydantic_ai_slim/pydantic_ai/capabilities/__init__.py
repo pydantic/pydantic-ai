@@ -31,7 +31,6 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
-    auto_capability_id,
 )
 from .capability import Capability
 from .combined import CombinedCapability
@@ -94,7 +93,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 # registered here due to circular imports. Use custom_capability_types in AgentSpec instead.
 
 __all__ = [
-    'auto_capability_id',
     'AbstractCapability',
     'AgentCapability',
     'AgentNode',

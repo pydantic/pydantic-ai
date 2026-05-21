@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -30,7 +30,6 @@ from .abstract import (
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
-    is_auto_capability_id,
 )
 
 if TYPE_CHECKING:
@@ -49,7 +48,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
-        super().__post_init__()
         # Splat any nested `CombinedCapability` so leaves participate as siblings in the
         # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
         # span both `outermost` and `innermost` tiers would force `_effective_ordering`
@@ -63,35 +61,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self.capabilities = flat
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
-
-        seen: set[str] = set()
-
-        def _check_unique(cap: AbstractCapability[AgentDepsT]) -> None:
-            try:
-                defer_loading = cap.defer_loading
-                cap_id = cap.id
-                _ = cap.description
-            except AttributeError as e:
-                raise UserError(
-                    'Capabilities with custom `__init__` methods must initialize base dataclass fields. '
-                    'Use the generated dataclass `__init__`, or set `self.id`, `self.description`, and '
-                    '`self.defer_loading` before calling `self.__post_init__()`.'
-                ) from e
-
-            if defer_loading is True and is_auto_capability_id(cap_id):
-                raise UserError(
-                    'Deferred capabilities must use stable explicit `id` values for message history replay. '
-                    'Pass `id=...` when using `defer_loading=True`.'
-                )
-
-            if cap_id in seen:
-                raise UserError(
-                    f'Capability id {cap_id!r} is used by multiple capabilities. '
-                    'Capability ids must be unique within a run.'
-                )
-            seen.add(cap_id)
-
-        self.apply(_check_unique)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
@@ -136,7 +105,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 def deferred_settings(
                     ctx: RunContext[AgentDepsT],
                     *,
-                    capability_id: str = capability.id,
+                    capability_id: str | None = capability.id,
                     cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
                 ) -> ModelSettings:
                     if capability_id in ctx.available_capability_ids:
@@ -181,14 +150,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 toolsets.append(
                     CapabilityOwnedToolset(
                         wrapped=toolset,  # pyright: ignore[reportUnknownArgumentType]
-                        capability_id=capability.id,
+                        capability=capability,
                     )
                 )
             else:
                 toolsets.append(
                     CapabilityOwnedToolset(
                         wrapped=DynamicToolset[AgentDepsT](toolset_func=toolset),
-                        capability_id=capability.id,
+                        capability=capability,
                     )
                 )
         return CombinedToolset(toolsets) if toolsets else None
@@ -223,7 +192,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
-            tool_defs = await capability.prepare_tools(_ctx_for_cap(capability.id, ctx), tool_defs)
+            tool_defs = await capability.prepare_tools(_ctx_for_cap(capability, ctx), tool_defs)
         return tool_defs
 
     async def prepare_output_tools(
@@ -232,7 +201,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
-            tool_defs = await capability.prepare_output_tools(_ctx_for_cap(capability.id, ctx), tool_defs)
+            tool_defs = await capability.prepare_output_tools(_ctx_for_cap(capability, ctx), tool_defs)
         return tool_defs
 
     # --- Run lifecycle hooks ---
@@ -242,7 +211,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> None:
         for capability in self.capabilities:
-            await capability.before_run(_ctx_for_cap(capability.id, ctx))
+            await capability.before_run(_ctx_for_cap(capability, ctx))
 
     async def after_run(
         self,
@@ -251,7 +220,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
         for capability in reversed(self.capabilities):
-            result = await capability.after_run(_ctx_for_cap(capability.id, ctx), result=result)
+            result = await capability.after_run(_ctx_for_cap(capability, ctx), result=result)
         return result
 
     async def wrap_run(
@@ -261,8 +230,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[], Awaitable[AgentRunResult[Any]]],
     ) -> AgentRunResult[Any]:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_run_wrap(cap, ctx, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_run_wrap(capability, ctx, chain)
         return await chain()
 
     async def on_run_error(
@@ -273,7 +242,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         for capability in reversed(self.capabilities):
             try:
-                return await capability.on_run_error(_ctx_for_cap(capability.id, ctx), error=error)
+                return await capability.on_run_error(_ctx_for_cap(capability, ctx), error=error)
             except BaseException as new_error:
                 error = new_error
         raise error
@@ -287,7 +256,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
         for capability in self.capabilities:
-            node = await capability.before_node_run(_ctx_for_cap(capability.id, ctx), node=node)
+            node = await capability.before_node_run(_ctx_for_cap(capability, ctx), node=node)
         return node
 
     async def after_node_run(
@@ -298,7 +267,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
-            result = await capability.after_node_run(_ctx_for_cap(capability.id, ctx), node=node, result=result)
+            result = await capability.after_node_run(_ctx_for_cap(capability, ctx), node=node, result=result)
         return result
 
     async def wrap_node_run(
@@ -312,8 +281,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_node_run_wrap(cap, ctx, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_node_run_wrap(capability, ctx, chain)
         return await chain(node)
 
     async def on_node_run_error(
@@ -325,7 +294,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
             try:
-                return await capability.on_node_run_error(_ctx_for_cap(capability.id, ctx), node=node, error=error)
+                return await capability.on_node_run_error(_ctx_for_cap(capability, ctx), node=node, error=error)
             except Exception as new_error:
                 error = new_error
         raise error
@@ -338,8 +307,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        for cap in reversed(self.capabilities):
-            stream = cap.wrap_run_event_stream(_ctx_for_cap(cap.id, ctx), stream=stream)
+        for capability in reversed(self.capabilities):
+            stream = capability.wrap_run_event_stream(_ctx_for_cap(capability, ctx), stream=stream)
         async for event in stream:
             yield event
 
@@ -351,7 +320,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         for capability in self.capabilities:
-            request_context = await capability.before_model_request(_ctx_for_cap(capability.id, ctx), request_context)
+            request_context = await capability.before_model_request(_ctx_for_cap(capability, ctx), request_context)
         return request_context
 
     async def after_model_request(
@@ -363,7 +332,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         for capability in reversed(self.capabilities):
             response = await capability.after_model_request(
-                _ctx_for_cap(capability.id, ctx), request_context=request_context, response=response
+                _ctx_for_cap(capability, ctx), request_context=request_context, response=response
             )
         return response
 
@@ -375,8 +344,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_model_request_wrap(cap, ctx, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_model_request_wrap(capability, ctx, chain)
         return await chain(request_context)
 
     async def on_model_request_error(
@@ -389,7 +358,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_model_request_error(
-                    _ctx_for_cap(capability.id, ctx), request_context=request_context, error=error
+                    _ctx_for_cap(capability, ctx), request_context=request_context, error=error
                 )
             except Exception as new_error:
                 error = new_error
@@ -407,7 +376,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> str | dict[str, Any]:
         for capability in self.capabilities:
             args = await capability.before_tool_validate(
-                _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args
+                _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args
             )
         return args
 
@@ -421,7 +390,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
             args = await capability.after_tool_validate(
-                _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args
+                _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args
             )
         return args
 
@@ -435,8 +404,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_tool_validate_wrap(cap, ctx, call, tool_def, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
     async def on_tool_validate_error(
@@ -451,7 +420,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_tool_validate_error(
-                    _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args, error=error
+                    _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args, error=error
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
@@ -473,7 +442,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         for capability in self.capabilities:
             args = await capability.before_tool_execute(
-                _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args
+                _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args
             )
         return args
 
@@ -488,7 +457,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         for capability in reversed(self.capabilities):
             result = await capability.after_tool_execute(
-                _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args, result=result
+                _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args, result=result
             )
         return result
 
@@ -502,8 +471,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_tool_execute_wrap(cap, ctx, call, tool_def, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
     async def on_tool_execute_error(
@@ -518,7 +487,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_tool_execute_error(
-                    _ctx_for_cap(capability.id, ctx), call=call, tool_def=tool_def, args=args, error=error
+                    _ctx_for_cap(capability, ctx), call=call, tool_def=tool_def, args=args, error=error
                 )
             except Exception as new_error:
                 error = new_error
@@ -535,7 +504,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> RawOutput:
         for capability in self.capabilities:
             output = await capability.before_output_validate(
-                _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output
+                _ctx_for_cap(capability, ctx), output_context=output_context, output=output
             )
         return output
 
@@ -548,7 +517,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         for capability in reversed(self.capabilities):
             output = await capability.after_output_validate(
-                _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output
+                _ctx_for_cap(capability, ctx), output_context=output_context, output=output
             )
         return output
 
@@ -561,8 +530,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: WrapOutputValidateHandler,
     ) -> Any:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_output_validate_wrap(cap, ctx, output_context, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_output_validate_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
     async def on_output_validate_error(
@@ -576,7 +545,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_output_validate_error(
-                    _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output, error=error
+                    _ctx_for_cap(capability, ctx), output_context=output_context, output=output, error=error
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
@@ -595,7 +564,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         for capability in self.capabilities:
             output = await capability.before_output_process(
-                _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output
+                _ctx_for_cap(capability, ctx), output_context=output_context, output=output
             )
         return output
 
@@ -608,7 +577,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         for capability in reversed(self.capabilities):
             output = await capability.after_output_process(
-                _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output
+                _ctx_for_cap(capability, ctx), output_context=output_context, output=output
             )
         return output
 
@@ -621,8 +590,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: WrapOutputProcessHandler,
     ) -> Any:
         chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_output_process_wrap(cap, ctx, output_context, chain)
+        for capability in reversed(self.capabilities):
+            chain = _make_output_process_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
     async def on_output_process_error(
@@ -636,7 +605,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_output_process_error(
-                    _ctx_for_cap(capability.id, ctx), output_context=output_context, output=output, error=error
+                    _ctx_for_cap(capability, ctx), output_context=output_context, output=output, error=error
                 )
             except Exception as new_error:
                 error = new_error
@@ -652,7 +621,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         remaining = requests
         any_handled = False
         for capability in self.capabilities:
-            result = await capability.handle_deferred_tool_calls(_ctx_for_cap(capability.id, ctx), requests=remaining)
+            result = await capability.handle_deferred_tool_calls(_ctx_for_cap(capability, ctx), requests=remaining)
             if result is None or not (result.approvals or result.calls):
                 continue
             any_handled = True
@@ -675,7 +644,7 @@ def _make_run_wrap(
     inner: Callable[[], Awaitable[AgentRunResult[Any]]],
 ) -> Callable[[], Awaitable[AgentRunResult[Any]]]:
     async def wrapped() -> AgentRunResult[Any]:
-        return await cap.wrap_run(_ctx_for_cap(cap.id, ctx), handler=inner)
+        return await cap.wrap_run(_ctx_for_cap(cap, ctx), handler=inner)
 
     return wrapped
 
@@ -687,7 +656,7 @@ def _make_model_request_wrap(
 ) -> Callable[[ModelRequestContext], Awaitable[ModelResponse]]:
     async def wrapped(request_context: ModelRequestContext) -> ModelResponse:
         return await cap.wrap_model_request(
-            _ctx_for_cap(cap.id, ctx),
+            _ctx_for_cap(cap, ctx),
             request_context=request_context,
             handler=inner,
         )
@@ -704,7 +673,7 @@ def _make_tool_validate_wrap(
 ) -> Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]:
     async def wrapped(args: str | dict[str, Any]) -> dict[str, Any]:
         return await cap.wrap_tool_validate(
-            _ctx_for_cap(cap.id, ctx), call=call, tool_def=tool_def, args=args, handler=inner
+            _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
         )
 
     return wrapped
@@ -724,7 +693,7 @@ def _make_node_run_wrap(
     async def wrapped(
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        return await cap.wrap_node_run(_ctx_for_cap(cap.id, ctx), node=node, handler=inner)
+        return await cap.wrap_node_run(_ctx_for_cap(cap, ctx), node=node, handler=inner)
 
     return wrapped
 
@@ -738,7 +707,7 @@ def _make_tool_execute_wrap(
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(
-            _ctx_for_cap(cap.id, ctx), call=call, tool_def=tool_def, args=args, handler=inner
+            _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
         )
 
     return wrapped
@@ -752,7 +721,7 @@ def _make_output_validate_wrap(
 ) -> Callable[[RawOutput], Awaitable[Any]]:
     async def wrapped(output: RawOutput) -> Any:
         return await cap.wrap_output_validate(
-            _ctx_for_cap(cap.id, ctx), output_context=output_context, output=output, handler=inner
+            _ctx_for_cap(cap, ctx), output_context=output_context, output=output, handler=inner
         )
 
     return wrapped
@@ -766,11 +735,16 @@ def _make_output_process_wrap(
 ) -> Callable[[Any], Awaitable[Any]]:
     async def wrapped(output: Any) -> Any:
         return await cap.wrap_output_process(
-            _ctx_for_cap(cap.id, ctx), output_context=output_context, output=output, handler=inner
+            _ctx_for_cap(cap, ctx), output_context=output_context, output=output, handler=inner
         )
 
     return wrapped
 
 
-def _ctx_for_cap(capability_id: str, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    capability_id = next(
+        capability_id
+        for capability_id, registered_capability in ctx.capabilities.items()
+        if registered_capability is capability
+    )
     return replace(ctx, capability_loaded=capability_id in ctx.available_capability_ids)

@@ -28,7 +28,7 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..capabilities.abstract import AbstractCapability, auto_capability_id
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -3990,11 +3990,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
                 semantics, so the field is deprecated and will be removed
                 in a future version.
         """
-        self.id = auto_capability_id()
-        self.description = None
-        self.defer_loading = False
-        self.__post_init__()
-
         if instructions is not None:
             warnings.warn(
                 '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '

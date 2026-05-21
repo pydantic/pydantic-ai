@@ -13,7 +13,6 @@ from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .abstract import auto_capability_id
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
@@ -128,15 +127,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         elif isinstance(native, MCPServerTool):
             self.id = native.id
         else:
-            self.id = _mcp_id_from_url(url) or auto_capability_id()
+            self.id = _mcp_id_from_url(url)
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
         self.__post_init__()
 
     def _default_native(self) -> MCPServerTool:
+        mcp_id = self.id or _mcp_id_from_url(self.url)
         return MCPServerTool(
-            id=self.id,
+            id=mcp_id,
             url=self.url,
             authorization_token=self.authorization_token,
             headers=self.headers,

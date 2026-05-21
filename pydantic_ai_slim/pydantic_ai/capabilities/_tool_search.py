@@ -139,7 +139,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
-        super().__post_init__()
         # `'keywords'` and a callable strategy both run their algorithm on our side and
         # both engage the provider's "client-executed" native mode where supported, so
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
