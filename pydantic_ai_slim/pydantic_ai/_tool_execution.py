@@ -234,6 +234,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # When resuming with `tool_call_results`, deferred kinds execute via the regular pipeline
         # (their results are supplied) rather than being batched at the end of the step.
         if self.tool_call_results is not None:
+            # The resume path must supply a result for every eligible call from the original response,
+            # including `'unknown'` (hallucinated) ones, using the `'skip'` sentinel for any call that
+            # was already handled in a prior step. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
             result_tool_call_ids = set(self.tool_call_results.keys())
             eligible_call_ids = {
