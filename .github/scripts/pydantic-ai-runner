@@ -56,12 +56,12 @@ from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ToolCallEvent,
     ToolCallPart,
+    ToolResultEvent,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -83,12 +83,14 @@ PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
 # with GH_AW_HARNESS_REQUEST_LIMIT.
 DEFAULT_REQUEST_LIMIT = 200
 
-# Execution guidance that prepends every prompt as a system instruction.
-# Weaker models (e.g. MiniMax behind an Anthropic-compatible shim) follow
-# system instructions much more strictly than user messages, so the full
-# workflow prompt is also routed into `instructions=` (see `run()`) rather
-# than sent as the user message. This snippet covers parallel tool calls;
-# the workflow's resolved prompt is concatenated after it.
+# Execution guidance that prepends every workflow prompt as a system
+# instruction. Weaker models (e.g. MiniMax behind an Anthropic-compatible
+# shim) follow system instructions much more strictly than user messages,
+# so `run()` concatenates this snippet with the resolved workflow prompt
+# and passes the whole thing as `Agent(instructions=...)`. The user
+# message is the trivial `RUN_TRIGGER` below — pydantic-ai re-applies
+# `instructions` to every `ModelRequest`, so the task spec stays in view
+# across the entire run (and across compaction).
 INSTRUCTIONS = (
     "You can call multiple tools in a single turn. When tool calls are "
     "independent (no call needs another call's output), issue them together "
@@ -252,21 +254,24 @@ def _history_size_chars(messages: list[ModelMessage]) -> int:
 
 async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     """Capability: summarise older turns once the history's total character
-    size exceeds the budget; keep the first message (system + task prompt)
-    and the most recent `KEEP_RECENT` messages verbatim. Falls back to plain
-    truncation when the summarisation sub-call fails (network/model)."""
+    size exceeds the budget; keep the most recent `KEEP_RECENT` messages
+    verbatim, replace the rest with a single summary message. The task
+    spec rides on `Agent(instructions=...)` (re-applied by pydantic-ai on
+    every `ModelRequest`), so we don't need to preserve a "head" message
+    here — pydantic-ai's request builder always re-prepends the system
+    prompt. Falls back to plain truncation when the summarisation
+    sub-call fails (network/model)."""
     trigger_chars = _compaction_trigger_chars()
     keep = _int_env("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", DEFAULT_COMPACTION_KEEP_RECENT)
     size = _history_size_chars(messages)
-    if size < trigger_chars or len(messages) <= keep + 1:
+    if size < trigger_chars or len(messages) <= keep:
         return messages
-    head = messages[:1]
-    middle = messages[1:-keep]
+    middle = messages[:-keep]
     tail = messages[-keep:]
     transcript = _render_messages_for_summary(middle)
     log(
         f"compacting history: {size} chars / {len(messages)} msgs -> "
-        f"keeping head + summary + last {keep} (summarising {len(middle)} mid-msgs)"
+        f"summary + last {keep} (summarising {len(middle)} mid-msgs)"
     )
     try:
         summariser = Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS)
@@ -280,9 +285,9 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         summary = str(r.output or "").strip() or "(empty summary)"
     except Exception as exc:  # noqa: BLE001 - never let compaction fail the run
         log(f"compaction summarisation failed ({exc!r}); truncating instead")
-        return head + tail
+        return tail
     synthetic = ModelRequest(parts=[UserPromptPart(content=f"[compacted history]\n{summary}")])
-    return head + [synthetic] + tail
+    return [synthetic] + tail
 
 
 # --------------------------------------------------------------------------- #
@@ -995,7 +1000,11 @@ async def _stream_events(ctx: RunContext[Any], events: Any) -> None:
     as they happen. Truncates result content for visibility; the model's view
     is unaffected (the handler is observation-only)."""
     async for event in events:
-        if isinstance(event, FunctionToolCallEvent):
+        # Use the `ToolCallEvent` / `ToolResultEvent` base classes so we
+        # cover both `FunctionToolCallEvent` (the common path) and
+        # `OutputToolCallEvent` (pydantic-ai structured-output mechanism)
+        # — they share the `part` attribute we read from.
+        if isinstance(event, ToolCallEvent):
             emit(
                 {
                     "type": "assistant",
@@ -1013,7 +1022,7 @@ async def _stream_events(ctx: RunContext[Any], events: Any) -> None:
                 }
             )
             log(f"tool_use: {event.part.tool_name}")
-        elif isinstance(event, FunctionToolResultEvent):
+        elif isinstance(event, ToolResultEvent):
             content = str(getattr(event.part, "content", ""))
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (

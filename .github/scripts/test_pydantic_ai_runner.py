@@ -299,6 +299,68 @@ def test_instructions_encourage_parallel_tool_calls():
     assert "parallel" in har.INSTRUCTIONS.lower()
 
 
+def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
+    """The workflow prompt rides as a system instruction; the user message
+    is just `RUN_TRIGGER`. Weaker models follow system instructions much
+    more strictly than user messages, so this wiring is load-bearing for
+    multi-step workflow prompts."""
+    import asyncio
+
+    seen: dict[str, object] = {}
+
+    class _CapturingAgent:
+        def __init__(self, model, instructions=None, **_):  # type: ignore[no-untyped-def]
+            seen["instructions"] = instructions
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return False
+
+        async def run(self, prompt, usage_limits=None, **_):  # type: ignore[no-untyped-def]
+            seen["run_prompt"] = prompt
+
+            class _Usage:
+                requests = 0
+                input_tokens = 0
+                output_tokens = 0
+
+            class _Result:
+                output = "done"
+                usage = _Usage()
+
+                @staticmethod
+                def all_messages():
+                    return []
+
+            return _Result()
+
+    monkeypatch.setattr(har, "Agent", _CapturingAgent)
+    monkeypatch.setattr(har, "emit", lambda *a, **k: None)
+    monkeypatch.setattr(har, "log_safe_outputs_state", lambda: None)
+
+    sentinel = "### WORKFLOW TASK SPEC: review the PR per the rules above ###"
+    asyncio.run(
+        har.run(
+            prompt=sentinel,
+            model=object(),
+            label="test-model",
+            native_tools=[],
+            mcp_servers=[],
+            session_id="test-session",
+        )
+    )
+
+    instructions = str(seen["instructions"])
+    assert har.INSTRUCTIONS in instructions  # baseline parallel-tool guidance
+    assert sentinel in instructions  # workflow prompt embedded in system instructions
+
+    # User message is the trivial trigger — task spec MUST NOT leak there.
+    assert seen["run_prompt"] == har.RUN_TRIGGER
+    assert sentinel not in str(seen["run_prompt"])
+
+
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
     assert har.READ_ONLY_SUBAGENT_TOOLS.isdisjoint(har.MUTATING_TOOLS)
     assert "Task" not in har.READ_ONLY_SUBAGENT_TOOLS  # no recursion
@@ -522,12 +584,15 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
         usage = parent_usage
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
-    # head (1) + synthetic summary (1) + last KEEP_RECENT (3) = 5
-    assert len(out) == 5
+    # synthetic summary (1) + last KEEP_RECENT (3) = 4. We no longer
+    # preserve a "head" message — pydantic-ai re-applies the system
+    # `instructions=` on every request, so the task spec stays visible
+    # without our help.
+    assert len(out) == 4
     # Compaction summariser cost rolled up into the parent's usage.
     assert seen_usage["usage"] is parent_usage
-    # Summary present in the middle synthetic ModelRequest.
-    summary_msg = out[1]
+    # Summary present in the leading synthetic ModelRequest.
+    summary_msg = out[0]
     assert any("SHORT SUMMARY" in getattr(p, "content", "") for p in summary_msg.parts)
 
 
@@ -560,8 +625,8 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
         usage = RunUsage()
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
-    # On failure: keep head + tail (no synthetic summary) = 1 + 3 = 4
-    assert len(out) == 4
+    # On failure: keep just the tail (no head, no synthetic summary) = 3
+    assert len(out) == 3
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):

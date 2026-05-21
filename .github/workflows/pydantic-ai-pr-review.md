@@ -117,9 +117,9 @@ pre-agent-steps:
       # Diagnostic: log the workspace state of both scripts/ and .github/scripts/
       # so we can verify the gh-aw restore-from-base step left them untouched.
       echo "::group::workspace inventory at gather time"
-      ls -la scripts/ 2>&1 | head -20 || true
+      ls -la scripts/ 2>&1 | head -50 || true
       echo "---"
-      ls -la .github/scripts/ 2>&1 | head -20 || true
+      ls -la .github/scripts/ 2>&1 | head -50 || true
       echo "::endgroup::"
       script=scripts/gather-pydantic-ai-review-context.sh
       if [ -x "$script" ]; then
