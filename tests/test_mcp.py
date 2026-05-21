@@ -29,6 +29,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    messages,
 )
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
@@ -125,6 +126,15 @@ async def test_stdio_server(run_context: RunContext[int]):
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
         assert result == snapshot(32.0)
+
+
+async def test_text_content_in_tool_return_does_not_leak_metadata_to_model():
+    """Regression test: `TextContent.metadata` must not be serialized into the model-facing payload."""
+    text = messages.TextContent(content='hello', metadata={'source': 'test', 'logged_at': '2026-01-01'})
+    part = ToolReturnPart(tool_name='t', content=text, tool_call_id='cid')
+    # Both serialization paths used by model adapters must collapse to the plain text.
+    assert part.model_response_str() == 'hello'
+    assert part.model_response_object() == {'return_value': 'hello'}
 
 
 async def test_reentrant_context_manager():
