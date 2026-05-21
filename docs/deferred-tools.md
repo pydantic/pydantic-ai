@@ -235,17 +235,17 @@ print(result.all_messages())
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='update_file',
-                content="File '.env' updated: ''",
-                tool_call_id='update_file_dotenv',
-                timestamp=datetime.datetime(...),
-            ),
-            ToolReturnPart(
                 tool_name='delete_file',
                 content='Deleting files is not allowed',
                 tool_call_id='delete_file',
                 timestamp=datetime.datetime(...),
                 outcome='denied',
+            ),
+            ToolReturnPart(
+                tool_name='update_file',
+                content="File '.env' updated: ''",
+                tool_call_id='update_file_dotenv',
+                timestamp=datetime.datetime(...),
             ),
             UserPromptPart(
                 content='Now create a backup of README.md',
@@ -303,6 +303,9 @@ print(result.all_messages())
 2. This second agent run continues from where the first run left off, providing the tool approval results and optionally a new `user_prompt` to give the model additional instructions alongside the deferred results.
 
 _(This example is complete, it can be run "as is")_
+
+!!! note "Tool result ordering"
+    Tool results follow the order in which the model emitted the corresponding tool calls. In the message history above, `delete_file`'s denied result appears before `update_file`'s result for `.env` because the model emitted `delete_file` first. This is an intentional behavior change in v2: results are no longer grouped by tool kind, so the ordering you see reflects the model's emission order.
 
 ## External Tool Execution
 

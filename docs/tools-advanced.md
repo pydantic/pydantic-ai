@@ -563,8 +563,51 @@ The validation result is exposed via the `args_valid` field on [`FunctionToolCal
 
 ### Parallel tool calls & concurrency
 
-When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
-If a tool requires sequential/serial execution, you can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering the tool, or wrap the agent run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager.
+When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
+
+To stop a specific tool from overlapping with others, mark it `sequential=True` — it then acts as a barrier: tools the model emitted before it finish first, it runs alone, and tools emitted after it start only once it finishes.
+
+```python {title="sequential_tool.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+agent = Agent()
+
+calls: list[str] = []
+
+
+@agent.tool_plain
+def fetch_record(record_id: int) -> str:
+    calls.append(f'fetch_record({record_id})')
+    return f'record-{record_id}'
+
+
+@agent.tool_plain(sequential=True)
+def write_to_database(record: str) -> str:
+    calls.append(f'write_to_database({record!r})')
+    return 'written'
+
+
+def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:  # first request: ask for both tools at once
+        return ModelResponse(
+            parts=[
+                ToolCallPart('fetch_record', {'record_id': 1}),
+                ToolCallPart('write_to_database', {'record': 'data'}),
+            ]
+        )
+    return ModelResponse(parts=[TextPart('done')])
+
+
+result = agent.run_sync('store the record', model=FunctionModel(call_tools))
+print(result.output)
+#> done
+# `write_to_database` waited for `fetch_record` to finish before running.
+print(calls)
+#> ['fetch_record(1)', "write_to_database('data')"]
+```
+
+You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
@@ -600,9 +643,9 @@ async def lifespan(app):
 #### Output Tool Calls
 
 When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
-The `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+The default `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information on how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+For more information on how `end_strategy` works with both function tools and output tools, see [Parallel Output Tool Calls](output.md#parallel-output-tool-calls).
 
 ## Tool Search
 

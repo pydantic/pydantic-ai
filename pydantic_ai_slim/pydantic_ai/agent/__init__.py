@@ -203,11 +203,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
     end_strategy: EndStrategy
-    """The strategy for handling multiple tool calls when a final result is found.
+    """The strategy for handling function tool calls the model requests alongside an output tool.
 
-    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
-    - `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
-    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+    Defaults to `'graceful'`. See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for the behavior of
+    each strategy.
     """
 
     model_settings: AgentModelSettings[AgentDepsT] | None
@@ -283,7 +282,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -307,7 +306,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -330,7 +329,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -2106,7 +2105,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -2242,7 +2242,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.

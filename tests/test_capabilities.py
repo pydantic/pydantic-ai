@@ -1705,7 +1705,7 @@ Supported by:
                     'title': 'Retries',
                 },
                 'end_strategy': {
-                    'default': 'early',
+                    'default': 'graceful',
                     'enum': ['early', 'graceful', 'exhaustive'],
                     'title': 'End Strategy',
                     'type': 'string',
