@@ -8,7 +8,7 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
@@ -34,31 +34,31 @@ def _drain_by_priority(
     return drained
 
 
-def _stamped_requests(
+def _stamped_messages(
     drained: list[PendingMessage],
     *,
     fallback_run_id: str | None,
     fallback_conversation_id: str | None,
-) -> list[ModelRequest]:
-    """Stamp drained requests with `timestamp` / `run_id` / `conversation_id` where unset.
+) -> list[ModelMessage]:
+    """Flatten drained pending messages, stamping `timestamp` / `run_id` / `conversation_id` where unset.
 
-    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] already carries a built
-    [`ModelRequest`][pydantic_ai.messages.ModelRequest] (built at enqueue time by
-    [`build_enqueue_request`][pydantic_ai._enqueue.build_enqueue_request]); this only
-    fills in framework-tracked metadata that the producer left unset, so passthrough
-    requests preserve producer-supplied values.
+    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
+    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
+    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
+    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
+    are preserved.
     """
-    requests: list[ModelRequest] = []
-    for msg in drained:
-        request = msg.request
-        if request.timestamp is None:
-            request.timestamp = now_utc()
-        if request.run_id is None:
-            request.run_id = fallback_run_id
-        if request.conversation_id is None:
-            request.conversation_id = fallback_conversation_id
-        requests.append(request)
-    return requests
+    messages: list[ModelMessage] = []
+    for pending in drained:
+        for message in pending.messages:
+            if message.timestamp is None:
+                message.timestamp = now_utc()
+            if message.run_id is None:
+                message.run_id = fallback_run_id
+            if message.conversation_id is None:
+                message.conversation_id = fallback_conversation_id
+            messages.append(message)
+    return messages
 
 
 class PendingMessageDrainCapability(AbstractCapability[Any]):
@@ -101,11 +101,11 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         that fixup.
         """
         drained = _drain_by_priority(ctx.pending_messages, 'asap')
-        for request in _stamped_requests(
+        for message in _stamped_messages(
             drained, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
         ):
-            request_context.messages.append(request)
-            ctx.messages.append(request)
+            request_context.messages.append(message)
+            ctx.messages.append(message)
         return request_context
 
     async def after_node_run(
@@ -141,13 +141,17 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not leftover_asap and not when_idle:
             return result
 
-        requests = [
-            *_stamped_requests(leftover_asap, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
-            *_stamped_requests(when_idle, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+        messages = [
+            *_stamped_messages(leftover_asap, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+            *_stamped_messages(when_idle, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
         ]
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
-        # will re-stamp it during the graph lifecycle. `_stamped_requests` already
-        # stamped it, which is harmless (the lifecycle stamp overwrites).
-        *extras, final = requests
+        # will re-stamp it during the graph lifecycle. `_stamped_messages` already
+        # stamped it, which is harmless (the lifecycle stamp overwrites). Every
+        # `PendingMessage` ends in a `ModelRequest` (enforced by `from_content`), so the
+        # last flattened message is always one; any earlier responses/requests become
+        # `extras` appended to history before the redirect.
+        *extras, final = messages
+        assert isinstance(final, ModelRequest), 'enqueued content always ends in a ModelRequest'
         ctx.messages.extend(extras)
         return ModelRequestNode(request=final)

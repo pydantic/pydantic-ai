@@ -67,6 +67,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -11713,7 +11714,7 @@ def test_pending_message_drain_capability_is_not_spec_constructible():
 
 
 def test_pending_message_allows_empty_request():
-    """`PendingMessage` doesn't validate its `request`; empty-parts requests are tolerated.
+    """`PendingMessage` doesn't validate its `messages`; empty-parts requests are tolerated.
 
     `enqueue()` already filters out the no-args case (no `PendingMessage` is appended).
     An empty `ModelRequest` reaching the queue is harmless — the drain stamps and forwards
@@ -11721,9 +11722,9 @@ def test_pending_message_allows_empty_request():
     """
     from pydantic_ai._enqueue import PendingMessage
 
-    msg = PendingMessage(request=ModelRequest(parts=[]))
+    msg = PendingMessage(messages=(ModelRequest(parts=[]),))
     assert msg.priority == 'asap'
-    assert msg.request.parts == []
+    assert msg.messages[0].parts == []
 
 
 async def test_enqueue_parts_style_calls_produce_one_request_per_call():
@@ -11818,8 +11819,99 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
     assert drained[2].instructions is None
 
 
-async def test_enqueue_rejects_model_request_mixed_with_other_items():
-    """Mixing a `ModelRequest` with strings/`Sequence[UserContent]` in one `enqueue` call is rejected."""
+async def test_enqueue_system_prompt_part():
+    """A bare `SystemPromptPart` is coalesced into a `ModelRequest` and delivered.
+
+    Now that mid-conversation `SystemPromptPart`s are rendered inline (not hoisted) on all
+    providers, `enqueue` accepts request parts directly — no `ModelRequest` wrapper needed.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='announce', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def announce(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart(content='New tools are now available.'))
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, SystemPromptPart) and p.content == 'New tools are now available.' for p in msg.parts)
+    )
+    assert injected is not None
+
+
+async def test_enqueue_interleaved_response_and_request():
+    """One `enqueue` call can inject an interleaved `ModelResponse` + `ModelRequest` exchange.
+
+    This is the synthetic "tool-search call + result" shape (a `ModelResponse` carrying the call
+    followed by a `ModelRequest` carrying the return). Both land in history in order, and the
+    trailing request is what the agent responds to next.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_exchange', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    synthetic_response = ModelResponse(
+        parts=[TextPart(content='synthetic prior turn')],
+        usage=RequestUsage(input_tokens=1, output_tokens=1),
+    )
+
+    @agent.tool
+    def inject_exchange(ctx: RunContext[None]) -> str:
+        ctx.enqueue(
+            synthetic_response,
+            ModelRequest(parts=[UserPromptPart(content='follow-up after synthetic turn')]),
+            priority='when_idle',
+        )
+        return 'ok'
+
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_idx = next(
+        i
+        for i, msg in enumerate(messages)
+        if isinstance(msg, ModelResponse)
+        and any(isinstance(p, TextPart) and p.content == 'synthetic prior turn' for p in msg.parts)
+    )
+    request_idx = next(
+        i
+        for i, msg in enumerate(messages)
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content == 'follow-up after synthetic turn' for p in msg.parts)
+    )
+    # The synthetic response is appended to history immediately before its paired request.
+    assert request_idx == response_idx + 1
+
+
+async def test_enqueue_rejects_content_not_ending_in_request():
+    """Enqueued content must end in a `ModelRequest`; a lone `ModelResponse` is rejected.
+
+    The agent needs a request to respond to — content that ends in a `ModelResponse` (with no
+    trailing request/part-style items) would leave nothing for the model to react to.
+    """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -11833,16 +11925,19 @@ async def test_enqueue_rejects_model_request_mixed_with_other_items():
         )
 
     agent = Agent(FunctionModel(model_fn))
+    lone_response = ModelResponse(
+        parts=[TextPart(content='synthetic')], usage=RequestUsage(input_tokens=1, output_tokens=1)
+    )
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
-        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
-            ctx.enqueue('hint', ModelRequest(parts=[UserPromptPart(content='wire')]))
+        with pytest.raises(ValueError, match='must end with a `ModelRequest`'):
+            ctx.enqueue(lone_response)
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
-            agent_run.enqueue(ModelRequest(parts=[UserPromptPart(content='wire')]), 'hint')
+        with pytest.raises(ValueError, match='must end with a `ModelRequest`'):
+            agent_run.enqueue(lone_response)
         async for _ in agent_run:
             pass
 

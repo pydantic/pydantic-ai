@@ -13,7 +13,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, build_enqueue_request
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -137,21 +137,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the drain.
 
         Args:
-            *content: One or more items packed into a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]
-                at enqueue time. Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)`
-                accepts) is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Pass a single
-                [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue it verbatim (preserving
-                `instructions`, `metadata`, etc.) — it cannot be mixed with other items. Calling with no
-                positional args is a no-op.
+            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+                Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
+                and each [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
+                part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+                [`ModelResponse`][pydantic_ai.messages.ModelResponse] is kept as its own message. The
+                assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
         """
-        request = build_enqueue_request(content)
-        if request is None:
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
             return
-        self.pending_messages.append(PendingMessage(request=request, priority=priority))
+        self.pending_messages.append(pending)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

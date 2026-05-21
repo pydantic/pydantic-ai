@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from .messages import ModelRequest, UserPromptPart
+from .messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, UserPromptPart
 
 if TYPE_CHECKING:
     from .messages import UserContent
@@ -28,53 +28,57 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
 """
 
 
-EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequest'
+EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequestPart | ModelMessage'
 """A single item accepted by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
 and [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
 
 - `str` or `Sequence[UserContent]`: wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]
     (matching the shape of `Agent.run(user_prompt=...)`).
-- [`ModelRequest`][pydantic_ai.messages.ModelRequest]: emitted verbatim as its own message at
-    drain time — pass a complete request when you need to control `instructions`, `metadata`,
-    or other request-level fields, or when you need a part type other than
-    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Must be the only positional argument to `enqueue`.
+- [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]): included verbatim.
+- [`ModelMessage`][pydantic_ai.messages.ModelMessage] (a complete
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]): emitted as its own message.
 
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is intentionally excluded:
-Anthropic and Google hoist any `SystemPromptPart` (regardless of position) to their
-top-level system parameter, which invalidates prefix cache and loses positional intent.
-If you really need to inject a `SystemPromptPart` mid-run, wrap it in a `ModelRequest` and
-pass that as the payload — but be aware of the cross-provider behavior; the framework-level
-fix is tracked in [#5437](https://github.com/pydantic/pydantic-ai/issues/5437) and will let
-us re-add direct `SystemPromptPart` / `Sequence[ModelRequestPart]` support to `EnqueueContent`.
+Consecutive part-style items (`str` / `Sequence[UserContent]` / `ModelRequestPart`) are coalesced
+into a single `ModelRequest`; complete `ModelMessage`s stay separate. This lets one `enqueue`
+call inject an interleaved exchange (e.g. a synthetic tool-search call + result — a `ModelResponse`
+followed by a `ModelRequest`). The assembled sequence must end in a `ModelRequest` so the agent has
+something to respond to.
 """
 
 
-def build_enqueue_request(items: Sequence[EnqueueContent]) -> ModelRequest | None:
-    """Build a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] from a sequence of enqueue items.
+def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessage]:
+    """Assemble enqueue items into a list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s.
 
-    Returns the input [`ModelRequest`][pydantic_ai.messages.ModelRequest] unchanged when a single
-    one was passed (passthrough — preserves `instructions`, `metadata`, and other request-level fields).
-    Otherwise wraps each item in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] and packs
-    them into one new request.
-
-    Returns `None` when there are no items (the caller can skip enqueueing — empty enqueues
-    are a no-op rather than an error).
-
-    Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
-    [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
+    Part-style items (`str` / `Sequence[UserContent]` / `ModelRequestPart`) are coalesced into a
+    single [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete `ModelMessage`s are emitted
+    as-is. Order is preserved, so a `ModelResponse` followed by part-style items produces the
+    response then a request built from those parts.
     """
-    if not items:
-        return None
-    if len(items) == 1 and isinstance(items[0], ModelRequest):
-        return items[0]
-    if any(isinstance(item, ModelRequest) for item in items):
-        raise ValueError('ModelRequest must be enqueued alone, not mixed with strings or `Sequence[UserContent]` items')
-    return ModelRequest(parts=[UserPromptPart(content=item) for item in items])  # type: ignore[arg-type]
+    messages: list[ModelMessage] = []
+    loose_parts: list[ModelRequestPart] = []
+
+    def flush() -> None:
+        if loose_parts:
+            messages.append(ModelRequest(parts=list(loose_parts)))
+            loose_parts.clear()
+
+    for item in items:
+        if isinstance(item, (ModelRequest, ModelResponse)):
+            flush()
+            messages.append(item)
+        elif isinstance(item, (str, Sequence)):
+            loose_parts.append(UserPromptPart(content=item))
+        else:
+            loose_parts.append(item)
+    flush()
+    return messages
 
 
 @dataclass
 class PendingMessage:
-    """A [`ModelRequest`][pydantic_ai.messages.ModelRequest] queued for injection into the agent conversation.
+    """One or more [`ModelMessage`][pydantic_ai.messages.ModelMessage]s queued for injection into the agent conversation.
 
     Enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] or
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and automatically drained
@@ -82,13 +86,35 @@ class PendingMessage:
     [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
     """
 
-    request: ModelRequest
-    """The request to inject into the conversation."""
+    messages: tuple[ModelMessage, ...]
+    """The message(s) to inject, in order. Always ends in a
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
 
     priority: PendingMessagePriority = 'asap'
-    """When to deliver this message:
+    """When to deliver these messages:
 
     - `'asap'`: at the earliest opportunity (next model request, or redirect if the agent
         would otherwise terminate).
     - `'when_idle'`: only when the agent would otherwise terminate, after `'asap'` messages.
     """
+
+    @classmethod
+    def from_content(cls, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> PendingMessage | None:
+        """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
+
+        Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
+
+        Raises:
+            ValueError: If the assembled messages don't end in a
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
+                since the agent needs a request to respond to.
+        """
+        messages = _build_enqueue_messages(content)
+        if not messages:
+            return None
+        if not isinstance(messages[-1], ModelRequest):
+            raise ValueError(
+                'Enqueued content must end with a `ModelRequest` (or `str` / `Sequence[UserContent]` / '
+                '`ModelRequestPart` items that form one), so the agent has a request to respond to.'
+            )
+        return cls(messages=tuple(messages), priority=priority)
