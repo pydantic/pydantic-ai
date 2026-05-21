@@ -72,6 +72,14 @@ class ModelProfile(TypedDict, total=False):
     supports_image_output: bool
     """Whether the model supports image output. Default: `False`."""
 
+    supports_inline_system_prompts: bool
+    """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
+
+    When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
+    `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
+    provider's top-level system parameter.
+    """
+
     default_structured_output_mode: StructuredOutputMode
     """The default structured output mode to use for the model. Default: `'tool'`."""
 

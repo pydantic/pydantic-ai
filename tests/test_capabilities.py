@@ -866,6 +866,18 @@ Keys:
                         'xai:grok-4-fast-reasoning',
                         'xai:grok-4-fast-reasoning-latest',
                         'xai:grok-4-latest',
+                        'xai:grok-4.20',
+                        'xai:grok-4.20-0309',
+                        'xai:grok-4.20-0309-non-reasoning',
+                        'xai:grok-4.20-0309-reasoning',
+                        'xai:grok-4.20-multi-agent',
+                        'xai:grok-4.20-multi-agent-0309',
+                        'xai:grok-4.20-multi-agent-latest',
+                        'xai:grok-4.20-non-reasoning',
+                        'xai:grok-4.20-non-reasoning-latest',
+                        'xai:grok-4.20-reasoning-latest',
+                        'xai:grok-4.3',
+                        'xai:grok-4.3-latest',
                         'xai:grok-code-fast-1',
                         'groq:llama-3.1-8b-instant',
                         'groq:llama-3.3-70b-versatile',
@@ -4805,7 +4817,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])  # pyright: ignore[reportCallIssue, reportArgumentType]
         result = await agent.run('What is happening on X?')
         assert result.output == 'done'
         assert result.all_messages() == snapshot(
@@ -4873,7 +4885,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])  # pyright: ignore[reportCallIssue, reportArgumentType]
         result = await agent.run('search X')
         assert result.output == 'done'
         tool_returns = [
@@ -4940,7 +4952,7 @@ class TestXSearchCapability:
 
         subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
         with pytest.raises(AttributeError, match='no_such_field'):
-            subagent.no_such_field
+            subagent.no_such_field  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
 
 class TestWebFetchCapability:

@@ -255,6 +255,7 @@ def test_openai_gpt_5_4():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -277,6 +278,7 @@ def test_openai_gpt_4o():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -294,6 +296,7 @@ def test_openai_o3_mini():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
@@ -368,13 +371,13 @@ def test_xai_grok_3_mini():
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert _normalize(profile) == snapshot(None)
+    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     profile = CohereProvider.model_profile('command-r-plus')
-    assert _normalize(profile) == snapshot(None)
+    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
 
 
 def test_deepseek_provider_deepseek_chat():
@@ -429,6 +432,8 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
             'bedrock_send_back_thinking_parts': True,
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
@@ -452,6 +457,8 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_tool_choice': True,
             'bedrock_send_back_thinking_parts': True,
             'bedrock_supports_prompt_caching': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
             'bedrock_supports_tool_caching': True,
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -474,6 +481,8 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_tool_choice': True,
             'bedrock_send_back_thinking_parts': True,
             'bedrock_supports_prompt_caching': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'bedrock_thinking_variant': 'anthropic',
@@ -636,6 +645,7 @@ def test_openrouter_openai_gpt_5_4():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -810,6 +820,7 @@ def test_azure_openai_gpt_5():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -877,6 +888,7 @@ def test_groq_moonshotai_kimi():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
         }
     )
 
@@ -885,21 +897,30 @@ def test_groq_moonshotai_kimi():
 def test_groq_meta_llama4_maverick():
     """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
     profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama3_no_overlay():
     """Older Llama models don't get the structured-output overlay."""
     profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_deepseek():
     profile = GroqProvider.model_profile('deepseek-r1-distill-llama-70b')
     assert _normalize(profile) == snapshot(
-        {'supports_thinking': True, 'thinking_always_enabled': True, 'ignore_streamed_leading_whitespace': True}
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -947,6 +968,7 @@ def test_ollama_gpt_oss():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -1032,6 +1054,7 @@ def test_litellm_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -1146,6 +1169,7 @@ def test_github_openai_bare_name():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -1237,6 +1261,7 @@ def test_vercel_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -1369,14 +1394,21 @@ def test_huggingface_bare_name_returns_none():
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_meta_llama():
     profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_deepseek():
     profile = HuggingFaceProvider.model_profile('deepseek-ai/DeepSeek-R1')
     assert _normalize(profile) == snapshot(
-        {'supports_thinking': True, 'thinking_always_enabled': True, 'ignore_streamed_leading_whitespace': True}
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -1384,14 +1416,20 @@ def test_huggingface_deepseek():
 def test_huggingface_qwen():
     profile = HuggingFaceProvider.model_profile('Qwen/Qwen3-235B-A22B')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_moonshotai():
     profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
-    assert _normalize(profile) == snapshot({'ignore_streamed_leading_whitespace': True})
+    assert _normalize(profile) == snapshot(
+        {'ignore_streamed_leading_whitespace': True, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')

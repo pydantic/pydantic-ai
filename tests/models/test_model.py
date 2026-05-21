@@ -7,7 +7,17 @@ import pytest
 
 from pydantic_ai import UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import try_import
 
@@ -351,3 +361,111 @@ def test_custom_provider_instance_method_model_profile():
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, dict)
+
+
+def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]]]:
+    """Flatten each `ModelRequest`'s parts to `(type, content)` tuples for compact assertions."""
+    return [
+        [(type(part).__name__, getattr(part, 'content', None)) for part in message.parts]
+        for message in messages
+        if isinstance(message, ModelRequest)
+    ]
+
+
+@pytest.mark.parametrize(
+    'supports_inline,messages,expected',
+    [
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [('UserPromptPart', '<system>Be terse.</system>'), ('UserPromptPart', 'ok?')],
+            ],
+            id='wraps-non-leading-system-prompt',
+        ),
+        pytest.param(
+            True,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [('SystemPromptPart', 'Be terse.'), ('UserPromptPart', 'ok?')],
+            ],
+            id='no-op-when-inline-supported',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(content='A'),
+                        SystemPromptPart(content='B'),
+                        UserPromptPart(content='c'),
+                    ]
+                ),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [
+                    ('UserPromptPart', '<system>A</system>'),
+                    ('UserPromptPart', '<system>B</system>'),
+                    ('UserPromptPart', 'c'),
+                ],
+            ],
+            id='wraps-multiple-non-leading-system-prompts',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+            ],
+            [[('SystemPromptPart', 'You are helpful.'), ('UserPromptPart', 'hi')]],
+            id='keeps-leading-system-prompt',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[UserPromptPart(content='follow up')]),
+            ],
+            [
+                [('SystemPromptPart', 'You are helpful.'), ('UserPromptPart', 'hi')],
+                [('UserPromptPart', 'follow up')],
+            ],
+            id='no-non-leading-system-prompt-to-wrap',
+        ),
+        pytest.param(
+            False,
+            [ModelRequest(parts=[SystemPromptPart(content='hi'), UserPromptPart(content='hello')])],
+            [[('SystemPromptPart', 'hi'), ('UserPromptPart', 'hello')]],
+            id='single-leading-request',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelResponse(parts=[TextPart(content='earlier reply')]),
+                ModelRequest(parts=[SystemPromptPart(content='Server prompt'), UserPromptPart(content='Follow up')]),
+            ],
+            [[('SystemPromptPart', 'Server prompt'), ('UserPromptPart', 'Follow up')]],
+            id='first-request-is-leading-after-orphan-response',
+        ),
+        pytest.param(False, [], [], id='no-request'),
+    ],
+)
+def test_prepare_messages_system_prompt_wrapping(
+    supports_inline: bool, messages: list[ModelMessage], expected: list[list[tuple[str, object]]]
+):
+    model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
+    assert _request_parts(model.prepare_messages(messages)) == expected

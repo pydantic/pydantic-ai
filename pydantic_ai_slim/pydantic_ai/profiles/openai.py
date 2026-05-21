@@ -224,6 +224,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
+        supports_inline_system_prompts=True,
         supports_thinking=supports_reasoning,
         thinking_always_enabled=thinking_always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,

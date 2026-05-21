@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -3865,6 +3865,121 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
     raw = validator.validate_python({'city': 'Mexico City'})
     wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
     assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    """When the model has a field named like the parameter, unwrapped input is validated as-is.
+
+    `{argument: {...}}` here is genuine unwrapped input setting the `argument` field, not a wrapper
+    envelope, so it must not be unwrapped a second time.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field():
+    """A model with a field named like the parameter still round-trips the already-wrapped shape.
+
+    When previously-validated args (`{argument: Payload(...)}`) are serialized out and re-validated
+    (e.g. across a Temporal activity boundary), the validator sees `{argument: {argument: ...}}`. The
+    unwrapped interpretation fails validation, so it falls back to unwrapping the envelope — keeping
+    validation idempotent even when the parameter name collides with a field name.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'argument': {'count': 1}}}) == {
+        'argument': Payload(argument={'count': 1})
+    }
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
+    """Unwrapped input validates when the model's only field uses the parameter name as its alias.
+
+    `argument` is not a field *name*, but it is the field's validation alias, so it's a key the model
+    accepts and the input must be validated as-is rather than unwrapped as an envelope. This includes
+    the case where the field has a default and a dict value, where unwrapping would silently drop it.
+    """
+
+    class Inner(BaseModel):
+        x: int = 0
+
+    class Payload(BaseModel):
+        data: Inner = Field(alias='argument', default_factory=Inner)
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.data.x)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': {'x': 5}})
+    assert validator.validate_python({'argument': {'x': 5}}) == {'argument': expected}
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
+    """A parameter name matching one of a field's `AliasChoices` is also recognized as a model key."""
+
+    class Payload(BaseModel):
+        city: str = Field(validation_alias=AliasChoices('argument', 'town'))
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': 'Mexico City'})
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
+
+
+def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
+    class Payload(BaseModel):
+        name: str = 'default_name'
+        value: int = 0
+
+    calls = 0
+    received: list[Payload] = []
+
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'argument': {'name': 'actual_name', 'value': 42}},
+                        tool_call_id='call-1',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    def my_tool(argument: Payload) -> str:
+        received.append(argument)
+        return 'ok'
+
+    result = Agent(FunctionModel(model), tools=[my_tool]).run_sync('go')
+
+    assert result.output == 'done'
+    assert received == [Payload(name='actual_name', value=42)]
 
 
 def test_tool_ctx_agent():
