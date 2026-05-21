@@ -206,7 +206,7 @@ class XSearchTool(AbstractNativeTool):
     `fallback_model` set, this tool also works with non-xAI models by delegating to a
     subagent running the specified xAI model.
 
-    Natively supported by:
+    Supported by:
 
     * xAI
     """
