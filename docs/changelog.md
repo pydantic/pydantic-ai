@@ -1,6 +1,6 @@
 # Upgrade Guide
 
-In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available as a [beta pre-release](version-policy.md#v2-beta), collecting the breaking and behavior changes that stability guarantee didn't allow. This guide lists the breaking changes for each version, with our recommended path to V2 below; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
+In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available as a beta pre-release, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
 
 ## Breaking Changes
 
@@ -8,9 +8,17 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 ### v2.0.0b1 (2026-05-20)
 
-<!-- TODO(v2-launch): at stable V2.0 release, add a `v2.0.0 (<date>)` heading for any changes since the last beta, and drop "beta" framing from the intro. -->
+<!-- TODO(v2-launch): at stable V2.0 release, add a `v2.0.0 (<date>)` heading for any changes since the last beta, drop the "beta" framing and the pre-release install pinning below, and update the dates in the Version Policy intro. -->
 
-The first V2 beta, forked from **v1.100.0**, which deprecates most of what V2 removes. V2 leans into a harness-first design with [capabilities](capabilities.md) as a core primitive: a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings, reaching every layer of the agent through one concept. Many of V2's changes move configuration that used to be spread across `Agent` arguments onto that primitive, alongside the behavior changes that V1's stability guarantee didn't allow.
+The first V2 beta, forked from **v1.100.0**, which deprecates most of what V2 removes. V2 leans into a harness-first design with [capabilities](capabilities.md) as a core primitive: a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings, reaching every layer of the agent through one concept. Many of V2's changes move configuration that used to be spread across `Agent` arguments onto that primitive, alongside the behavior changes that V1's stability guarantee didn't allow. Pydantic AI stays a small core: some capabilities ship with it, more come from the first-party [Pydantic AI Harness](harness/overview.md), and others are third-party or your own.
+
+To install the beta, pin the exact pre-release version. Find the current beta on [PyPI](https://pypi.org/project/pydantic-ai/#history) or the [GitHub releases page](https://github.com/pydantic/pydantic-ai/releases), then (replacing `bN` with that version):
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0bN"
+```
+
+The V2 API and behaviors aren't yet covered by our [stability guarantee](version-policy.md) — we don't expect major changes but may still adjust in response to feedback before the stable V2.0 release. Please [try it and report issues](https://github.com/pydantic/pydantic-ai/issues), or reach out in the `#pydantic-ai` channel on [Slack](help.md#slack).
 
 The breaking changes below are split into two groups:
 

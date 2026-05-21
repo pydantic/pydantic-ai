@@ -1,8 +1,10 @@
 # Version Policy
 
-Pydantic AI V1 was released in September 2025. The first V2 beta (`v2.0.0b1`) was released on May 20, 2026, with a stable V2.0 expected within roughly two weeks — see [V2 Beta](#v2-beta) below.
+<!-- TODO(v2-launch): at stable V2.0 release, update the beta/GA dates below to reflect the actual V2.0 release. -->
 
-We will not intentionally make breaking changes in minor releases. Functionality marked as deprecated in a release is not removed until the next major version, which we won't release sooner than 3 months after V2.0 ships stable.
+Pydantic AI V1 was released in September 2025. The first V2 beta (`v2.0.0b1`) was released on May 20, 2026, with a stable V2.0 expected within roughly two weeks; see the [Upgrade Guide](changelog.md) for what's in V2, how to install the beta, and how to upgrade.
+
+We will not intentionally make breaking changes in minor releases. Functionality marked as deprecated in a release is not removed until the next major version, which we won't release sooner than 3 months after V2.0 ships stable. During the V2 beta, the V2 API and behaviors aren't yet covered by this guarantee — we don't expect major changes but may still adjust in response to feedback before the stable V2.0 release.
 
 We'll continue to provide security fixes for V1 for at least 6 months after V2's stable release, so you have time to upgrade your applications. When you're ready to make the jump, the [Upgrade Guide](changelog.md) lists the breaking changes for each version, along with our recommended path to V2.
 
@@ -16,22 +18,6 @@ The following changes will **NOT** be considered breaking changes, and may occur
 * Changing how `__repr__` behaves, even of public classes.
 
 In all cases we will aim to minimize churn and do so only when justified by the increase of quality of Pydantic AI for users.
-
-## V2 Beta
-
-V2 is available as a beta pre-release. It collects the breaking and behavior changes V1's stability guarantee didn't allow, and leans into a harness-first design: [capabilities](capabilities.md) are now a core primitive — a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings. Pydantic AI stays a small core: some capabilities ship with it, more come from the first-party [Pydantic AI Harness](harness/overview.md), and others are third-party or your own.
-
-To install it, pin the exact pre-release version. Find the current beta on [PyPI](https://pypi.org/project/pydantic-ai/#history) or the [GitHub releases page](https://github.com/pydantic/pydantic-ai/releases), then (replacing `bN` with that version):
-
-```bash
-pip/uv-add "pydantic-ai==2.0.0bN"
-```
-
-For the recommended upgrade path and the full list of breaking changes, see the [Upgrade Guide](changelog.md).
-
-During the beta the V2 API and behaviors aren't yet covered by the stability guarantee above — we don't expect major changes but may still adjust in response to feedback before the stable V2.0 release. Please [try it and report issues](https://github.com/pydantic/pydantic-ai/issues), or reach out in the `#pydantic-ai` channel on [Slack](help.md#slack).
-
-<!-- TODO(v2-launch): once V2.0 is stable, update the beta/GA dates in the Version Policy section above, replace this section with standard install instructions (drop the pre-release pinning), and fold the capabilities framing into the release announcement instead. -->
 
 ## Beta Features
 
