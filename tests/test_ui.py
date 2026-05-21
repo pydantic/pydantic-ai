@@ -1139,9 +1139,10 @@ def test_sanitize_messages_resets_force_download_allow_local():
         ]
     )
 
-    with pytest.warns(UserWarning, match=r"'https://example\.com/img\.png'.*force_download='allow-local'.*reset"):
+    with pytest.warns(UserWarning, match=r"1 client-submitted file URL.*force_download='allow-local'.*reset") as caught:
         sanitized = adapter.sanitize_messages(adapter.messages)
 
+    assert 'https://example.com/img.png' not in str(caught[0].message)
     assert isinstance(sanitized[0], ModelRequest)
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
@@ -1208,9 +1209,9 @@ def test_sanitize_messages_strips_disallowed_scheme_before_reset():
 
     messages = [str(w.message) for w in caught]
     assert any("scheme(s) ['s3']" in m for m in messages)
-    assert any("force_download='allow-local'" in m and 'https://example.com/img.png' in m for m in messages)
-    # The `s3` URL is dropped, so its URL must not appear in the allow-local warning.
-    assert not any('s3://bucket/key.png' in m and "force_download='allow-local'" in m for m in messages)
+    assert any('1 client-submitted file URL' in m and "force_download='allow-local'" in m for m in messages)
+    assert not any('s3://bucket/key.png' in m for m in messages)
+    assert not any('https://example.com/img.png' in m for m in messages)
 
     assert isinstance(sanitized[0], ModelRequest)
     user_part = sanitized[0].parts[0]

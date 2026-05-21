@@ -306,20 +306,24 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         strip_system_prompt = self.manage_system_prompt == 'server'
         stripped_system_prompt = False
         disallowed_url_schemes: set[str] = set()
-        reset_allow_local_urls: list[str] = []
+        reset_allow_local_count = 0
         dangling_tool_call_names: list[str] = []
         last_index = len(messages) - 1
 
         sanitized: list[ModelMessage] = []
         for index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
+                (
+                    new_request_parts,
+                    request_stripped_system_prompt,
+                    request_reset_allow_local_count,
+                ) = self._sanitize_request_parts(
                     message.parts,
                     strip_system_prompt=strip_system_prompt,
                     disallowed_schemes=disallowed_url_schemes,
-                    reset_allow_local_urls=reset_allow_local_urls,
                 )
                 stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+                reset_allow_local_count += request_reset_allow_local_count
                 if new_request_parts:
                     sanitized.append(replace(message, parts=new_request_parts))
                 # Otherwise drop the request entirely so we don't leave an empty
@@ -357,9 +361,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        if reset_allow_local_urls:
+        if reset_allow_local_count:
+            file_url_label = 'file URL' if reset_allow_local_count == 1 else 'file URLs'
             warnings.warn(
-                f'Client-submitted file URLs {sorted(set(reset_allow_local_urls))!r} had '
+                f'{reset_allow_local_count} client-submitted {file_url_label} had '
                 f"`force_download='allow-local'` reset to `False`. `'allow-local'` opts the URL "
                 f'out of the SSRF private-IP block and is only safe for server-authored URLs; '
                 f'set it on `message_history` passed directly to `Agent.run` instead.',
@@ -387,48 +392,51 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         strip_system_prompt: bool,
         disallowed_schemes: set[str],
-        reset_allow_local_urls: list[str],
-    ) -> tuple[list[ModelRequestPart], bool]:
+    ) -> tuple[list[ModelRequestPart], bool, int]:
         """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
         `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
-        `reset_allow_local_urls` is appended with the URLs of any `FileUrl` parts whose
-        `force_download='allow-local'` was reset to `False`.
-        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped.
+        Returns the kept parts, whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped,
+        and the number of `FileUrl` parts whose `force_download='allow-local'` was reset to `False`.
         """
         stripped_system_prompt = False
+        reset_allow_local_count = 0
         new_parts: list[ModelRequestPart] = []
         for part in parts:
             if strip_system_prompt and isinstance(part, SystemPromptPart):
                 stripped_system_prompt = True
                 continue
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                filtered_content, part_reset_allow_local_count = self._filter_user_content(
+                    part.content, disallowed_schemes
+                )
+                reset_allow_local_count += part_reset_allow_local_count
                 new_parts.append(
                     replace(
                         part,
-                        content=self._filter_user_content(part.content, disallowed_schemes, reset_allow_local_urls),
+                        content=filtered_content,
                     )
                 )
             else:
                 new_parts.append(part)
-        return new_parts, stripped_system_prompt
+        return new_parts, stripped_system_prompt, reset_allow_local_count
 
     def _filter_user_content(
         self,
         content: Sequence[UserContent],
         disallowed_schemes: set[str],
-        reset_allow_local_urls: list[str],
-    ) -> list[UserContent]:
+    ) -> tuple[list[UserContent], int]:
         """Sanitize [`FileUrl`][pydantic_ai.messages.FileUrl] items in client-submitted user content.
 
         Drops items whose scheme isn't in the allowlist, and resets `force_download='allow-local'`
         on kept items to `False`.
 
         `disallowed_schemes` is updated in place with any disallowed schemes encountered.
-        `reset_allow_local_urls` is appended with the URLs of any `FileUrl` items whose
-        `force_download='allow-local'` was reset to `False`.
+        Returns the kept items and the number of `FileUrl` items whose `force_download='allow-local'`
+        was reset to `False`.
         """
         filtered: list[UserContent] = []
+        reset_allow_local_count = 0
         for item in content:
             if isinstance(item, FileUrl):
                 scheme = urlparse(item.url).scheme.lower()
@@ -436,10 +444,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     disallowed_schemes.add(scheme)
                     continue
                 if item.force_download == 'allow-local':
-                    reset_allow_local_urls.append(item.url)
+                    reset_allow_local_count += 1
                     item = replace(item, force_download=False)
             filtered.append(item)
-        return filtered
+        return filtered, reset_allow_local_count
 
     def _sanitize_last_response_parts(
         self,
