@@ -21,7 +21,8 @@ permissions:
   pull-requests: read
   issues: read
 # Full git history: the reviewer reads `git log`/`git diff` for context and the
-# gather-review-context script annotates per-file diffs against the base ref.
+# gather-pydantic-ai-review-context script annotates per-file diffs against the
+# base ref.
 checkout:
   fetch-depth: 0
 concurrency:
@@ -75,75 +76,25 @@ pre-steps:
   # own installer (the same call it makes for non-custom-command jobs).
   - name: Install AWF firewall binary (skipped by custom engine.command)
     run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.25.46
-  # Stage (not install) a launcher at gh-aw's exec-able /tmp/gh-aw/bin path.
-  # uv itself is installed by runtimes.uv; this only writes a wrapper file
-  # that runs `uv run --script` on the workspace harness at agent time.
+  # Stage the committed launcher script at gh-aw's exec-able /tmp/gh-aw/bin/
+  # path (the checked-out workspace is mounted no-exec in the AWF sandbox).
   - name: Stage Pydantic AI harness launcher
     run: |
-      set -euo pipefail
       mkdir -p /tmp/gh-aw/bin
-      cat > /tmp/gh-aw/bin/pydantic-ai-runner-launch <<'WRAP'
-      #!/usr/bin/env bash
-      set -euo pipefail
-      export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
-      export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
-      export UV_TOOL_DIR=/tmp/gh-aw/uv/tool
-      export XDG_DATA_HOME=/tmp/gh-aw/uv/data
-      export XDG_CACHE_HOME=/tmp/gh-aw/uv/xdg-cache
-      mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
-      runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
-      echo "[harness-launch] cwd=$(pwd) GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-unset} UV_CACHE_DIR=${UV_CACHE_DIR}" >&2
-      echo "[harness-launch] runner=${runner} exists=$([ -f "${runner}" ] && echo yes || echo no)" >&2
-      uv_bin=""
-      if command -v uv >/dev/null 2>&1; then
-        uv_bin="$(command -v uv)"
-      else
-        for c in "${HOME}/.local/bin/uv" "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/uv/*/*/uv /opt/hostedtoolcache/uv/*/*/uv /home/runner/work/_tool/uv/*/*/uv /usr/local/bin/uv; do
-          [ -x "$c" ] && uv_bin="$c" && break
-        done
-      fi
-      if [ -z "${uv_bin}" ]; then
-        echo "[harness-launch] FATAL: uv not found; PATH=${PATH}" >&2
-        exit 127
-      fi
-      echo "[harness-launch] using uv=${uv_bin}" >&2
-      exec "${uv_bin}" run --script "${runner}" "$@"
-      WRAP
-      chmod +x /tmp/gh-aw/bin/pydantic-ai-runner-launch
+      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
 
 pre-agent-steps:
   # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache.
+  # firewalled agent reuses a warm cache (non-fatal on failure).
   - name: Pre-warm Pydantic AI harness uv environment
-    run: |
-      set -uo pipefail
-      export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
-      export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
-      export UV_TOOL_DIR=/tmp/gh-aw/uv/tool
-      export XDG_DATA_HOME=/tmp/gh-aw/uv/data
-      export XDG_CACHE_HOME=/tmp/gh-aw/uv/xdg-cache
-      mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
-      runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
-      uv_bin=""
-      if command -v uv >/dev/null 2>&1; then
-        uv_bin="$(command -v uv)"
-      else
-        for c in "${HOME}/.local/bin/uv" "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/uv/*/*/uv /opt/hostedtoolcache/uv/*/*/uv /home/runner/work/_tool/uv/*/*/uv /usr/local/bin/uv; do
-          [ -x "$c" ] && uv_bin="$c" && break
-        done
-      fi
-      if [ -z "${uv_bin}" ]; then
-        echo "::warning::uv not found for pre-warm; agent will install under the firewall"
-        exit 0
-      fi
-      echo "[harness-prewarm] using uv=${uv_bin} cache=${UV_CACHE_DIR}"
-      "${uv_bin}" sync --script "${runner}" \
-        || echo "::warning::harness uv pre-warm failed; agent will install under the firewall"
-  # Pre-fetch PR context using the repo's own gather-review-context.sh —
-  # writes `.github/.review-context/` with pr-details, comments, review
-  # threads, annotated per-file diffs, related issues, and AGENTS.md
-  # excerpts. The agent reads these files instead of calling the GitHub
-  # API at run time. Non-fatal: missing context just reduces signal.
+    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
+  # Pre-fetch PR context into `.github/.review-context/`: pr-details, PR
+  # comments, review threads (with annotated diff hunks + resolved/outdated
+  # state), annotated per-file diffs, related issues, AGENTS.md excerpts for
+  # changed dirs, file orderings for sub-agent fan-out, and a PR-size summary.
+  # The agent reads these files instead of calling the GitHub API at run time.
+  # Non-fatal: missing context just reduces signal. The script is a fork of
+  # scripts/gather-review-context.sh — see the TODO at the top of the fork.
   - name: Gather PR review context
     if: ${{ github.event.pull_request.number }}
     env:
@@ -152,11 +103,12 @@ pre-agent-steps:
       REPO: ${{ github.repository }}
     run: |
       set -uo pipefail
-      if [ -x scripts/gather-review-context.sh ]; then
-        scripts/gather-review-context.sh "$PR_NUMBER" "$REPO" \
-          || echo "::warning::gather-review-context.sh failed; reviewer will run with less context"
+      script=.github/scripts/gather-pydantic-ai-review-context.sh
+      if [ -x "$script" ]; then
+        "$script" "$PR_NUMBER" "$REPO" \
+          || echo "::warning::${script} failed; reviewer will run with less context"
       else
-        echo "::warning::scripts/gather-review-context.sh not present; reviewer will run with less context"
+        echo "::warning::${script} not present; reviewer will run with less context"
       fi
 
 jobs:

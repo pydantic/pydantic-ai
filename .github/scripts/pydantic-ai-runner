@@ -30,6 +30,7 @@ proxy base URL — never a real upstream key.
 
 import argparse
 import asyncio
+import contextvars
 import glob as globlib
 import json
 import os
@@ -272,16 +273,32 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
 # When the agent touches a file, the harness transparently surfaces the
 # directory's `AGENTS.md` / `CLAUDE.md` the first time it's relevant (walking
 # up to the workspace root). Per-run state ensures each file is shown at most
-# once. Shared across the parent agent and any read-only `Task` sub-agents.
+# once. Held in a `ContextVar` so each `run()` (and each test) gets its own
+# set without test-ordering leaks, while `Task` sub-agents naturally inherit
+# the parent's set via the async context tree (mutations to the shared object
+# propagate both ways).
 # --------------------------------------------------------------------------- #
 CONTEXT_FILE_NAMES = ("AGENTS.md", "CLAUDE.md")
 MAX_CONTEXT_FILE_CHARS = 8000
-_seen_context_files: set[pathlib.Path] = set()
+_seen_context_files_var: contextvars.ContextVar[set[pathlib.Path] | None] = (
+    contextvars.ContextVar("_seen_context_files", default=None)
+)
+
+
+def _seen_context_files() -> set[pathlib.Path]:
+    """Return the current run's dedupe set, installing one lazily if a tool is
+    invoked outside `run()` (e.g. ad-hoc test calls that skipped reset)."""
+    s = _seen_context_files_var.get()
+    if s is None:
+        s = set()
+        _seen_context_files_var.set(s)
+    return s
 
 
 def _reset_context_state() -> None:
-    """Clear per-run state. Called once at the start of each `run()`."""
-    _seen_context_files.clear()
+    """Install a fresh dedupe set in the current context. Called once at the
+    start of each `run()` (and from tests that want a clean slate)."""
+    _seen_context_files_var.set(set())
 
 
 def _attach_context(path_arg: str | None) -> str:
@@ -295,14 +312,15 @@ def _attach_context(path_arg: str | None) -> str:
         target = _resolve(path_arg).resolve()
     except OSError:
         return ""
+    seen = _seen_context_files()
     cur = target if target.is_dir() else target.parent
     blocks: list[str] = []
     while True:
         for name in CONTEXT_FILE_NAMES:
             candidate = cur / name
-            if not candidate.is_file() or candidate in _seen_context_files:
+            if not candidate.is_file() or candidate in seen:
                 continue
-            _seen_context_files.add(candidate)
+            seen.add(candidate)
             try:
                 content = candidate.read_text(encoding="utf-8", errors="replace")
             except OSError:

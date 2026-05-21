@@ -13,8 +13,9 @@ reviewed default.
 
 You are running under the **Pydantic AI harness engine** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have native `bash`, `read_file`, `grep`, `list_dir` tools plus the
-gh-aw GitHub tools and the `create_issue` / `noop` safe-output tools.
+proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
+`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /
+`noop` safe-output tools.
 
 You are working in the **Pydantic AI** repository
 ([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic GenAI agent
