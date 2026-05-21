@@ -43,10 +43,16 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     """
 
     allowed_x_handles: list[str] | None
-    """If provided, only posts from these X handles will be included (max 10). Requires native support."""
+    """If provided, only posts from these X handles will be included (max 10).
+
+    Honored by the native X search tool, whether used directly on an xAI model or via the `fallback_model` subagent.
+    """
 
     excluded_x_handles: list[str] | None
-    """If provided, posts from these X handles will be excluded (max 10). Requires native support."""
+    """If provided, posts from these X handles will be excluded (max 10).
+
+    Honored by the native X search tool, whether used directly on an xAI model or via the `fallback_model` subagent.
+    """
 
     from_date: datetime | None
     """If provided, only posts created on or after this datetime will be included."""
@@ -55,14 +61,16 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     """If provided, only posts created on or before this datetime will be included."""
 
     enable_image_understanding: bool | None
-    """Enable image analysis from X posts. Defaults to `False`."""
+    """Enable image analysis from X posts. When unset, inherits the native tool's default (`False`)."""
 
     enable_video_understanding: bool | None
-    """Enable video analysis from X content. Defaults to `False`."""
+    """Enable video analysis from X content. When unset, inherits the native tool's default (`False`)."""
 
     include_output: bool | None
     """Include raw X search results in the response as
-    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Defaults to `False`.
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
+
+    When unset, inherits the native tool's default (`False`).
     """
 
     def __init__(
