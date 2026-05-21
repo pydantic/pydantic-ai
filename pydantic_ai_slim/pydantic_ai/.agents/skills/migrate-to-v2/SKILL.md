@@ -130,20 +130,13 @@ Surface remaining failures grouped by category. Type errors usually indicate sig
 
 ## Validation
 
-This skill ships a runtime validator at `scripts/validate.py` that proves every codemod against `pydantic-ai==1.100.0` (v1 half) and `pydantic-ai==2.0.0b1` (v2 half). After the user has migrated their own code, you can adapt the same harness to their tree: capture warnings with `warnings.catch_warnings(record=True)`, filter to `PydanticAIDeprecationWarning` / `PydanticGraphDeprecationWarning` / `PydanticEvalsDeprecationWarning`, and fail CI on any hit:
+After the user has migrated their own code, fail CI on any lingering deprecation:
 
 ```bash
 PYTHONWARNINGS='error::pydantic_ai.exceptions.PydanticAIDeprecationWarning' uv run pytest
 ```
 
-To re-run this skill's own validator (mostly useful when updating the table):
-
-```bash
-uv venv .agents/skills/migrate-to-v2/scripts/.venv-v1 --python 3.12
-uv pip install --python .agents/skills/migrate-to-v2/scripts/.venv-v1/bin/python \
-    'pydantic-ai-slim[mcp,evals,openai,google,ag-ui]==1.100.0' fasta2a
-.agents/skills/migrate-to-v2/scripts/.venv-v1/bin/python .agents/skills/migrate-to-v2/scripts/validate.py
-```
+For an ad-hoc check on an import, wrap it in `warnings.catch_warnings(record=True)` and filter to `PydanticAIDeprecationWarning` / `PydanticGraphDeprecationWarning` / `PydanticEvalsDeprecationWarning`.
 
 ## Guardrails
 
@@ -157,9 +150,3 @@ uv pip install --python .agents/skills/migrate-to-v2/scripts/.venv-v1/bin/python
 
 - `references/DEPRECATIONS.md` — full v1 → v2 codemod table, indexed by warning-message substring. Load when applying step 3.
 - `references/BEHAVIOR_CHANGES.md` — the six non-warning behavior changes from the v2.0.0b1 release notes, expanded with detection + remediation. Load at step 5.
-- `examples/v1_sample.py` — small fixture exercising eight common deprecations.
-- `examples/v2_sample.py` — golden v2 form of the fixture.
-- `examples/individual/<id>_v1.py` / `<id>_v2.py` — per-row pairs (16 rows currently), each a 10-30 line single-concern script with an `EXPECT` substring. The validator at `scripts/validate.py` imports each and asserts (v1) the expected warning fires, (v2) no deprecation warning fires.
-- `examples/legacy_app/` and `examples/modern_app/` — small multi-file applications exercising the merged-`capabilities=[...]` migration plus messages / evals deprecations together. The same validator imports and runs `main.run()` from each.
-- `scripts/probe_warnings.py` — re-capture exact warning text from v1.100.0 (used when updating `DEPRECATIONS.md`).
-- `scripts/validate.py` — runs all of the above. Pass `v1` or `v2` to restrict; defaults to whichever half matches the active interpreter.
