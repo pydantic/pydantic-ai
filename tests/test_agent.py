@@ -51,7 +51,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
+    set_agent_graph_sleep,
 )
+from pydantic_ai._agent_graph import ContinueRequestNode
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -78,6 +80,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph import End
 
 if TYPE_CHECKING:
     from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -11312,8 +11315,6 @@ def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch)
 
 def test_agent_graph_sleep_custom_function() -> None:
     """A custom sleep function registered via set_agent_graph_sleep is used instead of asyncio.sleep."""
-    from pydantic_ai import set_agent_graph_sleep
-
     call_count = 0
     custom_delays: list[float] = []
 
@@ -11338,10 +11339,6 @@ def test_agent_graph_sleep_custom_function() -> None:
 
 async def test_agent_graph_sleep_streaming_with_delay() -> None:
     """Streaming continuation path also uses the pluggable sleep when suspended_retry_delay is set."""
-    from pydantic_ai import set_agent_graph_sleep
-    from pydantic_ai._agent_graph import ContinueRequestNode
-    from pydantic_graph.nodes import End
-
     request_count = 0
     stream_count = 0
     custom_delays: list[float] = []
