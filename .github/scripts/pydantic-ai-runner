@@ -472,7 +472,7 @@ def build_model(args: Args) -> tuple[Model, str]:
     """
     raw = (
         args.model
-        or _first_env("GH_AW_HARNESS_MODEL", "GH_AW_MODEL_AGENT_CLAUDE", "ANTHROPIC_MODEL")
+        or _first_env("GH_AW_MODEL", "GH_AW_HARNESS_MODEL", "GH_AW_MODEL_AGENT_CLAUDE", "ANTHROPIC_MODEL")
         or "claude-sonnet-4-5"
     )
     provider, _, model_name = raw.partition(":") if ":" in raw else ("", "", raw)
