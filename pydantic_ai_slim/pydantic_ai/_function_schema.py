@@ -7,12 +7,12 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from functools import partial
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
 from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
@@ -20,7 +20,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints, is_typeddict
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -198,7 +198,9 @@ def function_schema(  # noqa: C901
                 required=required,
             )
             # noinspection PyTypeChecker
-            td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
+            metadata = td_schema.setdefault('metadata', {})
+            metadata['is_model_like'] = is_model_like(annotation)
+            metadata['single_arg_has_field_name'] = _annotation_has_field(annotation, field_name)
 
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
@@ -313,7 +315,8 @@ def _build_schema(
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
         td_field = fields[name]
-        if td_field['metadata']['is_model_like']:  # type: ignore
+        metadata = td_field.get('metadata') or {}
+        if metadata.get('is_model_like'):
             # The JSON schema sent to the model is the model-like parameter's schema directly (unwrapped),
             # so the model generates its fields at the top level rather than inside a redundant wrapper.
             # The validator output is wrapped to `{name: value}` so validated args are always a dict
@@ -323,7 +326,12 @@ def _build_schema(
             # validated args after serialization round-trip.
             return (
                 core_schema.no_info_wrap_validator_function(
-                    partial(_validate_single_arg, name=name), td_field['schema']
+                    partial(
+                        _validate_single_arg,
+                        name=name,
+                        prefer_wrapped=not metadata.get('single_arg_has_field_name', False),
+                    ),
+                    td_field['schema'],
                 ),
                 name,
             )
@@ -338,20 +346,42 @@ def _build_schema(
     return td_schema, None
 
 
+def _annotation_has_field(annotation: Any, name: str) -> bool:
+    if not isinstance(annotation, type):
+        return False
+
+    annotation_type = cast(type[Any], annotation)
+    if issubclass(annotation_type, BaseModel):
+        return name in annotation_type.model_fields
+    if is_dataclass(annotation_type):
+        return any(field.name == name for field in dataclass_fields(annotation_type))
+    if is_typeddict(annotation_type):
+        annotations = getattr(annotation_type, '__annotations__', {})
+        return isinstance(annotations, dict) and name in annotations
+    return False
+
+
+def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
+    return isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]
+
+
 def _validate_single_arg(
     value: Any,
     handler: core_schema.ValidatorFunctionWrapHandler,
     *,
     name: str,
+    prefer_wrapped: bool,
 ) -> dict[str, Any]:
+    if not _is_wrapped_single_arg(value, name):
+        return {name: handler(value)}
+
+    if prefer_wrapped:
+        return {name: handler(value[name])}
+
     try:
         return {name: handler(value)}
     except ValidationError:
-        # Fall back to unwrapping the `{name: value}` shape produced by a previous validation pass
-        # (e.g. after Temporal serialization/deserialization of already-validated args).
-        if isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]:
-            return {name: handler(value[name])}
-        raise
+        return {name: handler(value[name])}
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:

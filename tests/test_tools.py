@@ -3865,6 +3865,52 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
     assert raw == wrapped == {'argument': Payload(city='Mexico City')}
 
 
+def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
+    class Payload(BaseModel):
+        name: str = 'default_name'
+        value: int = 0
+
+    calls = 0
+    received: list[Payload] = []
+
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'argument': {'name': 'actual_name', 'value': 42}},
+                        tool_call_id='call-1',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    def my_tool(argument: Payload) -> str:
+        received.append(argument)
+        return 'ok'
+
+    result = Agent(FunctionModel(model), tools=[my_tool]).run_sync('go')
+
+    assert result.output == 'done'
+    assert received == [Payload(name='actual_name', value=42)]
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)
