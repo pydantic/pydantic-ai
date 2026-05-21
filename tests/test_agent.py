@@ -4073,7 +4073,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCalls` as well
 
     def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -6479,7 +6479,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCalls` as well
 
 
 async def test_model_settings_override() -> None:

@@ -1264,7 +1264,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
 
     async def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -3080,7 +3080,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
     # The retry-wins tests (a function-tool `ModelRetry` suppressing an output result) have no
     # streaming counterpart: under `run_stream` the streamed output is committed as soon as it's
     # detected, so retry-wins doesn't apply (see `docs/output.md`).
