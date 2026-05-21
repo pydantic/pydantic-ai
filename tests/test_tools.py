@@ -277,9 +277,10 @@ def test_google_style_with_returns():
         Returns:
             str: The result as a string.
         """
-        return str(x)  # pragma: no cover
+        return str(x)
 
     agent.tool_plain(my_tool)
+    assert my_tool(1) == '1'  # exercise the tool body so it doesn't need a no-cover pragma
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
