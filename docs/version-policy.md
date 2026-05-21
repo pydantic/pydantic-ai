@@ -8,7 +8,7 @@ We'll continue to provide security fixes for V1 for at least 6 months after V2's
 
 ## V2 Beta
 
-V2 is available as a beta pre-release. It collects the breaking and behavior changes V1's stability guarantee didn't allow, and leans into a harness-first design: [capabilities](capabilities.md) are now a core primitive — a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings. Pydantic AI stays a small core, extended by capabilities you compose: first-party ones, those in [Pydantic AI Harness](harness/overview.md), and third-party ones.
+V2 is available as a beta pre-release. It collects the breaking and behavior changes V1's stability guarantee didn't allow, and leans into a harness-first design: [capabilities](capabilities.md) are now a core primitive — a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings. Pydantic AI stays a small core: some capabilities ship with it, more come from the first-party [Pydantic AI Harness](harness/overview.md), and others are third-party or your own.
 
 To install it, pin the exact pre-release version. Find the current beta on [PyPI](https://pypi.org/project/pydantic-ai/#history) or the [GitHub releases page](https://github.com/pydantic/pydantic-ai/releases), then (replacing `bN` with that version):
 
