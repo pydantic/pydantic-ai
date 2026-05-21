@@ -2,6 +2,7 @@
 # environment to load the associated dependencies
 
 # pyright: reportUnnecessaryTypeIgnoreComment = false
+# pyright: reportDeprecated = false
 
 from __future__ import annotations as _annotations
 
@@ -16,7 +17,8 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -37,6 +39,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -78,6 +81,12 @@ with try_import() as mlxlm_imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings(
+        'ignore:`OutlinesModel` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`OutlinesProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
 ]
 
 skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
@@ -257,8 +266,14 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
+
+
+@pytest.mark.filterwarnings('default::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+def test_outlines_model_deprecation_warning(mock_async_model: OutlinesModel) -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`OutlinesModel` is deprecated'):
+        OutlinesModel(mock_async_model.model, profile=mock_async_model.profile)
 
 
 pydantic_ai_parameters = [
@@ -317,7 +332,7 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
 
 
@@ -593,9 +608,9 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
 
 @skip_if_llama_cpp_imports_unsuccessful
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
-    # builtin tools
-    agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
+    # native tools
+    agent = Agent(llamacpp_model, capabilities=[NativeTool(WebSearchTool())])
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
     # function tools

@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -44,12 +45,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
@@ -166,14 +168,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -251,7 +253,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=2,
@@ -548,7 +550,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
     )
 
@@ -583,7 +585,7 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -605,24 +607,23 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o-123',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1',
-                        provider_details={
-                            'finish_reason': 'stop',
-                            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=6, output_tokens=3),
+                    model_name='gpt-4o-123',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='123',
+                    finish_reason='stop',
                 )
+            )
 
 
 def struc_chunk(
@@ -676,9 +677,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
@@ -813,7 +814,7 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
@@ -844,7 +845,7 @@ async def test_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 async def test_none_choices(allow_model_requests: None):
@@ -887,6 +888,102 @@ async def test_system_prompt_role(
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
             'extra_body': None,
         }
+    ]
+
+
+async def test_merge_leading_system_messages(allow_model_requests: None) -> None:
+    """When `openai_chat_supports_multiple_system_messages=False`, consecutive system messages at the start are merged."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt\n\nextra static prompt\n\ndynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_single_system_message(allow_model_requests: None) -> None:
+    """With only one leading system message, the merge flag is a no-op."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='only one')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'only one', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_user_role_unchanged(allow_model_requests: None) -> None:
+    """When system prompts are sent as `user` role, the merge flag does not collapse them."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False,
+            openai_system_prompt_role='user',
+        ),
+    )
+    agent = Agent(m, system_prompt='static prompt')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'user'},
+        {'content': 'extra static prompt', 'role': 'user'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_disabled_by_default(allow_model_requests: None) -> None:
+    """Default behavior is preserved: multiple system messages are sent as separate messages."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'system'},
+        {'content': 'extra static prompt', 'role': 'system'},
+        {'content': 'dynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
     ]
 
 
@@ -1042,7 +1139,7 @@ async def test_openai_audio_url_input(
     assert result.output == snapshot(
         'Yes, the phenomenon of the sun rising in the east and setting in the west is due to the rotation of the Earth. The Earth rotates on its axis from west to east, making the sun appear to rise on the eastern horizon and set in the west. This is a daily occurrence and has been a fundamental aspect of human observation and timekeeping throughout history.'
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=81,
             output_tokens=72,
@@ -1363,7 +1460,7 @@ async def test_audio_as_binary_content_input(
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=64,
             output_tokens=9,
@@ -2033,6 +2130,10 @@ def tool_with_datetime(x: datetime) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_decimal(x: Decimal) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -2137,6 +2238,52 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_decimal,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                    'type': 'string',
+                                },
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_decimal,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'type': 'string',
+                                    'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                },
+                            ]
+                        }
+                    },
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3064,7 +3211,9 @@ async def test_openai_instructions_with_responses_logprobs_streaming(allow_model
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     with pytest.raises(
@@ -3077,7 +3226,9 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     result = await agent.run('What day is today?')
@@ -3089,7 +3240,7 @@ async def test_openai_web_search_tool_with_user_location(allow_model_requests: N
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'}))],
     )
 
     result = await agent.run('What is the current temperature?')
@@ -3571,6 +3722,18 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
     )
 
 
+async def test_openai_responses_native_output_decimal_strict(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
+
+
 async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -3884,7 +4047,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
 async def test_valid_response(env: TestEnv, allow_model_requests: None):
     """VCR recording is of a valid response."""
     env.set('OPENAI_API_KEY', 'foobar')
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai-chat:gpt-4o')
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
@@ -5096,7 +5259,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
     The final usage should equal the last chunk's usage, not the sum of all chunks.
-    We verify that usage is correctly updated at each step via stream_responses.
+    We verify that usage is correctly updated at each step via stream_response.
     """
     # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
     stream = [
@@ -5116,9 +5279,9 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
     async with agent.run_stream('', model_settings=settings) as result:
-        # Verify usage is updated at each step via stream_responses
+        # Verify usage is updated at each step via stream_response
         usage_at_each_step: list[RequestUsage] = []
-        async for response, _ in result.stream_responses(debounce_by=None):
+        async for response in result.stream_response(debounce_by=None):
             usage_at_each_step.append(response.usage)
 
         # Each step should have the cumulative usage from that chunk (not accumulated)
@@ -5135,7 +5298,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
 
 
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):

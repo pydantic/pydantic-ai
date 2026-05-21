@@ -6,9 +6,11 @@ dispatching them asynchronously in the background after each run completes.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+import logfire_api
 
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
@@ -129,14 +131,39 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         if not sampled:
             return await handler()
 
-        # Run the agent with span tree capture and attribute/metric tracking
-        with _task_run.run_task() as get_eval_context_kwargs:
-            result = await handler()
-
         # Merge config and run metadata
         metadata: dict[str, Any] | None = None
         if config.metadata is not None or ctx.metadata is not None:
             metadata = {**(config.metadata or {}), **(ctx.metadata or {})}
+
+        # Use the agent's declared name when available so evaluation events can be
+        # filtered per-agent. Fall back to the generic 'agent' label when unset.
+        agent_name = ctx.agent.name if ctx.agent is not None else None
+        target = agent_name or 'agent'
+        span_reference = _parse_traceparent(logfire_api.get_context().get('traceparent'))
+
+        # Run the agent with span tree capture and attribute/metric tracking.
+        # `get_eval_context_kwargs` is bound by the `with` once `run_task` enters; pre-init
+        # to `None` only to satisfy pyright's flow analysis on the except path.
+        get_eval_context_kwargs: Callable[[], dict[str, Any]] | None = None
+        try:
+            with _task_run.run_task() as get_eval_context_kwargs:
+                result = await handler()
+        except Exception as e:
+            error_evaluators = [ev for ev in sampled if ev.run_on_errors]
+            if error_evaluators and get_eval_context_kwargs is not None:
+                context = EvaluatorContext(
+                    name=ctx.run_id,
+                    inputs=inputs,
+                    output=e,
+                    expected_output=None,
+                    metadata=metadata,
+                    **get_eval_context_kwargs(),
+                )
+                _online_internal.dispatch_async(
+                    _online_internal.dispatch_evaluators(error_evaluators, context, span_reference, target, config)
+                )
+            raise
 
         context = EvaluatorContext(
             name=ctx.run_id,
@@ -146,13 +173,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             metadata=metadata,
             **get_eval_context_kwargs(),
         )
-
-        span_reference = _parse_traceparent(result._traceparent(required=False))  # pyright: ignore[reportPrivateUsage]
-
-        # Use the agent's declared name when available so evaluation events can be
-        # filtered per-agent. Fall back to the generic 'agent' label when unset.
-        agent_name = ctx.agent.name if ctx.agent is not None else None
-        target = agent_name or 'agent'
         _online_internal.dispatch_async(
             _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
         )

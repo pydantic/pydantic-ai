@@ -55,7 +55,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     deps_type=str,
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -95,11 +95,11 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
-print(result.usage())
+print(result.usage)
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
@@ -216,7 +216,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Create/configure agents, choose output types, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
-| Use provider-native web search, web fetch, or code execution | [Built-in Tools](./references/BUILTIN-TOOLS.md) |
+| Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Use advanced tool features such as approval, retries, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Work with multimodal input, message history, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
@@ -235,7 +235,7 @@ Load [Architecture and Decision Guide](./references/ARCHITECTURE.md) only when t
 | Comparison Tables | Output modes, model provider prefixes, tool decorators, built-in capabilities, agent methods |
 | Architecture Overview | Execution flow, generic types, construction patterns, lifecycle hooks, model string format |
 
-**Quick reference — model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google-gla:gemini-3-pro-preview"`)
+**Quick reference — model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 
 **Quick reference — key agent methods:** `run()`, `run_sync()`, `run_stream()`, `run_stream_sync()`, `run_stream_events()`, `iter()`
 
@@ -254,7 +254,7 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 - **`TestModel` requires `agent.override()`**: Don't set `agent.model` directly. Always use the context manager: `with agent.override(model=TestModel()):`.
 - **`str` in output_type allows plain text to end the run**: If your union includes `str` (or no `output_type` is set), the model can return plain text instead of structured output. Omit `str` from the union to force tool-based output.
 - **Hook decorator names on `.on` don't repeat `on_`**: Use `hooks.on.run_error` and `hooks.on.model_request_error` — not `hooks.on.on_run_error`.
-- **`history_processors` is plural**: The Agent parameter is `history_processors=[...]`, not `history_processor=`.
+- **`history_processors` is deprecated; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. The kwarg still works in 1.x but emits a `PydanticAIDeprecationWarning` and will be removed in v2.
 
 ## Task-Family References
 
@@ -265,7 +265,7 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Core agent setup, output, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
-| Provider-native builtin tools | [Built-in Tools](./references/BUILTIN-TOOLS.md) |
+| Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Approval, retries, validators, timeouts, rich tool returns, deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Multimodal input, message history, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
