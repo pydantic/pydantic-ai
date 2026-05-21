@@ -2275,7 +2275,7 @@ def test_abstract_capability_get_model_settings_default():
 
     cap = PlainCap()
     assert cap.get_model_settings() is None
-    assert cap.get_descriptions() is None
+    assert cap.get_description() is None
 
 
 async def test_abstract_capability_description_field_is_optional_in_deferred_catalog() -> None:
@@ -9927,7 +9927,7 @@ def test_prefix_tools_delegates_metadata_to_wrapped_capability():
 
     assert cap.id == 'leaf-tools'
     assert cap.description == 'Leaf tool bundle.'
-    assert cap.get_descriptions() == 'Leaf tool bundle.'
+    assert cap.get_description() == 'Leaf tool bundle.'
     assert cap.defer_loading is True
     assert visited == [cap]
 
@@ -9985,14 +9985,14 @@ async def test_prefix_tools_registration_matches_wrapper_metadata_cases():
     assert registered['github'] is prefixed
     assert prefixed.id == 'github'
     assert prefixed.defer_loading is True
-    assert prefixed.get_descriptions() == 'GitHub MCP server.'
+    assert prefixed.get_description() == 'GitHub MCP server.'
 
     explicit_id = PrefixTools(github, prefix='github', id='github_prefixed')
     registered = await registered_capabilities(explicit_id)
 
     assert registered['github_prefixed'] is explicit_id
     assert explicit_id.defer_loading is False
-    assert explicit_id.get_descriptions() == 'GitHub MCP server.'
+    assert explicit_id.get_description() == 'GitHub MCP server.'
 
     explicit_deferred = PrefixTools(
         Capability[None](),

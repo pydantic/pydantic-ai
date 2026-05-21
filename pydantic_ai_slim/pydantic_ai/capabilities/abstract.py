@@ -89,38 +89,26 @@ CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[A
 """Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
 
 
-CapabilityDescriptions = str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]]
-"""Capability description(s): a static string, a function (sync/async, with or without
-[`RunContext`][pydantic_ai.tools.RunContext]) that returns one, or a sequence of either.
+CapabilityDescription = str | SystemPromptFunc[AgentDepsT]
+"""Capability description: a static string, or a function (sync/async, with or without
+[`RunContext`][pydantic_ai.tools.RunContext]) that returns one.
 
-Mirrors [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions]: for dynamic
-descriptions, return a callable from
-[`get_descriptions`][pydantic_ai.capabilities.AbstractCapability.get_descriptions] rather than
+For dynamic descriptions, return a callable from
+[`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] rather than
 having the method itself take `RunContext`.
 """
 
 
-async def resolve_capability_descriptions(
-    descriptions: CapabilityDescriptions[AgentDepsT] | None,
+async def resolve_capability_description(
+    description: CapabilityDescription[AgentDepsT] | None,
     ctx: RunContext[AgentDepsT],
-) -> list[str]:
-    """Resolve [`CapabilityDescriptions`][pydantic_ai.capabilities.CapabilityDescriptions] to a list of strings."""
-    if descriptions is None:
-        return []
-    parts: Sequence[str | SystemPromptFunc[AgentDepsT]]
-    if isinstance(descriptions, str) or callable(descriptions):
-        parts = [descriptions]
-    else:
-        parts = descriptions
-    resolved: list[str] = []
-    for part in parts:
-        if isinstance(part, str):
-            resolved.append(part)
-        else:
-            value = await SystemPromptRunner[AgentDepsT](part).run(ctx)
-            if value is not None:
-                resolved.append(value)
-    return resolved
+) -> str | None:
+    """Resolve a [`CapabilityDescription`][pydantic_ai.capabilities.CapabilityDescription] to a string."""
+    if description is None:
+        return None
+    if isinstance(description, str):
+        return description
+    return await SystemPromptRunner[AgentDepsT](description).run(ctx)
 
 
 _AUTO_CAPABILITY_ID_PREFIX = 'auto_capability_'
@@ -224,7 +212,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] so
     message history replay can identify the capability. A
     [`description`][pydantic_ai.capabilities.AbstractCapability.description] or
-    [`get_descriptions`][pydantic_ai.capabilities.AbstractCapability.get_descriptions]
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
     override is optional and only adds routing context to the load catalog.
     """
 
@@ -358,8 +346,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_descriptions(self) -> CapabilityDescriptions[AgentDepsT] | None:
-        """Return human-readable description(s) of this capability, or None.
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        """Return a human-readable description of this capability, or None.
 
         Surfaced to the model in the `load_capability` catalog when
         [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
@@ -367,7 +355,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This method is called once at agent construction time. To get dynamic
         per-run behavior, return a callable that receives
         [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments) — not a dynamic string.
-        Return a sequence to provide multiple parts that will be concatenated.
         Default: return the static `description` field.
         """
         return self.description

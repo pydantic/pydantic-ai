@@ -124,7 +124,7 @@ def refund_status(ctx: RunContext[None], order_id: str) -> str:
 
 In addition to [`@capability.tool`][pydantic_ai.capabilities.Capability.tool] and [`@capability.tool_plain`][pydantic_ai.capabilities.Capability.tool_plain], you can pass existing functions or [`Tool`][pydantic_ai.tools.Tool] instances via `tools=`, or hand in one or more prebuilt [toolsets](toolsets.md) via `toolsets=`. For dynamic instructions, use the [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
 
-For anything beyond instructions, function tools, and a toolset — model settings, hooks, a dynamic description — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. Override [`get_descriptions`][pydantic_ai.capabilities.AbstractCapability.get_descriptions] when the catalog entry needs to vary by run — return a callable, or a sequence of strings/callables for multiple parts.
+For anything beyond instructions, function tools, and a toolset — model settings, hooks, a dynamic description — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. Override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] when the catalog entry needs to vary by run — return a callable that produces the description string.
 
 ### Skills
 
