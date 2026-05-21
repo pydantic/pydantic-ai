@@ -14,7 +14,7 @@ All capabilities live in `pydantic_ai.capabilities`.
 
 ### A1. `Agent(instrument=...)` → `Instrumentation` capability — PR #4967
 
-- Warning substring: `` `Agent(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead. ``
+- Warning substring: "`Agent(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead."
 - Also fires for: `Agent.instrument` getter/setter, `Agent.from_spec(instrument=...)`.
 
 ```text
@@ -31,7 +31,7 @@ Agent('openai-chat:gpt-4o', capabilities=[Instrumentation(InstrumentationSetting
 
 ### A2. `Agent(history_processors=...)` → `ProcessHistory` — PR #5425
 
-- Warning substring: `` `Agent(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. Replace with `Agent(capabilities=[ProcessHistory(fn), ...])`, or hook the `before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`. ``
+- Warning substring: "`Agent(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. Replace with `Agent(capabilities=[ProcessHistory(fn), ...])`, or hook the `before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`."
 
 ```text
 # v1
@@ -45,7 +45,7 @@ Agent('openai-chat:gpt-4o', capabilities=[ProcessHistory(strip_pii), ProcessHist
 
 ### A3. `Agent(prepare_tools=...)` → `PrepareTools` — PR #5335
 
-- Warning substring: `` `Agent(prepare_tools=...)` is deprecated and will be removed in v2.0. Use `capabilities=[PrepareTools(prepare_tools)]` instead. Note: `prepare_tools` runs only on function tools — to prepare output tools, also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`. ``
+- Warning substring: "`Agent(prepare_tools=...)` is deprecated and will be removed in v2.0. Use `capabilities=[PrepareTools(prepare_tools)]` instead. Note: `prepare_tools` runs only on function tools — to prepare output tools, also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`."
 
 ```text
 from pydantic_ai.capabilities import PrepareTools
@@ -54,11 +54,11 @@ Agent('openai-chat:gpt-4o', capabilities=[PrepareTools(my_prepare)])
 
 ### A4. `Agent(prepare_output_tools=...)` → `PrepareOutputTools` — PR #5335
 
-- Warning substring: `` `Agent(prepare_output_tools=...)` is deprecated and will be removed in v2.0. Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead. ``
+- Warning substring: "`Agent(prepare_output_tools=...)` is deprecated and will be removed in v2.0. Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead."
 
 ### A5. `Agent(event_stream_handler=...)` → `ProcessEventStream` — PR #5335
 
-- Warning substring: `` `Agent(event_stream_handler=...)` is deprecated and will be removed in v2.0. Use `capabilities=[ProcessEventStream(handler)]` instead. ``
+- Warning substring: "`Agent(event_stream_handler=...)` is deprecated and will be removed in v2.0. Use `capabilities=[ProcessEventStream(handler)]` instead."
 
 ```text
 from pydantic_ai.capabilities import ProcessEventStream
@@ -69,8 +69,8 @@ Agent('openai-chat:gpt-4o', capabilities=[ProcessEventStream(my_handler)])
 
 The constructor kwargs are dropped; the underlying knob is now a dict on `retries=`.
 
-- Warning substring (`tool_retries`): `` `Agent(tool_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead. ``
-- Warning substring (`output_retries`): `` `Agent(output_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead. ``
+- Warning substring (`tool_retries`): "`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead."
+- Warning substring (`output_retries`): "`Agent(output_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead."
 
 ```text
 # v1
@@ -85,7 +85,7 @@ Note: `Agent(retries=)` itself is **not** deprecated.
 
 ### A7. `Agent(mcp_servers=...)` → `toolsets=`
 
-- Warning substring: `` `mcp_servers` is deprecated, use `toolsets` instead ``
+- Warning substring: "`mcp_servers` is deprecated, use `toolsets` instead"
 
 ```text
 Agent('openai-chat:gpt-4o', toolsets=[my_mcp_toolset])
@@ -97,7 +97,7 @@ Agent('openai-chat:gpt-4o', toolsets=[my_mcp_toolset])
 
 ### B1. `OpenAIModel` → `OpenAIChatModel` — PR #2676
 
-- Warning substring: `` `OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` ``
+- Warning substring: "`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel`"
 
 ```text
 # v1
@@ -108,13 +108,13 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 
 ### B1b. `openai:` string form behavior flip — runtime warning at construction
 
-- Warning substring (v1.100.0 only, advisory): `` In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. Use 'openai-chat:' to keep current Chat Completions behavior, or 'openai-responses:' to opt in early. ``
+- Warning substring (v1.100.0 only, advisory): "In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. Use 'openai-chat:' to keep current Chat Completions behavior, or 'openai-responses:' to opt in early."
 
 The v1 deprecation does **not** force the change — it warns. In v2, `'openai:'` silently flips to Responses. For a low-risk upgrade PR, change all `'openai:...'` strings to `'openai-chat:...'`. See `BEHAVIOR_CHANGES.md` §2.
 
 ### B2. `GeminiModel` → `GoogleModel` — PR #2416
 
-- Warning substring: `` Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details. ``
+- Warning substring: "Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details."
 
 ```text
 # v1
@@ -125,8 +125,8 @@ from pydantic_ai.models.google import GoogleModel
 
 ### B3. `GoogleGLAProvider` / `GoogleVertexProvider` → `GoogleProvider` — PR #5336, #2450
 
-- Warning substring: `` `GoogleGLAProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead. ``
-- Warning substring: `` `GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead. ``
+- Warning substring: "`GoogleGLAProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead."
+- Warning substring: "`GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead."
 
 ```text
 # v1
@@ -143,19 +143,19 @@ Provider-prefix renames (model strings):
 
 ### B3c. UNVERIFIED — gateway prefix and `google-vertex:` rename
 
-The `gateway/gemini:` warning is conditional on a valid Pydantic AI Gateway key (`PYDANTIC_AI_GATEWAY_API_KEY` that encodes a region). The probe with a dummy key raises before the deprecation can fire. The warning text in v1.100.0 source is: `` The 'gateway/gemini:' prefix is deprecated and will be removed in v2.0. Use 'gateway/google-cloud:' instead. `` — confirmed by grep, but not runtime-validated. Treat as best-effort.
+The `gateway/gemini:` warning is conditional on a valid Pydantic AI Gateway key (`PYDANTIC_AI_GATEWAY_API_KEY` that encodes a region). The probe with a dummy key raises before the deprecation can fire. The warning text in v1.100.0 source is: "The 'gateway/gemini:' prefix is deprecated and will be removed in v2.0. Use 'gateway/google-cloud:' instead." — confirmed by grep, but not runtime-validated. Treat as best-effort.
 
 Similarly, `google-vertex:` → `google-cloud:` is in the v2 source but the v1 string mapping was not exercised by the probe (no `google-cloud:` provider prefix in v1, so the deprecation likely fires only via `GoogleProvider(vertexai=True)` migration). Apply by analogy to `google-gla:` → `google:`.
 
 ### B4. Positional model name without provider prefix — PR #2711
 
-- Warning substring: `` Specifying a model name without a provider prefix is deprecated. Instead of 'gpt-4o', use 'openai:gpt-4o'. ``
+- Warning substring: "Specifying a model name without a provider prefix is deprecated. Instead of 'gpt-4o', use 'openai:gpt-4o'."
 
 Always include the `provider:` prefix. Combine with B1b — use `openai-chat:` for a safe migration.
 
 ### B5. `GrokProvider` → `XaiProvider` + `XaiModel` — PR #3400
 
-- Warning substring: `` `GrokProvider` is deprecated, use `XaiProvider` with `XaiModel` instead for the native xAI SDK. See <https://ai.pydantic.dev/models/xai/> for more details. ``
+- Warning substring: "`GrokProvider` is deprecated, use `XaiProvider` with `XaiModel` instead for the native xAI SDK. See <https://ai.pydantic.dev/models/xai/> for more details."
 
 ```text
 # v1
@@ -173,7 +173,7 @@ from pydantic_ai.models.xai import XaiModel
 
 Yields `ModelResponse` snapshots, **not `(ModelResponse, is_last)` tuples**. Drop the tuple unpack.
 
-- Warning substring: `` `AgentStream.stream_responses()` is deprecated and will be removed in v2.0. Replace `async for r in stream.stream_responses(...)` with `async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots ``
+- Warning substring: "`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. Replace `async for r in stream.stream_responses(...)` with `async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots"
 
 ```text
 # v1
@@ -191,7 +191,7 @@ async for msg in stream.stream_response():
 
 In v1.100.0 these are `@deprecated_callable_property` — calling them returns the right type but emits a warning.
 
-- Warning substring: `` `AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses). `` (and analogous for `timestamp`, `stream.get` → `stream.response`)
+- Warning substring: "`AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses)." (and analogous for `timestamp`, `stream.get` → `stream.response`)
 - Verified via `TestModel` against `1.100.0`.
 
 ```text
@@ -210,9 +210,9 @@ These fire only when the method is *called*. Import-only smoke tests will not su
 
 ### C3. `StreamedRunResult.stream` / `.stream_structured` / `.validate_structured_output` — PR #5463 (dropped)
 
-- `` `StreamedRunResult.stream` is deprecated, use `stream_output` instead. ``
-- `` `StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead. `` → then C1 applies, so go directly to `stream_response`.
-- `` `validate_structured_output` is deprecated, use `validate_response_output` instead. ``
+- "`StreamedRunResult.stream` is deprecated, use `stream_output` instead."
+- "`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead." → then C1 applies, so go directly to `stream_response`.
+- "`validate_structured_output` is deprecated, use `validate_response_output` instead."
 
 These were dropped at the source level on `v2-main`; on v1.100.0 they still emit warnings.
 
@@ -222,7 +222,7 @@ These were dropped at the source level on `v2-main`; on v1.100.0 they still emit
 
 ### D1. `MCPServerStdio` → `MCPToolset` — PR #5325
 
-- Warning substring: `` `MCPServerStdio` is deprecated and will be removed in v2. Use `MCPToolset('path/to/script.py')` for Python scripts, `MCPToolset('script.js')` for Node scripts, or `MCPToolset(fastmcp.client.transports.StdioTransport(command='...', args=[...]))` for arbitrary commands. ``
+- Warning substring: "`MCPServerStdio` is deprecated and will be removed in v2. Use `MCPToolset('path/to/script.py')` for Python scripts, `MCPToolset('script.js')` for Node scripts, or `MCPToolset(fastmcp.client.transports.StdioTransport(command='...', args=[...]))` for arbitrary commands."
 
 ```text
 # v1
@@ -238,15 +238,15 @@ toolset = MCPToolset('my_mcp.py')
 
 ### D2. `MCPServerSSE` → `MCPToolset(url)` — PR #5325
 
-- Warning substring: `` `MCPServerSSE` is deprecated and will be removed in v2. Use `MCPToolset('http://.../sse')` instead — the SSE transport is automatically inferred from URLs ending in `/sse`. ``
+- Warning substring: "`MCPServerSSE` is deprecated and will be removed in v2. Use `MCPToolset('http://.../sse')` instead — the SSE transport is automatically inferred from URLs ending in `/sse`."
 
 ### D3. `MCPServerStreamableHTTP` → `MCPToolset(url)` — PR #5325
 
-- Warning substring: `` `MCPServerStreamableHTTP` is deprecated and will be removed in v2. Use `MCPToolset('http://.../mcp')` instead — Streamable HTTP is the default for HTTP URLs. ``
+- Warning substring: "`MCPServerStreamableHTTP` is deprecated and will be removed in v2. Use `MCPToolset('http://.../mcp')` instead — Streamable HTTP is the default for HTTP URLs."
 
 ### D4. `MCPServerHTTP` → `MCPServerSSE` → `MCPToolset`
 
-- Warning substring: `` The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead. `` then D2.
+- Warning substring: "The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead." then D2.
 
 ### D5. `FastMCPToolset` — removed before 1.100.0
 
@@ -260,11 +260,11 @@ If a user is on an older v1 (<1.100.0) they will hit a deprecation warning; on 1
 
 ### D6. `MCPServer*` ctor `sse_read_timeout=` → `read_timeout=`
 
-- Warning substring: `` 'sse_read_timeout' is deprecated, use 'read_timeout' instead. ``
+- Warning substring: "'sse_read_timeout' is deprecated, use 'read_timeout' instead."
 
 ### D7. `Agent.run_mcp_servers()` → `async with agent:`
 
-- Warning substring: `` `run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`. ``
+- Warning substring: "`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`."
 
 ### D8. `load_mcp_servers(...)` → `load_mcp_toolsets(...)` — PR #5325
 
@@ -272,7 +272,7 @@ Symbol-rename in `pydantic_ai.mcp`. Old name removed in v2; new name returns `MC
 
 ### D9. `pydantic_ai.mcp.MCPServerConfig` → inline `MCPToolset` construction
 
-- Warning substring: `` `pydantic_ai.mcp.MCPServerConfig` is deprecated and will be removed in v2. Pass the JSON config to `load_mcp_toolsets(...)` directly, or build `MCPToolset`s inline from `fastmcp.client.transports.StdioTransport` / URLs. ``
+- Warning substring: "`pydantic_ai.mcp.MCPServerConfig` is deprecated and will be removed in v2. Pass the JSON config to `load_mcp_toolsets(...)` directly, or build `MCPToolset`s inline from `fastmcp.client.transports.StdioTransport` / URLs."
 
 ---
 
@@ -280,7 +280,7 @@ Symbol-rename in `pydantic_ai.mcp`. Old name removed in v2; new name returns `MC
 
 ### E1. `Agent.to_a2a()` → `fasta2a.pydantic_ai.agent_to_a2a` — PR #5426
 
-- Warning substring: `` `Agent.to_a2a()` is deprecated and will be removed in 2.0. The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) and use `from fasta2a.pydantic_ai import agent_to_a2a` directly. ``
+- Warning substring: "`Agent.to_a2a()` is deprecated and will be removed in 2.0. The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) and use `from fasta2a.pydantic_ai import agent_to_a2a` directly."
 
 ```text
 # v1
@@ -294,9 +294,9 @@ Also drop `pydantic-ai[fasta2a]` from `pyproject.toml`; depend on `fasta2a[pydan
 
 ### E2. `AGUIApp` / `Agent.to_ag_ui()` / `pydantic_ai.ag_ui` shim → `AGUIAdapter` — PR #5345
 
-- Warning substring (module shim): `` The `pydantic_ai.ag_ui` module is deprecated and will be removed in 2.0. Replace: ``  (the warning then prints the exact `from`/`with` block — full text is multi-line, match on the leading sentence).
-- Warning substring (`to_ag_ui`): `` `Agent.to_ag_ui()` is deprecated and will be removed in 2.0. ``
-- Warning substring (`AGUIApp`): `` `AGUIApp` is deprecated and will be removed in 2.0. ``
+- Warning substring (module shim): "The `pydantic_ai.ag_ui` module is deprecated and will be removed in 2.0. Replace:"  (the warning then prints the exact `from`/`with` block — full text is multi-line, match on the leading sentence).
+- Warning substring (`to_ag_ui`): "`Agent.to_ag_ui()` is deprecated and will be removed in 2.0."
+- Warning substring (`AGUIApp`): "`AGUIApp` is deprecated and will be removed in 2.0."
 
 ```text
 # v1
@@ -319,15 +319,15 @@ app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 
 ### E3. `OutlinesModel` / `OutlinesProvider` → removed — PR #5432
 
-- Warning substring (`OutlinesModel`): `` `OutlinesModel` is deprecated and will be removed in v2. If you would like to keep using Outlines with Pydantic AI, please file an issue at https://github.com/dottxt-ai/outlines/issues. ``
-- Warning substring (`OutlinesProvider`): `` `OutlinesProvider` is deprecated and will be removed in v2. If you would like to keep using Outlines with Pydantic AI, please file an issue at https://github.com/dottxt-ai/outlines/issues. ``
+- Warning substring (`OutlinesModel`): "`OutlinesModel` is deprecated and will be removed in v2. If you would like to keep using Outlines with Pydantic AI, please file an issue at https://github.com/dottxt-ai/outlines/issues."
+- Warning substring (`OutlinesProvider`): "`OutlinesProvider` is deprecated and will be removed in v2. If you would like to keep using Outlines with Pydantic AI, please file an issue at https://github.com/dottxt-ai/outlines/issues."
 - Both fire on **instantiation** (the classes are decorated with `@deprecated`), not on bare import. Verified against `outlines==1.3.0` + `pydantic-ai==1.100.0`.
 
 In v2, `pydantic_ai.models.outlines` is removed (ImportError). No in-tree replacement — tell the user to track <https://github.com/dottxt-ai/outlines/issues> or drop Outlines.
 
 ### E4. `pydantic_ai.ext.aci` (`tool_from_aci`, `ACIToolset`) → removed — PR #5510
 
-- Warning substring: `` `pydantic_ai.ext.aci` is deprecated and will be removed in 2.0. Wrap ACI.dev tools yourself using `pydantic_ai.tools.Tool.from_schema` against `aci.ACI().functions.get_definition(...)`, or use the upstream `aci-sdk` integration directly. ``
+- Warning substring: "`pydantic_ai.ext.aci` is deprecated and will be removed in 2.0. Wrap ACI.dev tools yourself using `pydantic_ai.tools.Tool.from_schema` against `aci.ACI().functions.get_definition(...)`, or use the upstream `aci-sdk` integration directly."
 - Fires on **use** (calling `tool_from_aci(...)` or instantiating `ACIToolset(...)`), **not** on bare import. Verified against `aci-sdk==1.0.0b4` + `pydantic-ai==1.100.0`.
 
 In v2, `pydantic_ai.ext.aci` is removed (ImportError). No in-tree replacement. v2 migration: wrap manually with `pydantic_ai.tools.Tool.from_schema`.
@@ -354,10 +354,10 @@ tool = Tool.from_schema(
 
 ### F1. `Usage` → `RunUsage` — PR #2378
 
-- Warning substring: `` `Usage` is deprecated, use `RunUsage` instead ``
+- Warning substring: "`Usage` is deprecated, use `RunUsage` instead"
 
 Also renames at the field level:
-- `request_tokens` → `input_tokens` (warning: `` `request_tokens` is deprecated, use `input_tokens` instead ``)
+- `request_tokens` → `input_tokens` (warning: "`request_tokens` is deprecated, use `input_tokens` instead")
 - `response_tokens` → `output_tokens`
 - `request_tokens_limit` → `input_tokens_limit`
 - `response_tokens_limit` → `output_tokens_limit`
@@ -373,21 +373,21 @@ from pydantic_ai.usage import RunUsage, RequestUsage
 
 ### F2. `vendor_*` → `provider_*` on `ModelResponse` — PR #5476
 
-- Warning substring: `` `vendor_details` is deprecated, use `provider_details` instead ``
-- Warning substring: `` `vendor_id` is deprecated, use `provider_response_id` instead ``
-- Warning substring: `` `provider_request_id` is deprecated, use `provider_response_id` instead ``
+- Warning substring: "`vendor_details` is deprecated, use `provider_details` instead"
+- Warning substring: "`vendor_id` is deprecated, use `provider_response_id` instead"
+- Warning substring: "`provider_request_id` is deprecated, use `provider_response_id` instead"
 
 ### F3. `{FunctionToolCallEvent,FunctionToolResultEvent}.call_id` → `.tool_call_id` — PR #2028
 
-- Warning substring: `` `call_id` is deprecated, use `tool_call_id` instead. ``
+- Warning substring: "`call_id` is deprecated, use `tool_call_id` instead."
 
 ### F4. `price` → `cost` on usage
 
-- Warning substring: `` `price` is deprecated, use `cost` instead ``
+- Warning substring: "`price` is deprecated, use `cost` instead"
 
 ### F5. `FunctionToolResultEvent.result` → `.part`
 
-- Warning substring: `` `result` is deprecated, use `part` instead. ``
+- Warning substring: "`result` is deprecated, use `part` instead."
 
 ---
 
@@ -395,7 +395,7 @@ from pydantic_ai.usage import RunUsage, RequestUsage
 
 In `pydantic-ai==1.100.0` the `Agent(builtin_tools=...)` ctor kwarg still exists and emits a deprecation. In v2 it is removed entirely (`TypeError: unexpected keyword argument 'builtin_tools'`) — and notably so is `native_tools=` as a kwarg. The v2 form is `capabilities=[NativeTool(...)]` (or a provider-adaptive capability like `WebSearch()` / `WebFetch()` / `MCP()` / `ImageGeneration()`).
 
-- Warning substring: `` `Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw native-tool registration, or a provider-adaptive capability like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback. ``
+- Warning substring: "`Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw native-tool registration, or a provider-adaptive capability like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback."
 - Verified at runtime against 1.100.0.
 
 ```text
@@ -416,13 +416,13 @@ Agent('openai-chat:gpt-4o', capabilities=[WebSearch()])
 
 ### H1. `DeferredToolCalls` → `DeferredToolRequests`
 
-- Warning substring: `` `DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead ``
+- Warning substring: "`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead"
 - Field rename: `.tool_calls` → `.calls`
 - v2 import location: `from pydantic_ai.tools import DeferredToolRequests` (also re-exported from top-level `pydantic_ai`). Note: **not** in `pydantic_ai.output` in v2.
 
 ### H2. `DeferredToolset` → `ExternalToolset`
 
-- Warning substring: `` `DeferredToolset` is deprecated, use `ExternalToolset` instead ``
+- Warning substring: "`DeferredToolset` is deprecated, use `ExternalToolset` instead"
 
 ### H3. UNVERIFIED — `HistoryProcessor` alias
 
@@ -434,19 +434,19 @@ Agent('openai-chat:gpt-4o', capabilities=[WebSearch()])
 
 ### H5. `OpenAIModelProfile.openai_supports_sampling_settings`
 
-- Warning substring: `` Set the `system_prompt_role` in the `OpenAIModelProfile` instead. ``
+- Warning substring: "Set the `system_prompt_role` in the `OpenAIModelProfile` instead."
 - Already dropped in `3f7427673` on `v2-main`.
 
 ### H6. `OpenAICompaction(instructions=)` — dropped
 
-- Warning substring: `` `OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted into the compaction model's context, not as a directive for how to summarize the conversation, so this field does not match `AnthropicCompaction(instructions=...)` semantics. ``
+- Warning substring: "`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted into the compaction model's context, not as a directive for how to summarize the conversation, so this field does not match `AnthropicCompaction(instructions=...)` semantics."
 - Category: plain `DeprecationWarning` (not `PydanticAIDeprecationWarning`).
 - In v2 the kwarg is removed (`TypeError`). No 1:1 replacement — drop the `instructions=` argument; if you need to steer the summarization, do it via the surrounding agent prompt instead.
 - Verified against 1.100.0 and 2.0.0b1.
 
 ### H7. `parallel_execution_mode("sequential")`
 
-- Warning substring: `` Use `parallel_execution_mode("sequential")` instead. ``
+- Warning substring: "Use `parallel_execution_mode("sequential")` instead."
 
 Replaces a method on `AbstractAgent` / `ToolManager`. Exact PR TBD; trust the warning at the call site.
 
@@ -456,7 +456,7 @@ Replaces a method on `AbstractAgent` / `ToolManager`. Exact PR TBD; trust the wa
 
 ### I1. Legacy `BaseNode`-runner imports from top-level — PR #5306
 
-- Warning substring: `` Importing `Graph` from `pydantic_graph` is deprecated. The `BaseNode`-based `Graph` runner and its persistence machinery are deprecated and will be removed (or repurposed) in v2; use the builder-based `GraphBuilder` API instead, or pin to `pydantic_graph<2` to keep using them. ``
+- Warning substring: "Importing `Graph` from `pydantic_graph` is deprecated. The `BaseNode`-based `Graph` runner and its persistence machinery are deprecated and will be removed (or repurposed) in v2; use the builder-based `GraphBuilder` API instead, or pin to `pydantic_graph<2` to keep using them."
 
 Affected: `Graph`, `GraphRun`, `GraphRunResult`, `BaseNode`, `Edge`, `End`, `GraphRunContext`, `EndSnapshot`, `NodeSnapshot`, `Snapshot`, `FullStatePersistence`, `SimpleStatePersistence`. All accessed via `pydantic_graph.__getattr__`.
 
@@ -464,7 +464,7 @@ Migration: rewrite using `GraphBuilder` (see `docs/graph.md`). If a full rewrite
 
 ### I2. `pydantic_graph.beta.*` → top-level — PR #5306
 
-- Warning substring: `` `pydantic_graph.beta.decision` is deprecated, import from `pydantic_graph.decision` instead. ``
+- Warning substring: "`pydantic_graph.beta.decision` is deprecated, import from `pydantic_graph.decision` instead."
 
 ```text
 # v1
@@ -479,7 +479,7 @@ from pydantic_graph.decision import Decision
 
 ### J1. `Dataset(...)` without `name=` — PR #4862
 
-- Warning substring: `` Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`. ``
+- Warning substring: "Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`."
 
 ```text
 # v1
@@ -493,9 +493,9 @@ Dataset(name='my_eval', cases=[...], evaluators=[...])
 Two distinct positional warnings exist in 1.100.0:
 
 - Positional dataclass init for `EvaluationResult` / `EvaluatorFailure`:
-  Warning substring: `` Constructing `EvaluationResult` with positional arguments is deprecated; use keyword arguments instead. Positional construction will be removed in pydantic-evals v2. `` (and analogous for `EvaluatorFailure`).
+  Warning substring: "Constructing `EvaluationResult` with positional arguments is deprecated; use keyword arguments instead. Positional construction will be removed in pydantic-evals v2." (and analogous for `EvaluatorFailure`).
 - Positional kwargs (`name`, `max_concurrency`, `progress`, `retry_task`, `retry_evaluators`) passed to `Dataset.evaluate` / `Dataset.evaluate_sync`:
-  Warning substring: `` Passing `name`, `max_concurrency`, `progress`, `retry_task`, or `retry_evaluators` positionally to `Dataset.evaluate` / `Dataset.evaluate_sync` is deprecated; pass them as keyword arguments. Positional support will be removed in pydantic-evals v2. ``
+  Warning substring: "Passing `name`, `max_concurrency`, `progress`, `retry_task`, or `retry_evaluators` positionally to `Dataset.evaluate` / `Dataset.evaluate_sync` is deprecated; pass them as keyword arguments. Positional support will be removed in pydantic-evals v2."
 
 Both verified against `pydantic-evals==1.100.0`. In v2 (2.0.0b1) both raise `TypeError` instead. Fix by switching to kwargs.
 
@@ -503,8 +503,8 @@ Note: `Dataset(...)` itself is `kw_only` in 1.100.0 already (positional args rai
 
 ### J3. `evaluation_name` / `evaluator_version` class/instance attribute — PR #5554
 
-- Warning substring (`evaluation_name`): `` <mod>.<Cls> relies on the `evaluation_name` attribute to customize the default evaluation name. This is deprecated; override `get_default_evaluation_name` in your evaluator class to retain this behavior in pydantic-evals v2. ``
-- Warning substring (`evaluator_version`): `` <mod>.<Cls> relies on the `evaluator_version` attribute to set its version. This is deprecated; override `get_evaluator_version` in your evaluator class to retain this behavior in pydantic-evals v2. ``
+- Warning substring (`evaluation_name`): "<mod>.<Cls> relies on the `evaluation_name` attribute to customize the default evaluation name. This is deprecated; override `get_default_evaluation_name` in your evaluator class to retain this behavior in pydantic-evals v2."
+- Warning substring (`evaluator_version`): "<mod>.<Cls> relies on the `evaluator_version` attribute to set its version. This is deprecated; override `get_evaluator_version` in your evaluator class to retain this behavior in pydantic-evals v2."
 - Both fire when `get_default_evaluation_name()` / `get_evaluator_version()` are *called* on an evaluator subclass that sets those attributes, not on subclass creation. Match the static substrings (`relies on the \`evaluation_name\` attribute`, `relies on the \`evaluator_version\` attribute`) and ignore the dynamic class prefix.
 - Verified against `pydantic-evals==1.100.0`. v2 form: override `get_default_evaluation_name(self) -> str` and `get_evaluator_version(self) -> str | None` instead of setting class attributes.
 
