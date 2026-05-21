@@ -2506,9 +2506,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings)
+        extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name):
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
             retrieve_kwargs: dict[str, Any] = {}
             if starting_after is not None:
                 retrieve_kwargs['starting_after'] = starting_after
@@ -2516,7 +2515,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 response_id=response_id,
                 include=include or OMIT,
                 stream=stream,
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=timeout,
                 extra_headers=extra_headers,
                 **retrieve_kwargs,
             )
