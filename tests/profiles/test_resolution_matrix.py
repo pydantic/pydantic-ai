@@ -1388,7 +1388,7 @@ def test_nebius_moonshotai():
 def test_huggingface_bare_name_returns_none():
     """HF requires `provider/model` form; bare name → `None`."""
 
-    assert HuggingFaceProvider.model_profile('some-model') is None
+    assert _normalize(HuggingFaceProvider.model_profile('some-model')) is None
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
@@ -1436,4 +1436,4 @@ def test_huggingface_moonshotai():
 def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
 
-    assert HuggingFaceProvider.model_profile('unknown/some-model') is None
+    assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
