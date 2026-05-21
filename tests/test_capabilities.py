@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -2275,7 +2275,7 @@ def test_abstract_capability_get_model_settings_default():
 
     cap = PlainCap()
     assert cap.get_model_settings() is None
-    assert cap.get_description(None) is None
+    assert cap.get_descriptions() is None
 
 
 async def test_abstract_capability_description_field_is_optional_in_deferred_catalog() -> None:
@@ -2400,19 +2400,32 @@ def test_toolset_capability_get_toolset():
     convenience_cap = Capability[None](toolset=ts)
     assert convenience_cap.get_toolset() is ts
 
+    plural_cap = Capability[None](toolsets=[ts])
+    assert plural_cap.get_toolset() is ts
+
+    ts_b = FunctionToolset[None]()
+    combined_cap = Capability[None](toolsets=[ts, ts_b])
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], combined_cap.get_toolset())
+    assert list(combined.toolsets) == [ts, ts_b]
+
     def greet(name: str) -> str:
         return f'Hello, {name}!'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Cannot use both `toolset` and `tools`'):
+    with pytest.raises(UserError, match='Cannot use both `toolsets` and `tools`'):
         Capability[None](toolset=ts, tools=[greet])
 
-    with pytest.raises(UserError, match=r'`Capability\.tool_plain\(\)` cannot be used when `toolset=` is set\.'):
+    with pytest.raises(UserError, match='Cannot use both `toolset` and `toolsets`'):
+        Capability[None](toolset=ts, toolsets=[ts_b])
+
+    with pytest.raises(UserError, match=r'`Capability\.tool_plain\(\)` cannot be used when `toolsets=` is set\.'):
         convenience_cap.tool_plain(greet)
 
     def greet_with_context(_ctx: RunContext[None], name: str) -> str:
         return f'Hello, {name}!'  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolset=` is set\.'):
+    with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolsets=` is set\.'):
         convenience_cap.tool(greet_with_context)
 
 
@@ -9914,7 +9927,7 @@ def test_prefix_tools_delegates_metadata_to_wrapped_capability():
 
     assert cap.id == 'leaf-tools'
     assert cap.description == 'Leaf tool bundle.'
-    assert cap.get_description(None) == 'Leaf tool bundle.'
+    assert cap.get_descriptions() == 'Leaf tool bundle.'
     assert cap.defer_loading is True
     assert visited == [cap]
 
@@ -9972,14 +9985,14 @@ async def test_prefix_tools_registration_matches_wrapper_metadata_cases():
     assert registered['github'] is prefixed
     assert prefixed.id == 'github'
     assert prefixed.defer_loading is True
-    assert prefixed.get_description(None) == 'GitHub MCP server.'
+    assert prefixed.get_descriptions() == 'GitHub MCP server.'
 
     explicit_id = PrefixTools(github, prefix='github', id='github_prefixed')
     registered = await registered_capabilities(explicit_id)
 
     assert registered['github_prefixed'] is explicit_id
     assert explicit_id.defer_loading is False
-    assert explicit_id.get_description(None) == 'GitHub MCP server.'
+    assert explicit_id.get_descriptions() == 'GitHub MCP server.'
 
     explicit_deferred = PrefixTools(
         Capability[None](),

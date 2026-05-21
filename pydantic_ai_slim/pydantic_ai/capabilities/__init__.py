@@ -16,6 +16,7 @@ from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityDescriptions,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
@@ -97,6 +98,7 @@ __all__ = [
     'AbstractCapability',
     'AgentCapability',
     'AgentNode',
+    'CapabilityDescriptions',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',

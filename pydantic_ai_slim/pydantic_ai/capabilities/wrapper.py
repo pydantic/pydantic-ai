@@ -22,6 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityDescriptions,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -71,8 +72,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None
 
-    def get_description(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
-        return self.description if self.description is not None else self.wrapped.get_description(ctx)
+    def get_descriptions(self) -> CapabilityDescriptions[AgentDepsT] | None:
+        return self.description if self.description is not None else self.wrapped.get_descriptions()
 
     @property
     def has_wrap_node_run(self) -> bool:

@@ -23,7 +23,9 @@ from pydantic_ai.tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from pydantic_ai.toolsets import AgentToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.combined import CombinedToolset
 
 
 @dataclass
@@ -38,8 +40,8 @@ class Capability(AbstractCapability[AgentDepsT]):
     [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
     """
 
-    toolset: AgentToolset[AgentDepsT] | None = None
-    """Toolset to register with the agent."""
+    toolsets: Sequence[AgentToolset[AgentDepsT]] = ()
+    """Toolsets to register with the agent. Combined via [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] when more than one is provided."""
 
     tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = ()
     """Function tools to register with the agent."""
@@ -55,21 +57,34 @@ class Capability(AbstractCapability[AgentDepsT]):
         *,
         instructions: AgentInstructions[AgentDepsT] | None = None,
         toolset: AgentToolset[AgentDepsT] | None = None,
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         id: str | Unset = UNSET,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
-        if toolset is not None and tools:
+        if toolset is not None and toolsets is not None:
             raise UserError(
-                'Cannot use both `toolset` and `tools` on the same capability. '
-                'Use `toolset` to register a toolset, or `tools` to register individual tools.'
+                'Cannot use both `toolset` and `toolsets` on the same capability. '
+                'Use `toolsets` to register one or more toolsets.'
+            )
+        resolved_toolsets: tuple[AgentToolset[AgentDepsT], ...]
+        if toolsets is not None:
+            resolved_toolsets = tuple(toolsets)
+        elif toolset is not None:
+            resolved_toolsets = (toolset,)
+        else:
+            resolved_toolsets = ()
+        if resolved_toolsets and tools:
+            raise UserError(
+                'Cannot use both `toolsets` and `tools` on the same capability. '
+                'Use `toolsets` to register toolsets, or `tools` to register individual tools.'
             )
         if is_set(id):
             super().__init__(id=id, description=description, defer_loading=defer_loading)
         else:
             super().__init__(description=description, defer_loading=defer_loading)
-        self.toolset = toolset
+        self.toolsets = resolved_toolsets
         self.tools = tools
         self._function_toolset = FunctionToolset[AgentDepsT](tools)
         self._instructions = list(normalize_instructions(instructions))
@@ -78,10 +93,15 @@ class Capability(AbstractCapability[AgentDepsT]):
         return list(self._instructions) if self._instructions else None
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        return self.toolset or self._function_toolset
-
-    def get_description(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
-        return self.description
+        if not self.toolsets:
+            return self._function_toolset
+        if len(self.toolsets) == 1:
+            return self.toolsets[0]
+        materialized: list[AbstractToolset[AgentDepsT]] = [
+            ts if isinstance(ts, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=ts)
+            for ts in self.toolsets
+        ]
+        return CombinedToolset[AgentDepsT](materialized)
 
     @overload
     def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
@@ -129,8 +149,8 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
-        if self.toolset is not None:
-            raise UserError('`Capability.tool_plain()` cannot be used when `toolset=` is set.')
+        if self.toolsets:
+            raise UserError('`Capability.tool_plain()` cannot be used when `toolsets=` is set.')
 
         decorator = self._function_toolset.tool_plain(
             name=name,
@@ -197,8 +217,8 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
-        if self.toolset is not None:
-            raise UserError('`Capability.tool()` cannot be used when `toolset=` is set.')
+        if self.toolsets:
+            raise UserError('`Capability.tool()` cannot be used when `toolsets=` is set.')
 
         decorator = self._function_toolset.tool(
             name=name,

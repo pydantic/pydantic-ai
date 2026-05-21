@@ -80,7 +80,7 @@ Message history matters. Loaded capability state is reconstructed from matching 
 
 ## Dynamic Descriptions and Instructions
 
-Use `get_description()` when the catalog text depends on run context. Use dynamic instructions when load-time instructions need deps or current run state.
+Use `get_descriptions()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) for dynamic text, or a sequence of strings/callables for multiple parts. Use dynamic instructions when load-time instructions need deps or current run state.
 
 ```python
 from dataclasses import dataclass
@@ -97,9 +97,11 @@ class SupportDeps:
 
 @dataclass
 class AccountCapability(AbstractCapability[SupportDeps]):
-    def get_description(self, ctx: RunContext[SupportDeps] | None) -> str:
-        plan = ctx.deps.plan if ctx else 'the current'
-        return f'Account-management tools for {plan} plan customers.'
+    def get_descriptions(self):
+        def describe(ctx: RunContext[SupportDeps]) -> str:
+            return f'Account-management tools for {ctx.deps.plan} plan customers.'
+
+        return describe
 
     def get_instructions(self):
         def load_instructions(ctx: RunContext[SupportDeps]) -> str:

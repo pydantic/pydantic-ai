@@ -8,7 +8,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
 
-from .abstract import AbstractCapability, CapabilityOrdering
+from .abstract import AbstractCapability, CapabilityOrdering, resolve_capability_descriptions
 from .instrumentation import Instrumentation
 
 
@@ -17,13 +17,14 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     """Internal capability that installs deferred capability catalog and loading support."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
+        async def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
             catalog: list[tuple[str, str]] = []
             for cap_id, cap in ctx.capabilities.items():
                 if not cap.defer_loading:
                     continue
 
-                catalog.append((cap_id, cap.get_description(ctx) or ''))
+                parts = await resolve_capability_descriptions(cap.get_descriptions(), ctx)
+                catalog.append((cap_id, ' '.join(parts)))
 
             entries = '\n'.join(
                 f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog
