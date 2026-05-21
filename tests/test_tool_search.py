@@ -167,39 +167,41 @@ if evals_available():
     class UsedSearchTools(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model used search_tools when expected tools exist."""
 
-        evaluation_name: str | None = field(default='used_search_tools')
-
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             if not ctx.metadata or not ctx.metadata.expected_tools:
                 return True
             return 'search_tools' in ctx.output.tool_calls
 
+        def get_default_evaluation_name(self) -> str:
+            return 'used_search_tools'
+
     @dataclass(repr=False)
     class FoundExpectedTools(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model found and called the expected tools."""
-
-        evaluation_name: str | None = field(default='found_expected_tools')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             if not ctx.metadata or not ctx.metadata.expected_tools:
                 return True
             return all(t in ctx.output.tool_calls for t in ctx.metadata.expected_tools)
 
+        def get_default_evaluation_name(self) -> str:
+            return 'found_expected_tools'
+
     @dataclass(repr=False)
     class ReasonableToolUsage(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model didn't use an excessive number of tool calls."""
 
         max_calls: int = 10
-        evaluation_name: str | None = field(default='reasonable_usage')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             return len(ctx.output.tool_calls) <= self.max_calls
 
+        def get_default_evaluation_name(self) -> str:
+            return 'reasonable_usage'
+
     @dataclass(repr=False)
     class KeywordCount(Evaluator[str, EvalOutput, EvalMetadata]):
         """Score the number of keywords used in the search query. Best is <= 3."""
-
-        evaluation_name: str | None = field(default='keyword_count')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
             if not ctx.output.search_args:
@@ -207,6 +209,9 @@ if evals_available():
             raw: Any = ctx.output.search_args[0].get('queries')
             queries = cast('list[str]', raw) if isinstance(raw, list) else ([str(raw)] if raw else [])
             return len(' '.join(queries).split())
+
+        def get_default_evaluation_name(self) -> str:
+            return 'keyword_count'
 
 
 # --- Helpers ---
