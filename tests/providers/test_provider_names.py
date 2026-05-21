@@ -66,7 +66,7 @@ with try_import() as imports_successful:
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
-        ('gateway/gemini', GoogleProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/google-cloud', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('outlines', OutlinesProvider, None),  # pyright: ignore[reportDeprecated]
