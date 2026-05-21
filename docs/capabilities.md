@@ -13,13 +13,13 @@ This makes them the primary extension point for Pydantic AI. Whether you're buil
 
 ## On-demand capabilities {#on-demand-capabilities}
 
-The cheapest token is the one you never send. As your agent grows — a refund runbook here, an account-security playbook there, a billing flow, a half-dozen internal workflows the model only touches occasionally — every capability bundled into the prompt costs context, latency, and money on every turn, even the turns it isn't used.
+By default, every capability you register contributes to the prompt on every turn — its instructions, tool schemas, and model settings all sit in the context window whether the model uses them that turn or not. As the number of registered capabilities grows, so does the per-turn token count, and a larger context also tends to hurt the model's ability to pick the right tool.
 
-**On-demand capabilities** flip this around. The model sees a compact catalog up front — just an `id` and `description` per capability — and pulls in the full behavior (instructions, tools, model settings, hooks) only when the conversation calls for it. A single `load_capability(id)` call activates everything that capability brings for the rest of the run.
+Marking a capability with `defer_loading=True` keeps its instructions, tools, model settings, and hooks out of the context window until the model asks for them. Up front the model only sees a short catalog: `id` and `description` per deferred capability. When the model calls `load_capability(id)`, that capability's contents are added to the context from the next turn onward and stay active for the rest of the run.
 
-This is the **progressive disclosure** pattern that has emerged as the standard way to scale agent context: [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) ship as filesystem skills the model loads on demand, and [Cloudflare's Code Mode](https://blog.cloudflare.com/code-mode/) shows that handing the model a small menu and letting it pull in details on demand outperforms stuffing every tool and instruction into the system prompt — the model picks the right path faster and the context stays small enough to stay accurate. A Pydantic AI capability goes one step further than a markdown skill: the loaded unit can carry typed Python tools, per-step model settings, and lifecycle hooks — not just instructions. See [Skills](#skills) below for the side-by-side.
+If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), this should feel familiar — a skill is a markdown file the model can pull in on demand. An on-demand capability is the same idea generalised: instead of just instructions, a single `load_capability` call can also activate typed function tools, per-step model settings, and lifecycle hooks for the rest of the run. Skills are effectively the instructions-only special case; see [Skills](#skills) for the side-by-side and a markdown loader.
 
-For large flat tool collections without bundled instructions or hooks, reach for [tool search](tools-advanced.md#tool-search) instead: it discovers individual tools by name.
+If you have a large flat set of tools with no surrounding instructions or hooks, [tool search](tools-advanced.md#tool-search) is the better fit — it discovers individual tools by name rather than loading bundles.
 
 ### How it works
 
@@ -128,61 +128,90 @@ For anything beyond instructions, function tools, and a toolset — model settin
 
 ### Skills
 
-If you came looking for [Agent Skills](https://www.anthropic.com/news/agent-skills) — small descriptions surfaced up front, full instructions loaded only when needed — on-demand capabilities cover the same shape in Pydantic AI.
-
-A skill is a markdown file (sometimes with helper scripts) loaded by the runtime. An on-demand capability is a Python bundle, so a single `load_capability` call can flip on:
+[Agent Skills](https://www.anthropic.com/news/agent-skills) — small descriptions surfaced up front, full instructions loaded only when needed — are the instructions-only special case of an on-demand capability. A skill changes what the model *knows*; an on-demand capability changes what the model knows, what it can do, and how it does it, in one load:
 
 - typed function tools the model can call directly
 - per-step model settings (e.g. raise reasoning effort just for this workflow)
 - lifecycle hooks (e.g. require approval before a destructive tool runs)
 - native tools (e.g. web search), with the trade-off described in [Cache implications](#cache-implications)
 
-A skill changes what the model *knows*. An on-demand capability changes what the model knows, what it can do, and how it does it — all from one load.
+The [`Capability`][pydantic_ai.capabilities.Capability] example earlier covers deferred instructions and function tools. The snippets below show each of the other three.
 
-```python {title="capability_as_skill.py" test="skip" lint="skip"}
+#### Deferred model settings
+
+[`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] is only consulted once the capability is loaded, so per-step settings like raised reasoning effort only apply for runs the model opts into:
+
+```python {title="deferred_model_settings.py" test="skip" lint="skip"}
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.toolsets import AgentToolset, FunctionToolset
-
-security_tools = FunctionToolset()
-
-
-@security_tools.tool_plain(requires_approval=True)
-def revoke_all_sessions(account_id: str) -> str:
-    """Revoke every active session for the account."""
-    return f'Revoked all sessions for {account_id}.'
 
 
 @dataclass
-class SecurityReview(AbstractCapability[Any]):
-    """A 'skill' that brings instructions, a gated tool, and raised reasoning effort."""
-
-    def get_instructions(self) -> str:
-        return (
-            'Confirm the affected account and list recent logins '
-            'before offering to revoke sessions.'
-        )
-
-    def get_toolset(self) -> AgentToolset[Any] | None:
-        return security_tools
-
+class DeepReasoning(AbstractCapability[Any]):
     def get_model_settings(self) -> ModelSettings:
         return ModelSettings(extra_body={'reasoning_effort': 'high'})
 
 
-security_review = SecurityReview(
-    id='security-review',
-    description='Use for suspicious-login reports, account takeover, or session revocation.',
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        DeepReasoning(
+            id='deep-reasoning',
+            description='Use for multi-step planning or hard analytical problems.',
+            defer_loading=True,
+        ),
+    ],
+)
+```
+
+#### Deferred lifecycle hooks
+
+Hooks on a deferred capability don't fire until it's loaded — useful for guardrails that should only kick in once the model has opted into a workflow:
+
+```python {title="deferred_hooks.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Hooks
+
+approvals = Hooks(
+    id='approvals',
+    description='Use when the next action may be destructive.',
     defer_loading=True,
 )
 
-agent = Agent('openai:gpt-5.2', capabilities=[security_review])
+
+@approvals.on.before_tool_execute
+async def require_approval(ctx, *, call, tool_def, args):
+    # Inspect the call, prompt the operator, raise to block — only runs
+    # once `approvals` has been loaded.
+    return args
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[approvals])
 ```
 
-Until the model loads `security-review`, none of these — the instructions, the `revoke_all_sessions` schema, the raised reasoning-effort setting, or the approval gate — touch the prompt or the run.
+#### Deferred native tools
+
+Any [native capability](#native-capabilities) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after `load_capability` — see [Cache implications](#cache-implications) for the trade-off:
+
+```python {title="deferred_native_tool.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        WebSearch(
+            local='duckduckgo',
+            id='web-research',
+            description='Use when the question requires up-to-date information.',
+            defer_loading=True,
+        ),
+    ],
+)
+```
 
 #### Loading skills from Markdown files
 
@@ -627,23 +656,21 @@ The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capabil
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
 
-Custom capability classes should be dataclasses. This lets Pydantic AI expose the shared capability fields — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — consistently, and it is required when custom capabilities are used in agent specs.
+Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object. If `id` is omitted, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run.
 
-```python {title="custom_capability_dataclass.py"}
-from dataclasses import dataclass
+```python {title="custom_capability_plain.py"}
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
 
-@dataclass
 class MyCapability(AbstractCapability[Any]):
     """A custom capability."""
 ```
 
-If you define a custom `__post_init__`, call `super().__post_init__()` so base validation still runs:
+Use a dataclass when you want generated constructor parameters for your own configuration fields, or for the shared metadata fields:
 
-```python {title="custom_capability_post_init.py"}
+```python {title="custom_capability_dataclass.py"}
 from dataclasses import dataclass
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -652,24 +679,15 @@ from pydantic_ai.capabilities import AbstractCapability
 @dataclass
 class MyCapability(AbstractCapability[None]):
     label: str
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        self.label = self.label.strip()
 ```
 
-If you define a custom `__init__`, use `@dataclass(init=False)` and initialize the base metadata before calling `__post_init__()`. Only expose `defer_loading` if the capability should support lazy loading; otherwise set `self.defer_loading = False`.
+If you define a custom `__init__`, set only the metadata you want to expose. There is no `super().__init__()` or `__post_init__()` requirement:
 
 ```python {title="custom_capability_init.py"}
-from dataclasses import dataclass
-
-from pydantic_ai.capabilities import AbstractCapability, auto_capability_id
+from pydantic_ai.capabilities import AbstractCapability
 
 
-@dataclass(init=False)
 class MyCapability(AbstractCapability[None]):
-    label: str
-
     def __init__(
         self,
         label: str,
@@ -678,14 +696,13 @@ class MyCapability(AbstractCapability[None]):
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
-        self.id = id if id is not None else auto_capability_id()
+        self.id = id
         self.description = description
         self.defer_loading = defer_loading
         self.label = label
-        self.__post_init__()
 ```
 
-When [`defer_loading=True`](#on-demand-capabilities), the capability must have a stable explicit `id`; auto-generated ids are rejected because they cannot be replayed from message history.
+When [`defer_loading=True`](#on-demand-capabilities), prefer a stable explicit `id` if you plan to replay message history across code changes. Otherwise, the run registration derives one from the class name.
 
 ### Providing tools
 
