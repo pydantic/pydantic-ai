@@ -1122,6 +1122,102 @@ def test_sanitize_messages_respects_custom_allowed_schemes():
     assert user_part.content == snapshot([ImageUrl(url='s3://bucket/ok.png')])
 
 
+def test_sanitize_messages_resets_force_download_allow_local():
+    """`FileUrl.force_download='allow-local'` on kept parts is reset to `False` with a warning."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/img.png', force_download='allow-local'),
+                            DocumentUrl(url='https://example.com/doc.pdf', force_download=True),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"'https://example\.com/img\.png'.*force_download='allow-local'.*reset"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/img.png', force_download=False),
+            DocumentUrl(url='https://example.com/doc.pdf', force_download=True),
+        ]
+    )
+
+
+def test_sanitize_messages_leaves_force_download_false_alone():
+    """`FileUrl` parts without `force_download='allow-local'` pass through unchanged without warnings."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/a.png'),
+                            ImageUrl(url='https://example.com/b.png', force_download=True),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/a.png', force_download=False),
+            ImageUrl(url='https://example.com/b.png', force_download=True),
+        ]
+    )
+
+
+def test_sanitize_messages_strips_disallowed_scheme_before_reset():
+    """A `FileUrl` with both a disallowed scheme and `allow-local` is dropped, not reset."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='s3://bucket/key.png', force_download='allow-local'),
+                            ImageUrl(url='https://example.com/img.png', force_download='allow-local'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    messages = [str(w.message) for w in caught]
+    assert any("scheme(s) ['s3']" in m for m in messages)
+    assert any("force_download='allow-local'" in m and 'https://example.com/img.png' in m for m in messages)
+    # The `s3` URL is dropped, so its URL must not appear in the allow-local warning.
+    assert not any('s3://bucket/key.png' in m and "force_download='allow-local'" in m for m in messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot([ImageUrl(url='https://example.com/img.png', force_download=False)])
+
+
 def test_sanitize_messages_strips_dangling_tool_calls():
     """A trailing ModelResponse with unresolved ToolCallParts has them dropped with a warning."""
     adapter = _make_dummy_adapter(

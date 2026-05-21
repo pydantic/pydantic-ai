@@ -284,6 +284,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
+        - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download]
+          values of `'allow-local'` on kept parts. `'allow-local'` opts the URL out
+          of the SSRF private-IP block, which is only safe for server-authored URLs;
+          on client-submitted parts it's reset to `False`.
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
           [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
           the end of the history that don't have a matching entry in
@@ -302,6 +306,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         strip_system_prompt = self.manage_system_prompt == 'server'
         stripped_system_prompt = False
         disallowed_url_schemes: set[str] = set()
+        reset_allow_local_urls: list[str] = []
         dangling_tool_call_names: list[str] = []
         last_index = len(messages) - 1
 
@@ -309,7 +314,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         for index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
-                    message.parts, strip_system_prompt=strip_system_prompt, disallowed_schemes=disallowed_url_schemes
+                    message.parts,
+                    strip_system_prompt=strip_system_prompt,
+                    disallowed_schemes=disallowed_url_schemes,
+                    reset_allow_local_urls=reset_allow_local_urls,
                 )
                 stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
                 if new_request_parts:
@@ -349,6 +357,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
+        if reset_allow_local_urls:
+            warnings.warn(
+                f'Client-submitted file URLs {sorted(set(reset_allow_local_urls))!r} had '
+                f"`force_download='allow-local'` reset to `False`. `'allow-local'` opts the URL "
+                f'out of the SSRF private-IP block and is only safe for server-authored URLs; '
+                f'set it on `message_history` passed directly to `Agent.run` instead.',
+                UserWarning,
+                stacklevel=2,
+            )
+
         if dangling_tool_call_names:
             warnings.warn(
                 f'Client-submitted history ended with unresolved tool call(s) '
@@ -369,10 +387,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         strip_system_prompt: bool,
         disallowed_schemes: set[str],
+        reset_allow_local_urls: list[str],
     ) -> tuple[list[ModelRequestPart], bool]:
         """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
         `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
+        `reset_allow_local_urls` is appended with the URLs of any `FileUrl` parts whose
+        `force_download='allow-local'` was reset to `False`.
         Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped.
         """
         stripped_system_prompt = False
@@ -382,7 +403,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stripped_system_prompt = True
                 continue
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                new_parts.append(replace(part, content=self._filter_user_content(part.content, disallowed_schemes)))
+                new_parts.append(
+                    replace(
+                        part,
+                        content=self._filter_user_content(part.content, disallowed_schemes, reset_allow_local_urls),
+                    )
+                )
             else:
                 new_parts.append(part)
         return new_parts, stripped_system_prompt
@@ -391,10 +417,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         self,
         content: Sequence[UserContent],
         disallowed_schemes: set[str],
+        reset_allow_local_urls: list[str],
     ) -> list[UserContent]:
-        """Drop [`FileUrl`][pydantic_ai.messages.FileUrl] items whose scheme isn't in the allowlist.
+        """Sanitize [`FileUrl`][pydantic_ai.messages.FileUrl] items in client-submitted user content.
+
+        Drops items whose scheme isn't in the allowlist, and resets `force_download='allow-local'`
+        on kept items to `False`.
 
         `disallowed_schemes` is updated in place with any disallowed schemes encountered.
+        `reset_allow_local_urls` is appended with the URLs of any `FileUrl` items whose
+        `force_download='allow-local'` was reset to `False`.
         """
         filtered: list[UserContent] = []
         for item in content:
@@ -403,6 +435,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 if scheme and scheme not in self.allowed_file_url_schemes:
                     disallowed_schemes.add(scheme)
                     continue
+                if item.force_download == 'allow-local':
+                    reset_allow_local_urls.append(item.url)
+                    item = replace(item, force_download=False)
             filtered.append(item)
         return filtered
 
