@@ -20,7 +20,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     * [`StreamedRunResult.stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
-    * [`StreamedRunResult.stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses]
+    * [`StreamedRunResult.stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response]
     * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
@@ -50,6 +50,7 @@ print(result.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -61,6 +62,7 @@ print(result.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -92,6 +94,7 @@ async def main():
                 timestamp=datetime.datetime(...),
                 instructions='Be a helpful assistant.',
                 run_id='...',
+                conversation_id='...',
             )
         ]
         """
@@ -117,6 +120,7 @@ async def main():
                 timestamp=datetime.datetime(...),
                 instructions='Be a helpful assistant.',
                 run_id='...',
+                conversation_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -128,6 +132,7 @@ async def main():
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
         ]
         """
@@ -143,7 +148,9 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
+
+Mid-conversation `SystemPromptPart`s (those in any `ModelRequest` after the first) are sent inline at their original position by providers whose API accepts system messages at arbitrary positions. For providers whose API doesn't, they're instead rendered as `<system>`-tagged `UserPromptPart`s at the same position, preserving the prefix cache and positional intent. Leading `SystemPromptPart`s always hoist to the provider's top-level system parameter.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
@@ -171,6 +178,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -182,6 +190,7 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -193,6 +202,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -204,12 +214,55 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Correlating runs with `conversation_id`
+
+Each `ModelRequest` and `ModelResponse` carries two identifiers:
+
+- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run; emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
+- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`; emitted as `gen_ai.conversation.id`.
+
+A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in [Logfire](logfire.md) (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
+
+```python {title="conversation_id is shared across runs in the same conversation"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+result1 = agent.run_sync('Tell me a joke.')
+result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
+
+assert result1.conversation_id == result2.conversation_id
+```
+
+To override or fork:
+
+- Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).
+- Pass `conversation_id='new'` to start a fresh conversation that ignores any `conversation_id` already on `message_history` — useful for branching off an existing thread without making the caller generate an ID.
+
+```python {title="forking a conversation"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+result1 = agent.run_sync('Tell me a joke.')
+forked = agent.run_sync(
+    'Tell me a different joke.',
+    message_history=result1.all_messages(),
+    conversation_id='new',
+)
+
+assert forked.conversation_id != result1.conversation_id
+```
+
+The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
 
 ## Storing and loading messages (to JSON)
 
@@ -264,7 +317,7 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google-gla:gemini-3-pro-preview` model.
+In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google:gemini-3-pro-preview` model.
 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
@@ -277,7 +330,7 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    model='google-gla:gemini-3-pro-preview',
+    model='google:gemini-3-pro-preview',
     message_history=result1.new_messages(),
 )
 print(result2.output)
@@ -296,6 +349,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -307,6 +361,7 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -318,6 +373,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -329,6 +385,7 @@ print(result2.all_messages())
         model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -340,31 +397,38 @@ Sometimes you may want to modify the message history before it's sent to the mod
 reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
 custom processing logic.
 
-Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
+Pydantic AI provides the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability that allows
+you to intercept and modify the message history before each model request.
+
+!!! note "`ProcessHistory` is a thin wrapper over `before_model_request`"
+    [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a migration-friendly wrapper
+    around the [`before_model_request`](hooks.md) lifecycle hook. If you want richer control
+    over the message history — access to the full [`RunContext`][pydantic_ai.tools.RunContext]
+    and [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], the ability to short-circuit
+    the model call, etc. — hook the event directly via
+    `capabilities=[Hooks(before_model_request=fn)]`.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
 
 !!! warning "History processors can affect `new_messages()` results"
-    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] determines which messages belong to the
-    current run after all history processors have been applied. If your processor reorders, inserts, or
-    removes messages, the set of messages returned by `new_messages()` may differ from what you expect.
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
+    produced during the current run. Messages provided via `message_history` are excluded —
+    including the trailing `ModelRequest` when resuming without a user prompt, even though
+    the framework may stamp it with the current run's `run_id` for observability.
 
-    To avoid surprises:
+    To keep this working when your processor mutates or adds messages:
 
-    - Preserve `run_id` on existing messages.
-    - When creating new messages in a processor that should be part of the current run, use a
-      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on the new message.
-    - Reordering or removing messages may shift the boundary between "old" and "new" messages, test
-      with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] to verify the behavior
-      matches your expectations.
+    - If you rebuild the trailing `ModelRequest`, preserve its `parts`, `timestamp`,
+      `instructions`, and `metadata` so it can still be identified as prior context.
+    - If you insert a new message that should appear in `new_messages()`, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on it.
 
 ### Usage
 
-The `history_processors` is a list of callables that take a list of
-[`ModelMessage`][pydantic_ai.messages.ModelMessage] and return a modified list of the same type.
+Each [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] wraps a callable that takes a list of
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] and returns a modified list of the same type.
 
 Each processor is applied in sequence, and processors can be either synchronous or asynchronous.
 
@@ -377,6 +441,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -384,7 +449,7 @@ def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
 # Create agent with history processor
-agent = Agent('openai:gpt-5.2', history_processors=[filter_responses])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(filter_responses)])
 
 # Example: Create some conversation history
 message_history = [
@@ -402,13 +467,14 @@ You can use the `history_processor` to only keep the recent messages:
 
 ```python {title="keep_recent_messages.py"}
 from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
 
 
 async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Keep only the last 5 messages to manage token usage."""
     return messages[-5:] if len(messages) > 5 else messages
 
-agent = Agent('openai:gpt-5.2', history_processors=[keep_recent_messages])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent_messages)])
 
 # Example: Even with a long conversation history, only the last 5 messages are sent to the model
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
@@ -425,6 +491,7 @@ additional information about the current run, such as dependencies, model inform
 
 ```python {title="context_aware_processor.py"}
 from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def context_aware_processor(
@@ -439,7 +506,7 @@ def context_aware_processor(
         return messages[-3:]  # Keep only recent messages when token usage is high
     return messages
 
-agent = Agent('openai:gpt-5.2', history_processors=[context_aware_processor])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_processor)])
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
@@ -450,6 +517,7 @@ Use an LLM to summarize older messages to preserve context while reducing tokens
 
 ```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent, ModelMessage
+from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
 summarize_agent = Agent(
@@ -472,7 +540,7 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     return messages
 
 
-agent = Agent('openai:gpt-5.2', history_processors=[summarize_old_messages])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messages)])
 ```
 
 !!! warning "Be careful when summarizing the message history"
@@ -494,6 +562,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
@@ -517,7 +586,7 @@ def test_history_processor(function_model: FunctionModel, received_messages: lis
     def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    agent = Agent(function_model, history_processors=[filter_responses])
+    agent = Agent(function_model, capabilities=[ProcessHistory(filter_responses)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -537,6 +606,7 @@ You can also use multiple processors:
 
 ```python {title="multiple_history_processors.py"}
 from pydantic_ai import Agent, ModelMessage, ModelRequest
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -547,7 +617,10 @@ def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-5:]
 
 
-agent = Agent('openai:gpt-5.2', history_processors=[filter_responses, summarize_old_messages])
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[ProcessHistory(filter_responses), ProcessHistory(summarize_old_messages)],
+)
 ```
 
 In this case, the `filter_responses` processor will be applied first, and the

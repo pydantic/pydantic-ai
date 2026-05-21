@@ -15,7 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
-    from .agent.abstract import AbstractAgent
+    from .agent import Agent
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
@@ -39,7 +39,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
-    agent: AbstractAgent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
+    agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
@@ -81,6 +81,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    conversation_id: str | None = None
+    """Unique identifier for the conversation this run belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Resolved at the start of `Agent.run` (etc.) from the explicit `conversation_id`
+    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7.
+    """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
     model_settings: ModelSettings | None = None

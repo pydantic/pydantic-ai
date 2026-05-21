@@ -14,7 +14,7 @@ from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from ._utils import AbstractSpan, get_traceparent, logfire_span
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
+from .basenode import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
 from .persistence import BaseStatePersistence
 from .persistence.in_mem import SimpleStatePersistence
 
@@ -36,7 +36,8 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
     from dataclasses import dataclass
 
-    from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+    from pydantic_graph import BaseNode, End, GraphRunContext
+    from pydantic_graph.graph import Graph
 
     @dataclass
     class MyState:
@@ -156,7 +157,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         assert result is not None, 'GraphRun should have a result'
         return result
 
-    def run_sync(
+    def run_sync(  # pragma: no cover  -- deprecated; coverage tracked on `run`
         self,
         start_node: BaseNode[StateT, DepsT, RunEndT],
         *,
@@ -182,7 +183,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Returns:
             The result type from ending the run and the history of the run.
         """
-        if infer_name and self.name is None:  # pragma: no branch
+        if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
         return _utils.get_event_loop().run_until_complete(
@@ -326,7 +327,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             state: The start state of the graph.
             infer_name: Whether to infer the graph name from the calling frame.
         """
-        if infer_name and self.name is None:
+        if infer_name and self.name is None:  # pragma: no branch
             self._infer_name(inspect.currentframe())
 
         persistence.set_graph_types(self)
@@ -666,7 +667,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         """Manually drive the graph run by passing in the node you want to run next.
 
         This lets you inspect or mutate the node before continuing execution, or skip certain nodes
-        under dynamic conditions. The graph run should stop when you return an [`End`][pydantic_graph.nodes.End] node.
+        under dynamic conditions. The graph run should stop when you return an [`End`][pydantic_graph.basenode.End] node.
 
         Here's an example of using `next` to drive the graph from [above][pydantic_graph.graph.Graph]:
         ```py {title="next_never_42.py" noqa="I001" requires="never_42.py"}
@@ -701,7 +702,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
                 the `start_node` of the run and updated each time a new node is returned.
 
         Returns:
-            The next node returned by the graph logic, or an [`End`][pydantic_graph.nodes.End] node if
+            The next node returned by the graph logic, or an [`End`][pydantic_graph.basenode.End] node if
             the run has completed.
         """
         if node is None:

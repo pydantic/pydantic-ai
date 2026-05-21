@@ -18,7 +18,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import websockets  # noqa: F401
+    import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     from pydantic_ai.models.openai import _WS_CONNECTION, OpenAIResponsesModel  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.providers.openai import OpenAIProvider

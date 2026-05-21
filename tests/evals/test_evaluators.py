@@ -250,6 +250,9 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
+        def get_default_evaluation_name(self) -> str:
+            return self.evaluation_name
+
     evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
@@ -259,31 +262,32 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
                 'reason': None,
                 'source': {'arguments': {'evaluation_name': 'abc', 'result': 123}, 'name': 'CustomNameFieldEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
 
     @dataclass
-    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    class CustomNameMethodEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         result: int
         my_name: str
-
-        @property
-        def evaluation_name(self) -> str:
-            return f'hello {self.my_name}'
 
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
-    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+        def get_default_evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+    evaluator = CustomNameMethodEvaluator(result=123, my_name='marcelo')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
         [
             {
                 'name': 'hello marcelo',
                 'reason': None,
-                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
+                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNameMethodEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
@@ -306,6 +310,7 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
         error_message='ValueError: Simulated error',
         error_stacktrace=IsStr(),
         source=FailingEvaluator().as_spec(),
+        error_type='ValueError',
     )
 
 

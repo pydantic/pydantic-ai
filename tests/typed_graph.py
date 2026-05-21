@@ -5,8 +5,10 @@ from typing import Any
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
 from pydantic_graph.persistence import BaseStatePersistence
+from pydantic_graph.persistence.in_mem import FullStatePersistence
 
 
 @dataclass

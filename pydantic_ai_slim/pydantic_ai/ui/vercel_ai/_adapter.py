@@ -18,8 +18,6 @@ from ... import _instructions
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -28,6 +26,8 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -63,6 +63,8 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalRequested,
+    ToolApprovalRequestedPart,
     ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
@@ -80,7 +82,7 @@ if TYPE_CHECKING:
 
     from ...agent import AbstractAgent
     from ...agent.abstract import AgentMetadata
-    from ...builtin_tools import AbstractBuiltinTool
+    from ...capabilities import AbstractCapability
     from ...models import KnownModelName, Model
     from ...output import OutputSpec
     from ...settings import ModelSettings
@@ -140,11 +142,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
         return await super().from_request(
-            request, agent=agent, sdk_version=sdk_version, server_message_id=server_message_id, **kwargs
+            request,
+            agent=agent,
+            sdk_version=sdk_version,
+            server_message_id=server_message_id,
+            manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
+            **kwargs,
         )
 
     @classmethod
@@ -157,6 +167,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
@@ -167,11 +178,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -179,6 +192,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -189,8 +203,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
-            builtin_tools=builtin_tools,
+            capabilities=capabilities,
             on_complete=on_complete,
+            manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
         )
 
@@ -219,6 +235,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
+
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID from the top-level `id` field of the Vercel AI request body (the chat ID)."""
+        return self.run_input.id
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
@@ -294,7 +315,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ThinkingPart(
                                 content=part.text,
                                 id=provider_meta.get('id'),
-                                signature=provider_meta.get('signature'),
+                                signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                                 provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
                             )
@@ -358,7 +379,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
                             builder.add(
-                                BuiltinToolCallPart(
+                                NativeToolCallPart(
                                     tool_name=tool_name,
                                     tool_call_id=tool_call_id,
                                     args=args,
@@ -379,7 +400,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = part.output if isinstance(part, ToolOutputAvailablePart) else None
                                     outcome = 'success'
                                 builder.add(
-                                    BuiltinToolReturnPart(
+                                    NativeToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=output,
@@ -483,18 +504,21 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     @classmethod
     def _dump_response_message(
-        cls, msg: ModelResponse, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
+        cls,
+        msg: ModelResponse,
+        tool_results: dict[str, ToolReturnPart | RetryPromptPart],
+        sdk_version: Literal[5, 6] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
 
         # For builtin tools, returns can be in the same ModelResponse as calls
-        local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
-            part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
+        local_builtin_returns: dict[str, NativeToolReturnPart] = {
+            part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)
         }
 
         for part in msg.parts:
-            if isinstance(part, BuiltinToolReturnPart):
+            if isinstance(part, NativeToolReturnPart):
                 continue
             elif isinstance(part, TextPart):
                 # Combine consecutive text parts
@@ -523,12 +547,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ),
                     )
                 )
-            elif isinstance(part, BuiltinToolCallPart):
+            elif isinstance(part, NativeToolCallPart):
                 tool_name = f'tool-{part.tool_name}'
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
                     # Builtin tool calls are represented by two parts in pydantic_ai:
-                    #   1. BuiltinToolCallPart (the tool request) -> part
-                    #   2. BuiltinToolReturnPart (the tool's output) -> builtin_return
+                    #   1. NativeToolCallPart (the tool request) -> part
+                    #   2. NativeToolReturnPart (the tool's output) -> builtin_return
                     # The Vercel AI SDK only has a single ToolOutputPart (ToolOutputAvailablePart or ToolOutputErrorPart).
                     # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
                     # we can properly reconstruct both the call and return parts with their respective metadata.
@@ -594,17 +618,34 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     call_provider_metadata = dump_provider_metadata(
                         id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                     )
-                    ui_parts.append(
-                        ToolInputAvailablePart(
-                            type=tool_name,
-                            tool_call_id=part.tool_call_id,
-                            input=part.args_as_dict(),
-                            provider_executed=True,
-                            call_provider_metadata=call_provider_metadata,
+                    # No result found → the tool call is deferred (awaiting approval or external result).
+                    # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
+                    # On v5, fall back to `input-available` since approval states are v6-only.
+                    # `approval.id` is not used for matching (tool_call_id is the match key),
+                    # so we use tool_call_id for a stable, deterministic value in dump output.
+                    if sdk_version >= 6:
+                        ui_parts.append(
+                            ToolApprovalRequestedPart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_dict(),
+                                provider_executed=True,
+                                call_provider_metadata=call_provider_metadata,
+                                approval=ToolApprovalRequested(id=part.tool_call_id),
+                            )
                         )
-                    )
+                    else:
+                        ui_parts.append(
+                            ToolInputAvailablePart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_dict(),
+                                provider_executed=True,
+                                call_provider_metadata=call_provider_metadata,
+                            )
+                        )
             elif isinstance(part, ToolCallPart):
-                ui_parts.extend(cls._dump_tool_call_part(part, tool_results))
+                ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
             else:
@@ -614,7 +655,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     @staticmethod
     def _dump_tool_call_part(
-        part: ToolCallPart, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
+        part: ToolCallPart,
+        tool_results: dict[str, ToolReturnPart | RetryPromptPart],
+        sdk_version: Literal[5, 6] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -676,15 +719,32 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 )
             )
         else:
-            ui_parts.append(
-                ToolInputAvailablePart(
-                    type=tool_type,
-                    tool_call_id=part.tool_call_id,
-                    input=part.args_as_dict(),
-                    provider_executed=False,
-                    call_provider_metadata=call_provider_metadata,
+            # No result found → the tool call is deferred (awaiting approval or external result).
+            # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
+            # On v5, fall back to `input-available` since approval states are v6-only.
+            # `approval.id` is not used for matching (tool_call_id is the match key),
+            # so we use tool_call_id for a stable, deterministic value in dump output.
+            if sdk_version >= 6:
+                ui_parts.append(
+                    ToolApprovalRequestedPart(
+                        type=tool_type,
+                        tool_call_id=part.tool_call_id,
+                        input=part.args_as_dict(),
+                        provider_executed=False,
+                        call_provider_metadata=call_provider_metadata,
+                        approval=ToolApprovalRequested(id=part.tool_call_id),
+                    )
                 )
-            )
+            else:
+                ui_parts.append(
+                    ToolInputAvailablePart(
+                        type=tool_type,
+                        tool_call_id=part.tool_call_id,
+                        input=part.args_as_dict(),
+                        provider_executed=False,
+                        call_provider_metadata=call_provider_metadata,
+                    )
+                )
 
         return ui_parts
 
@@ -695,8 +755,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
+        sdk_version: Literal[5, 6] = 5,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
+
+        When `sdk_version=6`, tool calls that have no corresponding result in the message history
+        are automatically detected as deferred and emitted with `state='approval-requested'`, so the
+        frontend can render approve/reject buttons on reload. On v5, such tool calls are emitted
+        with `state='input-available'` (approval states are v6-only).
 
         Args:
             messages: A sequence of ModelMessage objects to convert
@@ -705,6 +771,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 message index (incremented per UIMessage appended), and should return a unique
                 string ID. If not provided, uses `provider_response_id` for responses,
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
+            sdk_version: Vercel AI SDK version to target. Defaults to 5 for backwards compatibility.
+                Set to 6 to emit tool approval parts for deferred tool calls.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -741,7 +809,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)

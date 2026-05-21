@@ -12,7 +12,7 @@ import anyio
 import pydantic
 
 from .. import _utils as _graph_utils, exceptions
-from ..nodes import BaseNode, End
+from ..basenode import BaseNode, End
 from . import (
     BaseStatePersistence,
     EndSnapshot,
@@ -41,7 +41,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     ```py
     from pathlib import Path
 
-    from pydantic_graph import FullStatePersistence
+    from pydantic_graph.persistence.in_mem import FullStatePersistence
 
     run_id = 'run_123abc'
     persistence = FullStatePersistence(Path('runs') / f'{run_id}.json')
@@ -96,7 +96,9 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         async with self._lock():
             snapshots = await self.load_all()
-            if snapshot := next((s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
+            if snapshot := next(
+                (s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None
+            ):  # pragma: no branch
                 snapshot.status = 'pending'
                 await self._save(snapshots)
                 return snapshot

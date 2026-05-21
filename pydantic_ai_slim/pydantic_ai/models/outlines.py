@@ -12,16 +12,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     ImageUrl,
@@ -30,6 +29,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -79,6 +80,14 @@ if TYPE_CHECKING:
     import transformers
 
 
+_DEPRECATION_MESSAGE = (
+    '`OutlinesModel` is deprecated and will be removed in v2. '
+    'If you would like to keep using Outlines with Pydantic AI, please file an issue at '
+    'https://github.com/dottxt-ai/outlines/issues.'
+)
+
+
+@deprecated(_DEPRECATION_MESSAGE, category=PydanticAIDeprecationWarning)
 @dataclass(init=False)
 class OutlinesModel(Model):
     """A model that relies on the Outlines library to run non API-based models."""
@@ -484,7 +493,7 @@ class OutlinesModel(Model):
                     elif isinstance(part, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet.
                         pass
-                    elif isinstance(part, ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart):
+                    elif isinstance(part, ToolCallPart | NativeToolCallPart | NativeToolReturnPart):
                         raise UserError('Tool calls are not supported for Outlines models yet.')
                     elif isinstance(part, FilePart):
                         if isinstance(part.content, BinaryContent) and part.content.is_image:
@@ -525,7 +534,7 @@ class OutlinesModel(Model):
         self, response: AsyncIterable[str], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Turn the Outlines text response into a Pydantic AI streamed response instance."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[str, AsyncIterable[str]] = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -545,7 +554,7 @@ class OutlinesStreamedResponse(StreamedResponse):
 
     _model_name: str
     _model_profile: ModelProfile
-    _response: AsyncIterable[str]
+    _response: _utils.PeekableAsyncStream[str, AsyncIterable[str]]
     _provider_name: str
     _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
