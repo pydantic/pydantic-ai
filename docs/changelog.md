@@ -10,7 +10,9 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 <!-- TODO(v2-launch): at stable V2.0 release, add a `v2.0.0 (<date>)` heading for any changes since the last beta, resolve the #5339 NOT-YET-MERGED markers below, and drop "beta" framing from the intro. -->
 
-The first V2 beta. V2 removes functionality deprecated during V1 and makes behavior changes that V1's stability guarantee didn't allow. Many of these changes share a throughline: replacing building blocks designed before [capabilities](capabilities.md) with patterns native to how capabilities and [hooks](hooks.md) work, so it's easier to assemble the powerful agents of 2026. See the [Version Policy](version-policy.md#v2-beta) for the recommended upgrade path; in short: upgrade to the latest V1, resolve every deprecation warning, then upgrade to V2.
+The first V2 beta, forked from **v1.100.0** — the final V1 release, in which everything V2 removes is already deprecated. V2 drops those deprecated APIs and makes the behavior changes that V1's stability guarantee didn't allow, leaning into [capabilities](capabilities.md) and [hooks](hooks.md) to make the powerful agents of 2026 easier to build.
+
+Recommended upgrade path (see the [Version Policy](version-policy.md#v2-beta)): upgrade to **v1.100.0**, resolve every deprecation warning, then upgrade to V2.
 
 The breaking changes below are split into two groups:
 
