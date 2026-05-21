@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 
 pytestmark = pytest.mark.anyio
 

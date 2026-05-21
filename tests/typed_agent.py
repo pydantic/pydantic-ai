@@ -10,7 +10,7 @@ from typing import Any, TypeAlias
 from starlette.requests import Request
 from typing_extensions import assert_type
 
-from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
@@ -193,6 +193,9 @@ def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
     assert_type(result, AgentRunResult[str])
     assert_type(result.output, str)
+    # `result.usage` is a callable-property: pyright must see a concrete type, not `Any` (issue #5525)
+    _usage: RunUsage = result.usage
+    assert_type(result.usage(), RunUsage)
 
 
 async def run_stream() -> None:
@@ -429,9 +432,9 @@ Agent('test', capabilities=[Thinking(effort='high')])
 
 if not MYPY:
     # pyright can infer AgentDepsT from capabilities; mypy cannot
-    # WebSearch is BuiltinOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
-    Agent('test', deps_type=MyDeps, capabilities=[WebSearch()])
-    Agent('test', capabilities=[WebSearch()])
+    # WebSearch is NativeOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local='duckduckgo')])
+    Agent('test', capabilities=[WebSearch(local='duckduckgo')])
 
     # WebSearch with a deps-typed local Tool constrains AgentDepsT
     def my_search(ctx: RunContext[MyDeps], query: str) -> str:
