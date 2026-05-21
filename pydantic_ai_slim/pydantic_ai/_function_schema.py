@@ -380,6 +380,8 @@ def _validate_single_arg(
         return {name: handler(value[name])}
     # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
     # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
+    # If the field accepts both shapes (e.g. it's typed `Any`) the two are indistinguishable; we prefer
+    # the unwrapped reading, so re-validation isn't idempotent for that (rare) collision.
     try:
         return {name: handler(value)}
     except ValidationError:
