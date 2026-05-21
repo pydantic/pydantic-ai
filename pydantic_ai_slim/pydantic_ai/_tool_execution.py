@@ -290,18 +290,24 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Output tool helpers ------------------------------------------------
 
-    def _make_output_status_part(self, call: _messages.ToolCallPart, content: str) -> _messages.ToolReturnPart:
-        """Synthesize and append a status `ToolReturnPart` for an output tool call (success or skip).
-
-        Sites that retry use the part returned by validation/execution directly, not a synthesized one.
-        """
-        part = _messages.ToolReturnPart(
+    def _status_part(self, call: _messages.ToolCallPart, content: str) -> _messages.ToolReturnPart:
+        """Build a status `ToolReturnPart` for an output tool call (success or skip). No side effects."""
+        return _messages.ToolReturnPart(
             tool_name=call.tool_name,
             content=content,
             tool_call_id=call.tool_call_id,
         )
+
+    def _record_output_part(
+        self,
+        call: _messages.ToolCallPart,
+        part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+        *,
+        args_valid: bool | None,
+    ) -> Iterator[_messages.HandleResponseEvent]:
+        """Append an output tool's return/retry `part` to `output_parts` and emit its call/result events."""
         self.output_parts.append(part)
-        return part
+        yield from _emit_output_tool_events(call, part, args_valid=args_valid)
 
     async def _run_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
         """Validate and execute an output tool call, returning a structured result.
@@ -350,9 +356,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         Tracks the part directly (`winning_output_part`) so `_apply_retry_wins` can replace it
         in `output_parts` without scanning the list.
         """
-        part = self._make_output_status_part(call, _FINAL_RESULT_PROCESSED)
-        self.winning_output_part = part
-        yield from _emit_output_tool_events(call, part, args_valid=True)
+        self.winning_output_part = self._status_part(call, _FINAL_RESULT_PROCESSED)
+        yield from self._record_output_part(call, self.winning_output_part, args_valid=True)
 
     async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Run a single output tool call (or stub it if a final result was already chosen)."""
@@ -360,8 +365,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             for event in self._emit_winning_output(call):
                 yield event
         elif self.final_result is not None:
-            part = self._make_output_status_part(call, _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
-            for event in _emit_output_tool_events(call, part, args_valid=None):
+            part = self._status_part(call, _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
+            for event in self._record_output_part(call, part, args_valid=None):
                 yield event
         else:
             r = await self._run_output_tool_call(call)
@@ -384,18 +389,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 # A successful-but-not-winning output only happens under `'exhaustive'`; `'early'`
                 # and `'graceful'` stop running output tools at the first success.
-                part = self._make_output_status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
-                yield from _emit_output_tool_events(r.call, part, args_valid=True)
+                part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
+                yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
-            self.output_parts.append(r.retry_part)
-            yield from _emit_output_tool_events(r.call, r.retry_part, args_valid=r.args_valid)
+            yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
         else:
             # Absorbed failure: another output won, so this one's max-retries error is recorded
             # as a skip rather than raised. (When no output won, the caller raises `raise_exc`.)
             assert r.raise_exc is not None
             message = _OUTPUT_EXECUTION_FAILED if r.args_valid else _OUTPUT_VALIDATION_FAILED
-            part = self._make_output_status_part(r.call, message)
-            yield from _emit_output_tool_events(r.call, part, args_valid=r.args_valid)
+            part = self._status_part(r.call, message)
+            yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
 
     # --- Function tool helpers ----------------------------------------------
 
