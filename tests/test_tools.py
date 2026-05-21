@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -3910,12 +3910,32 @@ def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field(
 def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
     """Unwrapped input validates when the model's only field uses the parameter name as its alias.
 
-    `argument` is not a field *name* (so the validator first tries to unwrap it as an envelope), but
-    it is the field's validation alias, so the fallback validates the input as-is rather than raising.
+    `argument` is not a field *name*, but it is the field's validation alias, so it's a key the model
+    accepts and the input must be validated as-is rather than unwrapped as an envelope. This includes
+    the case where the field has a default and a dict value, where unwrapping would silently drop it.
     """
 
+    class Inner(BaseModel):
+        x: int = 0
+
     class Payload(BaseModel):
-        city: str = Field(alias='argument')
+        data: Inner = Field(alias='argument', default_factory=Inner)
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.data.x)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': {'x': 5}})
+    assert validator.validate_python({'argument': {'x': 5}}) == {'argument': expected}
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
+    """A parameter name matching one of a field's `AliasChoices` is also recognized as a model key."""
+
+    class Payload(BaseModel):
+        city: str = Field(validation_alias=AliasChoices('argument', 'town'))
 
     def my_tool(argument: Payload) -> str:  # pragma: no cover
         return argument.city
@@ -3923,7 +3943,8 @@ def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
     tool = Tool(my_tool)
     validator = tool.function_schema.validator
 
-    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': Payload(argument='Mexico City')}
+    expected = Payload.model_validate({'argument': 'Mexico City'})
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
 
 
 def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():

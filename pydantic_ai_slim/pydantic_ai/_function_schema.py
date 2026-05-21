@@ -7,12 +7,12 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
 from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
@@ -20,7 +20,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints, is_typeddict
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -199,8 +199,11 @@ def function_schema(  # noqa: C901
             )
             # noinspection PyTypeChecker
             metadata = td_schema.setdefault('metadata', {})
-            metadata['is_model_like'] = is_model_like(annotation)
-            metadata['single_arg_has_field_name'] = _annotation_has_field(annotation, field_name)
+            model_like = is_model_like(annotation)
+            metadata['is_model_like'] = model_like
+            # As a single model-like arg, the parameter name doubles as the wrapper key, so record
+            # whether the unwrapped model would itself accept it as a top-level key (see `_build_schema`).
+            metadata['single_arg_name_is_model_key'] = model_like and _annotation_accepts_key(annotation, field_name)
 
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
@@ -329,7 +332,7 @@ def _build_schema(
                     partial(
                         _validate_single_arg,
                         name=name,
-                        name_is_field=metadata.get('single_arg_has_field_name', False),
+                        name_is_model_key=metadata.get('single_arg_name_is_model_key', False),
                     ),
                     td_field['schema'],
                 ),
@@ -346,17 +349,15 @@ def _build_schema(
     return td_schema, None
 
 
-def _annotation_has_field(annotation: Any, name: str) -> bool:
-    if not isinstance(annotation, type):
-        return False
-    annotation = cast(type[Any], annotation)
-    if issubclass(annotation, BaseModel):
-        return name in annotation.model_fields
-    if is_dataclass(annotation):
-        return any(field.name == name for field in dataclass_fields(annotation))
-    if is_typeddict(annotation):
-        return name in getattr(annotation, '__annotations__', {})
-    return False
+def _annotation_accepts_key(annotation: Any, name: str) -> bool:
+    """Whether a model-like `annotation` accepts `name` as a top-level validation key.
+
+    Used by `_build_schema` to tell a wrapper envelope `{name: ...}` (which we unwrap) apart from
+    genuine unwrapped input for a model with a field — or field alias — called `name` (which we don't).
+    Reading the keys from the validation JSON schema lets Pydantic resolve aliases for us.
+    """
+    properties = TypeAdapter(annotation).json_schema(mode='validation').get('properties', {})
+    return name in properties
 
 
 def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
@@ -368,22 +369,21 @@ def _validate_single_arg(
     handler: core_schema.ValidatorFunctionWrapHandler,
     *,
     name: str,
-    name_is_field: bool,
+    name_is_model_key: bool,
 ) -> dict[str, Any]:
     if not _is_wrapped_single_arg(value, name):
-        # Not shaped like `{name: ...}`, so this is the unwrapped model input the model emits
-        # against the flattened JSON schema. Validate it directly and wrap the result.
+        # Plain unwrapped model input, as emitted against the flattened JSON schema.
         return {name: handler(value)}
-
-    # `value` is `{name: <payload>}` — ambiguous: a wrapper envelope (e.g. re-validated args after a
-    # Temporal round-trip) vs. genuine unwrapped input for a model with a field named `name`. Try the
-    # likelier interpretation first and fall back on `ValidationError`, since under `extra='ignore'` the
-    # wrong one can validate silently. The fallback also covers `name` matching a validation alias.
-    primary, fallback = (value, value[name]) if name_is_field else (value[name], value)
+    if not name_is_model_key:
+        # `name` isn't a key the model accepts, so `{name: ...}` can only be a wrapper envelope (e.g.
+        # re-validated args after a Temporal round-trip). Unwrap it; a bad payload still raises here.
+        return {name: handler(value[name])}
+    # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
+    # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
     try:
-        return {name: handler(primary)}
+        return {name: handler(value)}
     except ValidationError:
-        return {name: handler(fallback)}
+        return {name: handler(value[name])}
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
