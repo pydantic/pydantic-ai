@@ -352,7 +352,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 ## Tool metadata
 
-MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
+MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta` and `annotations` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions, and the tool's output schema (if any) is available as the `return_schema` field.
 
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the server declares support for [task-augmented execution](#background-tasks) on the tool.
 
@@ -393,10 +393,8 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
-
-See [Streamable HTTP Client](#streamable-http-client) for the full `agent.run` plumbing.
 
 ## Resources
 
