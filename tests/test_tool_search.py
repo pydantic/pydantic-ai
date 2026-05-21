@@ -1293,7 +1293,7 @@ def test_parse_discovered_tools_reads_legacy_metadata():
     legacy `metadata['discovered_tools']` reader is exercised through this classmethod (which
     run preparation calls to populate `discovered_tool_names`). A valid legacy list surfaces its
     names; a malformed one (wrong shape) is silently skipped via the `ValidationError` guard."""
-    valid = [
+    valid: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -1308,7 +1308,7 @@ def test_parse_discovered_tools_reads_legacy_metadata():
 
     # Malformed legacy metadata (`discovered_tools` is not a `list[str]`) trips
     # `_LEGACY_METADATA_TA.validate_python`, so `_collect_legacy` hits its `except: return`.
-    malformed = [
+    malformed: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 ToolReturnPart(
