@@ -194,8 +194,6 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev
-
       - name: cache HuggingFace models
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -204,9 +202,11 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: unset UV_FROZEN
+      - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
+        env:
+          UV_FROZEN: "0"
 
-      - run: uv run --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
