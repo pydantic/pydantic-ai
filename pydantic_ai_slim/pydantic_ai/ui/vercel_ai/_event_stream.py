@@ -148,6 +148,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
+        # The AI SDK *merges* `messageMetadata` into `message.metadata` rather than replacing it.
+        # Emitting exactly one metadata chunk per run (and none at `start`) keeps merge equivalent
+        # to assignment; adding a `start`-time or mid-stream chunk would need the merge revisited.
         yield MessageMetadataChunk(message_metadata=dump_message_metadata(event.result.response))
 
         # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)

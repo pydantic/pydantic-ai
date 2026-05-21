@@ -157,7 +157,7 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
     return metadata
 
 
-def apply_message_metadata(message: ModelMessage, metadata: Any) -> None:
+def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
     """Load UIMessage.metadata back onto a Pydantic AI message.
 
     Behavior-shaping fields like `instructions` are neither dumped nor restored: the agent
