@@ -715,6 +715,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     },
                     provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
                     finish_reason='stop',
+                    suspended_retry_delay=1.0,
                 )
             )
 
