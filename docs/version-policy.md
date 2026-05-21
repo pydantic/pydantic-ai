@@ -1,26 +1,34 @@
 ## Version Policy
 
-We will not intentionally make breaking changes in minor releases of V1, which was released in September 2025.
+<!-- TODO(v2-launch): this page is written V2-forward for the V2 beta docs. At stable V2.0 launch, set the release month below, remove the beta-specific caveats, and confirm the next-major / V1-support dates. -->
 
-Functionality marked as deprecated in a V1 release will not be removed until V2.
+Pydantic AI V2 was released in <!-- TODO(v2-launch): confirm month -->2026<!-- /TODO --> (V1 was released in September 2025). We will not intentionally make breaking changes in minor releases, and functionality marked as deprecated in a release is not removed until the next major version — which we will not release sooner than 3 months after V2.
 
-Once V2 is released as stable, we'll continue to provide security fixes for V1 for another 6 months minimum, so you have time to upgrade your applications.
+We'll continue to provide security fixes for V1 for at least 6 months after V2's stable release, so you have time to upgrade your applications. See [Upgrading to V2](#upgrading-to-v2) for the recommended path.
 
 ## V2 Beta
 
-V2 is now available as a beta pre-release (`pip install pydantic-ai==2.0.0bN` / `uv add pydantic-ai==2.0.0bN`). It collects the breaking changes and behavior changes that we couldn't make under the V1 stability guarantee, alongside a more capable, more coherent foundation for building agents.
+V2 is available as a beta pre-release. It collects the breaking and behavior changes V1's stability guarantee didn't allow, on top of a foundation built around [capabilities](capabilities.md) and [hooks](hooks.md) — the same model that powers [Pydantic AI Harness](harness/overview.md), the official capability library — so it's easier to assemble powerful agents.
 
-During the beta period the V2 API and behaviors are not yet covered by the stability guarantee above: while we don't expect major changes, we may still make adjustments in response to feedback before the stable V2.0 release. We encourage you to try the beta, [report issues](https://github.com/pydantic/pydantic-ai/issues), and pin an exact pre-release version (`==2.0.0bN`) rather than a range.
+To install it, pin the exact pre-release version. Find the current beta on [PyPI](https://pypi.org/project/pydantic-ai/#history) or the [GitHub releases page](https://github.com/pydantic/pydantic-ai/releases), then (replacing `bN` with that version):
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0bN"
+```
+
+During the beta the V2 API and behaviors aren't yet covered by the stability guarantee above — we don't expect major changes but may still adjust in response to feedback before the stable V2.0 release. Please [try it and report issues](https://github.com/pydantic/pydantic-ai/issues), or reach out in the `#pydantic-ai` channel on [Slack](help.md#slack).
+
+<!-- TODO(v2-launch): once V2.0 is stable, replace this section with the standard install instructions (drop the pre-release pinning), and fold the "capabilities and hooks foundation" framing into the release announcement instead. -->
 
 ### Upgrading to V2
 
 To make the upgrade as smooth as possible, we recommend the following path:
 
 1. **Upgrade to the latest V1 release** (`pydantic-ai<2`) first.
-2. **Resolve every deprecation warning.** Most of V2's breaking changes were announced in V1 via deprecation warnings that name the new API and, where possible, include a migration snippet. Running your test suite (or app) with warnings visible and addressing each one migrates you across the bulk of V2 ahead of time.
-3. **Upgrade to V2** and address the remaining changes that could not be pre-announced via a deprecation — primarily default-behavior changes and a handful of removals that have no V1 deprecation. These are listed explicitly in the [Upgrade Guide](changelog.md), separated from the deprecation-driven changes so you know what still needs your attention.
+2. **Resolve every deprecation warning.** [Most of V2's breaking changes](changelog.md#changes-covered-by-deprecation-warnings) were announced in V1 via deprecation warnings that name the new API and, where possible, include a migration snippet. Running your test suite (or app) with warnings visible and addressing each one — by hand or by pointing a coding agent at them — migrates you across the bulk of V2 ahead of time.
+3. **Upgrade to V2** and make the [changes that couldn't be pre-announced](changelog.md#changes-not-covered-by-deprecation-warnings) via a deprecation — primarily default-behavior changes and a handful of removals with no V1 deprecation.
 
-Jumping straight from an older V1 to V2 without first resolving deprecation warnings is possible but will be considerably more work, since you'll be reconstructing the migration guidance the warnings would have given you.
+You can also upgrade straight to V2 and work through the [Upgrade Guide](changelog.md) directly — it's organized so a coding agent can apply the code changes mechanically. Resolving deprecation warnings on the latest V1 first is still the smoother path, since it spreads the work out and leaves you only the behavior changes to reason about consciously at the end.
 
 Of course, some apparently safe changes and bug fixes will inevitably break some users' code &mdash; obligatory link to [xkcd](https://xkcd.com/1172/).
 
