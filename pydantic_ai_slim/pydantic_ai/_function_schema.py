@@ -349,15 +349,13 @@ def _build_schema(
 def _annotation_has_field(annotation: Any, name: str) -> bool:
     if not isinstance(annotation, type):
         return False
-
-    annotation_type = cast(type[Any], annotation)
-    if issubclass(annotation_type, BaseModel):
-        return name in annotation_type.model_fields
-    if is_dataclass(annotation_type):
-        return any(field.name == name for field in dataclass_fields(annotation_type))
-    if is_typeddict(annotation_type):
-        annotations = getattr(annotation_type, '__annotations__', {})
-        return isinstance(annotations, dict) and name in annotations
+    annotation = cast(type[Any], annotation)
+    if issubclass(annotation, BaseModel):
+        return name in annotation.model_fields
+    if is_dataclass(annotation):
+        return any(field.name == name for field in dataclass_fields(annotation))
+    if is_typeddict(annotation):
+        return name in getattr(annotation, '__annotations__', {})
     return False
 
 
@@ -377,16 +375,10 @@ def _validate_single_arg(
         # against the flattened JSON schema. Validate it directly and wrap the result.
         return {name: handler(value)}
 
-    # `value` is shaped `{name: <payload>}`, which is ambiguous between:
-    # - a wrapper envelope around the model input, produced by a previous validation pass that
-    #   serialized the `{name: value}` output and re-validated it (e.g. a Temporal activity
-    #   round-trip, where the validator must be idempotent), and
-    # - genuine unwrapped input for a model that happens to have a field named `name`.
-    # We can't rely on `ValidationError` alone to tell these apart: under Pydantic's default
-    # `extra='ignore'`, the wrong interpretation can validate silently (dropping the payload and
-    # filling defaults) instead of raising. So we try the most likely interpretation first based
-    # on whether `name` is a real field, and fall back to the other if it raises. The fallback
-    # also covers the rare case where `name` matches a field's validation alias rather than its name.
+    # `value` is `{name: <payload>}` — ambiguous: a wrapper envelope (e.g. re-validated args after a
+    # Temporal round-trip) vs. genuine unwrapped input for a model with a field named `name`. Try the
+    # likelier interpretation first and fall back on `ValidationError`, since under `extra='ignore'` the
+    # wrong one can validate silently. The fallback also covers `name` matching a validation alias.
     primary, fallback = (value, value[name]) if name_is_field else (value[name], value)
     try:
         return {name: handler(primary)}
