@@ -78,7 +78,8 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
   becomes the final result. As with `'graceful'`, a function tool's
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] suppresses the output result. Use `sequential=True`
   on a tool (including via [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that
-  doesn't overlap with others.
+  doesn't overlap with others, or `sequential='fail_fast'` to skip that barrier and downstream tools
+  after an earlier retry.
 
 The default changed from `'early'` to `'graceful'` in v2. Set `end_strategy='early'` to keep the v1
 behavior where the run ends the instant an output tool succeeds.

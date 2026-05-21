@@ -22,6 +22,7 @@ from ..tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    ToolSequential,
 )
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -53,6 +54,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
+    strict: bool | None
+    sequential: ToolSequential
+    requires_approval: bool
+    metadata: dict[str, Any] | None
     _defer_loading: bool
     include_return_schema: bool | None
 
@@ -66,7 +71,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        sequential: bool = False,
+        sequential: ToolSequential = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool = False,
@@ -164,7 +169,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: ToolSequential | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -186,7 +191,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: ToolSequential | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -307,7 +312,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: ToolSequential | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -329,7 +334,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: ToolSequential | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -479,7 +484,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: ToolSequential | None = None,
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,

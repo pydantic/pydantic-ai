@@ -6156,6 +6156,165 @@ class TestMultipleToolCalls:
         # The barrier output ran only after the preceding function tool completed.
         assert events == ['tool_a', 'output']
 
+    def test_graceful_fail_fast_output_skips_after_function_retry(self):
+        """`sequential='fail_fast'` prevents output side effects after an earlier tool retry."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            assert info.output_tools is not None
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('bad_tool', {}),
+                        ToolCallPart('done', {'value': 'premature'}),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart('done', {'value': 'corrected'})])
+
+        def done(output: OutputType) -> OutputType:
+            events.append(f'output:{output.value}')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=ToolOutput(done, name='done', sequential='fail_fast'),
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def bad_tool() -> str:
+            events.append('bad_tool')
+            raise ModelRetry('try again')
+
+        result = agent.run_sync('test')
+
+        assert result.output.value == 'corrected'
+        assert events == ['bad_tool', 'output:corrected']
+
+    def test_graceful_fail_fast_function_tool_skips_downstream_tools(self):
+        """A fail-fast function tool aborts itself and later tools after an earlier retry."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('bad_tool', {}),
+                        ToolCallPart('write_tool', {}),
+                        ToolCallPart('after_write', {}),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(return_model))
+
+        @agent.tool_plain
+        def bad_tool() -> str:
+            events.append('bad_tool')
+            raise ModelRetry('try again')
+
+        @agent.tool_plain(sequential='fail_fast')
+        def write_tool() -> str:  # pragma: no cover
+            events.append('write_tool')
+            return 'written'
+
+        @agent.tool_plain
+        def after_write() -> str:  # pragma: no cover
+            events.append('after_write')
+            return 'after'
+
+        result = agent.run_sync('test')
+
+        assert result.output == 'done'
+        assert events == ['bad_tool']
+
+    def test_graceful_fail_fast_function_tool_after_output_retry(self):
+        """Fail-fast checks use the actual batch call when functions appear after an output."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            assert info.output_tools is not None
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('done', {'value': 'bad'}),
+                        ToolCallPart('write_tool', {}),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart('done', {'value': 'corrected'})])
+
+        def done(output: OutputType) -> OutputType:
+            if output.value == 'bad':
+                events.append('output:bad')
+                raise ModelRetry('bad output')
+            events.append(f'output:{output.value}')
+            return output
+
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(done, name='done'))
+
+        @agent.tool_plain(sequential='fail_fast')
+        def write_tool() -> str:  # pragma: no cover
+            events.append('write_tool')
+            return 'written'
+
+        result = agent.run_sync('test')
+
+        assert result.output.value == 'corrected'
+        assert events == ['output:bad', 'output:corrected']
+
+    def test_exhaustive_fail_fast_skips_downstream_tools_after_retry(self):
+        """A fail-fast barrier aborts the rest of an exhaustive response after an earlier retry."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            assert info.output_tools is not None
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('bad_tool', {}),
+                        ToolCallPart('done', {'value': 'premature'}),
+                        ToolCallPart('after_output', {}),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart('done', {'value': 'corrected'})])
+
+        def done(output: OutputType) -> OutputType:
+            events.append(f'output:{output.value}')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=ToolOutput(done, name='done', sequential='fail_fast'),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        def bad_tool() -> str:
+            events.append('bad_tool')
+            raise ModelRetry('try again')
+
+        @agent.tool_plain
+        def after_output() -> str:  # pragma: no cover
+            events.append('after_output')
+            return 'after'
+
+        result = agent.run_sync('test')
+
+        assert result.output.value == 'corrected'
+        assert events == ['bad_tool', 'output:corrected']
+
     def test_early_runs_function_tools_when_all_outputs_fail(self):
         """Under `early`, if every output tool fails, function tools run so the model can correct."""
         called: list[str] = []

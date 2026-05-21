@@ -35,6 +35,8 @@ _OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the
 _OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
 _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
+_TOOL_SKIPPED_PREVIOUS_FAILURE = 'Tool not executed - a previous tool failed.'
+_OUTPUT_SKIPPED_PREVIOUS_FAILURE = 'Output tool not used - a previous tool failed.'
 
 
 def _emit_output_tool_events(
@@ -127,6 +129,8 @@ async def process_tool_calls(
     A `sequential=True` tool is a barrier: tools emitted before it complete first, it runs
     alone, and tools emitted after it start only once it finishes. The run-scoped
     `parallel_execution_mode('sequential')` turns every tool into its own barrier.
+    A `sequential='fail_fast'` tool is also a barrier, and if an earlier tool produced
+    a retry, it and the rest of the model response are skipped before execution.
 
     Under `'graceful'`/`'exhaustive'`, the **retry-wins** invariant applies: if any
     function/unknown tool produces a `RetryPromptPart`, `final_result` is suppressed so the
@@ -210,6 +214,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
+    previous_tool_failed: bool = dataclasses.field(default=False, init=False)
+    fail_fast_abort_triggered: bool = dataclasses.field(default=False, init=False)
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
@@ -297,6 +303,34 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             content=content,
             tool_call_id=call.tool_call_id,
         )
+
+    def _should_fail_fast_skip(self, index: int) -> bool:
+        """Whether this call starts/continues a fail-fast abort."""
+        return self._should_fail_fast_skip_call(self.tool_calls[index])
+
+    def _should_fail_fast_skip_call(self, call: _messages.ToolCallPart) -> bool:
+        """Whether this call starts/continues a fail-fast abort."""
+        if self.fail_fast_abort_triggered:
+            return True
+        if self.previous_tool_failed and self.tool_manager.is_fail_fast(call):
+            self.fail_fast_abort_triggered = True
+            return True
+        return False
+
+    def _skip_for_fail_fast(self, index: int) -> Iterator[_messages.HandleResponseEvent]:
+        """Record a skipped tool once fail-fast has aborted the rest of the response."""
+        call = self.tool_calls[index]
+        if self.call_kinds[index] == 'output':
+            part = self._status_part(call, _OUTPUT_SKIPPED_PREVIOUS_FAILURE)
+            yield from self._record_output_part(call, part, args_valid=None)
+        elif self.is_executable_function(index) or self.call_kinds[index] in ('external', 'unapproved'):
+            self.output_parts.append(
+                _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=_TOOL_SKIPPED_PREVIOUS_FAILURE,
+                    tool_call_id=call.tool_call_id,
+                )
+            )
 
     def _record_output_part(
         self,
@@ -392,11 +426,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
+            self.previous_tool_failed = True
             yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
         else:
             # Absorbed failure: another output won, so this one's max-retries error is recorded
             # as a skip rather than raised. (When no output won, the caller raises `raise_exc`.)
             assert r.raise_exc is not None
+            self.previous_tool_failed = True
             message = _OUTPUT_EXECUTION_FAILED if r.args_valid else _OUTPUT_VALIDATION_FAILED
             part = self._status_part(r.call, message)
             yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
@@ -474,6 +510,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 kind = tool_def.kind if tool_def is not None else 'unknown'
                 if self._is_retry_wins_trigger(part, kind=kind):
                     self.retry_wins_triggered = True
+                if isinstance(part, _messages.RetryPromptPart):
+                    self.previous_tool_failed = True
 
     async def _call_tool(
         self,
@@ -585,6 +623,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_part
+                if isinstance(tool_part, _messages.RetryPromptPart):
+                    self.previous_tool_failed = True
                 if tool_user_content:
                     user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
@@ -617,6 +657,23 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         try:
             for segment in segments:
+                if len(segment) == 1:
+                    index = segment[0]
+                    if self._should_fail_fast_skip_call(tool_calls[index]):
+                        tool_parts_by_index[index] = _messages.ToolReturnPart(
+                            tool_name=tool_calls[index].tool_name,
+                            content=_TOOL_SKIPPED_PREVIOUS_FAILURE,
+                            tool_call_id=tool_calls[index].tool_call_id,
+                        )
+                        # Once a fail-fast barrier trips, the rest of this function batch is skipped.
+                        for later_index in range(index + 1, len(tool_calls)):
+                            tool_parts_by_index[later_index] = _messages.ToolReturnPart(
+                                tool_name=tool_calls[later_index].tool_name,
+                                content=_TOOL_SKIPPED_PREVIOUS_FAILURE,
+                                tool_call_id=tool_calls[later_index].tool_call_id,
+                            )
+                        break
+
                 if len(segment) == 1:
                     # A barrier (or sole call): run inline, event in completion order.
                     index = segment[0]
@@ -739,12 +796,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # Grouping by kind (all `external`, then all `unapproved`) is intentional and distinct from the
         # emission-order execution used elsewhere: deferred tools are resolved externally, so the order in
         # which we emit/collect them here doesn't affect behavior.
-        calls = [*self.tool_calls_by_kind['external'], *self.tool_calls_by_kind['unapproved']]
+        deferred_indices = [i for i, kind in enumerate(self.call_kinds) if kind in ('external', 'unapproved')]
         if self.final_result:
             # If the run was already determined to end on deferred tool calls,
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(self.final_result.output, _output.DeferredToolRequests):
-                for call in calls:
+                for i in deferred_indices:
+                    call = self.tool_calls[i]
                     self.output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
@@ -752,8 +810,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                             tool_call_id=call.tool_call_id,
                         )
                     )
-        elif calls:
-            for call in calls:
+        elif deferred_indices:
+            for i in deferred_indices:
+                if self._should_fail_fast_skip(i):
+                    for event in self._skip_for_fail_fast(i):
+                        yield event
+                    continue
+
+                call = self.tool_calls[i]
                 try:
                     validated = await self.tool_manager.validate_tool_call(call)
                 except exceptions.UnexpectedModelBehavior:
@@ -763,7 +827,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
-                    if call in self.tool_calls_by_kind['external']:
+                    if self.call_kinds[i] == 'external':
                         self.deferred_calls['external'].append(call)
                     else:
                         self.deferred_calls['unapproved'].append(call)
@@ -892,10 +956,18 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             if self.call_kinds[i] == 'output':
                 async for event in flush_pending():
                     yield event
+                if self._should_fail_fast_skip(i):
+                    for event in self._skip_for_fail_fast(i):
+                        yield event
+                    continue
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
                 async for event in self._run_output(call):  # pragma: no branch
                     yield event
             elif self.is_executable_function(i):
+                if self._should_fail_fast_skip(i):
+                    for event in self._skip_for_fail_fast(i):
+                        yield event
+                    continue
                 pending_functions.append(call)
         async for event in flush_pending():
             yield event
@@ -945,6 +1017,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
         function_parts: dict[int, _messages.ModelRequestPart] = {}
         function_user_parts: dict[int, _messages.UserPromptPart] = {}
+        skipped_indices: set[int] = set()
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
@@ -966,6 +1039,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         appended = False
         try:
             for segment in segments:
+                if len(segment) == 1 and self._should_fail_fast_skip(segment[0]):
+                    start = task_indices.index(segment[0])
+                    skipped_indices.update(task_indices[start:])
+                    break
+
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
                     pending: set[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]] = set(tasks)
@@ -975,6 +1053,8 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             index, payload = task.result()
                             if isinstance(payload, _OutputCallResult):
                                 output_results[index] = payload
+                                if payload.retry_part is not None or payload.raise_exc is not None:
+                                    self.previous_tool_failed = True
                             elif isinstance(payload, exceptions.CallDeferred):
                                 deferred_by_index[index] = 'external'
                                 deferred_meta_by_index[index] = payload.metadata
@@ -988,6 +1068,8 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
+                                if isinstance(tool_part, _messages.RetryPromptPart):
+                                    self.previous_tool_failed = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
                                 if ordered_events:
                                     function_events[index] = result_event
@@ -1019,7 +1101,10 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
             # Append parts and emit output events in emission order.
             for i in executable_indices:
-                if self.call_kinds[i] == 'output':
+                if i in skipped_indices:
+                    for event in self._skip_for_fail_fast(i):
+                        yield event
+                elif self.call_kinds[i] == 'output':
                     r = output_results.get(i)
                     if r is None:
                         continue  # pragma: no cover  # every output index is populated above

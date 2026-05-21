@@ -160,7 +160,12 @@ class ToolManager(Generic[AgentDepsT]):
         after it start only once it finishes. Other tools parallelize around it.
         """
         tool_def = self.get_tool_def(call.tool_name)
-        return tool_def is not None and tool_def.sequential
+        return tool_def is not None and bool(tool_def.sequential)
+
+    def is_fail_fast(self, call: ToolCallPart) -> bool:
+        """Whether a tool call should abort downstream tools after an earlier retry."""
+        tool_def = self.get_tool_def(call.tool_name)
+        return tool_def is not None and tool_def.sequential == 'fail_fast'
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""

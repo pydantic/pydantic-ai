@@ -33,6 +33,7 @@ __all__ = (
     'ToolSelectorFunc',
     'ToolSelector',
     'matches_tool_selector',
+    'ToolSequential',
     'AgentNativeTool',
     'NativeToolFunc',
     'Tool',
@@ -47,6 +48,9 @@ __all__ = (
 
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
+
+ToolSequential: TypeAlias = bool | Literal['fail_fast']
+"""Tool barrier behavior."""
 
 SystemPromptFunc: TypeAlias = (
     Callable[[RunContext[AgentDepsT]], str | None]
@@ -449,7 +453,7 @@ class Tool(Generic[ToolAgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    sequential: bool
+    sequential: ToolSequential
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
@@ -476,7 +480,7 @@ class Tool(Generic[ToolAgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        sequential: bool = False,
+        sequential: ToolSequential = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -541,6 +545,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                Set to `'fail_fast'` to skip this tool and the rest of the response after an earlier retry.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -586,7 +591,7 @@ class Tool(Generic[ToolAgentDepsT]):
         description: str | None,
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
-        sequential: bool = False,
+        sequential: ToolSequential = False,
         args_validator: ArgsValidatorFunc[Any, ...] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
@@ -603,6 +608,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                Set to `'fail_fast'` to skip this tool and the rest of the response after an earlier retry.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
@@ -717,7 +723,7 @@ class ToolDefinition:
     Note: this is currently supported by OpenAI and Anthropic models.
     """
 
-    sequential: bool = False
+    sequential: ToolSequential = False
     """Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
 
     A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
@@ -725,6 +731,9 @@ class ToolDefinition:
     in parallel around it. To run an entire run's tools serially, use
     [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
     instead.
+
+    A `sequential='fail_fast'` tool is also a barrier, but it is skipped together with all
+    following tools in the same model response when any earlier tool failed with a retry.
     """
 
     kind: ToolKind = field(default='function')

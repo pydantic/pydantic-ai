@@ -567,6 +567,8 @@ When a model returns multiple tool calls in one response, Pydantic AI schedules 
 
 To stop a specific tool from overlapping with others, mark it `sequential=True` — it then acts as a barrier: tools the model emitted before it finish first, it runs alone, and tools emitted after it start only once it finishes.
 
+Use `sequential='fail_fast'` when the barrier should also protect downstream side effects. If any earlier tool in the same model response failed with a retry, the fail-fast tool and all tools emitted after it are skipped, so a later "done" or write tool doesn't run after an upstream action failed.
+
 ```python {title="sequential_tool.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel

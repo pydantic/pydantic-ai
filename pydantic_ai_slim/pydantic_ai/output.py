@@ -13,7 +13,7 @@ from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import ObjectJsonSchema, ToolDefinition
+from .tools import ObjectJsonSchema, ToolDefinition, ToolSequential
 
 __all__ = (
     # classes
@@ -121,12 +121,13 @@ class ToolOutput(Generic[OutputDataT]):
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
-    sequential: bool
+    sequential: ToolSequential
     """Whether this output tool must run as a barrier, not overlapping with other tool calls.
 
     Only meaningful under `end_strategy='exhaustive'`, where tools otherwise run in parallel: a
     `sequential=True` output tool runs alone, so function tools the model emitted before it complete
     first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
+    Set to `'fail_fast'` to skip this output tool and the rest of the response after an earlier retry.
     """
 
     def __init__(
@@ -137,7 +138,7 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
-        sequential: bool = False,
+        sequential: ToolSequential = False,
     ):
         self.output = type_
         self.name = name
