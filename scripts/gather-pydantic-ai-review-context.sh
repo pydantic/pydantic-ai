@@ -352,18 +352,27 @@ DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) 
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
-# Gather directory-specific AGENTS.md files for changed directories
-echo "  - Directory AGENTS.md files"
+# Gather AGENTS.md files relevant to the PR — the repo-root file (always,
+# when present) plus any per-directory AGENTS.md whose directory has changed
+# files in this PR.
+echo "  - AGENTS.md files (repo-root + changed directories)"
 > "$CTX/agents-md.txt"
-for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
-  dir=$(dirname "$agents_file")
-  if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
-    echo "=== ${agents_file} ==="
-    cat "$agents_file"
+{
+  if [ -f ./AGENTS.md ]; then
+    echo "=== AGENTS.md ==="
+    cat ./AGENTS.md
     echo ""
   fi
-done >> "$CTX/agents-md.txt"
-[ -s "$CTX/agents-md.txt" ] || echo "(No directory-specific AGENTS.md files for changed directories)" > "$CTX/agents-md.txt"
+  for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
+    dir=$(dirname "$agents_file")
+    if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+      echo "=== ${agents_file} ==="
+      cat "$agents_file"
+      echo ""
+    fi
+  done
+} >> "$CTX/agents-md.txt"
+[ -s "$CTX/agents-md.txt" ] || echo "(No AGENTS.md files relevant to this PR)" > "$CTX/agents-md.txt"
 
 # Shared review conventions — the severity scale, false-positive catalog,
 # and calibration examples. Pre-writing this file (instead of inlining the
