@@ -2366,7 +2366,7 @@ async def test_run_stream_request_error():
 
 async def test_run_stream_tool_retry_exhaustion():
     """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
-    agent = Agent(model=TestModel(), tool_retries=1, output_retries=1)
+    agent = Agent(model=TestModel(), retries={'tools': 1, 'output': 1})
 
     @agent.tool_plain(retries=1)
     async def flaky_tool(query: str) -> str:
@@ -2438,7 +2438,7 @@ async def test_run_stream_output_tool_error():
         raise ValueError('Output validation failed')
 
     agent = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries={'tools': 0, 'output': 0}
     )
 
     request = SubmitMessage(
@@ -5578,6 +5578,90 @@ async def test_adapter_load_messages_text_with_provider_metadata():
                         id='text_123',
                         provider_name='anthropic',
                         provider_details={'model': 'gpt-4', 'tokens': 50},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_reasoning_streaming_omits_signature():
+    """Regression test for #5532: streaming reasoning parts omit signatures."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Partial reasoning',
+                    state='streaming',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_123',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Partial reasoning',
+                        id='reasoning_123',
+                        signature=None,
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_reasoning_done_preserves_signature():
+    """Regression test for #5532: completed reasoning parts preserve signatures."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Complete reasoning',
+                    state='done',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_456',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Complete reasoning',
+                        id='reasoning_456',
+                        signature='abc123signature',
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
                     )
                 ],
                 timestamp=IsDatetime(),

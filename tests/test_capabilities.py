@@ -42,6 +42,7 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
+    XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -95,10 +96,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, try_import
-
-with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XSearch
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -120,6 +118,7 @@ def test_capability_types() -> None:
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'XSearch': XSearch,
         }
     )
 
@@ -388,72 +387,42 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_retries_override():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
-
-
 def test_agent_from_spec_no_retries_does_not_warn():
-    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
-
-    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
-    user-set value; only an explicit value is forwarded to the deprecated
-    `Agent(retries=...)` kwarg.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test'})
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
 
     assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_explicit_retries_warns():
-    """An explicit `retries` in the spec still triggers the deprecation warning."""
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
-        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_tool_retries():
-    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
-
-    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_agent_spec_retries_deprecated_getter():
-    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
     spec = AgentSpec(model='test', retries=5)
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        assert spec.retries == 5
-
-
-def test_agent_spec_tool_retries_field():
-    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
-    spec = AgentSpec(model='test', tool_retries=5)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        assert spec.tool_retries == 5
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -548,6 +517,36 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'description': """\
+Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
+
+Pass to `Agent(retries=...)` as a dict to set different budgets per category.
+
+`int` semantics differ by call site:
+
+- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
+  to `N`.
+- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
+  budget. Tool retries cannot be overridden per run or via `override()` — passing
+  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
+  manager is built once at agent construction.
+
+Keys:
+    tools: Default number of retries for tool calls before raising an error.
+    output: Maximum number of retries for output validation. On the text path
+        this is a global per-run budget; on the tool path it is the default
+        per-tool `max_retries` for each output tool, overridable via
+        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
+""",
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -774,6 +773,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.1-flash-image-preview',
                         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -845,6 +845,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite-preview',
                         'google-cloud:gemini-3.1-pro-preview',
+                        'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash-lite',
@@ -861,6 +862,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite-preview',
                         'google:gemini-3.1-pro-preview',
+                        'google:gemini-3.5-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'grok:grok-2-image-1212',
@@ -1170,6 +1172,7 @@ All types must be serializable using Pydantic.\
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
                         'temperature': {'title': 'Temperature', 'type': 'number'},
                         'top_p': {'title': 'Top P', 'type': 'number'},
+                        'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
@@ -1513,6 +1516,13 @@ Supported by:
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
+                    'required': ['XSearch'],
+                    'title': 'spec_XSearch',
+                    'type': 'object',
+                },
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
@@ -1647,6 +1657,8 @@ Supported by:
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'const': 'XSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_XSearch'},
                             ]
                         },
                     },
@@ -1736,6 +1748,44 @@ Supported by:
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
                 },
+                'spec_params_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Image Understanding',
+                        },
+                        'enable_video_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Video Understanding',
+                        },
+                        'include_output': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Include Output'},
+                    },
+                    'title': 'spec_params_XSearch',
+                    'type': 'object',
+                },
             },
             'additionalProperties': False,
             'properties': {
@@ -1765,17 +1815,18 @@ Supported by:
                 'tool_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Tool Retries',
                 },
                 'retries': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
                     'default': None,
-                    'deprecated': True,
                     'title': 'Retries',
                 },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Output Retries',
                 },
                 'end_strategy': {
@@ -1825,6 +1876,8 @@ Supported by:
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'const': 'XSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_XSearch'},
                         ]
                     },
                     'title': 'Capabilities',
@@ -2032,8 +2085,7 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
-        agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -2096,14 +2148,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.tool_retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -4454,8 +4506,7 @@ class TestPrepareOutputToolsHook:
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            tool_retries=4,
-            output_retries=4,
+            retries={'tools': 4, 'output': 4},
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
@@ -4714,13 +4765,19 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 class TestXSearchCapability:
     def test_xsearch_default(self):
-        """XSearch() with defaults → builtin XSearchTool, no local."""
+        """XSearch() with defaults → native XSearchTool, no local."""
         cap = XSearch()
         assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.fallback_model is None
         assert cap.get_toolset() is None
+
+    def test_xsearch_with_fallback_model(self):
+        """XSearch(fallback_model=...) → native XSearchTool, local subagent fallback."""
+        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is not None
 
     def test_xsearch_with_all_constraints(self):
         """XSearch with all constraint fields → XSearchTool configured."""
@@ -4756,9 +4813,229 @@ class TestXSearchCapability:
             XSearch(native=False, local=False)
 
     def test_xsearch_native_false_with_constraints_raises(self):
-        """XSearch(native=False, allowed_x_handles=...) → UserError."""
+        """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
+
+    def test_xsearch_resolved_native_merges_overrides(self):
+        """Capability-level kwargs override fields on a passed native instance."""
+        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
+        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
+        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert resolved == snapshot(
+            XSearchTool(
+                allowed_x_handles=['a'],
+                from_date=datetime(2024, 1, 1),
+                enable_image_understanding=False,
+            )
+        )
+
+    def test_xsearch_fallback_model_and_local_conflict(self):
+        """XSearch(fallback_model=..., local=func) raises UserError."""
+
+        def my_search(query: str) -> str:
+            return 'result'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
+
+    def test_xsearch_fallback_model_with_local_false(self):
+        """XSearch(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=False)
+
+    def test_xsearch_callable_native_with_fallback(self):
+        """Callable native with fallback_model still creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = XSearch(
+            native=lambda ctx: XSearchTool(enable_image_understanding=True),
+            fallback_model='xai:grok-4-1-fast-non-reasoning',
+        )
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('What is happening on X?')
+        assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is happening on X?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='x_search',
+                            args='{"query": "latest news"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=55, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='x_search',
+                            content='summary of recent tweets',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_xsearch_sync_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with sync callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('search X')
+        assert result.output == 'done'
+        tool_returns = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(tool_returns) == 1
+        assert tool_returns[0].content == 'summary'
+
+    async def test_xsearch_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from the subagent becomes a retry prompt to the outer model."""
+
+        # Inner model returns an empty response → triggers UnexpectedModelBehavior in the subagent.
+        def empty_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[])
+
+        inner_model = FunctionModel(
+            empty_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=inner_model)])
+        result = await agent.run('search X')
+        assert result.output == 'gave up'
+        retry_parts = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert len(retry_parts) == 1
+        assert retry_parts[0].tool_name == 'x_search'
+
+    def test_x_search_tool_builtin_tool_kwarg_deprecated(self):
+        """`x_search_tool(builtin_tool=...)` warns and forwards to `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_native_tool_wins_over_builtin_tool(self):
+        """`x_search_tool(native_tool=..., builtin_tool=...)` keeps the explicit `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        explicit = XSearchTool(allowed_x_handles=['preferred'])
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=explicit, builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_unknown_kwarg_raises(self):
+        """`x_search_tool(unknown=...)` raises TypeError naming the offending kwarg."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r'unexpected keyword arguments: `bogus`'):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool(), bogus=1)
+
+    def test_x_search_tool_missing_native_tool_raises(self):
+        """`x_search_tool()` without `native_tool=` raises TypeError."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r"missing required argument: 'native_tool'"):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning')
+
+    def test_xsearch_subagent_tool_builtin_tool_attr_deprecated(self):
+        """Reading `XSearchSubagentTool.builtin_tool` warns and returns `.native_tool`."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        native = XSearchTool()
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=native)
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`XSearchSubagentTool\.builtin_tool` is deprecated'):
+            assert subagent.builtin_tool is native
+
+    def test_xsearch_subagent_tool_unknown_attr_raises(self):
+        """Unknown attribute access on `XSearchSubagentTool` raises AttributeError as usual."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
+        with pytest.raises(AttributeError, match='no_such_field'):
+            subagent.no_such_field
 
 
 class TestWebFetchCapability:
@@ -6069,8 +6346,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
@@ -6523,7 +6813,6 @@ def test_web_fetch_unique_id():
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()
@@ -8948,7 +9237,7 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
@@ -9276,7 +9565,9 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
@@ -9476,7 +9767,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9803,7 +10094,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9879,7 +10170,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9953,7 +10244,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -10027,7 +10318,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:

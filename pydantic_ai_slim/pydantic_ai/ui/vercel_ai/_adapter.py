@@ -315,7 +315,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ThinkingPart(
                                 content=part.text,
                                 id=provider_meta.get('id'),
-                                signature=provider_meta.get('signature'),
+                                signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                                 provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
                             )
