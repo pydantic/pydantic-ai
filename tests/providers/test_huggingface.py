@@ -40,7 +40,7 @@ def test_huggingface_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-            'to use the HuggingFace provider.'
+            ' to use the HuggingFace provider.'
         ),
     ):
         HuggingFaceProvider()

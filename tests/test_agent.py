@@ -3,10 +3,11 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
-from datetime import timezone
-from typing import Any, Generic, Literal, TypeVar, Union
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
@@ -25,6 +26,7 @@ from pydantic_ai import (
     CombinedToolset,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -58,25 +60,131 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.builtin_tools import (
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
+from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import (
     CodeExecutionTool,
     MCPServerTool,
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
+from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
+if TYPE_CHECKING:
+    from pydantic_ai.providers.alibaba import AlibabaProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+else:
+    try:
+        from pydantic_ai.providers.alibaba import AlibabaProvider
+        from pydantic_ai.providers.azure import AzureProvider
+        from pydantic_ai.providers.cerebras import CerebrasProvider
+        from pydantic_ai.providers.deepseek import DeepSeekProvider
+        from pydantic_ai.providers.fireworks import FireworksProvider
+        from pydantic_ai.providers.github import GitHubProvider
+        from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
+        from pydantic_ai.providers.heroku import HerokuProvider
+        from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+        from pydantic_ai.providers.nebius import NebiusProvider
+        from pydantic_ai.providers.ollama import OllamaProvider
+        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+        from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.together import TogetherProvider
+        from pydantic_ai.providers.vercel import VercelProvider
+    except ImportError:  # pragma: lax no cover
+        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = GrokProvider = HerokuProvider = None  # type: ignore
+        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
+        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
+        TogetherProvider = VercelProvider = None  # type: ignore
+
+    try:
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+    except ImportError:  # pragma: lax no cover
+        AnthropicProvider = None
+
+    try:
+        from pydantic_ai.providers.cohere import CohereProvider
+    except ImportError:  # pragma: lax no cover
+        CohereProvider = None
+
+    try:
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        GoogleProvider = None
+
+    try:
+        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleGLAProvider = None
+
+    try:
+        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleVertexProvider = None
+
+    try:
+        from pydantic_ai.providers.groq import GroqProvider
+    except ImportError:  # pragma: lax no cover
+        GroqProvider = None
+
+    try:
+        from pydantic_ai.providers.litellm import LiteLLMProvider
+    except ImportError:  # pragma: lax no cover
+        LiteLLMProvider = None
+
+    try:
+        from pydantic_ai.providers.mistral import MistralProvider
+    except ImportError:  # pragma: lax no cover
+        MistralProvider = None
+
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
+
+requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-genai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
+requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
+requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
 
 def test_result_tuple():
@@ -97,6 +205,7 @@ def test_result_tuple():
             model_name='function:return_tuple:',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -188,6 +297,7 @@ def test_result_pydantic_model_retry():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
@@ -195,6 +305,7 @@ def test_result_pydantic_model_retry():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -214,6 +325,7 @@ def test_result_pydantic_model_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
@@ -221,6 +333,7 @@ def test_result_pydantic_model_retry():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -233,6 +346,7 @@ def test_result_pydantic_model_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -293,7 +407,8 @@ def test_result_pydantic_model_validation_error():
 ]
 ```
 
-Fix the errors and try again.""")
+Fix the errors and try again.\
+""")
 
 
 def test_output_validator():
@@ -324,6 +439,7 @@ def test_output_validator():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
@@ -331,6 +447,7 @@ def test_output_validator():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -343,6 +460,7 @@ def test_output_validator():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
@@ -350,6 +468,7 @@ def test_output_validator():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -362,6 +481,7 @@ def test_output_validator():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -379,7 +499,7 @@ def test_output_validator_retries():
         args_json = '{"a": 1, "b": "foo"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=Foo, retries={'output': target_retries})
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
@@ -416,7 +536,7 @@ def test_output_function_retries():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='sunny')])
 
-    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), retries={'output': target_retries})
 
     result = agent.run_sync('Hello')
     assert result.output == 'Weather: sunny'
@@ -445,7 +565,7 @@ def test_tool_output_function_retries():
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), output_type=get_weather, output_retries=target_retries)
+    agent = Agent(FunctionModel(return_model), output_type=get_weather, retries={'output': target_retries})
 
     result = agent.run_sync('Hello')
     assert result.output == 'Weather in Mexico City'
@@ -478,7 +598,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(get_weather, max_retries=target_retries),
-        retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     result = agent.run_sync('Hello')
@@ -491,6 +611,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -504,6 +625,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -516,6 +638,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -529,6 +652,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -541,6 +665,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -554,6 +679,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -566,6 +692,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -579,6 +706,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -591,6 +719,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -604,6 +733,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -616,6 +746,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -629,6 +760,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -641,6 +773,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -685,7 +818,7 @@ def test_tool_output_max_retries_per_tool():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     result = agent.run_sync('Hello')
@@ -700,6 +833,7 @@ def test_tool_output_max_retries_per_tool():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -713,6 +847,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -725,6 +860,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -738,6 +874,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -750,6 +887,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -763,6 +901,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -775,6 +914,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -788,6 +928,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -800,6 +941,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -813,6 +955,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -825,6 +968,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -985,6 +1129,7 @@ def test_plain_response_then_tuple():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -992,6 +1137,7 @@ def test_plain_response_then_tuple():
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1003,6 +1149,7 @@ def test_plain_response_then_tuple():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1012,6 +1159,7 @@ def test_plain_response_then_tuple():
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1024,6 +1172,7 @@ def test_plain_response_then_tuple():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1037,6 +1186,7 @@ def test_plain_response_then_tuple():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
     assert result.all_messages()[-1] == snapshot(
@@ -1051,6 +1201,7 @@ def test_plain_response_then_tuple():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -1067,6 +1218,7 @@ def test_output_tool_return_content_str_return():
             model_name='test',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -1578,6 +1730,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1591,6 +1744,7 @@ def test_output_type_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1603,6 +1757,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1616,6 +1771,7 @@ def test_output_type_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1628,6 +1784,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1668,6 +1825,7 @@ def test_output_type_text_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='New York City')],
@@ -1675,6 +1833,7 @@ def test_output_type_text_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1686,6 +1845,7 @@ def test_output_type_text_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
@@ -1693,6 +1853,7 @@ def test_output_type_text_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1862,6 +2023,7 @@ def test_output_type_text_output_function():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -1869,6 +2031,7 @@ def test_output_type_text_output_function():
                 model_name='function:say_world:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1919,6 +2082,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1932,6 +2096,7 @@ def test_output_type_handoff_to_agent():
                 model_name='function:call_handoff_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1944,6 +2109,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1959,6 +2125,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1972,6 +2139,7 @@ def test_output_type_handoff_to_agent():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1984,6 +2152,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2325,6 +2494,7 @@ def test_prompted_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -2332,6 +2502,7 @@ def test_prompted_output():
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2362,6 +2533,7 @@ def test_prompted_output_with_template():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -2369,9 +2541,29 @@ def test_prompted_output_with_template():
                 model_name='function:return_foo:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+def test_prompted_output_with_template_and_instructions():
+    def return_foo(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        assert 'Be helpful' in info.instructions
+        assert 'Gimme some JSON:' in info.instructions
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, instructions='Be helpful', output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
 
 
 def test_prompted_output_with_template_false():
@@ -2447,6 +2639,7 @@ def test_prompted_output_with_defs():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2458,6 +2651,7 @@ def test_prompted_output_with_defs():
                 model_name='function:return_foo_bar:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2495,6 +2689,7 @@ def test_native_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2502,6 +2697,7 @@ def test_native_output():
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2520,13 +2716,15 @@ def test_native_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=87, output_tokens=12),
+                usage=RequestUsage(input_tokens=81, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2578,6 +2776,7 @@ def test_prompted_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "New York City"}')],
@@ -2585,6 +2784,7 @@ def test_prompted_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2596,6 +2796,7 @@ def test_prompted_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2603,6 +2804,7 @@ def test_prompted_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2627,6 +2829,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2634,6 +2837,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2643,6 +2847,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2650,6 +2855,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2665,6 +2871,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2672,6 +2879,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2681,6 +2889,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2688,11 +2897,13 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2700,13 +2911,14 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert result2.new_messages() == result2.all_messages()[-2:]
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
     assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
-    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
+    assert result2.usage == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
@@ -2733,6 +2945,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2740,6 +2953,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2749,6 +2963,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2756,11 +2971,13 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2768,14 +2985,15 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert result3.new_messages() == result3.all_messages()[-2:]
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
-    assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
-    assert result3.timestamp() == IsNow(tz=timezone.utc)
+    assert result3.usage == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
+    assert result3.timestamp == IsNow(tz=timezone.utc)
 
 
 def test_run_with_history_new_structured():
@@ -2800,6 +3018,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2807,6 +3026,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2816,6 +3036,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2829,6 +3050,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2841,6 +3063,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2855,6 +3078,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2862,6 +3086,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2871,6 +3096,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
@@ -2878,6 +3104,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2890,6 +3117,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             # second call, notice no repeated system prompt
             ModelRequest(
@@ -2898,6 +3126,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
@@ -2905,6 +3134,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2917,13 +3147,14 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert result2.output == snapshot(Response(a=0))
     assert result2.new_messages() == result2.all_messages()[-3:]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
-    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
+    assert result2.usage == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
@@ -2975,7 +3206,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         dynamic_ref=IsStr(),
                     ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -2986,6 +3217,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -2993,11 +3225,12 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -3044,6 +3277,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final response')],
@@ -3051,6 +3285,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                 model_name='function:simple_response:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3146,6 +3381,7 @@ Summarize this conversation to include all important facts about the user and
         what their interactions were about.\
 """,
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='James likes cars in general, especially the Fiat 126p that his parents had.')],
@@ -3153,6 +3389,7 @@ Summarize this conversation to include all important facts about the user and
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3180,6 +3417,7 @@ def test_empty_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3187,11 +3425,13 @@ def test_empty_response():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
@@ -3199,6 +3439,7 @@ def test_empty_response():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3211,7 +3452,7 @@ def test_empty_response_without_recovery():
     agent = Agent(FunctionModel(llm), output_type=tuple[str, int])
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
             agent.run_sync('Hello')
 
     assert messages == snapshot(
@@ -3225,6 +3466,7 @@ def test_empty_response_without_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3232,11 +3474,13 @@ def test_empty_response_without_recovery():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3244,6 +3488,7 @@ def test_empty_response_without_recovery():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3258,6 +3503,89 @@ def test_agent_message_history_includes_run_id() -> None:
     run_ids = [message.run_id for message in history]
     assert run_ids == snapshot([IsStr(), IsStr()])
     assert len({*run_ids}) == snapshot(1)
+
+
+def test_agent_message_history_includes_conversation_id() -> None:
+    agent = Agent(TestModel(custom_output_text='testing conv_id'))
+
+    result = agent.run_sync('Hello')
+
+    assert result.conversation_id != result.run_id
+    conversation_ids = [message.conversation_id for message in result.all_messages()]
+    assert conversation_ids == [result.conversation_id, result.conversation_id]
+
+
+def test_agent_conversation_id_resolves_from_message_history() -> None:
+    agent = Agent(TestModel(custom_output_text='continuation'))
+
+    first = agent.run_sync('first turn')
+    second = agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert second.conversation_id == first.conversation_id
+    new_conv_ids = [m.conversation_id for m in second.new_messages()]
+    assert all(cid == first.conversation_id for cid in new_conv_ids)
+
+
+def test_agent_conversation_id_explicit_override() -> None:
+    agent = Agent(TestModel(custom_output_text='explicit'))
+
+    result = agent.run_sync('hi', conversation_id='conv-app-42')
+    assert result.conversation_id == 'conv-app-42'
+    assert all(m.conversation_id == 'conv-app-42' for m in result.all_messages())
+
+
+def test_agent_conversation_id_new_sentinel_forks() -> None:
+    agent = Agent(TestModel(custom_output_text='fork'))
+
+    first = agent.run_sync('first')
+    forked = agent.run_sync('branch', message_history=first.all_messages(), conversation_id='new')
+
+    assert forked.conversation_id != first.conversation_id
+    new_conv_ids = [m.conversation_id for m in forked.new_messages()]
+    assert all(cid == forked.conversation_id for cid in new_conv_ids)
+
+
+def test_agent_conversation_id_available_in_run_context() -> None:
+    captured: list[str | None] = []
+
+    def capture_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+        captured.append(ctx.conversation_id)
+        return {}
+
+    agent = Agent(TestModel(custom_output_text='ctx'), metadata=capture_metadata)
+    result = agent.run_sync('hi', conversation_id='conv-from-ctx')
+
+    assert result.conversation_id == 'conv-from-ctx'
+    assert captured
+    assert all(cid == 'conv-from-ctx' for cid in captured)
+
+
+async def test_agent_conversation_id_surfaces_on_iter_and_async_stream() -> None:
+    """`conversation_id` is reachable from `AgentRun` and `StreamedRunResult`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+
+    async with agent.iter('hi', conversation_id='conv-iter') as agent_run:
+        assert agent_run.conversation_id == 'conv-iter'
+        async for _ in agent_run:
+            pass
+
+    async with agent.run_stream('hi', conversation_id='conv-async-stream') as stream:
+        assert stream.conversation_id == 'conv-async-stream'
+        await stream.get_output()
+
+
+def test_agent_conversation_id_surfaces_on_sync_stream() -> None:
+    """`conversation_id` is reachable from `StreamedRunResultSync`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+    result = agent.run_stream_sync('hi', conversation_id='conv-sync-stream')
+    assert result.conversation_id == 'conv-sync-stream'
+
+
+async def test_agent_run_result_conversation_id_property() -> None:
+    """`AgentRunResult.conversation_id` returns the run's conversation ID."""
+    agent = Agent(TestModel(custom_output_text='ok'))
+    result = await agent.run('hi', conversation_id='conv-result')
+    assert result.conversation_id == 'conv-result'
 
 
 async def test_agent_run_result_metadata_available() -> None:
@@ -3385,7 +3713,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3393,6 +3721,7 @@ def test_unknown_tool():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3400,6 +3729,7 @@ def test_unknown_tool():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3412,6 +3742,7 @@ def test_unknown_tool():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3419,6 +3750,7 @@ def test_unknown_tool():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3441,6 +3773,7 @@ def test_unknown_tool_fix():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3448,6 +3781,7 @@ def test_unknown_tool_fix():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3460,6 +3794,7 @@ def test_unknown_tool_fix():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -3467,6 +3802,7 @@ def test_unknown_tool_fix():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3478,10 +3814,10 @@ def test_unknown_tool_multiple_retries():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=num_retries)
+    agent = Agent(FunctionModel(empty), retries={'tools': num_retries, 'output': num_retries})
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3489,6 +3825,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3496,6 +3833,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3508,6 +3846,7 @@ def test_unknown_tool_multiple_retries():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3515,6 +3854,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3527,6 +3867,7 @@ def test_unknown_tool_multiple_retries():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3534,6 +3875,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3545,7 +3887,7 @@ def test_unknown_tool_per_tool_retries_exceeded():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+    agent = Agent(FunctionModel(empty), retries={'tools': 1, 'output': 5})
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
@@ -3635,7 +3977,7 @@ def test_thinking_only_response_with_finish_reason_length():
 def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')
-        agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[str, str], defer_model_check=True)
+        agent = Agent('google:gemini-3-flash-preview', output_type=tuple[str, str], defer_model_check=True)
 
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             agent.run_sync('Hello')
@@ -3645,7 +3987,7 @@ def test_model_requests_blocked(env: TestEnv):
 
 def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google:gemini-3-flash-preview', output_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
@@ -3799,6 +4141,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3811,6 +4154,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -3841,6 +4185,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -3893,6 +4238,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3903,6 +4249,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -3921,6 +4268,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -3951,6 +4299,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3961,6 +4310,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -3979,6 +4329,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4036,6 +4387,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4053,6 +4405,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4075,7 +4428,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
@@ -4089,6 +4442,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4154,6 +4508,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4173,6 +4528,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4197,6 +4553,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4249,6 +4606,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4263,6 +4621,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4275,6 +4634,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4307,6 +4667,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4320,6 +4681,7 @@ class TestMultipleToolCalls:
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4332,6 +4694,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4345,6 +4708,7 @@ class TestMultipleToolCalls:
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4357,6 +4721,351 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_executes_function_tools_but_skips_output_tools(self):
+        """Test that 'graceful' strategy executes function tools but skips remaining output tools."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('regular_tool', {'x': 42}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test graceful strategy')
+
+        # Verify the result came from the output tool
+        assert result.output.value == 'first'
+
+        # Verify all function tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 42}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=13),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'graceful' strategy does not execute additional output tool functions."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'first'}),
+                    ToolCallPart('second_output', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        result = agent.run_sync('test graceful output tools')
+
+        # Verify the result came from the first output tool
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'first'
+
+        # Verify only the first output tool was called
+        assert output_tools_called == ['first']
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args={'value': 'second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='first_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_uses_first_final_result(self):
+        """Test that 'graceful' strategy uses the first final result and ignores subsequent ones."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('final_result', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+        result = agent.run_sync('test multiple final results')
+        messages = result.all_messages()
+
+        # Verify the result came from the first final tool
+        assert result.output.value == 'first'
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_with_final_result_in_middle(self):
+        """Test that 'graceful' strategy executes function tools but skips output and deferred tools."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 5}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x + 1
+
+        result = agent.run_sync('test graceful strategy with final result in middle')
+
+        # Verify function tools were called but deferred tools were not
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got the correct final result
+        assert result.output.value == 'final'
+
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test graceful strategy with final result in middle',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=58, output_tokens=22),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4414,6 +5123,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4432,6 +5142,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4457,7 +5168,7 @@ class TestMultipleToolCalls:
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
@@ -4471,6 +5182,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4523,6 +5235,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4533,6 +5246,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4551,6 +5265,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4603,6 +5318,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4613,6 +5329,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4631,6 +5348,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4665,7 +5383,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - model must succeed first try
+            retries={'output': 0},  # No retries - model must succeed first try
         )
 
         result = agent.run_sync('test valid first invalid second')
@@ -4684,6 +5402,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4694,6 +5413,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4712,6 +5432,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4746,7 +5467,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=1,  # Allow 1 retry so `ToolRetryError` is raised
+            retries={'output': 1},  # Allow 1 retry so `ToolRetryError` is raised
         )
 
         result = agent.run_sync('test exhaustive with tool retry')
@@ -4765,6 +5486,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive with tool retry', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4775,6 +5497,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4793,6 +5516,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4821,7 +5545,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
             agent.run_sync('test')
 
     def test_exhaustive_skips_output_tool_exceeding_retries_on_validation(self):
@@ -4926,6 +5650,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4936,6 +5661,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4961,6 +5687,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5029,7 +5756,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,
+            retries={'output': 0},
         )
 
         result = agent.run_sync('test exhaustive with max retries exceeded')
@@ -5063,7 +5790,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='early',
-            output_retries=0,
+            retries={'output': 0},
         )
 
         result = agent.run_sync('test early with max retries exceeded')
@@ -5135,6 +5862,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5145,6 +5873,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5157,6 +5886,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -5164,6 +5894,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5186,6 +5917,7 @@ def test_nested_capture_run_messages() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5193,6 +5925,7 @@ def test_nested_capture_run_messages() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5214,6 +5947,7 @@ def test_double_capture_run_messages() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5221,6 +5955,7 @@ def test_double_capture_run_messages() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5265,6 +6000,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5273,6 +6009,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5295,6 +6032,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5303,12 +6041,14 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5317,6 +6057,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5355,6 +6096,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5363,6 +6105,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5386,6 +6129,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5394,12 +6138,14 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5408,6 +6154,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5506,6 +6253,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -5513,6 +6261,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5525,6 +6274,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')],
@@ -5532,6 +6282,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5604,6 +6355,7 @@ def test_binary_content_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -5635,7 +6387,9 @@ def test_binary_content_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
         ]
     )
@@ -5674,6 +6428,7 @@ def test_image_url_serializable_missing_media_type():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -5705,7 +6460,9 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
         ]
     )
@@ -5751,6 +6508,7 @@ def test_image_url_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -5782,7 +6540,9 @@ def test_image_url_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             },
         ]
     )
@@ -5850,6 +6610,7 @@ def test_tool_returning_binary_content_with_identifier():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5893,6 +6654,7 @@ def test_tool_returning_file_url_with_identifier():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5914,6 +6676,7 @@ def test_instructions_raise_error_when_system_prompt_is_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5939,6 +6702,7 @@ def test_instructions_raise_error_when_instructions_is_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5955,6 +6719,7 @@ def test_instructions_both_instructions_and_system_prompt_are_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5973,6 +6738,7 @@ def test_instructions_decorator_without_parenthesis():
             timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -5991,6 +6757,7 @@ def test_instructions_decorator_with_parenthesis():
             timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6011,6 +6778,7 @@ def test_instructions_with_message_history():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -6018,6 +6786,7 @@ def test_instructions_with_message_history():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6044,6 +6813,7 @@ You are a helpful assistant.
 You are a potato.\
 """,
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6060,6 +6830,7 @@ You are a helpful assistant.
 Your task is to greet people.\
 """,
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6068,10 +6839,9 @@ Your task is to greet people.\
         ModelRequest(
             parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
             timestamp=IsNow(tz=timezone.utc),
-            instructions="""\
-You are a helpful assistant.\
-""",
+            instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6101,6 +6871,7 @@ def test_multi_agent_instructions_with_structured_output():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Agent 2 instructions',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
@@ -6108,6 +6879,7 @@ def test_multi_agent_instructions_with_structured_output():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6120,6 +6892,7 @@ def test_multi_agent_instructions_with_structured_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6153,6 +6926,7 @@ def test_empty_final_response():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6163,6 +6937,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6172,6 +6947,7 @@ def test_empty_final_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6182,6 +6958,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6191,6 +6968,7 @@ def test_empty_final_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -6198,6 +6976,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6219,8 +6998,249 @@ def test_agent_run_result_serialization() -> None:
 def test_agent_repr() -> None:
     agent = Agent()
     assert repr(agent) == snapshot(
-        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>)"
     )
+
+
+async def test_agent_context_manager_no_model():
+    agent = Agent()
+    async with agent:
+        pass
+
+
+def test_cached_async_http_client_deprecated():
+    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
+
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
+        cached_async_http_client()  # pyright: ignore[reportDeprecated]
+
+
+@requires_openai
+async def test_provider_lifecycle_closes_client():
+    """Provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_reentrant_lifecycle():
+    """Reentrant provider lifecycle keeps client open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            assert not http_client.is_closed
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_aexit_without_aenter():
+    """Calling __aexit__ without __aenter__ is a no-op (no crash).
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    # Clean up the owned http client to avoid ResourceWarning from __del__
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_provider_aexit_without_aenter_then_async_with():
+    """Bare __aexit__ before any __aenter__ must not corrupt later lifecycle state."""
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    async with provider:
+        assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+# TODO(v2): uncomment when we re-enable the ResourceWarning in Provider.__del__
+# @requires_openai
+# async def test_provider_del_warns_on_unclosed_client():
+#     """Provider.__del__ warns if the HTTP client was never closed.
+#
+#     Regression test for PR #4421 (provider lifecycle management).
+#     https://github.com/pydantic/pydantic-ai/pull/4421
+#     """
+#     provider = OpenAIProvider(api_key='test-key')
+#     assert provider._own_http_client is not None
+#     assert not provider._own_http_client.is_closed
+#     with pytest.warns(ResourceWarning, match='was garbage collected with an open HTTP client'):
+#         provider.__del__()
+#     # Clean up
+#     await provider._own_http_client.aclose()
+
+
+@requires_openai
+async def test_provider_reentry_after_close():
+    """Provider can be re-entered after exit by recreating the HTTP client."""
+    provider = OpenAIProvider(api_key='test-key')
+
+    async with provider:
+        first_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
+
+
+@requires_google_gla
+@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
+async def test_google_gla_provider_reentry_after_close():
+    """GoogleGLAProvider restores base_url and API key header on re-entry."""
+    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert second_client.is_closed
+
+
+@requires_google_vertex
+@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
+async def test_google_vertex_provider_reentry_after_close():
+    """GoogleVertexProvider restores auth and base_url on re-entry."""
+    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert first_client.auth is not None
+        assert 'us-central1' in str(first_client.base_url)
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert second_client.auth is not None
+        assert 'us-central1' in str(second_client.base_url)
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_gateway_provider_reentry_after_close():
+    """Gateway provider restores event_hooks on re-entry."""
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
+
+    async with provider:
+        first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert first_client is not None
+        assert not first_client.is_closed
+        assert len(first_client.event_hooks.get('request', [])) == 1
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_client is not None
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert len(second_client.event_hooks.get('request', [])) == 1
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_azure_provider_lifecycle_closes_client():
+    """Azure provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://test.openai.azure.com',
+        api_key='test-key',
+        api_version='2024-02-01',
+    )
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
+@pytest.mark.parametrize(
+    'provider_factory',
+    [
+        pytest.param(lambda: OpenAIProvider(api_key='t'), marks=[requires_openai], id='openai'),
+        pytest.param(lambda: AnthropicProvider(api_key='t'), marks=[requires_anthropic], id='anthropic'),
+        pytest.param(lambda: GroqProvider(api_key='t'), marks=[requires_groq], id='groq'),
+        pytest.param(lambda: MistralProvider(api_key='t'), marks=[requires_mistral], id='mistral'),
+        pytest.param(lambda: CohereProvider(api_key='t'), marks=[requires_cohere], id='cohere'),
+        pytest.param(lambda: GoogleProvider(api_key='t'), marks=[requires_google], id='google'),
+        pytest.param(
+            lambda: AzureProvider(azure_endpoint='https://t.openai.azure.com', api_key='t', api_version='2024-02-01'),
+            marks=[requires_openai],
+            id='azure',
+        ),
+        pytest.param(lambda: CerebrasProvider(api_key='t'), marks=[requires_openai], id='cerebras'),
+        pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
+        pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
+        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
+        pytest.param(lambda: GrokProvider(api_key='t'), marks=[requires_openai], id='grok'),  # pyright: ignore[reportDeprecated]
+        pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
+        pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
+        pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
+        pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),
+        pytest.param(
+            lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
+        ),
+        pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
+        pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
+        pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
+        pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
+    ],
+)
+async def test_provider_reentry_recreates_http_client(provider_factory: Callable[[], Provider[Any]]):
+    """All providers with _own_http_client properly close on exit and recreate on re-entry."""
+    provider = provider_factory()
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+
+    async with provider:
+        first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert first_client is not None
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_client is not None
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
 
 
 def test_tool_call_with_validation_value_error_serializable():
@@ -6265,6 +7285,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'instructions': None,
             'kind': 'request',
             'run_id': IsStr(),
+            'conversation_id': IsStr(),
             'metadata': None,
         }
     )
@@ -6336,6 +7357,7 @@ def test_multimodal_tool_response():
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6350,6 +7372,7 @@ def test_multimodal_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6371,6 +7394,7 @@ def test_multimodal_tool_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
@@ -6378,6 +7402,7 @@ def test_multimodal_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6419,6 +7444,7 @@ def test_plain_tool_response():
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6433,6 +7459,7 @@ def test_plain_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6446,6 +7473,7 @@ def test_plain_tool_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
@@ -6453,6 +7481,7 @@ def test_plain_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6512,15 +7541,22 @@ def test_deprecated_kwargs_still_work():
     import warnings
 
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
-            Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert '`mcp_servers` is deprecated' in str(w[0].message)
+            Agent(  # pyright: ignore[reportDeprecated]
+                'test',
+                mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],  # pyright: ignore[reportDeprecated]
+            )
+            mcp_servers_warnings = [
+                warning
+                for warning in w
+                if issubclass(warning.category, DeprecationWarning)
+                and '`mcp_servers` is deprecated' in str(warning.message)
+            ]
+            assert len(mcp_servers_warnings) == 1
     except ImportError:
         pass
 
@@ -6539,7 +7575,7 @@ def test_override_toolsets():
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
 
-    agent = Agent('test', toolsets=[foo_toolset], prepare_tools=prepare_tools)
+    agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.tool_plain
     def baz() -> str:
@@ -6589,7 +7625,7 @@ def test_override_tools():
         available_tools.append([tool_def.name for tool_def in tool_defs])
         return tool_defs
 
-    agent = Agent('test', tools=[foo], prepare_tools=prepare_tools)
+    agent = Agent('test', tools=[foo], capabilities=[PrepareTools(prepare_tools)])
 
     result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['foo'])
@@ -6635,7 +7671,7 @@ def test_toolset_factory():
         else:
             return ModelResponse(parts=[TextPart('Done')])
 
-    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], prepare_tools=prepare_tools)
+    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], capabilities=[PrepareTools(prepare_tools)])
 
     @agent.toolset
     def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
@@ -6691,6 +7727,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='add_foo_tool', tool_call_id=IsStr())],
@@ -6698,6 +7735,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6710,6 +7748,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
@@ -6717,6 +7756,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6729,6 +7769,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
@@ -6736,6 +7777,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6769,7 +7811,7 @@ def test_prepare_output_tools():
         deps_type=AgentDeps,
         tools=[present_plan],
         output_type=[ToolOutput(run_sql, name='run_sql')],
-        prepare_output_tools=only_if_plan_presented,
+        capabilities=[PrepareOutputTools(only_if_plan_presented)],
     )
 
     result = agent.run_sync('Hello', deps=AgentDeps())
@@ -6785,6 +7827,7 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6798,6 +7841,7 @@ def test_prepare_output_tools():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6810,6 +7854,7 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6823,6 +7868,7 @@ def test_prepare_output_tools():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6835,19 +7881,99 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
 
+def test_prepare_output_tools_receives_output_max_retries():
+    """Regression for the bug surfaced in #4745 / #4859 design discussion: the
+    `prepare_output_tools` callable must see `ctx.max_retries == max_output_retries`,
+    not the function-tool retry budget. Also verifies `ctx.retry` advances per output retry
+    and that per-tool retry counts in `ctx.retries` propagate (matching `prepare_tools`).
+    """
+    seen_retries: list[int] = []
+    seen_max_retries: list[int] = []
+    seen_per_tool_retries: list[int] = []
+
+    target_retries = 3
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools
+        # Always return the same output; the validator drives retries.
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_retries.append(ctx.retry)
+        seen_max_retries.append(ctx.max_retries)
+        seen_per_tool_retries.append(ctx.retries.get(tool_defs[0].name, 0))
+        return tool_defs
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        # tool retry budget — different from output, must NOT leak into prep ctx
+        retries={'output': target_retries, 'tools': 1},
+        capabilities=[PrepareOutputTools(prep)],
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        if ctx.retry == target_retries:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # `prep` runs once per step (= target_retries + 1 calls). Each call should see the
+    # OUTPUT retry budget, never the tool retry budget (`retries=1`).
+    assert seen_max_retries == [target_retries] * (target_retries + 1)
+    assert seen_retries == [0, 1, 2, 3]
+    # Per-tool retry counts populated by `for_run_step` propagate too — matching
+    # what `prepare_tools` sees on the function-tool side.
+    assert seen_per_tool_retries == [0, 1, 2, 3]
+
+
+def test_prepare_output_tools_sees_run_level_output_retries_override():
+    """`prepare_output_tools` sees the run-level output retry override on `ctx.max_retries`,
+    not the agent-level default — so capability hooks observe the same budget the run will enforce.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5075#discussion_r3170685538.
+    """
+    seen_max_retries: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_max_retries.append(ctx.max_retries)
+        return tool_defs
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        retries={'output': 5},
+        capabilities=[PrepareOutputTools(prep)],
+    )
+
+    result = agent.run_sync('Hello', retries={'output': 2})
+    assert isinstance(result.output, Foo)
+    # Hook sees run-level override (2), not the agent-level default (5).
+    assert seen_max_retries == [2]
+
+
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_explicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -6860,14 +7986,15 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 async def test_implicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -6876,9 +8003,10 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_parallel_mcp_calls():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
@@ -6893,7 +8021,7 @@ def test_parallel_mcp_calls():
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
@@ -6949,6 +8077,139 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
     # No new asyncio tasks should be left over from this run.
     leaked = asyncio.all_tasks() - tasks_before
     assert not leaked, f'Orphaned tasks remain: {leaked}'
+
+
+async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks():
+    """Outer cancellation can arrive after one parallel tool task has already finished.
+
+    The cleanup path should skip finished tasks and cancel only sibling tasks that are
+    still pending.
+    """
+    completed_tool_finished = asyncio.Event()
+    pending_tool_started = asyncio.Event()
+    pending_tool_cancelled = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='completed_tool'),
+                ToolCallPart(tool_name='pending_tool'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def completed_tool() -> str:
+        completed_tool_finished.set()
+        return 'done'
+
+    @agent.tool_plain
+    async def pending_tool() -> str:
+        pending_tool_started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            pending_tool_cancelled.set()
+            raise
+        return 'done'  # pragma: no cover
+
+    task = asyncio.create_task(agent.run('call tools'))
+    await asyncio.wait_for(completed_tool_finished.wait(), timeout=1)
+    await asyncio.wait_for(pending_tool_started.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert pending_tool_cancelled.is_set()
+
+
+async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
+    """Outer cancellation while waiting for `wrap_run` readiness should clean up the wrapper task.
+
+    Target boundary: `Agent.iter()` creates `_wrap_task` and `_ready_waiter`, then waits for
+    `asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)`.
+    The test should cancel the parent task while that wait is pending, then assert the
+    capability's `wrap_run` cleanup has completed before cancellation returns.
+    """
+
+    cleanup_finished = asyncio.Event()
+    started = asyncio.Event()
+    never_finishes = asyncio.Future[AgentRunResult[Any]]()
+
+    class WrapRunCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            try:
+                started.set()
+                return await never_finishes
+            finally:
+                cleanup_finished.set()
+
+    agent = Agent(TestModel(), capabilities=[WrapRunCapability()])
+
+    task = asyncio.create_task(agent.run('test'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
+    """Outer cancellation during parallel tool execution should await cancelled tool cleanup.
+
+    Target boundary: parallel tool execution creates one task per tool call and waits with
+    `asyncio.wait(...)`. The cancel handler must drain those tasks so each tool's `finally`
+    runs before the parent function exits; otherwise cleanup races against the parent
+    unwinding.
+    """
+    started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_can_finish = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='slow_tool_a'),
+                ToolCallPart(tool_name='slow_tool_b'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def slow_tool_a() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            await cleanup_can_finish.wait()
+            cleanup_finished.set()
+        return 'done'  # pragma: no cover
+
+    @agent.tool_plain
+    async def slow_tool_b() -> str:
+        await asyncio.sleep(10)
+        return 'done'  # pragma: no cover
+
+    task = asyncio.create_task(agent.run('call tools'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    assert not task.done()
+    cleanup_can_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
 
 
 @pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
@@ -7019,15 +8280,16 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     assert integer_holder == 2
 
 
+@pytest.mark.filterwarnings('ignore:`MCPServerStdio` is deprecated:DeprecationWarning')
 def test_set_mcp_sampling_model():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
     test_model = TestModel()
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent(None, toolsets=[toolset])
 
@@ -7069,6 +8331,9 @@ def test_toolsets():
         assert toolset not in agent.toolsets
 
 
+@pytest.mark.filterwarnings(
+    r'ignore:`Agent\(event_stream_handler=\.\.\.\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_wrapper_agent():
     async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
         pass  # pragma: no cover
@@ -7080,8 +8345,15 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    agent = Agent(  # pyright: ignore[reportCallIssue]
+        test_model,
+        system_prompt='You are a wrapped agent',
+        toolsets=[foo_toolset],
+        output_type=Foo,
+        event_stream_handler=event_stream_handler,
+    )
     wrapper_agent = WrapperAgent(agent)
+    assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name
@@ -7090,8 +8362,11 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == agent.description
     wrapper_agent.description = 'wrapped description'
     assert wrapper_agent.description == 'wrapped description'
+    # `render_description` is `Agent`-only; setting via `wrapper_agent.description` mutates the wrapped agent.
+    assert agent.render_description() == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.root_capability is agent.root_capability
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',
@@ -7156,9 +8431,10 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...')],
@@ -7166,6 +8442,7 @@ async def test_thinking_only_response_retry():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7175,9 +8452,10 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
@@ -7185,6 +8463,7 @@ async def test_thinking_only_response_retry():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7218,6 +8497,7 @@ async def test_retry_message_no_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='thinking...')],
@@ -7225,6 +8505,7 @@ async def test_retry_message_no_tools():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7236,6 +8517,7 @@ async def test_retry_message_no_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
@@ -7243,6 +8525,7 @@ async def test_retry_message_no_tools():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7276,6 +8559,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='thinking...')],
@@ -7283,6 +8567,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7294,6 +8579,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7307,6 +8593,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7319,6 +8606,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7366,6 +8654,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7376,6 +8665,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7388,6 +8678,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Nothing more to say.')],
@@ -7395,6 +8686,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7446,6 +8738,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7465,6 +8758,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7477,6 +8771,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7506,6 +8801,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7525,6 +8821,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7537,6 +8834,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7556,6 +8854,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -7563,6 +8862,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7588,6 +8888,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -7595,6 +8896,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7737,6 +9039,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7748,6 +9051,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7775,6 +9079,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Approved and continue with the operation')],
@@ -7782,22 +9087,22 @@ async def test_user_prompt_with_deferred_tool_results():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
 
-def test_tool_requires_approval_error():
+def test_tool_requires_approval_no_output_type():
+    """Adding a requires_approval tool without DeferredToolRequests in output type is allowed.
+
+    The error is raised at runtime if the tool is called and no handler resolves it.
+    """
     agent = Agent('test')
 
-    with pytest.raises(
-        UserError,
-        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
-    ):
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> None:
-            pass
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> None:
+        pass
 
 
 async def test_consecutive_model_responses_in_history():
@@ -7845,6 +9150,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='All right then, goodbye!')],
@@ -7852,6 +9158,7 @@ async def test_consecutive_model_responses_in_history():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7867,6 +9174,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='All right then, goodbye!')],
@@ -7874,6 +9182,7 @@ async def test_consecutive_model_responses_in_history():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7901,6 +9210,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8172,6 +9482,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
@@ -8179,6 +9490,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8191,6 +9503,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8204,6 +9517,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8216,6 +9530,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8233,6 +9548,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
@@ -8240,6 +9556,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8252,6 +9569,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8265,6 +9583,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8277,6 +9596,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8284,17 +9604,17 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
 
 
-def test_agent_builtin_tools_runtime_vs_agent_level():
-    """Test that runtime builtin_tools parameter is merged with agent-level builtin_tools."""
+def test_agent_native_tools_runtime_vs_agent_level():
+    """Test that runtime `capabilities=[NativeTool(...)]` is merged with agent-level native tools."""
     model = TestModel()
 
     agent = Agent(
         model=model,
-        builtin_tools=[
-            WebSearchTool(),
-            CodeExecutionTool(),
-            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
-            MCPServerTool(id='github', url='https://api.githubcopilot.com/mcp'),
+        capabilities=[
+            NativeTool(WebSearchTool()),
+            NativeTool(CodeExecutionTool()),
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+            NativeTool(MCPServerTool(id='github', url='https://api.githubcopilot.com/mcp')),
         ],
     )
 
@@ -8302,15 +9622,17 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
     with pytest.raises(Exception, match='TestModel does not support built-in tools'):
         agent.run_sync(
             'Hello',
-            builtin_tools=[
-                WebSearchTool(search_context_size='high'),
-                MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
-                MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            capabilities=[
+                NativeTool(WebSearchTool(search_context_size='high')),
+                NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp')),
+                NativeTool(
+                    MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token')
+                ),
             ],
         )
 
     assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.builtin_tools == snapshot(
+    assert model.last_model_request_parameters.native_tools == snapshot(
         [
             WebSearchTool(search_context_size='high'),
             CodeExecutionTool(),
@@ -8318,6 +9640,54 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
+    )
+
+
+def test_agent_override_native_tools_empty_runs_with_test_model():
+    """Test that agent-level native tools can be removed when overriding the model."""
+    model = TestModel()
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+
+    with agent.override(model=model, native_tools=[]):
+        result = agent.run_sync('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == []
+
+
+def test_agent_override_native_tools_replaces_agent_level_tools():
+    """Test that override native_tools replace, rather than append to, agent-level native tools."""
+    model = TestModel()
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+
+    with (
+        agent.override(native_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello')
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot([CodeExecutionTool()])
+
+
+def test_agent_override_native_tools_preserves_runtime_additive_tools():
+    """Test that runtime `capabilities=[NativeTool(...)]` are still added to overridden native tools."""
+    model = TestModel()
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+
+    with (
+        agent.override(native_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync(
+            'Hello',
+            capabilities=[NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))],
+        )
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
     )
 
 
@@ -8362,21 +9732,17 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -8388,6 +9754,7 @@ async def test_message_history():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
@@ -8395,6 +9762,7 @@ async def test_message_history():
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8416,9 +9784,9 @@ async def prepared_web_search(ctx: RunContext[UserContext]) -> WebSearchTool | N
     )
 
 
-async def test_dynamic_builtin_tool_configured():
+async def test_dynamic_native_tool_configured():
     model = TestModel()
-    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+    agent = Agent(model, capabilities=[NativeTool(prepared_web_search)], deps_type=UserContext)
 
     user_context = UserContext(location='London')
 
@@ -8426,7 +9794,7 @@ async def test_dynamic_builtin_tool_configured():
         await agent.run('Hello', deps=user_context)
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 1
     tool = tools[0]
     assert isinstance(tool, WebSearchTool)
@@ -8435,31 +9803,35 @@ async def test_dynamic_builtin_tool_configured():
     assert tool.search_context_size == 'medium'
 
 
-async def test_dynamic_builtin_tool_omitted():
+async def test_dynamic_native_tool_omitted():
     model = TestModel()
-    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+    agent = Agent(model, capabilities=[NativeTool(prepared_web_search)], deps_type=UserContext)
 
     user_context = UserContext(location=None)
 
     await agent.run('Hello', deps=user_context)
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 0
 
 
-async def test_mixed_static_and_dynamic_builtin_tools():
+async def test_mixed_static_and_dynamic_native_tools():
     model = TestModel()
 
     static_tool = CodeExecutionTool()
-    agent = Agent(model, builtin_tools=[static_tool, prepared_web_search], deps_type=UserContext)
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(static_tool), NativeTool(prepared_web_search)],
+        deps_type=UserContext,
+    )
 
     # Case 1: Dynamic tool returns None
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         await agent.run('Hello', deps=UserContext(location=None))
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 1
     assert tools[0] == static_tool
 
@@ -8468,7 +9840,7 @@ async def test_mixed_static_and_dynamic_builtin_tools():
         await agent.run('Hello', deps=UserContext(location='Paris'))
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 2
     assert tools[0] == static_tool
     dynamic_tool = tools[1]
@@ -8484,33 +9856,56 @@ def sync_dynamic_tool(ctx: RunContext[UserContext]) -> WebSearchTool:
 
 async def test_sync_dynamic_tool():
     model = TestModel()
-    agent = Agent(model, builtin_tools=[sync_dynamic_tool], deps_type=UserContext)
+    agent = Agent(model, capabilities=[NativeTool(sync_dynamic_tool)], deps_type=UserContext)
 
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         await agent.run('Hello', deps=UserContext(location='London'))
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 1
     assert isinstance(tools[0], WebSearchTool)
     assert tools[0].search_context_size == 'low'
 
 
 async def test_dynamic_tool_in_run_call():
-    """Verify dynamic tools can be passed to agent.run()."""
+    """Verify dynamic tools can be passed to agent.run() via `capabilities=[NativeTool(...)]`."""
     model = TestModel()
     agent = Agent(model, deps_type=UserContext)
 
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location='Berlin'), builtin_tools=[prepared_web_search])
+        await agent.run('Hello', deps=UserContext(location='Berlin'), capabilities=[NativeTool(prepared_web_search)])
 
     assert model.last_model_request_parameters is not None
-    tools = model.last_model_request_parameters.builtin_tools
+    tools = model.last_model_request_parameters.native_tools
     assert len(tools) == 1
     tool = tools[0]
     assert isinstance(tool, WebSearchTool)
     assert tool.user_location is not None
     assert tool.user_location.get('city') == 'Berlin'
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: Any):
+    """Verify that statically-set tool_choice='required' or list[str] raises UserError in agent.run().
+
+    These settings exclude output tools and would force a tool call on every step, preventing
+    the agent from producing a final response. Users should use ToolOrOutput, set tool_choice
+    dynamically via a capability that returns a callable from get_model_settings(), or use
+    pydantic_ai.direct.model_request for single-shot calls.
+    """
+    model = TestModel()
+    agent = Agent(model)
+
+    settings: ModelSettings = {'tool_choice': tool_choice}
+    with pytest.raises(UserError, match='prevents the agent from producing a final response'):
+        await agent.run('Hello', model_settings=settings)
 
 
 async def test_central_content_filter_handling():
@@ -8551,6 +9946,316 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_agent_allows_none_output_empty_response():
+    """Test that Agent(output_type=str | None) succeeds on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_after_tool():
+    """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
+    call_count = 0
+
+    async def tool_then_empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=tool_then_empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_called():
+    """Test that output validators are called when returning None on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    validator_called = False
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], output: str | None) -> str | None:
+        nonlocal validator_called
+        validator_called = True
+        assert output is None
+        return output
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_retry():
+    """Test that output validator raising ModelRetry triggers a retry when output is None."""
+
+    async def model_then_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[])
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    model = FunctionModel(function=model_then_text)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+        if output is None:
+            raise ModelRetry('None not acceptable, please respond')
+        return output
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='None not acceptable, please respond',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello')],
+                usage=RequestUsage(input_tokens=65, output_tokens=1),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_still_fails_if_none_not_allowed():
+    """Test that Agent(output_type=str) still fails on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        await agent.run('hello')
+
+
+def test_agent_output_type_bare_none_error():
+    """Test that Agent(output_type=None) raises a clear error."""
+    with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
+        Agent('test', output_type=None)  # type: ignore[arg-type]
+
+
+async def test_agent_allows_none_output_tool_mode_none_via_tool():
+    """Test that `int | None` exposes a separate `final_result_NoneType` tool the model can call."""
+    seen_tool_names: list[str] = []
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        seen_tool_names[:] = [t.name for t in info.output_tools]
+        none_tool = next(t for t in info.output_tools if 'NoneType' in t.name)
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=none_tool.name, args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_none_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+    assert seen_tool_names == snapshot(['final_result_int', 'final_result_NoneType'])
+
+
+async def test_agent_allows_none_output_tool_mode_int_via_tool():
+    """Test that `int | None` still resolves the int branch via the int tool."""
+
+    async def call_int_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        int_tool = next(t for t in info.output_tools if t.name == 'final_result_int')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=int_tool.name, args={'response': 42}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_int_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output == 42
+
+
+async def test_agent_allows_none_output_tool_mode_empty_response():
+    """Test that `int | None` still falls back to `None` on an empty response."""
+
+    async def empty(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    agent = Agent(FunctionModel(function=empty), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_native_structured_none():
+    """Test that `NativeOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def native_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=native_none), output_type=NativeOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_prompted_structured_none():
+    """Test that `PromptedOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def prompted_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=prompted_none), output_type=PromptedOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_tool_output_union_null():
+    """Test that `ToolOutput(int | None)` accepts a JSON `null` via the tool's `anyOf` schema."""
+
+    async def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_explicit_none_tool():
+    """Test that `[ToolOutput(int), ToolOutput(type(None))]` surfaces one tool per type."""
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result_NoneType', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(
+        FunctionModel(function=call_none_tool),
+        output_type=[ToolOutput(int), ToolOutput(type(None))],
+    )
+    result = await agent.run('hello')
+    assert result.output is None
 
 
 # region Dynamic model_settings
@@ -8793,6 +10498,757 @@ class TestOverrideWithModelSettings:
 
         result = agent.run_sync('Hello')
         assert result.output == 'max_tokens=100 temperature=None'
+
+
+def test_output_validator_retry_consistency_across_paths():
+    """Output validators see global retry info, matching the text-output path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
+    the text path sets ctx.retry/max_retries to the global output retry counter,
+    but the tool-output path was using the per-tool counter, causing inconsistent
+    ctx.retry and ctx.max_retries values in @agent.output_validator.
+
+    Using `ToolOutput(max_retries=5)` with `retries={'output': 2}` exposes the bug:
+    without the fix, the validator would see max_retries=5 (per-tool value)
+    instead of max_retries=2 (global output retry budget, matching the text path).
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo, max_retries=5),
+        retries={'output': 2},
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == 2:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [2, 2, 2]
+
+
+def test_output_validator_exceeds_output_retries():
+    """Output validator that never succeeds should respect output_retries limit.
+
+    When the output_validator always raises ModelRetry, the agent should stop
+    after output_retries attempts. The per-tool limit from ToolManager enforces
+    this via output_retries flowing into ToolsetTool.max_retries.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        retries={'output': 2},
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(2\\)'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
+async def test_concurrent_runs_output_retry_isolation():
+    """Concurrent runs on the same agent must not share output retry state.
+
+    OutputToolset.for_run_step returns a shallow copy so each run gets
+    isolated _output_retry_count values across await points.
+    """
+    retries_by_run: dict[str, list[int]] = {'fast': [], 'slow': []}
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        retries={'output': 3},
+    )
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        # Use the prompt to identify which run this is
+        run_id = 'slow' if 'slow' in (ctx.prompt or '') else 'fast'
+        retries_by_run[run_id].append(ctx.retry)
+        if ctx.retry < 2:
+            if run_id == 'slow':
+                await asyncio.sleep(0.05)
+            raise ModelRetry(f'{run_id} retry {ctx.retry}')
+        return o
+
+    result_fast, result_slow = await asyncio.gather(
+        agent.run('fast'),
+        agent.run('slow'),
+    )
+
+    assert isinstance(result_fast.output, Foo)
+    assert isinstance(result_slow.output, Foo)
+    assert retries_by_run['fast'] == [0, 1, 2]
+    assert retries_by_run['slow'] == [0, 1, 2]
+
+
+def test_output_validator_retry_counter_with_tool_switch():
+    """Global retry counter tracks across output tool switches.
+
+    When the model switches from one output tool to another, the global
+    retry counter (visible to output validators via ctx.retry) keeps
+    incrementing. Each tool's per-tool counter is independent.
+    """
+    validator_retries: list[int] = []
+    validator_max_retries: list[int] = []
+
+    def output_a(value: str) -> str:
+        return value
+
+    def output_b(value: str) -> str:
+        return value
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        tool_names: dict[str, str] = {}
+        tool_names.update({t.name: t.name for t in info.output_tools})
+
+        name_a = next(n for n in tool_names if 'output_a' in n)
+        name_b = next(n for n in tool_names if 'output_b' in n)
+
+        call_count += 1
+        # First call: output_b (will fail validation), second+: output_a
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(name_b, '{"value": "x"}')])
+        return ModelResponse(parts=[ToolCallPart(name_a, '{"value": "hello"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(output_a, max_retries=3),
+            ToolOutput(output_b, max_retries=1),
+        ],
+        retries={'tools': 0, 'output': 0},
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: str) -> str:
+        validator_retries.append(ctx.retry)
+        validator_max_retries.append(ctx.max_retries)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'hello'
+
+    # Global retry counter increments across tool switches
+    assert validator_retries == [0, 1, 2]
+    # max_retries reflects the agent-level default (0) since output_retries not set
+    assert validator_max_retries == [0, 0, 0]
+
+
+def test_output_tool_validation_vs_execution_retry_counting():
+    """Both validation failures and execution failures increment the global retry counter.
+
+    Validation failure (bad args from model) and execution failure (ModelRetry from
+    output function) both go through process_tool_calls and should both increment
+    ctx.state.output_retries_used for output validator context tracking.
+    """
+    validator_retries: list[int] = []
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        call_count += 1
+        tool_name = info.output_tools[0].name
+        # First call: send invalid args (validation failure path)
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"bad_field": 1}')])
+        # Subsequent calls: send valid args (execution path)
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        retries={'output': 5},
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        validator_retries.append(ctx.retry)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # retry 0: never reached validator (validation failure from bad args)
+    # retry 1: reached validator, raised ModelRetry (execution failure)
+    # retry 2: reached validator, succeeded
+    assert validator_retries == [1, 2]
+
+
+@dataclass(kw_only=True)
+class OutputRetryBudgetCase:
+    """One row in the output-retry budget precedence matrix.
+
+    `init`/`override`/`run` flow into `Agent(...)`, `agent.override(...)`, and
+    `agent.run_sync(...)` respectively. The test asserts the effective budget
+    by exhausting it with an always-retrying output_validator and confirming
+    the validator saw exactly `range(expected_budget + 1)` invocations.
+
+    All cases run on the tool-output path; text-path parity has its own test
+    (`test_text_path_honors_output_retry_budget`) below.
+    """
+
+    id: str
+    init: dict[str, Any]
+    override: dict[str, Any] | None
+    run: dict[str, Any]
+    expected_budget: int
+    expects_deprecation_warning: bool
+
+
+OUTPUT_RETRY_BUDGET_CASES = [
+    OutputRetryBudgetCase(
+        id='run-arg-caps-agent-default',
+        init={'retries': {'output': 5}},
+        override=None,
+        run={'retries': 2},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='run-arg-beats-spec',
+        init={'retries': {'output': 5}},
+        override=None,
+        run={'retries': 2, 'spec': {'retries': {'output': 4}}},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='spec-only-beats-agent-default',
+        init={'retries': {'output': 5}},
+        override=None,
+        run={'spec': {'retries': {'output': 2}}},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-kwarg-caps-agent-default',
+        init={'retries': {'output': 5}},
+        override={'retries': 2},
+        run={},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-spec-honored',
+        init={'retries': {'output': 5}},
+        override={'spec': {'retries': {'output': 2}}},
+        run={},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-beats-run-arg',
+        init={'retries': {'output': 5}},
+        override={'retries': 1},
+        run={'retries': 10},
+        expected_budget=1,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='int-retries-sets-both',
+        init={'retries': 5},
+        override=None,
+        run={},
+        expected_budget=5,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='dict-tools-only-keeps-output-default',
+        init={'retries': {'tools': 5}},
+        override=None,
+        run={},
+        expected_budget=1,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='dict-sets-both-independently',
+        init={'retries': {'tools': 3, 'output': 5}},
+        override=None,
+        run={},
+        expected_budget=5,
+        expects_deprecation_warning=False,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', OUTPUT_RETRY_BUDGET_CASES, ids=lambda c: c.id)
+def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
+    """Effective output-retry budget = override > run arg > spec > agent default.
+
+    Exhausts the resolved budget with an always-retrying output_validator and asserts the
+    validator saw `range(expected_budget + 1)` invocations and the exhaustion error reports
+    the expected budget.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    expected_msg = rf'Exceeded maximum output retries \({case.expected_budget}\)'
+    override_ctx = agent.override(**case.override) if case.override is not None else nullcontext()
+
+    with override_ctx:
+        with pytest.raises(UnexpectedModelBehavior, match=expected_msg):
+            agent.run_sync('Hello', **case.run)
+
+    assert retries_log == list(range(case.expected_budget + 1))
+
+
+def test_text_path_honors_output_retry_budget():
+    """Parity check: the text-output path enforces the run-level output retry override too.
+
+    The matrix above runs on the tool-output path; this test verifies the same precedence applies
+    when the model returns a `TextPart` and the agent's `output_type` is `str`.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')])
+
+    agent = Agent(FunctionModel(return_model), output_type=str, retries={'output': 5})
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: str) -> str:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', retries={'output': 2})
+
+    assert retries_log == [0, 1, 2]
+
+
+def test_run_level_output_retry_override_without_validators():
+    """Run-level output retry override takes effect and isolates from the shared agent-level toolset
+    even when no output_validator is registered.
+
+    Exercises the shared-toolset clone branch: with `output_schema == self._output_schema` and no
+    output_validators registered, `Agent.iter` must clone the shared `self._output_toolset` before
+    mutating `max_retries` so the agent-level toolset retains its original budget for subsequent runs.
+    Enforcement runs through `ToolManager._check_max_retries` (per-tool), not `consume_output_retry`.
+    """
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        # Always return invalid args → output function raises ModelRetry via validation path
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries={'output': 10})
+    shared_toolset = agent._output_toolset  # pyright: ignore[reportPrivateUsage]
+    assert shared_toolset is not None
+    assert shared_toolset.max_retries == 10
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', retries={'output': 2})
+
+    # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
+    assert call_count == 3
+    # The shared agent-level toolset's `max_retries` was preserved — confirms the run cloned before mutating.
+    assert shared_toolset.max_retries == 10
+
+
+def test_from_spec_preserves_zero_retry_budgets():
+    output_call_count = 0
+
+    def output_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal output_call_count
+        output_call_count += 1
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    output_agent = Agent.from_spec(
+        {'model': 'test', 'retries': {'output': 0}},
+        model=FunctionModel(output_model),
+        output_type=ToolOutput(Foo),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        output_agent.run_sync('Hello')
+
+    assert output_call_count == 1
+
+    tool_call_count = 0
+
+    def tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal tool_call_count
+        tool_call_count += 1
+        if tool_call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('plain_tool', '{"bad_field": 1}')])
+        if tool_call_count == 2:
+            return ModelResponse(parts=[ToolCallPart('plain_tool', '{"x": 1}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    tool_agent = Agent.from_spec(
+        {'model': 'test', 'retries': {'tools': 0}},
+        model=FunctionModel(tool_model),
+    )
+
+    @tool_agent.tool_plain
+    def plain_tool(x: int) -> str:
+        return str(x)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'plain_tool' exceeded max retries count of 0"):
+        tool_agent.run_sync('Hello')
+
+    result = tool_agent.run_sync('Hello again')
+    assert result.output == 'done'
+    assert tool_call_count == 3
+
+
+def test_run_retries_cannot_override_tool_budget():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError, match=r'Per-run `retries` cannot set tool retries'):
+        agent.run_sync('Hello', retries={'tools': 1})
+
+
+def test_override_retries_cannot_override_tool_budget():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError, match=r'agent\.override\(retries=\.\.\.\)` cannot set tool retries'):
+        with agent.override(retries={'tools': 1}):
+            pass
+
+
+def test_wrapper_override_forwards_retries():
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries={'output': 3})
+    wrapped = WrapperAgent(agent)
+
+    with wrapped.override(retries=0):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+            wrapped.run_sync('Hello')
+
+    assert call_count == 1
+
+
+@pytest.mark.parametrize(
+    'kwargs',
+    [
+        {},
+        {'retries': 5},
+        {'retries': {'tools': 5}},
+        {'retries': {'output': 5}},
+        {'retries': {'tools': 5, 'output': 3}},
+    ],
+    ids=[
+        'no-kwargs',
+        'int-retries',
+        'dict-tools-only',
+        'dict-output-only',
+        'dict-both',
+    ],
+)
+def test_agent_init_retries(kwargs: dict[str, Any]):
+    """The `retries: int | AgentRetries` API accepts shared and per-category budgets."""
+    Agent('test', **kwargs)
+
+
+def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
+    """Unknown tool calls should not increment the global retry counter.
+
+    When the model returns both an unknown tool and a valid tool in the same
+    response, the unknown tool is handled via per-tool retries (ModelRetry)
+    downstream. The global retry counter should only reflect output validation
+    retries, not unknown-tool retries, so valid tools keep working.
+
+    We set retries=2 (per-tool max for unknown tools) and retries={'output': 1}
+    (global max for output validation) to isolate the bug: per-tool retries
+    allow 2 rounds of the unknown tool, but the old code's global increment
+    would exhaust the output retry budget after just 2 rounds.
+    """
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('nonexistent_tool', '{}'),
+                    ToolCallPart('valid_tool', '{"x": 1}'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), retries={'tools': 2, 'output': 1})
+
+    @agent.tool_plain
+    def valid_tool(x: int) -> str:
+        return f'result={x}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert call_count == 3
+
+
+# endregion
+
+
+# region Image output validators
+
+
+async def test_image_output_validators_run():
+    """Test that output validators are called and can modify image output."""
+
+    def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        return BinaryImage(data=b'modified', media_type=output.media_type)
+
+    result = await agent.run('Give me an image')
+    assert isinstance(result.output, BinaryImage)
+    assert result.output.data == b'modified', 'validator should be able to modify the output'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                usage=RequestUsage(input_tokens=54, output_tokens=8),
+                model_name='function:return_image:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_image_output_validator_model_retry():
+    """Test that ModelRetry from image validator raises UnexpectedModelBehavior in streaming."""
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:  # pragma: no cover
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        raise ModelRetry('image validation failed')
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match='Output validation failed during streaming, and retries are not supported',
+    ):
+        async with agent.run_stream('Give me an image') as stream:
+            await stream.get_output()
+
+
+async def test_image_output_validators_run_stream():
+    """Test that output validators are called and can modify image output during streaming."""
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'original', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:  # pragma: no cover
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        return BinaryImage(data=b'modified', media_type=output.media_type)
+
+    async with agent.run_stream('Give me an image') as stream:
+        result = await stream.get_output()
+
+    assert isinstance(result, BinaryImage)
+    assert result.data == b'modified', 'validator should be able to modify the output'
+    assert stream.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                model_name='image-model',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                provider_url='https://test.example.com',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion

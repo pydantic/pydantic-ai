@@ -83,8 +83,12 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
+            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:
+            result['gen_ai.usage.cache_read.input_tokens'] = self.cache_read_tokens
+            # For backwards compat
             details['cache_read_tokens'] = self.cache_read_tokens
         if self.input_audio_tokens:
             details['input_audio_tokens'] = self.input_audio_tokens
@@ -277,17 +281,17 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` ahead of time.
 
-    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
+    and is disabled by default.
 
     Supported by:
 
     - Anthropic
     - Google
     - Bedrock Converse
-
-    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    - OpenAI Responses
     """
 
     @property

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import base64
-from asyncio import Lock
+import functools
 from contextlib import AsyncExitStack
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import anyio
 from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
@@ -33,18 +34,22 @@ try:
         TextContent,
         TextResourceContents,
     )
+    from typing_extensions import deprecated
 
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
     raise ImportError(
-        'Please install the `fastmcp` package to use the FastMCP server, '
-        'you can use the `fastmcp` optional group — `pip install "pydantic-ai-slim[fastmcp]"`'
+        'Please install the fastmcp client to use `FastMCPToolset` — '
+        '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
+        'or install the full `fastmcp` package directly.'
     ) from _import_error
 
 
 if TYPE_CHECKING:
     from fastmcp.client.client import CallToolResult
+
+    from pydantic_ai.mcp import ProcessToolCallback
 
 
 FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
@@ -54,13 +59,26 @@ ToolErrorBehavior = Literal['model_retry', 'error']
 UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
+@deprecated(
+    '`FastMCPToolset` is deprecated and will be removed in v2. '
+    'Use `pydantic_ai.mcp.MCPToolset` instead — it is also built on the FastMCP `Client` and accepts '
+    'a pre-built `fastmcp.Client` or any input FastMCP can build a transport from, while adding full '
+    'parity with the legacy `MCPServer*` classes (caching, resource methods, sampling shortcuts, '
+    'OAuth auth). See the migration guide in the v2 release notes.'
+)
 @dataclass(init=False)
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
-    """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server.
+    """Toolset backed by a FastMCP `Client` for calling tools on a local or remote MCP server.
 
-    The Toolset can accept a FastMCP Client, a FastMCP Transport, or any other object which a FastMCP Transport can be created from.
+    Accepts a pre-built FastMCP `Client`, a FastMCP `ClientTransport`, or any other input that
+    FastMCP can build a transport from (a URL, a script path, etc.). See
+    [the FastMCP transports docs](https://gofastmcp.com/clients/transports) for the full list.
 
-    See https://gofastmcp.com/clients/transports for a full list of transports available.
+    !!! warning "Deprecated"
+        Use [`MCPToolset`][pydantic_ai.mcp.MCPToolset] instead — it accepts the same input shapes
+        (including a FastMCP `Client`), adds full parity with the legacy `MCPServer*` classes
+        (caching, resource methods, sampling shortcuts, OAuth auth), and runs on the same FastMCP
+        client under the hood.
     """
 
     client: Client[Any]
@@ -71,8 +89,11 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     tool_error_behavior: Literal['model_retry', 'error']
     """The behavior to take when a tool error occurs."""
 
-    max_retries: int
-    """The maximum number of retries to attempt if a tool call fails."""
+    max_retries: int | None
+    """The maximum number of retries to attempt if a tool call fails.
+
+    If `None`, inherits the agent's default retry count at runtime.
+    """
 
     include_instructions: bool
     """Whether to include the server's instructions in the agent's instructions.
@@ -80,9 +101,26 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     Defaults to `False` for backward compatibility.
     """
 
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    process_tool_call: ProcessToolCallback | None
+    """Hook to customize tool calling and optionally pass extra metadata."""
+
     _id: str | None
 
     _instructions: str | None
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
 
     def __init__(
         self,
@@ -96,10 +134,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         | dict[str, Any]
         | str,
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
+        process_tool_call: ProcessToolCallback | None = None,
     ) -> None:
         if isinstance(client, Client):
             self.client = client
@@ -110,8 +150,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.include_instructions = include_instructions
+        self.include_return_schema = include_return_schema
+        self.process_tool_call = process_tool_call
 
-        self._enter_lock: Lock = Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
 
@@ -151,32 +192,39 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         return None
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
         """Return the FastMCP server's instructions for how to use its tools.
 
         If [`include_instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.include_instructions] is `True`, returns
         the [`instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.instructions] sent by the FastMCP server during
         initialization. Otherwise, returns `None`.
 
+        Instructions from external servers are marked as dynamic since they may change between connections.
+
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if `include_instructions` is enabled, otherwise `None`.
+            An `InstructionPart` with the server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
         if not self.include_instructions:
             return None
         try:
-            return self.instructions
+            instructions = self.instructions
         except AttributeError:
             # Server not yet initialized — return None rather than propagating.
             return None
+        if instructions is None:
+            return None
+        return messages.InstructionPart(content=instructions, dynamic=True)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         async with self:
             return {
-                mcp_tool.name: self.tool_for_tool_def(
-                    ToolDefinition(
+                mcp_tool.name: ToolsetTool[AgentDepsT](
+                    toolset=self,
+                    tool_def=ToolDefinition(
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         parameters_json_schema=mcp_tool.inputSchema,
@@ -185,35 +233,72 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
-                    )
+                        return_schema=mcp_tool.outputSchema or None,
+                        include_return_schema=self.include_return_schema,
+                    ),
+                    max_retries=max_retries,
+                    args_validator=TOOL_SCHEMA_VALIDATOR,
                 )
                 for mcp_tool in await self.client.list_tools()
             }
 
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    async def direct_call_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
-        async with self:
+        """Call a tool on the server.
+
+        Args:
+            name: The name of the tool to call.
+            args: The arguments to pass to the tool.
+            metadata: Request-level metadata (optional)
+
+        Returns:
+            The result of the tool call.
+
+        Raises:
+            ModelRetry: If the tool call fails.
+        """
+        async with self:  # Ensure server is running
             try:
-                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=tool_args)
+                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'model_retry':
                     raise ModelRetry(message=str(e)) from e
                 else:
                     raise e
 
-        # If we have structured content, return that
-        if call_tool_result.structured_content:
-            return call_tool_result.structured_content
+        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+        if (structured := call_tool_result.structured_content) and all(
+            isinstance(part, TextContent) for part in call_tool_result.content
+        ):
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
 
-        # Otherwise, return the content
         return _map_fastmcp_tool_results(parts=call_tool_result.content)
+
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+    ) -> Any:
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
+        else:
+            return await self.direct_call_tool(name, tool_args)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
             tool_def=tool_def,
             toolset=self,
-            max_retries=self.max_retries,
+            max_retries=self.max_retries if self.max_retries is not None else 1,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

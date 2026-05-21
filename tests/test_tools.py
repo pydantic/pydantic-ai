@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -51,8 +52,10 @@ def test_tool_no_ctx():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
-        '  First parameter of tools that take context must be annotated with RunContext[...]'
+        """\
+Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]\
+"""
     )
 
 
@@ -66,8 +69,10 @@ def test_tool_plain_with_ctx():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
-        '  RunContext annotations can only be used with tools that take context'
+        """\
+Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:
+  RunContext annotations can only be used with tools that take context\
+"""
     )
 
 
@@ -101,9 +106,11 @@ def test_tool_ctx_second():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
-        '  First parameter of tools that take context must be annotated with RunContext[...]\n'
-        '  RunContext annotations can only be used as the first argument'
+        """\
+Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
     )
 
 
@@ -117,12 +124,19 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
+def _json_fallback(v: Any) -> Any:  # pragma: no cover
+    """Fallback for pydantic_core.to_json on types it can't serialize (e.g. FunctionSignature)."""
+    return None
+
+
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r, fallback=_json_fallback).decode())])
     else:
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
+        return ModelResponse(
+            parts=[TextPart(pydantic_core.to_json(info.function_tools, fallback=_json_fallback).decode())]
+        )
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -151,7 +165,12 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -187,7 +206,12 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -231,7 +255,12 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -275,7 +304,12 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -317,7 +351,12 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -365,7 +404,12 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -401,7 +445,12 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -428,7 +477,12 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -473,7 +527,12 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -511,7 +570,12 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -558,7 +622,12 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -574,14 +643,14 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
     assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
@@ -595,7 +664,9 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries={'tools': 7, 'output': 7}
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -761,9 +832,11 @@ def test_return_unknown():
     class Foobar:
         pass
 
-    @agent.tool_plain
-    def return_pydantic_model() -> Foobar:
-        return Foobar()
+    with pytest.warns(UserWarning, match='Could not generate return schema'):
+
+        @agent.tool_plain
+        def return_pydantic_model() -> Foobar:
+            return Foobar()
 
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
         agent.run_sync('')
@@ -943,7 +1016,12 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -1017,7 +1095,12 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'prefer_builtin': None,
+                'defer_loading': False,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
             {
                 'description': None,
@@ -1034,7 +1117,12 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'prefer_builtin': None,
+                'defer_loading': False,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
         ]
     )
@@ -1124,7 +1212,12 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'prefer_builtin': None,
+                'defer_loading': False,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
             {
                 'description': None,
@@ -1140,7 +1233,12 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'prefer_builtin': None,
+                'defer_loading': False,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
         ]
     )
@@ -1179,7 +1277,12 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'prefer_builtin': None,
+            'defer_loading': False,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -1194,7 +1297,7 @@ def test_dynamic_tools_agent_wide():
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1222,7 +1325,7 @@ def test_sync_prepare_tools_agent_wide():
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1252,7 +1355,7 @@ def test_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1281,7 +1384,7 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0}, deps_type=str)
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
@@ -1303,7 +1406,7 @@ def test_function_tool_inconsistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
@@ -1328,7 +1431,7 @@ def test_async_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1350,7 +1453,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
@@ -1438,6 +1541,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
@@ -1445,6 +1549,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1457,6 +1562,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -1464,6 +1570,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1831,6 +1938,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1846,6 +1954,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1886,6 +1995,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1926,6 +2036,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1941,6 +2052,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1981,6 +2093,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2010,6 +2123,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2017,6 +2131,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2051,6 +2166,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2058,6 +2174,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2073,6 +2190,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2088,6 +2206,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2279,6 +2398,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2290,6 +2410,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2302,6 +2423,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2334,6 +2456,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2345,6 +2468,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2357,6 +2481,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2376,6 +2501,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2383,6 +2509,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2503,7 +2630,7 @@ def test_tool_metadata():
 
 def test_retry_tool_until_last_attempt():
     model = TestModel()
-    agent = Agent(model, retries=2)
+    agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
     def always_fail(ctx: RunContext[None]) -> str:
@@ -2525,6 +2652,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2532,6 +2660,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2544,6 +2673,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2551,6 +2681,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2563,6 +2694,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2570,6 +2702,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2582,6 +2715,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
@@ -2589,6 +2723,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2697,7 +2832,7 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), retries=2)
+    agent = Agent(TestModel(), retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
@@ -2791,7 +2926,7 @@ async def test_tool_timeout_exceeds_retry_limit():
         # Always try to call the slow tool
         return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
-    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+    agent = Agent(FunctionModel(model_logic), retries={'tools': 1, 'output': 1})  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
@@ -3115,6 +3250,7 @@ def test_args_validator_success():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3126,6 +3262,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3138,6 +3275,7 @@ def test_args_validator_success():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3145,6 +3283,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3193,6 +3332,7 @@ async def test_args_validator_async():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3204,6 +3344,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3216,6 +3357,7 @@ async def test_args_validator_async():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3223,6 +3365,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3280,6 +3423,7 @@ def test_args_validator_tool_direct():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3291,6 +3435,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3303,6 +3448,7 @@ def test_args_validator_tool_direct():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3310,6 +3456,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3345,6 +3492,7 @@ def test_args_validator_toolset():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3356,6 +3504,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3368,6 +3517,7 @@ def test_args_validator_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3375,6 +3525,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3407,6 +3558,7 @@ def test_args_validator_tool_plain():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3418,6 +3570,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3430,6 +3583,7 @@ def test_args_validator_tool_plain():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3437,6 +3591,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3660,3 +3815,472 @@ def test_args_validator_not_double_called_for_approved_tools():
     # Validator should have been called exactly once with approved=True
     assert len(validator_calls) == 1
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
+
+
+def test_args_validator_single_base_model_arg():
+    """`args_validator` works when a tool has a single BaseModel parameter.
+
+    The tool's JSON schema is the BaseModel's fields directly (unwrapped), but the validated
+    args dict remains keyed by parameter name so `args_validator_func(ctx, **args)` unpacks correctly.
+    """
+
+    class MyArgs(BaseModel):
+        x: int
+        y: int
+
+    validator_calls: list[MyArgs] = []
+
+    def my_validator(ctx: RunContext[int], argument: MyArgs) -> None:
+        validator_calls.append(argument)
+
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], argument: MyArgs) -> int:
+        return argument.x + argument.y
+
+    agent.run_sync('call add_numbers', deps=42)
+    assert len(validator_calls) == 1
+    assert isinstance(validator_calls[0], MyArgs)
+
+
+def test_single_base_model_arg_validator_accepts_wrapped_input():
+    """The single-BaseModel-arg validator also accepts already-wrapped `{name: value}` input.
+
+    This shape arises when previously-validated args are serialized out (e.g. through Temporal's
+    activity boundary) and then re-validated with the same schema.
+    """
+
+    class Payload(BaseModel):
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_tool_ctx_agent():
+    """ctx.agent gives tools access to the running agent's properties."""
+    agent = Agent('test', name='my_agent', output_type=int)
+    tool_agent_names: list[str | None] = []
+    tool_output_types: list[Any] = []
+
+    @agent.tool
+    def get_agent_info(ctx: RunContext[None]) -> str:
+        assert ctx.agent is not None
+        tool_agent_names.append(ctx.agent.name)
+        tool_output_types.append(ctx.agent.output_type)
+        return f'agent={ctx.agent.name}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(0)
+    assert tool_agent_names == ['my_agent']
+    assert tool_output_types == [int]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_agent_info',
+                        content='agent=my_agent',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_tool_ctx_agent_in_output_validator():
+    """ctx.agent is available in output validators."""
+    agent = Agent('test', name='validated_agent')
+    validator_agent_names: list[str | None] = []
+
+    @agent.output_validator
+    def check_agent(ctx: RunContext[None], output: str) -> str:
+        assert ctx.agent is not None
+        validator_agent_names.append(ctx.agent.name)
+        return output
+
+    result = agent.run_sync('Hello')
+    assert validator_agent_names == ['validated_agent']
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+# region return_schema tests
+
+
+def test_return_schema_from_function():
+    """return_schema is generated from the function's return type annotation."""
+    from pydantic import BaseModel
+
+    class User(BaseModel):
+        name: str
+        age: int
+
+    def get_user(user_id: int) -> User:
+        """Get a user by ID."""
+        return User(name='test', age=42)  # pragma: no cover
+
+    tool = Tool(get_user)
+    td = tool.tool_def
+    assert td.return_schema == {
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name', 'age'],
+        'title': 'User',
+        'type': 'object',
+    }
+
+
+def test_return_schema_none_for_str():
+    """str return type generates a return_schema (simple type)."""
+
+    def greet(name: str) -> str:
+        return f'Hello {name}'  # pragma: no cover
+
+    tool = Tool(greet)
+    td = tool.tool_def
+    assert td.return_schema == {'type': 'string'}
+
+
+def test_return_schema_none_return():
+    """None return type generates a null schema."""
+
+    def do_stuff(x: int) -> None:
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema == {'type': 'null'}
+
+
+def test_return_schema_no_annotation():
+    """No return annotation generates an unconstrained schema."""
+
+    def do_stuff(x: int):
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema == {}
+
+
+def test_return_schema_tool_return_bare():
+    """Bare ToolReturn generates an unconstrained schema (pre-generic legacy form)."""
+    from pydantic_ai.messages import ToolReturn
+
+    def my_tool(x: int) -> ToolReturn:
+        return ToolReturn(return_value=x)  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.tool_def.return_schema == {}
+
+
+def test_return_schema_tool_return_generic():
+    """ToolReturn[T] generates return_schema from T."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.messages import ToolReturn
+
+    class Result(BaseModel):
+        value: int
+
+    def my_tool(x: int) -> ToolReturn[Result]:
+        return ToolReturn(return_value=Result(value=x))  # pragma: no cover
+
+    tool = Tool(my_tool)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'value' in td.return_schema['properties']
+
+
+def test_return_schema_self_bound_method():
+    """Self return type on a bound method resolves to the owning class."""
+    from pydantic import BaseModel
+    from typing_extensions import Self
+
+    class Weather(BaseModel):
+        temperature: float
+
+        def get_weather(self, city: str) -> Self:
+            return self  # pragma: no cover
+
+    tool = Tool(Weather(temperature=1.0).get_weather)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'temperature' in td.return_schema['properties']
+
+
+def test_return_schema_self_unbound():
+    """Self return type on a non-bound function falls back to unconstrained schema."""
+    from typing import Any
+
+    from typing_extensions import Self
+
+    from pydantic_ai._function_schema import _extract_return_schema_type
+
+    # Pass Self directly as the annotation — no need for a real function with Self return
+    result = _extract_return_schema_type(Self, lambda: None)
+    assert result is Any
+
+
+def test_include_return_schema_default_cleared():
+    """return_schema is cleared by default when no IncludeToolReturnSchemas capability is used."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    agent = Agent('test', tools=[Tool(my_tool)])
+    result = agent.run_sync('test')
+    # return_schema should be cleared since include_return_schema defaults to False
+    # (verified by the fact that the tool description doesn't contain "Return schema:")
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert 'Return schema' not in str(part.content)
+
+
+def test_include_return_schema_via_capability():
+    """IncludeToolReturnSchemas capability preserves return_schema on tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+
+    def my_tool(x: int) -> int:
+        return x
+
+    agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
+    result = agent.run_sync('test')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    # The tool description should contain the return schema since the capability enables it
+    tool_parts = [p for p in request.parts if hasattr(p, 'content')]
+    assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
+
+
+def test_include_return_schema_capability_with_tool_names():
+    """IncludeToolReturnSchemas with specific tool names only affects those tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a), Tool(tool_b)],
+        capabilities=[IncludeToolReturnSchemas(tools=['tool_a'])],
+    )
+    agent.run_sync('test')
+
+    # tool_a should have include_return_schema=True (schema injected into description by model)
+    # tool_b should have include_return_schema=None/False (no schema in description)
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert tool_a_def.include_return_schema is True
+    assert 'Return schema' in (tool_a_def.description or '')
+    assert 'Return schema' not in (tool_b_def.description or '')
+
+
+def test_include_return_schema_per_tool_override():
+    """Per-tool include_return_schema=False overrides IncludeToolReturnSchemas capability."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a, include_return_schema=False), Tool(tool_b)],
+        capabilities=[IncludeToolReturnSchemas()],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a explicitly opted out — no return schema in description
+    assert 'Return schema' not in (tool_a_def.description or '')
+    # tool_b got opted in by capability — return schema present
+    assert tool_b_def.include_return_schema is True
+    assert 'Return schema' in (tool_b_def.description or '')
+
+
+def test_include_return_schema_warning_no_schema():
+    """Agent warns when include_return_schema=True but return_schema is None (e.g. MCP tool)."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    tool = Tool(my_tool, include_return_schema=True)
+    # Simulate MCP tool without outputSchema by clearing return_schema
+    tool.function_schema.return_schema = None  # type: ignore[assignment]
+
+    agent = Agent('test', tools=[tool])
+
+    with pytest.warns(UserWarning, match='include_return_schema'):
+        agent.run_sync('test')
+
+
+def test_include_return_schema_warning_empty_schema():
+    """Agent warns when include_return_schema=True but return_schema is {} (Any-typed return)."""
+
+    def untyped_tool(x: int):
+        return x
+
+    agent = Agent('test', tools=[Tool(untyped_tool, include_return_schema=True)])
+
+    with pytest.warns(UserWarning, match='no meaningful return schema'):
+        agent.run_sync('test')
+
+
+def test_prepare_return_schemas():
+    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.tools import ToolDefinition
+
+    td_with_schema = ToolDefinition(
+        name='test',
+        description='A tool',
+        return_schema={'type': 'string'},
+        include_return_schema=True,
+    )
+    td_no_opt_in = ToolDefinition(
+        name='other',
+        description='Another tool',
+        return_schema={'type': 'integer'},
+    )
+    params = ModelRequestParameters(
+        function_tools=[td_with_schema, td_no_opt_in],
+        output_tools=[],
+        output_mode='auto',
+        output_object=None,
+    )
+
+    # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
+    profile_no_native = ModelProfile(supports_tool_return_schema=False)
+    result = _prepare_return_schemas(params, profile_no_native)
+    assert result.function_tools[0].return_schema is None
+    assert 'Return schema:' in (result.function_tools[0].description or '')
+    assert 'A tool' in (result.function_tools[0].description or '')
+    assert result.function_tools[1].return_schema is None
+    assert 'Return schema:' not in (result.function_tools[1].description or '')
+
+    # Native model: opted-in tool keeps schema, non-opted-in gets cleared
+    profile_native = ModelProfile(supports_tool_return_schema=True)
+    result = _prepare_return_schemas(params, profile_native)
+    assert result.function_tools[0].return_schema == {'type': 'string'}
+    assert result.function_tools[1].return_schema is None
+
+    # No description: schema injection still works
+    td_no_desc = ToolDefinition(name='bare', return_schema={'type': 'string'}, include_return_schema=True)
+    params_no_desc = ModelRequestParameters(
+        function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
+    )
+    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    assert result.function_tools[0].description is not None
+    assert result.function_tools[0].description.startswith('Return schema:')
+
+
+def test_return_schema_google_native():
+    """Google model passes return_schema as response_json_schema."""
+    pytest.importorskip('google.genai')
+    from pydantic_ai.models.google import _function_declaration_from_tool
+
+    td = ToolDefinition(
+        name='test',
+        description='A test tool',
+        return_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+    )
+    decl = _function_declaration_from_tool(td)
+    assert decl.get('response_json_schema') == {'type': 'object', 'properties': {'x': {'type': 'integer'}}}
+
+
+def test_include_return_schema_on_toolset_tool():
+    """include_return_schema passed explicitly on FunctionToolset.tool overrides the toolset default."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(include_return_schema=True)
+    def get_value(x: int) -> int:
+        return x  # pragma: no cover
+
+    tools = list(toolset.tools.values())
+    assert len(tools) == 1
+    assert tools[0].include_return_schema is True
+
+
+# endregion

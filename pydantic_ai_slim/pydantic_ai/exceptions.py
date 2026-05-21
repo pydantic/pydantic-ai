@@ -236,7 +236,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when an model provider response has a status code of 4xx or 5xx."""
+    """Raised when a model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""

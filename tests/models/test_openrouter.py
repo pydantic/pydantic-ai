@@ -27,9 +27,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -206,7 +206,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
     assert tool_call_part.tool_name == 'divide'
     assert tool_call_part.args == snapshot('{"numerator": 123, "denominator": 456, "on_inf": "infinity"}')
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') is None
@@ -254,7 +254,7 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     )
     messages.append(await model_request(model, messages))
 
-    openai_messages = await model._map_messages(messages, None)  # type: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
     assert assistant_message['role'] == 'assistant'
@@ -278,6 +278,47 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert 'data' in reasoning_encrypted
     assert reasoning_encrypted['type'] == 'reasoning.encrypted'
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
+
+
+async def test_openrouter_thinking_only_response_mapping() -> None:
+    """A `ModelResponse` containing only OpenRouter `ThinkingPart`s still produces an assistant
+    message carrying `reasoning_details`, even though the base class would skip emitting any
+    message for an otherwise-empty response.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='thinking summary text',
+                    provider_name='openrouter',
+                    provider_details={
+                        'type': 'reasoning.summary',
+                        'format': 'openai-responses-v1',
+                    },
+                )
+            ],
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up?')]),
+    ]
+
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assistant_message = mapped[1]
+    assert assistant_message['role'] == 'assistant'
+    assert assistant_message.get('content') is None
+    assert assistant_message['reasoning_details'] == [  # type: ignore[reportGeneralTypeIssues]
+        {
+            'type': 'reasoning.summary',
+            'id': None,
+            'format': 'openai-responses-v1',
+            'index': None,
+            'summary': 'thinking summary text',
+        }
+    ]
 
 
 async def test_openrouter_video_url_mapping() -> None:
@@ -459,7 +500,7 @@ async def test_openrouter_binary_content_video_public_api(
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
@@ -470,11 +511,11 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
 
     result = await agent.run('Tell me about Venus')
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
     )
 
@@ -482,7 +523,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Mars', model_settings=settings)
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
@@ -565,7 +606,7 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
     user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
     response = await model_request(model, [user_message])
 
-    mapped_messages = await model._map_messages([user_message, response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([user_message, response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert len(mapped_messages) == 2
     assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
@@ -622,7 +663,7 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     assert tool_call_part.tool_name == 'find_education_content'
     assert tool_call_part.args == snapshot(None)
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') == snapshot("I'll search for education content for you.")
@@ -914,9 +955,9 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-async def test_openrouter_supported_builtin_tools() -> None:
+async def test_openrouter_supported_native_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
-    supported = OpenRouterModel.supported_builtin_tools()
+    supported = OpenRouterModel.supported_native_tools()
     assert WebSearchTool in supported
 
 
@@ -927,7 +968,7 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     new_settings, _ = model.prepare_request(None, model_request_parameters)
@@ -960,7 +1001,7 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
@@ -983,7 +1024,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     web_tool = WebSearchTool(search_context_size='medium')
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[non_web_tool, web_tool],
+        native_tools=[non_web_tool, web_tool],
     )
 
     with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):

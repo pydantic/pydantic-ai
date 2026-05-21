@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '638'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What's the weather in Paris?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get time in a timezone
+          name: get_time
+          parameters_json_schema:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '830'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1275
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+              name: get_weather
+            thoughtSignature: Cu4BAXLI2nycYMBX9tXHnlLYlEcsaa/06Vuho7Z/qCWsQp8jJjyWqKood7DCsrcDybpHQAM7VWnMLE2VzHLBw3nGZLKS2EBMF6u+2iV+V2ggk2rdu6YyWRkBSospfisbaJoZLpoz9jo+iZ+CQgiSCuJKkax1i3VWUsEFzebQ2paOlVQSFOhA6bHDq3dyjSIEtQFuBJWkHJLJUhm4GGHFHP9ZNt+C/FChFl2yT64M1zJFi646Sj5Nx44B6s6EcI4Rwo2KjbwTuA1Mbej3CEPo1wmzY3A1Ea9C+ymJQcF6iyDV6cHsB9XspG2zKpID5z+SVQ==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: _8F7ae6qEM2kqtsP8sG2uAI
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 83
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 83
+        thoughtsTokenCount: 50
+        totalTokenCount: 148
+    status:
+      code: 200
+      message: OK
+version: 1

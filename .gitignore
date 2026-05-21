@@ -20,14 +20,20 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+CLAUDE.local.md
+.codex/*
 .agents/*
 .claude/*
-# need to add because of local setup, + waiting on https://github.com/pydantic/pydantic-ai/pull/4211 to merge
-.agents/*
+!.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
+!.claude/skills/testing-skill
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/
+
+# AICA mini-PR diagnostic scratch (see team.pydantic.work)
+local-notes/

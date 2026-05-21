@@ -8,6 +8,7 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
+import dataclasses
 import queue
 import threading
 from collections.abc import Iterator, Sequence
@@ -20,6 +21,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
+from ._deprecated_callable import deprecated_callable_property
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
@@ -31,6 +33,27 @@ __all__ = (
 )
 
 STREAM_INITIALIZATION_TIMEOUT = 30
+
+
+def _ensure_instruction_parts(
+    msgs: Sequence[messages.ModelMessage],
+    model_request_parameters: models.ModelRequestParameters,
+) -> models.ModelRequestParameters:
+    """Populate instruction_parts from message history if not already set.
+
+    When using the direct API, users set `instructions` on `ModelRequest` but may not set
+    `instruction_parts` on `ModelRequestParameters`. This bridges the gap so models that
+    read `instruction_parts` directly still see the instructions.
+    """
+    if model_request_parameters.instruction_parts is not None:
+        return model_request_parameters
+    for message in reversed(msgs):
+        if isinstance(message, messages.ModelRequest) and message.instructions is not None:
+            return dataclasses.replace(
+                model_request_parameters,
+                instruction_parts=[messages.InstructionPart(content=message.instructions)],
+            )
+    return model_request_parameters
 
 
 async def model_request(
@@ -78,10 +101,11 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
+    mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return await model_instance.request(
         list(messages),
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        mrp,
     )
 
 
@@ -196,10 +220,11 @@ def model_request_stream(
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
     model_instance = _prepare_model(model, instrument)
+    mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return model_instance.request_stream(
         list(messages),
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        mrp,
     )
 
 
@@ -376,7 +401,7 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
-    # TODO (v2): Drop in favor of `response` property
+    @deprecated_callable_property('`StreamedResponseSync.get` is deprecated; use the `response` property instead.')
     def get(self) -> messages.ModelResponse:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
@@ -384,12 +409,14 @@ class StreamedResponseSync:
     @property
     def response(self) -> messages.ModelResponse:
         """Get the current state of the response."""
-        return self.get()
+        return self._ensure_stream_ready().get()
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponseSync.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
-        return self._ensure_stream_ready().usage()
+        return self._ensure_stream_ready().usage
 
     @property
     def model_name(self) -> str:

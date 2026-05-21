@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals import PydanticEvalsDeprecationWarning
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
@@ -73,6 +75,55 @@ def test_evaluation_result():
     downcast = result.downcast(int, bool)
     assert downcast is not None
     assert downcast.value is True
+
+
+def test_evaluation_result_positional_construction_warns():
+    """Positional construction of `EvaluationResult` is deprecated ahead of v2 making it kw-only."""
+
+    @dataclass
+    class DummyEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    source = DummyEvaluator().as_spec()
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positional arguments is deprecated'):
+        result = EvaluationResult('test', True, 'Success', source)
+    assert result.name == 'test'
+    assert result.value is True
+    assert result.reason == 'Success'
+    assert result.source == source
+
+
+def test_evaluator_failure_positional_construction_warns():
+    """Positional construction of `EvaluatorFailure` is deprecated ahead of v2 making it kw-only."""
+
+    @dataclass
+    class DummyEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    source = DummyEvaluator().as_spec()
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positional arguments is deprecated'):
+        failure = EvaluatorFailure('test', 'boom', 'traceback...', source)
+    assert failure.name == 'test'
+    assert failure.error_message == 'boom'
+    assert failure.error_stacktrace == 'traceback...'
+    assert failure.source == source
+
+
+def test_evaluation_result_kwargs_does_not_warn():
+    """Keyword construction should not emit a deprecation warning."""
+
+    @dataclass
+    class DummyEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    source = DummyEvaluator().as_spec()
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticEvalsDeprecationWarning)
+        EvaluationResult(name='test', value=True, reason='Success', source=source)
+        EvaluatorFailure(name='test', error_message='boom', error_stacktrace='tb', source=source)
 
 
 def test_strict_abc_meta():
@@ -203,6 +254,88 @@ async def test_evaluation_name():
     assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
 
 
+def test_evaluation_name_attribute_emits_deprecation_warning():
+    """Relying on the `evaluation_name` attribute to customize the default name is deprecated."""
+
+    @dataclass
+    class CustomNameViaAttr(Evaluator[Any, Any, Any]):
+        evaluation_name: str | None = 'custom'
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    evaluator = CustomNameViaAttr()
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='evaluation_name'):
+        assert evaluator.get_default_evaluation_name() == 'custom'
+
+
+def test_evaluation_name_method_override_does_not_warn():
+    """Overriding `get_default_evaluation_name` is the supported, warning-free path."""
+
+    @dataclass
+    class CustomNameViaMethod(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_default_evaluation_name(self) -> str:
+            return 'overridden'
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticEvalsDeprecationWarning)
+        assert CustomNameViaMethod().get_default_evaluation_name() == 'overridden'
+
+
+def test_evaluator_version_default_is_none():
+    """The base `get_evaluator_version` returns None when no version is declared."""
+
+    @dataclass
+    class Unversioned(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    assert Unversioned().get_evaluator_version() is None
+
+
+def test_evaluator_version_attribute_emits_deprecation_warning():
+    """Relying on the `evaluator_version` attribute is deprecated."""
+
+    @dataclass
+    class VersionedViaAttr(Evaluator[Any, Any, Any]):
+        evaluator_version = 'v2'
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='evaluator_version'):
+        assert VersionedViaAttr().get_evaluator_version() == 'v2'
+
+
+def test_evaluator_version_method_override_does_not_warn():
+    """Overriding `get_evaluator_version` is the supported, warning-free path."""
+
+    @dataclass
+    class VersionedViaMethod(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_evaluator_version(self) -> str | None:
+            return 'v3'
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticEvalsDeprecationWarning)
+        assert VersionedViaMethod().get_evaluator_version() == 'v3'
+
+
+def test_builtin_evaluators_with_evaluation_name_do_not_warn():
+    """Built-in evaluators that expose `evaluation_name` as a dataclass field shouldn't self-warn."""
+    from pydantic_evals.evaluators.common import Equals
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticEvalsDeprecationWarning)
+        assert Equals(value=42, evaluation_name='int_match').get_default_evaluation_name() == 'int_match'
+        assert Equals(value=42).get_default_evaluation_name() == 'Equals'
+
+
 async def test_evaluator_serialization():
     """Test evaluator serialization."""
 
@@ -283,6 +416,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'SimpleEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )
@@ -297,6 +431,7 @@ async def test_run_evaluator():
                 'reason': 'Failed',
                 'source': {'arguments': {'reason': 'Failed', 'value': False}, 'name': 'SimpleEvaluator'},
                 'value': False,
+                'evaluator_version': None,
             }
         ]
     )
@@ -306,8 +441,20 @@ async def test_run_evaluator():
     results = await run_evaluator(evaluator, ctx)
     assert adapter.dump_python(results) == snapshot(
         [
-            {'name': 'test1', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': True},
-            {'name': 'test2', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': False},
+            {
+                'name': 'test1',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': True,
+                'evaluator_version': None,
+            },
+            {
+                'name': 'test2',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': False,
+                'evaluator_version': None,
+            },
         ]
     )
 
@@ -321,6 +468,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'AsyncEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )

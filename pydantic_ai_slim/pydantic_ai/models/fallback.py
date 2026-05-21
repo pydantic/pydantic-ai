@@ -4,14 +4,16 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
+import anyio
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
+from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
-from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
@@ -76,6 +78,13 @@ class FallbackModel(Model):
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
+    @cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
+
     def __init__(
         self,
         default_model: Model | KnownModelName | str,
@@ -100,6 +109,7 @@ class FallbackModel(Model):
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
+        self._entered_count = 0
 
         # Parse fallback_on into exception handlers and response handlers
         self._exception_handlers = []
@@ -155,6 +165,33 @@ class FallbackModel(Model):
                 return True
         return False
 
+    async def __aenter__(self) -> FallbackModel:
+        """Enter all sub-models so their providers can manage HTTP client lifecycle."""
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                async with AsyncExitStack() as exit_stack:
+                    for model in self.models:
+                        await exit_stack.enter_async_context(model)
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit all sub-models, closing their providers' HTTP clients."""
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0:
+                await self._exit_stack.aclose()
+
+    @property
+    def provider(self) -> None:
+        return None  # pragma: no cover
+
     @property
     def model_name(self) -> str:
         """The model name."""
@@ -189,7 +226,9 @@ class FallbackModel(Model):
         for model in self.models:
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                response = await model.request(messages, model_settings, model_request_parameters)
+                # Each inner model has its own profile, so re-run `prepare_messages` per model.
+                prepared_messages = model.prepare_messages(messages)
+                response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
@@ -220,8 +259,9 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                    prepared_messages = model.prepare_messages(messages)
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, model_request_parameters, run_context)
+                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if await self._should_fallback(exc):
@@ -247,6 +287,11 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        # `FallbackModel` doesn't have its own profile — defer per-model `prepare_messages`
+        # to each inner model's `request` call so the right profile gates the transformation.
+        return messages
+
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):
             span = get_current_span()
@@ -255,8 +300,8 @@ class FallbackModel(Model):
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(
                         {
-                            **InstrumentedModel.model_attributes(model),
-                            **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
+                            **model_attributes(model),
+                            **model_request_parameters_attributes(model_request_parameters),
                         }
                     )
 

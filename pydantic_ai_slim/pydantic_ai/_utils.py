@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -19,21 +22,17 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
-    TypeVar,
     get_args,
     get_origin,
     overload,
 )
 
+import anyio
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -41,10 +40,15 @@ from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
 
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
+
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_ai.agent import AgentRetries, AgentRun, AgentRunResult
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages
@@ -54,6 +58,7 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
 @contextmanager
@@ -76,12 +81,48 @@ def disable_threads() -> Iterator[None]:
         _disable_threads.reset(token)
 
 
+@contextmanager
+def using_thread_executor(executor: Executor) -> Iterator[None]:
+    """Context manager to use a custom executor for running sync functions in threads.
+
+    Inside this context, sync functions will be executed using the provided executor
+    via [`asyncio.get_running_loop().run_in_executor()`][asyncio.loop.run_in_executor]
+    instead of the default [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in long-running servers (e.g. FastAPI) where thread accumulation
+    from ephemeral anyio worker threads can be a problem, and you want to use a bounded
+    `ThreadPoolExecutor` instead.
+
+    Args:
+        executor: The executor to use for running sync functions.
+
+    Yields:
+        None
+    """
+    token = _thread_executor.set(executor)
+    try:
+        yield
+    finally:
+        _thread_executor.reset(token)
+
+
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
     if _disable_threads.get():
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+
+    executor = _thread_executor.get()
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        ctx = copy_context()
+        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+
     return await run_sync(wrapped_func)
+
+
+def is_async_generator_already_running(exc: RuntimeError) -> bool:
+    return 'asynchronous generator is already running' in str(exc)
 
 
 def is_model_like(type_: Any) -> bool:
@@ -146,6 +187,57 @@ class Some(Generic[T]):
 
 Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
+
+
+async def gather(*coros: Awaitable[T]) -> list[T]:
+    """Run awaitables concurrently via an `anyio` task group and return results in input order.
+
+    Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
+    as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
+    match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+    """
+    sentinel = Unset()
+    results: list[T | Unset] = [sentinel] * len(coros)
+
+    async def _run(index: int, coro: Awaitable[T]) -> None:
+        results[index] = await coro
+
+    try:
+        async with anyio.create_task_group() as tg:
+            for i, coro in enumerate(coros):
+                tg.start_soon(_run, i, coro)
+    except BaseExceptionGroup as eg:
+        if len(eg.exceptions) == 1:
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
+        raise
+
+    final_results: list[T] = []
+    for result in results:
+        assert not isinstance(result, Unset)
+        final_results.append(result)
+    return final_results
+
+
+async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> None:
+    """Cancel any tasks still running and wait for them to finish unwinding.
+
+    Cleanup-only: results and exceptions from `tasks` are intentionally discarded so a
+    cancelled child cannot replace an exception already propagating in the caller.
+    Use after `asyncio.create_task` when an outer cancel/exception means the spawned
+    tasks must be torn down before the caller exits.
+    """
+    for task in tasks:
+        if not task.done():
+            task.cancel(msg=msg)
+
+    # Pydantic Graph runs nodes under AnyIO cancel scopes. Once the outer scope
+    # is cancelled, AnyIO uses level cancellation and can keep re-cancelling at
+    # each await. Shield the drain so child tasks get one explicit cancel above,
+    # then can finish normal async `finally` cleanup before we re-raise.
+    with anyio.CancelScope(shield=True):
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class Unset:
@@ -299,8 +391,8 @@ def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
     | _messages.RetryPromptPart
-    | _messages.BuiltinToolCallPart
-    | _messages.BuiltinToolReturnPart,
+    | _messages.NativeToolCallPart
+    | _messages.NativeToolReturnPart,
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
@@ -323,15 +415,18 @@ def generate_tool_call_id() -> str:
     return f'pyd_ai_{uuid.uuid4().hex}'
 
 
-class PeekableAsyncStream(Generic[T]):
+SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])
+
+
+class PeekableAsyncStream(Generic[T, SourceT]):
     """Wraps an async iterable of type T and allows peeking at the *next* item without consuming it.
 
     We only buffer one item at a time (the next item). Once that item is yielded, it is discarded.
     This is a single-pass stream.
     """
 
-    def __init__(self, source: AsyncIterable[T]):
-        self._source = source
+    def __init__(self, source: SourceT):
+        self.source = source
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
@@ -350,7 +445,7 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             self._buffer = await anext(self._source_iter)
@@ -384,13 +479,20 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             return await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             raise
+
+    async def aclose(self) -> None:
+        self._exhausted = True
+        value = self._source_iter if self._source_iter is not None else self.source
+        aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
+        if aclose is not None:
+            await aclose()
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
@@ -403,6 +505,19 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
         f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
     )
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
+    """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
+
+    Construct a new dataclass instance from `src`'s fields, overriding selected ones.
+    Lets typed-part narrowers stay maintainable when fields are added to the base
+    class — base-class field changes flow through automatically instead of needing
+    every narrower to be updated by hand.
+    """
+    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
+    field_values.update(overrides)
+    return dst_cls(**field_values)
 
 
 _datetime_ta = TypeAdapter(datetime)
@@ -524,12 +639,37 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
 
-    # Handle unions
-    for union_type in ['anyOf', 'oneOf']:
-        if union_type in s:
-            union_items: list[dict[str, Any]] = s[union_type]
-            for item in union_items:
+    # Handle additionalProperties
+    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
+        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(additional_props, name_mapping)
+
+    # Handle unions and composition keywords
+    for keyword in ['anyOf', 'oneOf', 'allOf']:
+        if keyword in s:
+            keyword_items: list[dict[str, Any]] = s[keyword]
+            for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
+
+    # Handle negation
+    if 'not' in s and isinstance(s['not'], dict):
+        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(not_schema, name_mapping)
+
+
+def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
+    """Generate a unique definition name by appending the schema title and/or a numeric suffix."""
+    new_name = name
+    if title := schema.get('title'):
+        new_name = f'{title}_{name}'
+
+    i = 1
+    original_new_name = new_name
+    new_name = f'{new_name}_{i}'
+    while new_name in all_defs:
+        i += 1
+        new_name = f'{original_new_name}_{i}'
+    return new_name
 
 
 def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -555,19 +695,36 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 all_defs[name] = def_schema
                 schema_name_mapping[name] = name
             elif def_schema != all_defs[name]:
-                new_name = name
-                if title := schema.get('title'):
-                    new_name = f'{title}_{name}'
+                # Different def with same name — assign a unique name
+                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[schema_name_mapping[name]] = def_schema
+            # else: structurally equal — handled below
 
-                i = 1
-                original_new_name = new_name
-                new_name = f'{new_name}_{i}'
-                while new_name in all_defs:
-                    i += 1
-                    new_name = f'{original_new_name}_{i}'
+        # Defs that are structurally equal (same dict) may still be semantically
+        # different if they contain $refs that point to defs that were renamed in
+        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
+        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
+        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
+        # Loop until stable, since creating a copy can trigger further copies
+        # in defs that reference it (transitive chains).
+        changed = True
+        while changed:
+            changed = False
+            for name, def_schema in defs.items():
+                if name not in schema_name_mapping:
+                    updated = copy.deepcopy(def_schema)
+                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                    if updated != def_schema:
+                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                        all_defs[schema_name_mapping[name]] = updated
+                        changed = True
+                    else:
+                        schema_name_mapping[name] = name
 
-                all_defs[new_name] = def_schema
-                schema_name_mapping[name] = new_name
+        # Update refs inside definitions so internal cross-references
+        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
+        for new_name in schema_name_mapping.values():
+            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
 
         _update_mapped_json_schema_refs(schema, schema_name_mapping)
         rewritten_schemas.append(schema)
@@ -587,6 +744,313 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
     if _kwargs:
         unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+
+
+def install_deprecated_kwarg_alias(
+    cls: type[Any],
+    *,
+    old: str,
+    new: str,
+    owner_name: str | None = None,
+) -> None:
+    """Install a wrapper around `cls.__init__` that accepts a deprecated kwarg as an alias for a renamed one.
+
+    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
+    from leaking into Pydantic's JSON-schema introspection of the wrapped class.
+
+    For `@dataclass` hierarchies, each subclass gets its own generated `__init__` that
+    bypasses the parent's wrap, so apply this helper to each subclass that needs the alias.
+
+    Args:
+        cls: The class whose `__init__` should be wrapped.
+        old: The deprecated kwarg name.
+        new: The renamed kwarg name that the legacy value should be forwarded to.
+        owner_name: Optional class name to use in the warning message. Defaults to the
+            class name of the instance being constructed (`type(self).__name__`).
+    """
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    orig_init = cls.__init__
+
+    @functools.wraps(orig_init)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
+        if old in kwargs:
+            name = owner_name or type(self).__name__
+            warnings.warn(
+                f'`{name}({old}=...)` is deprecated, use `{new}=` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            # When both `old` and `new` are present, the user explicitly typed the legacy spelling, so
+            # let it win. The common path that puts both keys here is `dataclasses.replace(obj, <old>=...)`,
+            # which silently re-passes every existing field value as `<new>=...`. The deprecation
+            # warning still tells the caller they're on the legacy kwarg.
+            kwargs[new] = kwargs.pop(old)
+        orig_init(self, *args, **kwargs)
+
+    cls.__init__ = wrapper
+
+
+_T = TypeVar('_T')
+
+
+def consume_deprecated_builtin_tools(
+    deprecated_kwargs: dict[str, Any],
+    native_tools: _T,
+    *,
+    stacklevel: int = 3,
+) -> _T:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and reconcile it with `native_tools=`.
+
+    Used by `override()` (and its `WrapperAgent` counterpart), where `native_tools=`
+    survives as a first-party kwarg. The legacy `builtin_tools=` kwarg stays functional
+    but emits a `PydanticAIDeprecationWarning` (visible by default, `UserWarning`
+    subclass) at runtime.
+
+    Returns `native_tools` if the caller passed an explicit value (anything other
+    than `None`/`UNSET`); otherwise the legacy value.
+
+    For per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    use [`consume_deprecated_builtin_tools_as_capabilities`][pydantic_ai._utils.consume_deprecated_builtin_tools_as_capabilities]
+    instead — those surfaces no longer expose a `native_tools=` kwarg.
+    """
+    from ._warnings import PydanticAIDeprecationWarning
+
+    if 'builtin_tools' not in deprecated_kwargs:
+        return native_tools
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    warnings.warn(
+        '`builtin_tools=` is deprecated, use `native_tools=` instead. '
+        'For higher-level capability-based registration, use '
+        '`capabilities=[NativeTool(...)]` or a provider-adaptive capability '
+        'like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if native_tools is None or native_tools is UNSET:
+        return legacy
+    return native_tools
+
+
+def consume_deprecated_builtin_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and return native-tool capability wrappers.
+
+    Returns a list of [`NativeTool`][pydantic_ai.capabilities.NativeTool] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    Used by per-call entry points (`run`/`iter`/`run_stream`/etc.) and the `Agent` constructor,
+    where the `native_tools=` parameter has been removed. For `override()` (which keeps
+    `native_tools=`), use
+    [`consume_deprecated_builtin_tools`][pydantic_ai._utils.consume_deprecated_builtin_tools] instead.
+    """
+    if 'builtin_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import NativeTool
+
+    warnings.warn(
+        f'`{owner}(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
+        'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
+        '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [NativeTool(t) for t in legacy]
+
+
+def consume_deprecated_instrument(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> Any:
+    """Pop a deprecated `instrument=` kwarg and warn.
+
+    Returns the legacy value (an `InstrumentationSettings | bool | None`) for the caller
+    to forward into the existing instrumentation resolution path, or `None` if the
+    kwarg was not passed. The `Instrumentation` capability is the preferred surface.
+    """
+    if 'instrument' not in deprecated_kwargs:
+        return None
+    legacy = deprecated_kwargs.pop('instrument')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return legacy
+
+
+def consume_deprecated_history_processors_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `history_processors=` kwarg, warn, and return `ProcessHistory` capability wrappers.
+
+    Returns a list of [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capabilities to
+    merge into the caller's `capabilities=`, or an empty list if no legacy kwarg was passed.
+
+    `ProcessHistory` is itself a thin wrapper over the `before_model_request` lifecycle hook;
+    new code should prefer either `capabilities=[ProcessHistory(fn)]` or, for richer control,
+    `capabilities=[Hooks(before_model_request=fn)]` directly.
+    """
+    if 'history_processors' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('history_processors')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities import ProcessHistory
+
+    warnings.warn(
+        f'`{owner}(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. '
+        f'Replace with `{owner}(capabilities=[ProcessHistory(fn), ...])`, or hook the '
+        '`before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [ProcessHistory(p) for p in legacy]
+
+
+def consume_deprecated_prepare_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `prepare_tools=` kwarg, warn, and return a `PrepareTools` capability wrapper.
+
+    Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
+    if no legacy kwarg was passed. The warning also reminds users that `prepare_tools` runs only
+    on function tools — to prepare output tools, they should pair it with `PrepareOutputTools`.
+    """
+    if 'prepare_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('prepare_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities.prepare_tools import PrepareTools
+
+    warnings.warn(
+        f'`{owner}(prepare_tools=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[PrepareTools(prepare_tools)]` instead. '
+        'Note: `prepare_tools` runs only on function tools — to prepare output tools, '
+        'also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [PrepareTools(legacy)]
+
+
+def consume_deprecated_prepare_output_tools_as_capabilities(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> list[Any]:
+    """Pop a deprecated `prepare_output_tools=` kwarg, warn, and return a `PrepareOutputTools` capability wrapper.
+
+    Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
+    if no legacy kwarg was passed.
+    """
+    if 'prepare_output_tools' not in deprecated_kwargs:
+        return []
+    legacy = deprecated_kwargs.pop('prepare_output_tools')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+    from .capabilities.prepare_tools import PrepareOutputTools
+
+    warnings.warn(
+        f'`{owner}(prepare_output_tools=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return [PrepareOutputTools(legacy)]
+
+
+def consume_deprecated_output_retries(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    current_retries: int | AgentRetries | None = None,
+    stacklevel: int = 3,
+) -> int | AgentRetries | None:
+    """Pop a deprecated `output_retries=` kwarg, warn, and reconcile with the new `retries=` kwarg.
+
+    Returns a value suitable to pass as the new `retries` argument:
+    - If the caller already provided `retries=`, it wins and `output_retries=` is just warned about.
+    - Otherwise the legacy `output_retries=` value is returned wrapped as `{'output': value}`.
+    """
+    if 'output_retries' not in deprecated_kwargs:
+        return current_retries
+    legacy = deprecated_kwargs.pop('output_retries')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(output_retries=...)` is deprecated and will be removed in v2.0. '
+        "Use `retries={'output': ...}` (or `retries=<int>` to override the output budget) instead.",
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if current_retries is not None:
+        return current_retries
+    if legacy is None:
+        return None
+    return {'output': legacy}
+
+
+def consume_deprecated_event_stream_handler(
+    deprecated_kwargs: dict[str, Any],
+    owner: str,
+    *,
+    stacklevel: int = 3,
+) -> Any:
+    """Pop a deprecated `event_stream_handler=` kwarg and warn.
+
+    Returns the legacy handler (or `None` if the kwarg was not passed) for the caller to
+    forward into the legacy `_event_stream_handler` path. The handler is NOT auto-remapped
+    to a `ProcessEventStream(...)` capability because the legacy path in `abstract.py`
+    invokes the handler directly after the capability chain has run, which would cause
+    a double invocation. Users see the warning and migrate manually to
+    `capabilities=[ProcessEventStream(handler)]`, which is the only path in v2.
+    """
+    if 'event_stream_handler' not in deprecated_kwargs:
+        return None
+    legacy = deprecated_kwargs.pop('event_stream_handler')
+    import warnings
+
+    from ._warnings import PydanticAIDeprecationWarning
+
+    warnings.warn(
+        f'`{owner}(event_stream_handler=...)` is deprecated and will be removed in v2.0. '
+        'Use `capabilities=[ProcessEventStream(handler)]` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return legacy
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
@@ -636,3 +1100,18 @@ def get_event_loop():
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_text_like_media_type(media_type: str) -> bool:
+    """Check if a media type represents text-like content.
+
+    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    """
+    return (
+        media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )

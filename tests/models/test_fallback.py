@@ -25,16 +25,24 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -83,6 +91,7 @@ def test_first_successful() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -90,6 +99,7 @@ def test_first_successful() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -111,6 +121,7 @@ def test_first_failed() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -118,6 +129,7 @@ def test_first_failed() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -126,7 +138,7 @@ def test_first_failed() -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     result = agent.run_sync('hello')
     assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
@@ -140,6 +152,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -147,6 +160,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -162,16 +176,18 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
@@ -206,6 +222,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -231,27 +249,30 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -259,6 +280,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -276,16 +299,18 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.operation.name': 'chat',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
@@ -320,6 +345,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'hello world',
@@ -367,7 +394,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
-    agent = Agent(model=fallback_model, instrument=True)
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -392,13 +419,14 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -406,6 +434,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'properties': {'model_request_parameters': {'type': 'object'}},
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -436,6 +465,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
@@ -485,25 +516,28 @@ async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -511,6 +545,8 @@ async def test_first_success_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -521,25 +557,28 @@ async def test_first_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -547,6 +586,8 @@ async def test_first_failed_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='complete',
                 ),
             ]
         )
@@ -558,7 +599,7 @@ async def test_all_failed_streaming() -> None:
     agent = Agent(model=fallback_model)
     with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
+            [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
@@ -751,6 +792,18 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    )
+                ],
             )
         )
 
@@ -813,6 +866,19 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(content='Be kind'),
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    ),
+                ],
             )
         )
 
@@ -826,7 +892,12 @@ Don't include any text or Markdown fencing before or after.
         prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
     )
     fallback_model = FallbackModel(tool_model, prompted_model)
-    agent = Agent(model=fallback_model, instrument=True, output_type=Foo, instructions='Be kind')
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        output_type=Foo,
+        instructions='Be kind',
+    )
     result = await agent.run('hello')
     assert result.output == snapshot(Foo(bar='baz'))
     assert result.all_messages() == snapshot(
@@ -841,6 +912,7 @@ Don't include any text or Markdown fencing before or after.
                 timestamp=IsDatetime(),
                 instructions='Be kind',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -848,6 +920,7 @@ Don't include any text or Markdown fencing before or after.
                 model_name='function:prompted_output_func:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -876,7 +949,7 @@ Don't include any text or Markdown fencing before or after.
                     ],
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -900,8 +973,24 @@ Don't include any text or Markdown fencing before or after.
 """,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {
+                                'content': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+""",
+                                'dynamic': False,
+                                'part_kind': 'instruction',
+                            },
+                        ],
                         'thinking': None,
                     },
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -939,6 +1028,8 @@ Don't include any text or Markdown fencing before or after.
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -1000,6 +1091,7 @@ async def test_response_handler_triggered() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='fallback response')],
@@ -1007,6 +1099,7 @@ async def test_response_handler_triggered() -> None:
                 model_name='function:fallback_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1141,8 +1234,8 @@ async def test_web_fetch_scenario() -> None:
         # Include multiple items to cover loop iteration branch
         return ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
+                NativeToolReturnPart(
                     tool_name='web_fetch',
                     tool_call_id='1',
                     content=[
@@ -1162,7 +1255,7 @@ async def test_web_fetch_scenario() -> None:
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
-        for call, result in response.builtin_tool_calls:  # pragma: no branch
+        for call, result in response.native_tool_calls:  # pragma: no branch
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):
@@ -1505,3 +1598,154 @@ async def test_response_rejection_error_message() -> None:
 
     error_msg = str(rejection_errors[0])
     assert 'rejected by fallback_on handler' in error_msg
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_closes_sub_model_clients():
+    """FallbackModel propagates __aenter__/__aexit__ to all sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_via_agent():
+    """Agent context manager propagates lifecycle through FallbackModel to sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    agent = Agent(model=fallback)
+
+    async with agent:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_reentrant_lifecycle():
+    """Reentrant FallbackModel lifecycle keeps sub-models' clients open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        http1 = provider1._own_http_client  # pyright: ignore[reportPrivateUsage]
+        http2 = provider2._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert http1 is not None
+        assert http2 is not None
+        async with fallback:
+            assert not http1.is_closed
+            assert not http2.is_closed
+        assert not http1.is_closed
+        assert not http2.is_closed
+    assert http1.is_closed
+    assert http2.is_closed
+
+
+@requires_openai
+async def test_fallback_model_instrumented_lifecycle():
+    """InstrumentedModel wrapping FallbackModel propagates lifecycle to sub-models.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    instrumented = InstrumentedModel(fallback, InstrumentationSettings())
+
+    async with instrumented:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_concurrent_entry():
+    """Concurrent entry to FallbackModel doesn't race on _entered_count / _exit_stack.
+
+    Without a lock, two coroutines can both see _entered_count == 0 when the first
+    yields during sub-model entry, causing one exit stack to be overwritten and leaked.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    import asyncio
+
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class SlowEnterModel(WrapperModel):
+        """Wrapper that yields during __aenter__ to widen the race window."""
+
+        async def __aenter__(self) -> SlowEnterModel:
+            await asyncio.sleep(0)
+            await self.wrapped.__aenter__()
+            return self
+
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider1))
+    model2 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider2))
+
+    fallback = FallbackModel(model1, model2)
+
+    async def enter_and_hold(event: asyncio.Event) -> None:
+        async with fallback:
+            event.set()
+            await asyncio.sleep(0.1)
+
+    event1 = asyncio.Event()
+    event2 = asyncio.Event()
+    task1 = asyncio.create_task(enter_and_hold(event1))
+    task2 = asyncio.create_task(enter_and_hold(event2))
+
+    await event1.wait()
+    await event2.wait()
+    assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+    await task1
+    await task2
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]

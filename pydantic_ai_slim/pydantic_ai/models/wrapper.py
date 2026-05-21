@@ -6,12 +6,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from typing_extensions import Self
+
+from .._deprecated_callable import deprecated_callable_property
 from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse, infer_model
 
 
 class CompletedStreamedResponse(StreamedResponse):
@@ -31,9 +35,16 @@ class CompletedStreamedResponse(StreamedResponse):
         # noinspection PyUnreachableCode
         yield
 
+    async def close_stream(self) -> None:
+        # The stream was already consumed by the durable execution wrapper.
+        pass
+
     def get(self) -> ModelResponse:
         return self.response
 
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         return self.response.usage  # pragma: no cover
 
@@ -68,6 +79,13 @@ class WrapperModel(Model):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 
+    async def __aenter__(self) -> Self:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        return await self.wrapped.__aexit__(*args)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -83,6 +101,14 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         return await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
 
     @asynccontextmanager
     async def request_stream(
@@ -106,6 +132,13 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        return self.wrapped.prepare_messages(messages)
+
+    @property
+    def provider(self) -> Provider[Any] | None:
+        return self.wrapped.provider  # pragma: no cover
 
     @property
     def model_name(self) -> str:
