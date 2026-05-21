@@ -37,7 +37,7 @@ uv add 'pydantic-ai[bedrock,groq,mistral]==2.0.0b1'
 
 **What to change** — two options, pick based on user intent:
 
-```python
+```text
 # Option A: stay on Chat Completions (lowest risk for an upgrade-only PR)
 Agent('openai-chat:gpt-4o')
 
@@ -61,7 +61,7 @@ For an upgrade PR, **prefer Option A**. Moving to the Responses API is a separat
 
 **What to change**: opt back into fallback explicitly with `local=`:
 
-```python
+```text
 # v1 (implicit fallback)
 Agent(..., capabilities=[WebSearch()])
 
@@ -83,7 +83,7 @@ Or accept the new default if native-only is what the user actually wants. For `M
 
 **What to change**:
 - If the user wants the old layout: pin the instrumentation version explicitly.
-  ```python
+  ```text
   from pydantic_ai.capabilities import Instrumentation
   from pydantic_ai.models.instrumented import InstrumentationSettings
   Agent(..., capabilities=[Instrumentation(InstrumentationSettings(version=4))])
@@ -102,7 +102,7 @@ Or accept the new default if native-only is what the user actually wants. For `M
 
 **What to change**:
 
-```python
+```text
 with capture_run_messages() as messages:
     try:
         await agent.run('...')
@@ -130,7 +130,7 @@ for msg in messages:
 
 **What to change** — two options:
 
-```python
+```text
 # Option A: preserve v1 behavior
 Agent(..., end_strategy='early')
 

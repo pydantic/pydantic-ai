@@ -64,7 +64,7 @@ For each unique warning message:
 
 **Crucial**: when migrating multiple `Agent(...)` kwargs that all map to capabilities (`instrument=`, `history_processors=`, `prepare_tools=`, `prepare_output_tools=`, `event_stream_handler=`), MERGE them into a single `capabilities=[...]` list. Do not create multiple `capabilities=` kwargs — Python will reject the second one. **`tool_retries=` and `output_retries=` are different**: they collapse into a `retries={'tools': N, 'output': M}` dict on the same `retries=` kwarg, *not* into `capabilities=`. See A6 in `references/DEPRECATIONS.md`.
 
-```python
+```text
 # v1 — three deprecated kwargs
 Agent(
     'openai:gpt-4o',

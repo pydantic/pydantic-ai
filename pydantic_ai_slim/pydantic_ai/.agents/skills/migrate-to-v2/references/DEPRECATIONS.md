@@ -17,7 +17,7 @@ All capabilities live in `pydantic_ai.capabilities`.
 - Warning substring: `` `Agent(instrument=...)` is deprecated, use `capabilities=[Instrumentation(...)]` instead. ``
 - Also fires for: `Agent.instrument` getter/setter, `Agent.from_spec(instrument=...)`.
 
-```python
+```text
 # v1
 Agent('openai:gpt-4o', instrument=True)
 Agent('openai:gpt-4o', instrument=InstrumentationSettings(...))
@@ -33,7 +33,7 @@ Agent('openai-chat:gpt-4o', capabilities=[Instrumentation(InstrumentationSetting
 
 - Warning substring: `` `Agent(history_processors=[fn, ...])` is deprecated and will be removed in v2.0. Replace with `Agent(capabilities=[ProcessHistory(fn), ...])`, or hook the `before_model_request` lifecycle event directly via `Hooks(before_model_request=fn)`. ``
 
-```python
+```text
 # v1
 Agent('openai:gpt-4o', history_processors=[strip_pii, summarize])
 # v2
@@ -47,7 +47,7 @@ Agent('openai-chat:gpt-4o', capabilities=[ProcessHistory(strip_pii), ProcessHist
 
 - Warning substring: `` `Agent(prepare_tools=...)` is deprecated and will be removed in v2.0. Use `capabilities=[PrepareTools(prepare_tools)]` instead. Note: `prepare_tools` runs only on function tools — to prepare output tools, also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`. ``
 
-```python
+```text
 from pydantic_ai.capabilities import PrepareTools
 Agent('openai-chat:gpt-4o', capabilities=[PrepareTools(my_prepare)])
 ```
@@ -60,7 +60,7 @@ Agent('openai-chat:gpt-4o', capabilities=[PrepareTools(my_prepare)])
 
 - Warning substring: `` `Agent(event_stream_handler=...)` is deprecated and will be removed in v2.0. Use `capabilities=[ProcessEventStream(handler)]` instead. ``
 
-```python
+```text
 from pydantic_ai.capabilities import ProcessEventStream
 Agent('openai-chat:gpt-4o', capabilities=[ProcessEventStream(my_handler)])
 ```
@@ -72,7 +72,7 @@ The constructor kwargs are dropped; the underlying knob is now a dict on `retrie
 - Warning substring (`tool_retries`): `` `Agent(tool_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead. ``
 - Warning substring (`output_retries`): `` `Agent(output_retries=...)` is deprecated and will be removed in v2.0. Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead. ``
 
-```python
+```text
 # v1
 Agent('openai:gpt-4o', tool_retries=3, output_retries=2)
 # v2
@@ -87,7 +87,7 @@ Note: `Agent(retries=)` itself is **not** deprecated.
 
 - Warning substring: `` `mcp_servers` is deprecated, use `toolsets` instead ``
 
-```python
+```text
 Agent('openai-chat:gpt-4o', toolsets=[my_mcp_toolset])
 ```
 
@@ -99,7 +99,7 @@ Agent('openai-chat:gpt-4o', toolsets=[my_mcp_toolset])
 
 - Warning substring: `` `OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` ``
 
-```python
+```text
 # v1
 from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
 # v2
@@ -116,7 +116,7 @@ The v1 deprecation does **not** force the change — it warns. In v2, `'openai:'
 
 - Warning substring: `` Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details. ``
 
-```python
+```text
 # v1
 from pydantic_ai.models.gemini import GeminiModel
 # v2
@@ -128,7 +128,7 @@ from pydantic_ai.models.google import GoogleModel
 - Warning substring: `` `GoogleGLAProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead. ``
 - Warning substring: `` `GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead. ``
 
-```python
+```text
 # v1
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -157,7 +157,7 @@ Always include the `provider:` prefix. Combine with B1b — use `openai-chat:` f
 
 - Warning substring: `` `GrokProvider` is deprecated, use `XaiProvider` with `XaiModel` instead for the native xAI SDK. See <https://ai.pydantic.dev/models/xai/> for more details. ``
 
-```python
+```text
 # v1
 from pydantic_ai.providers.grok import GrokProvider
 # v2
@@ -175,7 +175,7 @@ Yields `ModelResponse` snapshots, **not `(ModelResponse, is_last)` tuples**. Dro
 
 - Warning substring: `` `AgentStream.stream_responses()` is deprecated and will be removed in v2.0. Replace `async for r in stream.stream_responses(...)` with `async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots ``
 
-```python
+```text
 # v1
 async for msg, is_last in stream.stream_responses():
     if is_last:
@@ -194,7 +194,7 @@ In v1.100.0 these are `@deprecated_callable_property` — calling them returns t
 - Warning substring: `` `AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses). `` (and analogous for `timestamp`, `stream.get` → `stream.response`)
 - Verified via `TestModel` against `1.100.0`.
 
-```python
+```text
 # v1
 usage = result.usage()
 ts = result.timestamp()
@@ -224,7 +224,7 @@ These were dropped at the source level on `v2-main`; on v1.100.0 they still emit
 
 - Warning substring: `` `MCPServerStdio` is deprecated and will be removed in v2. Use `MCPToolset('path/to/script.py')` for Python scripts, `MCPToolset('script.js')` for Node scripts, or `MCPToolset(fastmcp.client.transports.StdioTransport(command='...', args=[...]))` for arbitrary commands. ``
 
-```python
+```text
 # v1
 from pydantic_ai.mcp import MCPServerStdio
 server = MCPServerStdio('uv', args=['run', 'my_mcp.py'])
@@ -282,7 +282,7 @@ Symbol-rename in `pydantic_ai.mcp`. Old name removed in v2; new name returns `MC
 
 - Warning substring: `` `Agent.to_a2a()` is deprecated and will be removed in 2.0. The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) and use `from fasta2a.pydantic_ai import agent_to_a2a` directly. ``
 
-```python
+```text
 # v1
 app = agent.to_a2a()
 # v2
@@ -298,7 +298,7 @@ Also drop `pydantic-ai[fasta2a]` from `pyproject.toml`; depend on `fasta2a[pydan
 - Warning substring (`to_ag_ui`): `` `Agent.to_ag_ui()` is deprecated and will be removed in 2.0. ``
 - Warning substring (`AGUIApp`): `` `AGUIApp` is deprecated and will be removed in 2.0. ``
 
-```python
+```text
 # v1
 from pydantic_ai.ag_ui import AGUIAdapter, StateDeps
 app = agent.to_ag_ui()
@@ -332,7 +332,7 @@ In v2, `pydantic_ai.models.outlines` is removed (ImportError). No in-tree replac
 
 In v2, `pydantic_ai.ext.aci` is removed (ImportError). No in-tree replacement. v2 migration: wrap manually with `pydantic_ai.tools.Tool.from_schema`.
 
-```python
+```text
 # v2 — verified Tool.from_schema signature:
 #   Tool.from_schema(function, name, description, json_schema, takes_ctx=False,
 #                    sequential=False, args_validator=None)
@@ -364,7 +364,7 @@ Also renames at the field level:
 
 Per-request usage (single model call) is now `RequestUsage`; aggregate over a run is `RunUsage`.
 
-```python
+```text
 # v1
 from pydantic_ai.usage import Usage
 # v2
@@ -398,7 +398,7 @@ In `pydantic-ai==1.100.0` the `Agent(builtin_tools=...)` ctor kwarg still exists
 - Warning substring: `` `Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw native-tool registration, or a provider-adaptive capability like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback. ``
 - Verified at runtime against 1.100.0.
 
-```python
+```text
 # v1
 Agent('openai:gpt-4o', builtin_tools=[WebSearchTool()])
 # v2
@@ -466,7 +466,7 @@ Migration: rewrite using `GraphBuilder` (see `docs/graph.md`). If a full rewrite
 
 - Warning substring: `` `pydantic_graph.beta.decision` is deprecated, import from `pydantic_graph.decision` instead. ``
 
-```python
+```text
 # v1
 from pydantic_graph.beta.decision import Decision
 # v2
@@ -481,7 +481,7 @@ from pydantic_graph.decision import Decision
 
 - Warning substring: `` Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`. ``
 
-```python
+```text
 # v1
 Dataset(cases=[...], evaluators=[...])
 # v2
