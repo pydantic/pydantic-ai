@@ -421,7 +421,17 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     out = asyncio.run(har.task(_Ctx(), "scan models/openai.py", "find tool_call_id bugs"))
     assert out == "SUB: investigated"
     assert seen["model_cls"] == "TestModel"
-    assert seen["prompt"] == "find tool_call_id bugs"
+    # Sub-agent uses the same system-prompt routing as the parent: the
+    # task spec rides in `instructions=` (alongside the general
+    # INSTRUCTIONS + SUBAGENT_INSTRUCTIONS preamble), and the user
+    # message is the trivial `RUN_TRIGGER`. This makes weaker models
+    # follow long structured sub-agent prompts much more reliably.
+    sub_instructions = str(seen["instructions"])
+    assert har.INSTRUCTIONS in sub_instructions
+    assert har.SUBAGENT_INSTRUCTIONS in sub_instructions
+    assert "find tool_call_id bugs" in sub_instructions
+    assert seen["prompt"] == har.RUN_TRIGGER
+    assert "find tool_call_id bugs" not in str(seen["prompt"])
     assert set(seen["tool_names"]) == har.READ_ONLY_SUBAGENT_TOOLS  # type: ignore[arg-type]
     assert "Task" not in seen["tool_names"]  # type: ignore[operator]
     assert "Bash" not in seen["tool_names"]  # type: ignore[operator]

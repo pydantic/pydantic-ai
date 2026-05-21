@@ -862,9 +862,15 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     """
     log(f"Task spawn: {description[:120]}")
     sub_tools = select_native_tools(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None)
+    # Same wiring as the parent in `run()`: the (typically long, structured)
+    # task prompt rides as a system instruction so weaker models follow it
+    # strictly. Parent agents are instructed to build fully-self-contained
+    # sub-agent prompts (full PR context, severity scale, file list, output
+    # format) — that material belongs in the system role, not as a user
+    # message. The user message is the trivial `RUN_TRIGGER`.
     sub = Agent(
         ctx.model,
-        instructions=SUBAGENT_INSTRUCTIONS,
+        instructions=f"{INSTRUCTIONS}\n\n{SUBAGENT_INSTRUCTIONS}\n\n{prompt}",
         tools=sub_tools,
         event_stream_handler=_stream_events,
     )
@@ -874,7 +880,7 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     # cost is invisible.
     before_requests = ctx.usage.requests
     try:
-        result = await sub.run(prompt, usage_limits=limits, usage=ctx.usage)
+        result = await sub.run(RUN_TRIGGER, usage_limits=limits, usage=ctx.usage)
     except Exception as exc:  # noqa: BLE001 - sub-agent failure -> tool result
         return f"error: sub-agent failed: {exc}"
     log(f"Task done: +{ctx.usage.requests - before_requests} sub-requests (total={ctx.usage.requests})")
