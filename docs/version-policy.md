@@ -24,7 +24,7 @@ During the beta the V2 API and behaviors aren't yet covered by the stability gua
 
 To make the upgrade as smooth as possible, we recommend the following path:
 
-1. **Upgrade to the latest V1 release.** Every API that V2 removes is deprecated as of **v1.100.0** (the release V2.0.0b1 is forked from), so any V1 at or above that version surfaces the warnings you need.
+1. **Upgrade to the latest V1 release.** Most of what V2 removes is deprecated as of **v1.100.0** (the release V2.0.0b1 is forked from), so any V1 at or above that version surfaces those warnings.
 2. **Resolve every deprecation warning.** [Most of V2's breaking changes](changelog.md#changes-covered-by-deprecation-warnings) were announced in V1 via deprecation warnings that name the new API and, where possible, include a migration snippet. Running your test suite (or app) with warnings visible and addressing each one — by hand or by pointing a coding agent at them — migrates you across the bulk of V2 ahead of time.
 3. **Upgrade to V2** and make the [changes that couldn't be pre-announced](changelog.md#changes-not-covered-by-deprecation-warnings) via a deprecation — primarily default-behavior changes and a handful of removals with no V1 deprecation.
 
