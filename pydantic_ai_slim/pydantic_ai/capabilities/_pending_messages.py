@@ -100,6 +100,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         and capabilities downstream of us might append more messages, so we can't rely on
         that fixup.
         """
+        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
         drained = _drain_by_priority(ctx.pending_messages, 'asap')
         for message in _stamped_messages(
             drained, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
@@ -132,6 +133,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not isinstance(result, End):
             return result
 
+        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
         # Pi-mono parity: drain `'asap'` first so anything that arrived during the
         # final step (e.g. a background task completing while the model produced
         # its final response) gets delivered before `'when_idle'` messages, and the

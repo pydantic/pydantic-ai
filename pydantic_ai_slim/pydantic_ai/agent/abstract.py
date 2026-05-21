@@ -27,7 +27,6 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
-    _enqueue,
     _instructions,
     _utils,
     exceptions,
@@ -207,7 +206,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
-        pending_messages: list[_enqueue.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
@@ -228,10 +226,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             prompt: Optional user prompt to expose as `RunContext.prompt`.
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
-            pending_messages: Optional live pending-message list to expose as
-                `RunContext.pending_messages` so `ctx.enqueue` calls from inside system
-                prompt callbacks reach the actual queue (e.g. when `ReinjectSystemPrompt`
-                re-resolves callbacks via a synthetic `RunContext`).
         """
         return []  # pragma: no cover — concrete subclasses override this
 

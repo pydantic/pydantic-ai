@@ -14,6 +14,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from .exceptions import UserError
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -100,9 +101,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
-    pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage], repr=False)
+    pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
+    Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
+    backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
     """
 
@@ -149,7 +153,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
+                synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
+                to deliver the message.
         """
+        if self.pending_messages is None:
+            raise UserError(
+                '`enqueue` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
+            )
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return

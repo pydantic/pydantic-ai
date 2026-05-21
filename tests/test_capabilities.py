@@ -11361,21 +11361,99 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
 
     assert result.output == Answer(value=2)
     assert call_count == 3
-    messages = result.all_messages()
-    # The follow-up landed as its own request, after the first (superseded) output-tool call.
-    follow_up_idx = next(
-        i
-        for i, msg in enumerate(messages)
-        if isinstance(msg, ModelRequest)
-        and any(isinstance(p, UserPromptPart) and p.content == 'Follow-up context' for p in msg.parts)
+    # The `when_idle` follow-up lands as its own request after the first (superseded) output-tool
+    # call, redirecting the run so the second output-tool call produces the real output.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": 1}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": 2}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
-    first_output_idx = next(
-        i
-        for i, msg in enumerate(messages)
-        if isinstance(msg, ModelResponse)
-        and any(isinstance(p, ToolCallPart) and p.args == '{"value": 1}' for p in msg.parts)
-    )
-    assert first_output_idx < follow_up_idx
 
 
 async def test_enqueue_from_agent_run():
@@ -11493,6 +11571,7 @@ async def test_pending_messages_accessible_on_run_context():
     @agent.tool
     def check_queue(ctx: RunContext[None]) -> str:
         # The queue must be live (mutations from inside a tool reach the drain).
+        assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 0
         ctx.enqueue('observed', priority='asap')
         assert len(ctx.pending_messages) == 1
@@ -11727,6 +11806,24 @@ def test_pending_message_allows_empty_request():
     assert msg.messages[0].parts == []
 
 
+async def test_enqueue_without_live_queue_raises():
+    """`ctx.enqueue` raises when the `RunContext` isn't backed by a running agent's queue.
+
+    `Agent.system_prompt_parts` builds a synthetic `RunContext` with no live queue — nothing
+    would ever drain it — so enqueuing from a system-prompt callback fails loudly instead of
+    silently dropping the message.
+    """
+    agent = Agent(TestModel())
+
+    @agent.system_prompt
+    def sp(ctx: RunContext[None]) -> str:
+        ctx.enqueue('this has nowhere to go')
+        return 'prompt'
+
+    with pytest.raises(UserError, match='only available during an agent run'):
+        await agent.system_prompt_parts()
+
+
 async def test_enqueue_parts_style_calls_produce_one_request_per_call():
     """Each `enqueue` call produces its own `ModelRequest` in history.
 
@@ -11889,21 +11986,67 @@ async def test_enqueue_interleaved_response_and_request():
         return 'ok'
 
     result = await agent.run('Hello')
-    messages = result.all_messages()
-    response_idx = next(
-        i
-        for i, msg in enumerate(messages)
-        if isinstance(msg, ModelResponse)
-        and any(isinstance(p, TextPart) and p.content == 'synthetic prior turn' for p in msg.parts)
-    )
-    request_idx = next(
-        i
-        for i, msg in enumerate(messages)
-        if isinstance(msg, ModelRequest)
-        and any(isinstance(p, UserPromptPart) and p.content == 'follow-up after synthetic turn' for p in msg.parts)
-    )
     # The synthetic response is appended to history immediately before its paired request.
-    assert request_idx == response_idx + 1
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_exchange', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_exchange',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='synthetic prior turn')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='follow-up after synthetic turn', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_enqueue_rejects_content_not_ending_in_request():

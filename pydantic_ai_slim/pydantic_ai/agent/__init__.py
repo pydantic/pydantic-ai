@@ -24,7 +24,6 @@ from pydantic_ai._spec import load_from_registry
 
 from .. import (
     _agent_graph,
-    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -2000,7 +1999,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
-        pending_messages: list[_enqueue.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
@@ -2015,7 +2013,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             messages=list(message_history or []),
             model_settings=model_settings,
             run_step=1,
-            pending_messages=pending_messages if pending_messages is not None else [],
         )
         return await _system_prompt.resolve_system_prompts(
             self._system_prompts, self._system_prompt_functions, run_context
