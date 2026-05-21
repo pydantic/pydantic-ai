@@ -79,12 +79,13 @@ from pydantic_ai.usage import UsageLimits
 
 PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
 
-# Default cap on model requests per run. The Claude Code CLI the harness
-# replaces has no such cap; pydantic-ai's built-in default is only 50, which
-# these deep multi-step agents exhaust mid-task. gh-aw's api-proxy still
-# enforces the real backstop (maxRuns/token budget). Override per workflow
-# with GH_AW_HARNESS_REQUEST_LIMIT.
-DEFAULT_REQUEST_LIMIT = 200
+# Cap on model requests for the parent agent and each `Task` sub-agent.
+# The Claude Code CLI the harness replaces has no such cap; pydantic-ai's
+# built-in default is only 50, which deep multi-step agents exhaust
+# mid-task. gh-aw's api-proxy still enforces the real backstop
+# (maxRuns/token budget).
+REQUEST_LIMIT = 200
+SUBAGENT_REQUEST_LIMIT = 75
 
 # Execution guidance that prepends every workflow prompt as a system
 # instruction. Weaker models (e.g. MiniMax behind an Anthropic-compatible
@@ -106,11 +107,6 @@ INSTRUCTIONS = (
 # task lives in `instructions=` (see `run()` for the concatenation), so the
 # user message is just a "begin" signal.
 RUN_TRIGGER = "Begin the task per the instructions above."
-
-
-def _request_limit() -> int:
-    """Per-run model-request cap (GH_AW_HARNESS_REQUEST_LIMIT, else default)."""
-    return _int_env("GH_AW_HARNESS_REQUEST_LIMIT", DEFAULT_REQUEST_LIMIT)
 
 # Claude Code native tools the harness implements. The model is trained on
 # these exact names/parameters, so matching them (rather than a custom set +
@@ -136,13 +132,6 @@ MUTATING_TOOLS = frozenset({"Bash", "Write", "Edit", "MultiEdit"})
 READ_ONLY_SUBAGENT_TOOLS = frozenset(
     {"Read", "Grep", "Glob", "LS", "WebFetch", "TodoWrite", "ExitPlanMode"}
 )
-# Per-sub-agent model-request cap (override with GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT).
-DEFAULT_SUBAGENT_REQUEST_LIMIT = 75
-
-
-def _subagent_request_limit() -> int:
-    """Per-`Task` sub-agent request cap, env-overridable."""
-    return _int_env("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", DEFAULT_SUBAGENT_REQUEST_LIMIT)
 
 
 SUBAGENT_INSTRUCTIONS = (
@@ -161,18 +150,14 @@ SUBAGENT_INSTRUCTIONS = (
 # --------------------------------------------------------------------------- #
 # Compaction triggers on TOTAL content size, not message count: a few huge
 # messages eat context just as fast as many small ones, and message-count
-# doesn't capture that. The default is derived from the configured model's
-# approximate context window (~4 chars/token) and a target headroom fraction
-# — both individually env-overridable. Set GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS
-# directly to bypass the derivation entirely.
-DEFAULT_MODEL_CONTEXT_CHARS = 800_000  # ≈ 200k-token window at ~4 chars/token
-DEFAULT_COMPACTION_FRACTION = 0.7      # compact when used context reaches 70%
-DEFAULT_COMPACTION_TRIGGER_CHARS = int(DEFAULT_MODEL_CONTEXT_CHARS * DEFAULT_COMPACTION_FRACTION)
-DEFAULT_COMPACTION_KEEP_RECENT = 10
-# Cap on how much of the older transcript the summariser sees in one call —
-# the model rarely needs more, and bigger inputs run slower without improving
-# the summary.
-COMPACTION_TRANSCRIPT_MAX_CHARS = 60_000
+# doesn't capture that. Sized in tokens (approximated as 4 chars/token) so
+# the knob matches how model context windows are quoted.
+MODEL_CONTEXT_TOKENS = 200_000             # context window of the configured model
+CHARS_PER_TOKEN = 4                        # rough approximation
+COMPACTION_TRIGGER_FRACTION = 0.5          # compact at 50% of the window
+COMPACTION_TRIGGER_CHARS = int(MODEL_CONTEXT_TOKENS * CHARS_PER_TOKEN * COMPACTION_TRIGGER_FRACTION)
+COMPACTION_KEEP_RECENT = 10                # last N messages retained verbatim
+COMPACTION_TRANSCRIPT_MAX_CHARS = 60_000   # max input to the summariser sub-call
 COMPACTION_SUMMARY_INSTRUCTIONS = (
     "You compact agent transcripts. Summarise the conversation so far into "
     "a tight, factual brief the parent agent can resume from: list the goal, "
@@ -180,54 +165,6 @@ COMPACTION_SUMMARY_INSTRUCTIONS = (
     "and the immediate next step. Preserve specifics (paths, identifiers, "
     "evidence) over prose. No flattery, no meta-commentary."
 )
-
-
-def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw:
-        try:
-            value = int(raw)
-            if value > 0:
-                return value
-        except ValueError:
-            pass
-    return default
-
-
-def _float_env(name: str, default: float, *, max_value: float | None = None) -> float:
-    raw = os.environ.get(name)
-    if raw:
-        try:
-            value = float(raw)
-            if value > 0 and (max_value is None or value <= max_value):
-                return value
-        except ValueError:
-            pass
-    return default
-
-
-def _compaction_trigger_chars() -> int:
-    """Resolve the compaction trigger.
-
-    Precedence:
-    1. An explicit `GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS` (absolute char budget).
-    2. Otherwise `MODEL_CONTEXT_CHARS * COMPACTION_FRACTION`, each individually
-       overridable via `GH_AW_HARNESS_MODEL_CONTEXT_CHARS` and
-       `GH_AW_HARNESS_COMPACTION_FRACTION` (0 < f <= 1).
-    """
-    direct = os.environ.get("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS")
-    if direct:
-        try:
-            v = int(direct)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-    context = _int_env("GH_AW_HARNESS_MODEL_CONTEXT_CHARS", DEFAULT_MODEL_CONTEXT_CHARS)
-    fraction = _float_env(
-        "GH_AW_HARNESS_COMPACTION_FRACTION", DEFAULT_COMPACTION_FRACTION, max_value=1.0
-    )
-    return int(context * fraction)
 
 
 def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
@@ -264,11 +201,10 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     here — pydantic-ai's request builder always re-prepends the system
     prompt. Falls back to plain truncation when the summarisation
     sub-call fails (network/model)."""
-    trigger_chars = _compaction_trigger_chars()
-    keep = _int_env("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", DEFAULT_COMPACTION_KEEP_RECENT)
     size = _history_size_chars(messages)
-    if size < trigger_chars or len(messages) <= keep:
+    if size < COMPACTION_TRIGGER_CHARS or len(messages) <= COMPACTION_KEEP_RECENT:
         return messages
+    keep = COMPACTION_KEEP_RECENT
     middle = messages[:-keep]
     tail = messages[-keep:]
     transcript = _render_messages_for_summary(middle)
@@ -333,7 +269,7 @@ def _attach_context(path_arg: str | None) -> str:
     if not path_arg:
         return ""
     try:
-        workspace = pathlib.Path(WORKSPACE).resolve()
+        workspace = pathlib.Path(_workspace()).resolve()
         target = _resolve(path_arg).resolve()
     except OSError:
         return ""
@@ -564,7 +500,13 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[Any]]:
 # inside the AWF firewall sandbox. `pydantic-ai` drives the multi-step loop.
 # --------------------------------------------------------------------------- #
 MAX_TOOL_OUTPUT = 16000
-WORKSPACE = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
+
+
+def _workspace() -> str:
+    """Resolve the workspace root live. Reading `GITHUB_WORKSPACE` lazily
+    (rather than capturing at import time) means tests can set it via
+    `monkeypatch.setenv` instead of patching a module-level constant."""
+    return os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
 
 
 def _clip(text: str) -> str:
@@ -575,7 +517,7 @@ def _clip(text: str) -> str:
 
 def _resolve(path: str) -> pathlib.Path:
     p = pathlib.Path(path)
-    return p if p.is_absolute() else pathlib.Path(WORKSPACE) / p
+    return p if p.is_absolute() else pathlib.Path(_workspace()) / p
 
 
 def bash(command: str, timeout: int | None = None) -> str:
@@ -587,7 +529,7 @@ def bash(command: str, timeout: int | None = None) -> str:
     secs = 120 if not timeout or timeout <= 0 else min(int(timeout), 600)
     try:
         r = subprocess.run(
-            command, shell=True, cwd=WORKSPACE, capture_output=True, text=True, timeout=secs
+            command, shell=True, cwd=_workspace(), capture_output=True, text=True, timeout=secs
         )
         return _clip(f"exit={r.returncode}\n{r.stdout}{r.stderr}")
     except subprocess.TimeoutExpired:
@@ -846,7 +788,7 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
         tools=sub_tools,
         capabilities=[ProcessEventStream(_stream_events)],
     )
-    limits = UsageLimits(request_limit=_subagent_request_limit())
+    limits = UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT)
     # Share the parent's RunUsage so the sub-agent's tokens/requests/tool-calls
     # roll up into the run's final stream-json result — otherwise sub-agent
     # cost is invisible.
@@ -1077,7 +1019,7 @@ async def run(
             ProcessEventStream(_stream_events),
         ],
     )
-    limits = UsageLimits(request_limit=_request_limit())
+    limits = UsageLimits(request_limit=REQUEST_LIMIT)
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})
 
     started = time.perf_counter()
@@ -1134,7 +1076,7 @@ def main() -> int:
         mcp_servers = build_mcp_servers(args)
         log(
             f"model={label} permission_mode={args.permission_mode or '(none)'} "
-            f"request_limit={_request_limit()} "
+            f"request_limit={REQUEST_LIMIT} "
             f"native_tools={[t.name for t in native_tools]} "
             f"mcp_servers={len(mcp_servers)} prompt_chars={len(prompt)}"
         )

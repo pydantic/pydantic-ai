@@ -284,14 +284,8 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
     assert {"WebFetch", "TodoWrite", "ExitPlanMode"} <= names  # non-mutating
 
 
-def test_request_limit_default_and_override(monkeypatch):
-    monkeypatch.delenv("GH_AW_HARNESS_REQUEST_LIMIT", raising=False)
-    assert har._request_limit() == har.DEFAULT_REQUEST_LIMIT == 200
-    monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", "350")
-    assert har._request_limit() == 350
-    for bad in ("0", "-5", "abc", ""):
-        monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", bad)
-        assert har._request_limit() == 200
+def test_request_limit_is_a_constant():
+    assert har.REQUEST_LIMIT == 200
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -372,14 +366,8 @@ def test_task_registered_in_native_tools():
     assert "Task" in har.NATIVE_TOOLS and "Task" in har.NATIVE_TOOL_NAMES
 
 
-def test_subagent_request_limit_default_and_override(monkeypatch):
-    monkeypatch.delenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", raising=False)
-    assert har._subagent_request_limit() == har.DEFAULT_SUBAGENT_REQUEST_LIMIT == 75
-    monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", "120")
-    assert har._subagent_request_limit() == 120
-    for bad in ("0", "-1", "x", ""):
-        monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", bad)
-        assert har._subagent_request_limit() == 75
+def test_subagent_request_limit_is_a_constant():
+    assert har.SUBAGENT_REQUEST_LIMIT == 75
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
@@ -435,7 +423,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     assert set(seen["tool_names"]) == har.READ_ONLY_SUBAGENT_TOOLS  # type: ignore[arg-type]
     assert "Task" not in seen["tool_names"]  # type: ignore[operator]
     assert "Bash" not in seen["tool_names"]  # type: ignore[operator]
-    assert seen["request_limit"] == har.DEFAULT_SUBAGENT_REQUEST_LIMIT
+    assert seen["request_limit"] == har.SUBAGENT_REQUEST_LIMIT
     assert seen["usage_obj"] is parent_usage  # sub-agent tokens roll up into parent
     # Sub-agent gets the same live event handler as the parent (registered
     # as a `ProcessEventStream` capability) so its tool calls stream out
@@ -455,7 +443,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
     # AGENTS.md at root of the "workspace" + CLAUDE.md in a subdir.
-    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     (tmp_path / "AGENTS.md").write_text("# repo conventions", encoding="utf-8")
     sub = tmp_path / "pkg"
     sub.mkdir()
@@ -478,7 +466,7 @@ def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
 
 
 def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
-    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     big = "X" * (har.MAX_CONTEXT_FILE_CHARS + 5000)
     (tmp_path / "AGENTS.md").write_text(big, encoding="utf-8")
     har._reset_context_state()
@@ -489,14 +477,14 @@ def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
 
 
 def test_attach_context_empty_for_missing_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     har._reset_context_state()
     assert har._attach_context(None) == ""
     assert har._attach_context("does-not-exist.py") == ""  # parent has no AGENTS.md/CLAUDE.md
 
 
 def test_read_file_prepends_context(monkeypatch, tmp_path):
-    monkeypatch.setattr(har, "WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     (tmp_path / "AGENTS.md").write_text("repo rules", encoding="utf-8")
     (tmp_path / "f.txt").write_text("file body", encoding="utf-8")
     har._reset_context_state()
@@ -507,34 +495,14 @@ def test_read_file_prepends_context(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 # history compaction (ProcessHistory capability)
 # --------------------------------------------------------------------------- #
-def test_compaction_trigger_chars_resolution(monkeypatch):
-    for v in (
-        "GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS",
-        "GH_AW_HARNESS_MODEL_CONTEXT_CHARS",
-        "GH_AW_HARNESS_COMPACTION_FRACTION",
-    ):
-        monkeypatch.delenv(v, raising=False)
-    # Default: 800k * 0.7 = 560k chars (≈ 70% of a 200k-token context).
-    assert har._compaction_trigger_chars() == 560_000
-    assert har.DEFAULT_COMPACTION_TRIGGER_CHARS == 560_000
-
-    # Component overrides compose.
-    monkeypatch.setenv("GH_AW_HARNESS_MODEL_CONTEXT_CHARS", "400000")
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_FRACTION", "0.5")
-    assert har._compaction_trigger_chars() == 200_000
-
-    # Direct trigger wins over derivation, even when components are also set.
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "12345")
-    assert har._compaction_trigger_chars() == 12345
-
-    # Bad fraction values fall back to default.
-    monkeypatch.delenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS")
-    monkeypatch.delenv("GH_AW_HARNESS_MODEL_CONTEXT_CHARS")
-    for bad in ("0", "-1", "1.5", "abc", ""):
-        monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_FRACTION", bad)
-        assert har._compaction_trigger_chars() == int(
-            har.DEFAULT_MODEL_CONTEXT_CHARS * har.DEFAULT_COMPACTION_FRACTION
-        )
+def test_compaction_trigger_chars_is_derived_from_model_context():
+    # COMPACTION_TRIGGER_CHARS = MODEL_CONTEXT_TOKENS * CHARS_PER_TOKEN * FRACTION
+    expected = int(
+        har.MODEL_CONTEXT_TOKENS * har.CHARS_PER_TOKEN * har.COMPACTION_TRIGGER_FRACTION
+    )
+    assert har.COMPACTION_TRIGGER_CHARS == expected
+    assert har.MODEL_CONTEXT_TOKENS == 200_000  # default 200k-token window
+    assert 0 < har.COMPACTION_TRIGGER_FRACTION <= 1
 
 
 def test_history_size_chars_sums_all_part_content():
@@ -568,13 +536,11 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
 
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "1000")
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
-
-    # 12 messages of ~120 chars each ≈ 1.4k chars — exceeds the 1000-char trigger.
-    msgs = [
-        ModelRequest(parts=[UserPromptPart(content=f"m{i} " + "x" * 120)]) for i in range(12)
-    ]
+    # KEEP_RECENT (10) + 3 middle to summarise = 13 messages. Each is big
+    # enough that the total exceeds COMPACTION_TRIGGER_CHARS so compaction
+    # fires without us having to override the trigger via env / setattr.
+    big = "x" * 50_000  # 50 KB per message, 13 * 50 KB ≈ 650 KB > 400 KB trigger
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i} {big}")]) for i in range(13)]
 
     seen_usage: dict[str, object] = {}
 
@@ -601,11 +567,11 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
         usage = parent_usage
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
-    # synthetic summary (1) + last KEEP_RECENT (3) = 4. We no longer
-    # preserve a "head" message — pydantic-ai re-applies the system
+    # synthetic summary (1) + last COMPACTION_KEEP_RECENT messages. We no
+    # longer preserve a "head" message — pydantic-ai re-applies the system
     # `instructions=` on every request, so the task spec stays visible
     # without our help.
-    assert len(out) == 4
+    assert len(out) == 1 + har.COMPACTION_KEEP_RECENT
     # Compaction summariser cost rolled up into the parent's usage.
     assert seen_usage["usage"] is parent_usage
     # Summary present in the leading synthetic ModelRequest.
@@ -619,12 +585,9 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.test import TestModel
 
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_TRIGGER_CHARS", "1000")
-    monkeypatch.setenv("GH_AW_HARNESS_COMPACTION_KEEP_RECENT", "3")
-
-    msgs = [
-        ModelRequest(parts=[UserPromptPart(content=f"m{i} " + "x" * 120)]) for i in range(12)
-    ]
+    # Same size-driven setup as the previous test — 13 big msgs > trigger.
+    big = "x" * 50_000
+    msgs = [ModelRequest(parts=[UserPromptPart(content=f"m{i} {big}")]) for i in range(13)]
 
     class _FailingAgent:
         def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
@@ -642,8 +605,8 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
         usage = RunUsage()
 
     out = asyncio.run(har._compact_history(_Ctx(), msgs))
-    # On failure: keep just the tail (no head, no synthetic summary) = 3
-    assert len(out) == 3
+    # On failure: keep just the tail (no head, no synthetic summary).
+    assert len(out) == har.COMPACTION_KEEP_RECENT
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
