@@ -268,7 +268,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: no cover
+    def my_tool(x: int) -> str:
         """A function that does something.
 
         Args:
@@ -277,7 +277,7 @@ def test_google_style_with_returns():
         Returns:
             str: The result as a string.
         """
-        return str(x)
+        return str(x)  # pragma: no cover
 
     agent.tool_plain(my_tool)
     result = agent.run_sync('Hello')
