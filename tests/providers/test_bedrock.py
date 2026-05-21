@@ -136,6 +136,22 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.bedrock_supports_adaptive_thinking is False
     assert anthropic_profile.bedrock_supports_effort is False
 
+    anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    # Sonnet 4.5 is the most-recent non-adaptive model — the boundary case users compare
+    # against Sonnet 4.6 when evaluating this fix.
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
+    assert anthropic_profile.bedrock_supports_effort is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    # Opus 4.5 supports `effort` on the direct Anthropic API but Bedrock only honors it
+    # alongside adaptive thinking, so the Bedrock flag must stay False here.
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
+    assert anthropic_profile.bedrock_supports_effort is False
+
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-6-20251015-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-6-20251015')
     assert isinstance(anthropic_profile, BedrockModelProfile)

@@ -153,10 +153,14 @@ class BedrockModelProfile(ModelProfile):
     """
 
     bedrock_supports_effort: bool = False
-    """Whether this model accepts `output_config.effort` (Opus 4.5+, Sonnet 4.6+).
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
 
-    Only meaningful for the `'anthropic'` variant. On Bedrock Converse, effort lives at
-    `additionalModelRequestFields.output_config.effort` (a sibling of `thinking`, not inside it).
+    Only meaningful for the `'anthropic'` variant AND only honored alongside
+    `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
+    `output_config.effort` on the legacy `{'type': 'enabled', 'budget_tokens': N}` path
+    (e.g. Opus 4.5), so the translator skips it there even though the direct Anthropic
+    API accepts it. Effort lives at `additionalModelRequestFields.output_config.effort`
+    (a sibling of `thinking`, not inside it).
     """
 
 
@@ -170,7 +174,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
     is_anthropic = isinstance(downstream, AnthropicModelProfile)
     supports_adaptive = is_anthropic and downstream.anthropic_supports_adaptive_thinking
-    supports_effort = is_anthropic and downstream.anthropic_supports_effort
+    # Bedrock only honors effort inside the adaptive branch of `_translate_thinking`, so don't claim
+    # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
+    supports_effort = supports_adaptive and is_anthropic and downstream.anthropic_supports_effort
     profile = BedrockModelProfile(
         bedrock_supports_tool_choice=True,
         bedrock_send_back_thinking_parts=True,
