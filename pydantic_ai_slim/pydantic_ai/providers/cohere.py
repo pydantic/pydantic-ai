@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 
 import httpx
 
@@ -40,8 +41,8 @@ class CohereProvider(Provider[AsyncClientV2]):
         return self._v1_client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
-        return cohere_model_profile(model_name)
+    def model_profile(model_name: str) -> ModelProfile:
+        return replace(cohere_model_profile(model_name) or ModelProfile(), supports_inline_system_prompts=True)
 
     def __init__(
         self,
