@@ -199,7 +199,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     capabilities: dict[str, AbstractCapability[DepsT]]
     available_capability_ids: set[str]
-    available_tools: set[str]
+    discovered_tool_names: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -865,7 +865,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         _refresh_available_capability_ids(ctx)
 
-        _refresh_available_tools(ctx)
+        _refresh_discovered_tool_names(ctx)
 
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1432,8 +1432,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
         available_capability_ids=ctx.deps.available_capability_ids,
-        # available_tools=ctx.deps.available_tools,
-        # Not sure if it makes sense here?
+        discovered_tool_names=ctx.deps.discovered_tool_names,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1451,14 +1450,12 @@ def _refresh_available_capability_ids(ctx: GraphRunContext[GraphAgentState, Grap
     ctx.deps.available_capability_ids.update(available_capability_ids)
 
 
-def _refresh_available_tools(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Refresh available tools from the current graph state."""
+def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived discovered tool names from the current graph state."""
     discovered_tool_names = ToolSearchToolset.parse_discovered_tools(ctx.state.message_history)
-    # I have all the tools that were revealed in this turn
-    # Now I need all the tools period?
-    # But that can obviously happen after get_tools() or where get_tools() is called because that will know which tools are available right now
-    # so available tools right now could just be this?
-    ctx.deps.available_tools = discovered_tool_names
+
+    ctx.deps.discovered_tool_names.clear()
+    ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
 def build_validation_context(

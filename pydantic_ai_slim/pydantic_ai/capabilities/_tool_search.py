@@ -31,7 +31,6 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -210,20 +209,26 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Append a synthetic tool-search exchange for tools unlocked by a capability load."""
-        loaded_tool_defs = tool_defs_for_loaded_capabilities(
-            ctx, request_context.model_request_parameters.function_tools
-        )
-
-        in_history = ToolSearchToolset.parse_discovered_tools(ctx.messages)
-        newly_loaded = {name: tool_def for name, tool_def in loaded_tool_defs.items() if name not in in_history}
+        # The tools `get_tools` revealed this turn are those it marked as managed by tool
+        # search (`with_native == ToolSearchTool.kind`) and no longer deferred. Of those,
+        # the ones to record are revealed-by-cap-load but not yet present in tool-search
+        # history (`ctx.discovered_tool_names`), so we don't duplicate an existing exchange.
+        function_tools = request_context.model_request_parameters.function_tools
+        newly_loaded = [
+            td
+            for td in function_tools
+            if td.with_native == ToolSearchTool.kind
+            and not td.defer_loading
+            and td.name not in ctx.discovered_tool_names
+        ]
         if not newly_loaded:
             return request_context
 
-        newly_loaded_names = sorted(newly_loaded)
-        capability_ids = sorted(
-            {capability_id for name in newly_loaded_names if (capability_id := newly_loaded[name].capability_id)}
-        )
-        call_id_digest = hashlib.blake2s('\x00'.join(newly_loaded_names).encode(), digest_size=8).hexdigest()
+        newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
+        capability_ids = sorted({td.capability_id for td in newly_loaded if td.capability_id})
+        call_id_digest = hashlib.blake2s(
+            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8
+        ).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 
         request_context.messages.append(
@@ -242,8 +247,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                     ToolSearchReturnPart(
                         content={
                             'discovered_tools': [
-                                {'name': name, 'description': newly_loaded[name].description}
-                                for name in newly_loaded_names
+                                {'name': td.name, 'description': td.description} for td in newly_loaded
                             ]
                         },
                         tool_call_id=call_id,

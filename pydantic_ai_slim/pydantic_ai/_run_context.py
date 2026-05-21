@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .result import RunUsage
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+    from .tools import ToolDefinition
 
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
@@ -117,12 +118,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The capabilities that are available for the current run."""
 
     available_capability_ids: set[str] = field(default_factory=set[str])
-    """IDs of every capability that is currently available.
+    """IDs of the capabilities whose contributions are live to the model right now.
 
-    Contains both non-deferred capabilities (`defer_loading=False`) and any
-    deferred capabilities the model has loaded via `load_capability`. Seeded
-    during run preparation from the capability registry and message history; the
-    `load_capability` tool body adds to it for in-step loads.
+    Distinct from `capabilities`, which is the full registry of capabilities registered
+    for the run (including deferred ones not yet loaded). `available_capability_ids` is
+    the subset whose contributions are currently active: non-deferred capabilities
+    (`defer_loading=False`) plus any deferred capabilities the model has loaded via
+    `load_capability`. Seeded during run preparation from the capability registry and
+    message history; the `load_capability` tool body adds to it for in-step loads.
     """
 
     capability_loaded: bool | None = None
@@ -131,21 +134,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
     This is `None` outside capability hook dispatch, where there is no current capability.
     """
 
-    available_tools: set[str] = field(default_factory=set[str])
-    """Tools that are available to be called on the current turn."""
+    discovered_tool_names: set[str] = field(default_factory=set[str])
+    """Names of deferred tools revealed via tool-search return parts in the message history.
+
+    The history-derived subset that `ToolSearchToolset.get_tools` reads to decide which
+    deferred tools to make visible this turn. Populated during run preparation from
+    message history.
+    """
 
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
-    # @property
-    # def available_tools(self) -> set[str]:
-    #     """Tools that are available to be called on the current turn."""
-    #     if self.tool_manager is None or self.tool_manager.tools is None:
-    #         return set()
+    @property
+    def available_tools(self) -> set[str]:
+        """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability)."""
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return set()
+        return {tool.tool_def.name for tool in self.tool_manager.tools.values() if not tool.tool_def.defer_loading}
 
-    #     return {tool.tool_def.name for tool in self.tool_manager.tools.values() if not tool.tool_def.defer_loading}
+    @property
+    def tools(self) -> dict[str, ToolDefinition]:
+        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tools` names into this for the callable subset."""
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return {}
+        return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

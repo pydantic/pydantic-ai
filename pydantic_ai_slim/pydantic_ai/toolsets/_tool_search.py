@@ -258,9 +258,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             )
         )
 
-        # Well available tools at the moment only know the tools that were revealed based on the message history
-        discovered_tool_names = ctx.available_tools | loaded_capability_tool_names
-        # So the tools provided by the last load_capability are not present at the moment?
+        # Tools to make visible this turn: those discovered via tool-search history plus
+        # those revealed by a loaded capability.
+        revealed_tool_names = ctx.discovered_tool_names | loaded_capability_tool_names
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
@@ -274,7 +274,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             managed_def = replace(
                 tool.tool_def,
                 with_native=_TOOL_SEARCH_BUILTIN_ID,
-                defer_loading=name not in discovered_tool_names,
+                defer_loading=name not in revealed_tool_names,
             )
             result[name] = replace(tool, tool_def=managed_def)
 
@@ -291,16 +291,15 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, discovered_tool_names)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, deferred, revealed_tool_names)
 
-        ctx.available_tools = set(result.keys())
         return result
 
     def _build_search_tool(
         self,
         ctx: RunContext[AgentDepsT],
         deferred: dict[str, ToolsetTool[AgentDepsT]],
-        discovered_tool_names: set[str],
+        revealed_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
@@ -310,7 +309,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         corpus = [
             tool.tool_def
             for name, tool in deferred.items()
-            if name not in discovered_tool_names
+            if name not in revealed_tool_names
             and (tool.tool_def.capability_id is None or tool.tool_def.capability_id in ctx.available_capability_ids)
         ]
 

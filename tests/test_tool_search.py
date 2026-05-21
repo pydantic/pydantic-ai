@@ -500,6 +500,7 @@ def _build_run_context(
     run_step: int = 0,
     messages: list[ModelMessage] | None = None,
     capabilities: dict[str, AbstractCapability[T]] | None = None,
+    discovered_tool_names: set[str] | None = None,
 ) -> RunContext[T]:
     """Build a `RunContext` for unit tests using `TestModel`."""
     return RunContext(
@@ -510,6 +511,7 @@ def _build_run_context(
         messages=messages or [],
         run_step=run_step,
         capabilities=capabilities or {},
+        discovered_tool_names=discovered_tool_names or set(),
     )
 
 
@@ -808,7 +810,7 @@ async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
             ]
         )
     ]
-    ctx = _build_run_context(None, messages=messages)
+    ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
     assert tools['calculate_mortgage'].tool_def.defer_loading is False
@@ -1206,7 +1208,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
             ]
         ),
     ]
-    ctx = _build_run_context(None, messages=messages)
+    ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage', 'stock_price'})
 
     tools = await searchable.get_tools(ctx)
     assert tools['calculate_mortgage'].tool_def.defer_loading is False
@@ -2868,7 +2870,10 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
             ]
         )
     ]
-    ctx = _build_run_context(None, messages=messages)
+    # `parse_discovered_tools` extracts discovery from the native return part; mirror that
+    # into `discovered_tool_names`, which `get_tools` reads to flip visibility.
+    assert ToolSearchToolset.parse_discovered_tools(messages) == {'calculate_mortgage'}
+    ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
     assert tools['calculate_mortgage'].tool_def.defer_loading is False

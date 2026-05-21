@@ -1495,7 +1495,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             root_capability=run_capability,
             capabilities=capabilities_dict,
             available_capability_ids=available_capability_ids,
-            available_tools=set(),
+            discovered_tool_names=set(),
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,

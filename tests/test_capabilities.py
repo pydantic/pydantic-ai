@@ -2816,6 +2816,139 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     )
 
 
+async def test_deferred_capability_tool_stays_available_across_turns() -> None:
+    """A capability-owned tool stays callable across every turn after `load_capability`.
+
+    Regression guard: the `available_tools`/`discovered_tool_names` split must keep a
+    loaded deferred tool non-deferred on the second (and later) post-load model request,
+    not just on the turn immediately following the load.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    # Names of non-deferred function tools the model sees on each request.
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        # Turn 1: load the capability.
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        lookup_calls = [part for part in tool_returns if part.tool_name == 'lookup_refund_policy']
+
+        # Turns 2 and 3: call the loaded tool twice, so we exercise two post-load turns.
+        if len(lookup_calls) < 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': f'order-{len(lookup_calls)}'},
+                        tool_call_id=f'lookup-{len(lookup_calls)}',
+                    )
+                ]
+            )
+
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+
+    # First request: tool is still deferred (not yet loaded).
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    # Every request after the load must expose the loaded tool as non-deferred — including
+    # the second post-load turn, which is what the regression broke.
+    post_load_turns = available_per_turn[1:]
+    assert len(post_load_turns) >= 2
+    for turn_tools in post_load_turns:
+        assert 'lookup_refund_policy' in turn_tools
+
+
+async def test_deferred_capability_synthetic_tool_search_persists_in_history() -> None:
+    """The synthetic tool-search exchange injected after a capability load persists to
+    the run's message history, and re-running with that history does not duplicate it."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
+        call_ids: list[str] = []
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
+                    call_ids.append(part.tool_call_id)
+        return call_ids
+
+    messages = result.all_messages()
+    call_ids = synthetic_pairs(messages)
+    # Exactly one synthetic call part, and its matching return part is present.
+    assert len(call_ids) == 1
+    return_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == call_ids[0]
+    ]
+    assert return_ids == [call_ids[0]]
+
+    # Idempotence: feeding the resulting history back in does not inject a duplicate pair
+    # (the deterministic call_id means it's recognized as already discovered).
+    result2 = await agent.run('And another refund?', message_history=messages)
+    new_messages = result2.all_messages()[len(messages) :]
+    assert synthetic_pairs(new_messages) == []
+
+
 async def test_deferred_capability_load_includes_toolset_instructions() -> None:
     """Instructions declared on a deferred capability's toolset surface via the `load_capability` return.
 

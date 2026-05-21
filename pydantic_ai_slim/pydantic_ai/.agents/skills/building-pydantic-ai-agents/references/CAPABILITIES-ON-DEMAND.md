@@ -72,7 +72,7 @@ When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
-- the capability id is added to `ctx.loaded_capability_ids`
+- the capability id is added to `ctx.available_capability_ids`
 - tools owned by the loaded capability become visible on later steps
 - `load_capability` remains visible so the tool set stays stable
 
