@@ -286,12 +286,12 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
 
 def test_request_limit_default_and_override(monkeypatch):
     monkeypatch.delenv("GH_AW_HARNESS_REQUEST_LIMIT", raising=False)
-    assert har._request_limit() == har.DEFAULT_REQUEST_LIMIT == 100
-    monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", "250")
-    assert har._request_limit() == 250
+    assert har._request_limit() == har.DEFAULT_REQUEST_LIMIT == 200
+    monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", "350")
+    assert har._request_limit() == 350
     for bad in ("0", "-5", "abc", ""):
         monkeypatch.setenv("GH_AW_HARNESS_REQUEST_LIMIT", bad)
-        assert har._request_limit() == 100
+        assert har._request_limit() == 200
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -312,12 +312,12 @@ def test_task_registered_in_native_tools():
 
 def test_subagent_request_limit_default_and_override(monkeypatch):
     monkeypatch.delenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", raising=False)
-    assert har._subagent_request_limit() == har.DEFAULT_SUBAGENT_REQUEST_LIMIT == 30
-    monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", "50")
-    assert har._subagent_request_limit() == 50
+    assert har._subagent_request_limit() == har.DEFAULT_SUBAGENT_REQUEST_LIMIT == 75
+    monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", "120")
+    assert har._subagent_request_limit() == 120
     for bad in ("0", "-1", "x", ""):
         monkeypatch.setenv("GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT", bad)
-        assert har._subagent_request_limit() == 30
+        assert har._subagent_request_limit() == 75
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):

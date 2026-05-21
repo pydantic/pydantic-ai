@@ -21,8 +21,8 @@ permissions:
   pull-requests: read
   issues: read
 # Full git history: the reviewer reads `git log`/`git diff` for context and the
-# gather-pydantic-ai-review-context script annotates per-file diffs against the
-# base ref.
+# gather-pydantic-ai-review-context script annotates per-file diffs against
+# the base ref.
 checkout:
   fetch-depth: 0
 concurrency:
@@ -91,13 +91,21 @@ pre-agent-steps:
   # firewalled agent reuses a warm cache (non-fatal on failure).
   - name: Pre-warm Pydantic AI harness uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
-  # Pre-fetch PR context into `.github/.review-context/`: pr-details, PR
+  # Pre-fetch PR context into `/tmp/gh-aw/.review-context/`: pr-details, PR
   # comments, review threads (with annotated diff hunks + resolved/outdated
   # state), annotated per-file diffs, related issues, AGENTS.md excerpts for
   # changed dirs, file orderings for sub-agent fan-out, and a PR-size summary.
   # The agent reads these files instead of calling the GitHub API at run time.
-  # Non-fatal: missing context just reduces signal. The script is a fork of
-  # scripts/gather-review-context.sh — see the TODO at the top of the fork.
+  # Non-fatal: missing context just reduces signal.
+  #
+  # The script lives at scripts/ (NOT .github/scripts/) because gh-aw's
+  # "Save/Restore agent config folders from base branch" step snapshots and
+  # restores `.github/` (and other managed agent-config folders) from the
+  # BASE branch — making any new file added under those folders unreliable
+  # for steps that run after the restore. `scripts/` is outside that set,
+  # matching where the legacy reviewer's gather-review-context.sh already
+  # lives. The script is a fork of scripts/gather-review-context.sh — see
+  # the TODO at the top of the fork.
   - name: Gather PR review context
     if: ${{ github.event.pull_request.number }}
     env:
@@ -106,7 +114,14 @@ pre-agent-steps:
       REPO: ${{ github.repository }}
     run: |
       set -uo pipefail
-      script=.github/scripts/gather-pydantic-ai-review-context.sh
+      # Diagnostic: log the workspace state of both scripts/ and .github/scripts/
+      # so we can verify the gh-aw restore-from-base step left them untouched.
+      echo "::group::workspace inventory at gather time"
+      ls -la scripts/ 2>&1 | head -20 || true
+      echo "---"
+      ls -la .github/scripts/ 2>&1 | head -20 || true
+      echo "::endgroup::"
+      script=scripts/gather-pydantic-ai-review-context.sh
       if [ -x "$script" ]; then
         "$script" "$PR_NUMBER" "$REPO" \
           || echo "::warning::${script} failed; reviewer will run with less context"

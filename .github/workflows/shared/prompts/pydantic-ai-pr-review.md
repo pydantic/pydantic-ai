@@ -48,8 +48,8 @@ and erodes trust in every future review.**
 
 ## Pre-gathered context
 
-A pre-agent step ran `.github/scripts/gather-pydantic-ai-review-context.sh`
-and wrote everything you need to `.github/.review-context/`. **Read these
+A pre-agent step ran `scripts/gather-pydantic-ai-review-context.sh` and
+wrote everything you need to `/tmp/gh-aw/.review-context/`. **Read these
 files instead of calling the GitHub API.**
 
 - `pr-details.json` — title, body, author, branches, labels, draft/state.
@@ -219,7 +219,7 @@ When in doubt, do not duplicate. Redundant comments erode trust.
 
 ### Step 1 — Orient
 
-1. Read `.github/.review-context/pr-details.json` and `pr-size.txt`.
+1. Read `/tmp/gh-aw/.review-context/pr-details.json` and `pr-size.txt`.
 2. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
    `agents-md.txt` sections.
 3. Skim `review-comments.txt` for prior threads (note the most recent
@@ -261,10 +261,10 @@ For each sub-agent, include in its prompt:
      **Calibration examples** sections from this prompt (copy verbatim).
 3. The **assigned file list** (in the assigned ordering) and instructions
    to:
-   - Read each `.github/.review-context/diff/<path>.diff` for changes.
+   - Read each `/tmp/gh-aw/.review-context/diff/<path>.diff` for changes.
    - Read the **full file** from the workspace for surrounding context
      (full files are checked out — use `Read`).
-   - Check `.github/.review-context/review-comments.txt` for existing
+   - Check `/tmp/gh-aw/.review-context/review-comments.txt` for existing
      threads on these files; skip duplicates per the rules above.
 4. The **output format**:
    ```
@@ -298,7 +298,7 @@ Before posting **any** inline comment:
 4. **Check existing threads** for the same `path:line` and apply the
    thread-handling rules above.
 5. **Confirm the line is commentable** — open
-   `.github/.review-context/diff/<file>.diff` and check the target line
+   `/tmp/gh-aw/.review-context/diff/<file>.diff` and check the target line
    has an `NL:<n>` prefix. If not, move the finding into the review body.
 
 ### Step 5 — Comment and submit

@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
-# Gather PR context for the Pydantic AI PR Review agent into .github/.review-context/
-# Usage: .github/scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
+# Gather PR context for the Pydantic AI PR Review agent into /tmp/gh-aw/.review-context/.
+# Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
 #
 # Examples:
-#   .github/scripts/gather-pydantic-ai-review-context.sh 4269
-#   .github/scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
+#   scripts/gather-pydantic-ai-review-context.sh 4269
+#   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
 #
-# TODO(consolidate): This is a fork of scripts/gather-review-context.sh used by
-# the legacy Claude-action workflow (.github/workflows/bots.yml). The two will
-# be consolidated once the Claude-action workflow is migrated to the Pydantic AI
-# harness — until then, keep edits scoped to whichever consumer needs them and
-# leave the other script alone.
+# Why outputs live under /tmp (not in the workspace): gh-aw's pre-agent flow
+# runs a "Save/Restore agent config folders from base branch" step that
+# touches `.github/` (a security feature to prevent PRs from rewriting the
+# agent's own configuration). Writing context inside `.github/` or any other
+# managed folder (`.agents`, `.claude`, `.codex`, …) is unreliable because
+# those snapshots can wipe or shadow what we wrote. `/tmp/gh-aw/...` is
+# under the runner's tmp tree, untouched by gh-aw's restore step.
+#
+# TODO(consolidate): This is a fork of scripts/gather-review-context.sh used
+# by the legacy Claude-action workflow (.github/workflows/bots.yml). The two
+# will be consolidated once the Claude-action workflow is migrated to the
+# Pydantic AI harness — until then, keep edits scoped to whichever consumer
+# needs them and leave the other script alone.
 
 set -euo pipefail
 
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
-CTX=".github/.review-context"
+CTX="/tmp/gh-aw/.review-context"
 mkdir -p "$CTX"
 
 echo "Gathering context for PR #${PR_NUMBER} in ${REPO}..."

@@ -81,12 +81,14 @@ PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
 # these deep multi-step agents exhaust mid-task. gh-aw's api-proxy still
 # enforces the real backstop (maxRuns/token budget). Override per workflow
 # with GH_AW_HARNESS_REQUEST_LIMIT.
-DEFAULT_REQUEST_LIMIT = 100
+DEFAULT_REQUEST_LIMIT = 200
 
-# System-level execution guidance (not task content — the task prompt is the
-# user message / Logfire-managed variable). pydantic-ai runs the tool calls in
-# a single model response concurrently, so batching independent calls is both
-# faster and far cheaper in model requests.
+# Execution guidance that prepends every prompt as a system instruction.
+# Weaker models (e.g. MiniMax behind an Anthropic-compatible shim) follow
+# system instructions much more strictly than user messages, so the full
+# workflow prompt is also routed into `instructions=` (see `run()`) rather
+# than sent as the user message. This snippet covers parallel tool calls;
+# the workflow's resolved prompt is concatenated after it.
 INSTRUCTIONS = (
     "You can call multiple tools in a single turn. When tool calls are "
     "independent (no call needs another call's output), issue them together "
@@ -94,6 +96,11 @@ INSTRUCTIONS = (
     "model requests. Only chain tools sequentially when one genuinely needs a "
     "previous tool's result."
 )
+
+# Trivial user message that triggers the agent to start working. The actual
+# task lives in `instructions=` (see `run()` for the concatenation), so the
+# user message is just a "begin" signal.
+RUN_TRIGGER = "Begin the task per the instructions above."
 
 
 def _request_limit() -> int:
@@ -125,7 +132,7 @@ READ_ONLY_SUBAGENT_TOOLS = frozenset(
     {"Read", "Grep", "Glob", "LS", "WebFetch", "TodoWrite", "ExitPlanMode"}
 )
 # Per-sub-agent model-request cap (override with GH_AW_HARNESS_SUBAGENT_REQUEST_LIMIT).
-DEFAULT_SUBAGENT_REQUEST_LIMIT = 30
+DEFAULT_SUBAGENT_REQUEST_LIMIT = 75
 
 
 def _subagent_request_limit() -> int:
@@ -1069,9 +1076,13 @@ async def run(
     session_id: str,
 ) -> int:
     _reset_context_state()  # per-run dedupe state for AGENTS.md/CLAUDE.md auto-loading
+    # The workflow prompt rides as a system instruction (not a user message)
+    # because weaker models follow system prompts much more strictly than
+    # user prompts — and the workflow prompts here are full task specs, not
+    # ad-hoc questions. The user message is a trivial trigger.
     agent = Agent(
         model,
-        instructions=INSTRUCTIONS,
+        instructions=f"{INSTRUCTIONS}\n\n{prompt}",
         tools=native_tools,
         toolsets=mcp_servers or None,
         capabilities=[ProcessHistory(_compact_history)],
@@ -1085,9 +1096,9 @@ async def run(
         if mcp_servers:
             async with agent:
                 await log_mcp_tools(mcp_servers)
-                result = await agent.run(prompt, usage_limits=limits)
+                result = await agent.run(RUN_TRIGGER, usage_limits=limits)
         else:
-            result = await agent.run(prompt, usage_limits=limits)
+            result = await agent.run(RUN_TRIGGER, usage_limits=limits)
     except Exception as exc:  # noqa: BLE001 - surface as a Claude-style error result
         log(f"agent run failed: {exc!r}")
         emit_result(
