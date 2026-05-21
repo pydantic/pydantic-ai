@@ -50,7 +50,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         return self._client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    def model_profile(model_name: str) -> ModelProfile:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
