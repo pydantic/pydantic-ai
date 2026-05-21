@@ -365,6 +365,163 @@ for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./
 done >> "$CTX/agents-md.txt"
 [ -s "$CTX/agents-md.txt" ] || echo "(No directory-specific AGENTS.md files for changed directories)" > "$CTX/agents-md.txt"
 
+# Shared review conventions — the severity scale, false-positive catalog,
+# and calibration examples. Pre-writing this file (instead of inlining the
+# same content into the workflow prompt) means the parent agent doesn't
+# have to copy 100+ lines of rules into every Task sub-agent prompt — the
+# parent just tells each sub-agent to `Read` this file once. Matches the
+# pattern elastic/ai-github-actions uses with `/tmp/pr-context/review-
+# instructions.md`. Keep this content in sync with what the PR review
+# seed prompt cites.
+echo "  - Review instructions for sub-agents"
+cat > "$CTX/review-instructions.md" <<'REVIEW_INSTRUCTIONS_EOF'
+# Pydantic AI PR Review — Shared Review Conventions
+
+This file is the **single source of truth** for the severity scale, false-
+positive catalog, calibration examples, and sub-agent output format. The
+parent PR-review agent and every Task sub-agent should `Read` this file
+once before reviewing.
+
+## Severity scale
+
+Determine severity AFTER investigating the finding, not before.
+
+- 🔴 **CRITICAL** — must fix before merge. Security vulnerability, data
+  corruption, public-API break without deprecation, type-safety hole
+  that would silently mistype user code.
+- 🟠 **HIGH** — should fix before merge. Logic bug with a concrete
+  failure trigger, missing validation at an external boundary, race
+  condition, significant perf regression, broken backward compatibility.
+- 🟡 **MEDIUM** — address soon, non-blocking. Error-handling gap with
+  an unlikely trigger, missing test for a non-trivial code path, subtly
+  surprising behavior, docs that contradict the code.
+- ⚪ **LOW** — author discretion. Minor improvements, missing docstrings
+  on small helpers, narrow refactor opportunities.
+- 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
+
+**Verdict mapping:** any HIGH or CRITICAL → `REQUEST_CHANGES`. MEDIUM-only
+or below → `APPROVE` (post the comments anyway). No findings → `APPROVE`.
+
+**Cap inline comments at 30 per run.** If more findings survive, keep the
+highest-severity 30 inline and list the rest briefly in the review body.
+
+## What NOT to flag
+
+This repo runs ruff and pyright in CI and has expert maintainers. The
+common false-positive patterns below all *look* like real issues — verify
+the surrounding code before posting.
+
+- **Style / formatting** — ruff handles it.
+- **Type nits already covered by pyright** — `make typecheck` runs in CI.
+- **"Missing tests" for pure refactor** — if the PR moves or renames
+  existing code and existing tests still exercise the behavior, no new
+  test is needed. Only flag missing tests for new behavior or new public
+  API.
+- **`None` / `Optional` access guarded upstream** — internal helpers
+  often assume a precondition the caller enforces (or a type narrows the
+  value via an `assert` / `isinstance` / early-return). Read the caller
+  before flagging.
+- **Internal renames** — anything with a leading underscore (or in a
+  module that starts with `_`) is private. Renaming or removing private
+  surface is fine; only flag breakage of *public* API.
+- **Provider-specific knobs** — request params, role mappings, finish
+  reasons differ deliberately across providers. Check the provider's
+  SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
+  before asserting a "bug".
+- **Cassettes / `uv.lock` / generated files** — never review.
+- **Theoretical performance** — `O(n²)` is only a problem if `n` is
+  realistically large in this use case. Don't flag without evidence of
+  real-world impact.
+- **Validation already enforced by Pydantic** — if the input is a
+  Pydantic model, don't flag missing manual validation of its fields.
+- **"This might break some user"** — if you can't name the user, the
+  call site, or the scenario, drop the finding.
+
+## Calibration examples
+
+### Example 1 — `None` access
+
+**Flag this (HIGH):**
+```python
+# PR adds a new public helper
+def first_text_message(messages: list[ModelMessage]) -> str:
+    for m in messages:
+        for p in m.parts:
+            if isinstance(p, TextPart):
+                return p.content
+```
+*Why:* The function is typed `-> str` but falls off the end and implicitly
+returns `None` when no `TextPart` is found, so any caller that does
+`.upper()` on the result silently breaks at runtime. Public API.
+
+**Don't flag this:**
+```python
+# PR adds this line inside agent.run() after the model call
+text = response.parts[-1].content
+```
+*Why:* Reading the surrounding code shows `_validate_response` runs
+before this line and guarantees `parts` is non-empty and the last part
+is text-bearing. The "missing None check" is handled at the layer above.
+
+### Example 2 — provider mapping
+
+**Flag this (HIGH):**
+```python
+# PR adds tool_call mapping for a new provider
+return ToolCallPart(tool_name=tc.name, args=tc.input)
+```
+*Why:* Every other provider sets `tool_call_id=tc.id` for round-trip
+identity; the new mapping silently drops it, breaking tool-result
+pairing for any agent that uses multi-tool calls.
+
+**Don't flag this:**
+```python
+# PR adds reasoning-effort mapping
+if model_settings.reasoning_effort:
+    request['reasoning'] = {'effort': model_settings.reasoning_effort}
+```
+*Why:* Even though OpenAI uses `reasoning_effort` at the top level,
+this provider's SDK docs (check `pydantic_ai/models/<provider>.py`
+neighbouring code) show the nested `reasoning.effort` shape is correct
+for this provider. Different providers, different shapes — not a bug.
+
+### Example 3 — backward compatibility
+
+**Flag this (CRITICAL):**
+```python
+# PR renames a public method on Agent
+- def run_sync(self, ...): ...
++ def sync_run(self, ...): ...
+```
+*Why:* `Agent.run_sync` is widely used public API. Removing it without
+a deprecation shim breaks every user on upgrade.
+
+**Don't flag this:**
+```python
+# PR renames an internal helper
+- def _build_request(...): ...
++ def _assemble_request(...): ...
+```
+*Why:* Leading underscore = private. Internal refactors don't need
+deprecation.
+
+## Sub-agent finding format
+
+When a Task sub-agent returns findings, use this exact format (one block
+per finding):
+
+```
+- file: path/to/file.py
+  line: 42
+  severity: HIGH | MEDIUM | LOW | NITPICK | CRITICAL
+  title: one-line title
+  body: one-paragraph problem statement + concrete failure scenario
+  suggestion: (optional) concrete code suggestion
+```
+
+Return an empty list if no finding applies.
+REVIEW_INSTRUCTIONS_EOF
+
 echo ""
 echo "Context gathered in ${CTX}/:"
 ls -lh "$CTX/"

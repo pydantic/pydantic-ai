@@ -52,7 +52,7 @@ from typing_extensions import NotRequired, TypedDict
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import ProcessEventStream, ProcessHistory
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -872,7 +872,7 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
         ctx.model,
         instructions=f"{INSTRUCTIONS}\n\n{SUBAGENT_INSTRUCTIONS}\n\n{prompt}",
         tools=sub_tools,
-        event_stream_handler=_stream_events,
+        capabilities=[ProcessEventStream(_stream_events)],
     )
     limits = UsageLimits(request_limit=_subagent_request_limit())
     # Share the parent's RunUsage so the sub-agent's tokens/requests/tool-calls
@@ -1100,8 +1100,10 @@ async def run(
         instructions=f"{INSTRUCTIONS}\n\n{prompt}",
         tools=native_tools,
         toolsets=mcp_servers or None,
-        capabilities=[ProcessHistory(_compact_history)],
-        event_stream_handler=_stream_events,
+        capabilities=[
+            ProcessHistory(_compact_history),
+            ProcessEventStream(_stream_events),
+        ],
     )
     limits = UsageLimits(request_limit=_request_limit())
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})

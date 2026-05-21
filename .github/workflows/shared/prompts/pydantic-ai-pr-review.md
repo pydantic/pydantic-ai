@@ -78,127 +78,22 @@ The annotated diffs are the **source of truth** for what changed.
 `gh pr view` / `gh pr diff` for that piece — but only that piece. Don't
 re-fetch what's already on disk.
 
-## Severity scale
+## Review conventions
 
-Determine severity AFTER investigating the finding, not before.
+The severity scale (CRITICAL / HIGH / MEDIUM / LOW / NITPICK), the
+"what NOT to flag" false-positive catalog, calibration examples, and
+the sub-agent finding format all live in a single file written by the
+pre-agent step:
 
-- 🔴 **CRITICAL** — must fix before merge. Security vulnerability, data
-  corruption, public-API break without deprecation, type-safety hole that
-  would silently mistype user code.
-- 🟠 **HIGH** — should fix before merge. Logic bug with a concrete failure
-  trigger, missing validation at an external boundary, race condition,
-  significant perf regression, broken backward compatibility.
-- 🟡 **MEDIUM** — address soon, non-blocking. Error-handling gap with an
-  unlikely trigger, missing test for a non-trivial code path, subtly
-  surprising behavior, docs that contradict the code.
-- ⚪ **LOW** — author discretion. Minor improvements, missing docstrings on
-  small helpers, narrow refactor opportunities.
-- 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
+**`/tmp/gh-aw/.review-context/review-instructions.md`** — read this
+once before reviewing. It is the source of truth; do not re-derive
+severity bands or false-positive rules from your own priors.
 
-**Verdict mapping:** any HIGH or CRITICAL → `REQUEST_CHANGES`. MEDIUM-only
-or below → `APPROVE` (post the comments anyway). No findings → `APPROVE`.
-**Cap inline comments at 30 per run** — if you have more, keep the highest
-severity 30 and move the rest into the review body as a brief list.
-
-## What NOT to flag
-
-This repo runs ruff and pyright in CI and has expert maintainers. The
-common false-positive patterns below all *look* like real issues — verify
-the surrounding code before posting.
-
-- **Style / formatting** — ruff handles it.
-- **Type nits already covered by pyright** — `make typecheck` runs in CI.
-- **"Missing tests" for pure refactor** — if the PR moves or renames
-  existing code and existing tests still exercise the behavior, no new
-  test is needed. Only flag missing tests for new behavior or new public
-  API.
-- **`None` / `Optional` access guarded upstream** — internal helpers
-  often assume a precondition the caller enforces (or a type narrows the
-  value via an `assert`/`isinstance`/early-return). Read the caller before
-  flagging.
-- **Internal renames** — anything with a leading underscore (or in a
-  module that starts with `_`) is private. Renaming or removing private
-  surface is fine; only flag breakage of *public* API.
-- **Provider-specific knobs** — request params, role mappings, finish
-  reasons differ deliberately across providers. Check the provider's SDK
-  docs (or recent commits in `pydantic_ai/models/<provider>.py`) before
-  asserting a "bug".
-- **Cassettes / `uv.lock` / generated files** — never review.
-- **Theoretical performance** — `O(n²)` is only a problem if `n` is
-  realistically large in this use case. Don't flag without evidence of
-  real-world impact.
-- **Validation already enforced by Pydantic** — if the input is a
-  Pydantic model, don't flag missing manual validation of its fields.
-- **"This might break some user"** — if you can't name the user, the
-  call site, or the scenario, drop the finding.
-
-## Calibration examples
-
-### Example 1 — `None` access
-
-**Flag this (HIGH):**
-```python
-# PR adds a new public helper
-def first_text_message(messages: list[ModelMessage]) -> str:
-    for m in messages:
-        for p in m.parts:
-            if isinstance(p, TextPart):
-                return p.content
-```
-*Why:* The function is typed `-> str` but falls off the end and implicitly
-returns `None` when no `TextPart` is found, so any caller that does
-`.upper()` on the result silently breaks at runtime. Public API.
-
-**Don't flag this:**
-```python
-# PR adds this line inside agent.run() after the model call
-text = response.parts[-1].content
-```
-*Why:* Reading the surrounding code shows `_validate_response` runs
-before this line and guarantees `parts` is non-empty and the last part is
-text-bearing. The "missing None check" is handled at the layer above.
-
-### Example 2 — provider mapping
-
-**Flag this (HIGH):**
-```python
-# PR adds tool_call mapping for a new provider
-return ToolCallPart(tool_name=tc.name, args=tc.input)
-```
-*Why:* Every other provider sets `tool_call_id=tc.id` for round-trip
-identity; the new mapping silently drops it, breaking tool-result
-pairing for any agent that uses multi-tool calls.
-
-**Don't flag this:**
-```python
-# PR adds reasoning-effort mapping
-if model_settings.reasoning_effort:
-    request['reasoning'] = {'effort': model_settings.reasoning_effort}
-```
-*Why:* Even though OpenAI uses `reasoning_effort` at the top level,
-this provider's SDK docs (check `pydantic_ai/models/<provider>.py`
-neighbouring code) show the nested `reasoning.effort` shape is correct
-for this provider. Different providers, different shapes — not a bug.
-
-### Example 3 — backward compatibility
-
-**Flag this (CRITICAL):**
-```python
-# PR renames a public method on Agent
-- def run_sync(self, ...): ...
-+ def sync_run(self, ...): ...
-```
-*Why:* `Agent.run_sync` is widely used public API. Removing it without a
-deprecation shim breaks every user on upgrade.
-
-**Don't flag this:**
-```python
-# PR renames an internal helper
-- def _build_request(...): ...
-+ def _assemble_request(...): ...
-```
-*Why:* Leading underscore = private. Internal refactors don't need
-deprecation.
+**Verdict mapping:** any HIGH or CRITICAL finding → `REQUEST_CHANGES`.
+MEDIUM-only or below → `APPROVE` (post the comments anyway).
+No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
+more findings survive, keep the highest-severity 30 inline and list
+the rest briefly in the review body.
 
 ## Handling existing review threads
 
@@ -219,12 +114,15 @@ When in doubt, do not duplicate. Redundant comments erode trust.
 
 ### Step 1 — Orient
 
-1. Read `/tmp/gh-aw/.review-context/pr-details.json` and `pr-size.txt`.
-2. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
+1. Read `/tmp/gh-aw/.review-context/review-instructions.md` —
+   severity scale, false-positive catalog, calibration examples, and
+   sub-agent finding format. Treat it as binding.
+2. Read `/tmp/gh-aw/.review-context/pr-details.json` and `pr-size.txt`.
+3. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
    `agents-md.txt` sections.
-3. Skim `review-comments.txt` for prior threads (note the most recent
+4. Skim `review-comments.txt` for prior threads (note the most recent
    review from this bot — you'll compare verdicts at the end).
-4. Read repo-root `CLAUDE.md` / `AGENTS.md` for project-wide conventions.
+5. Read repo-root `CLAUDE.md` / `AGENTS.md` for project-wide conventions.
 
 ### Step 2 — Pick a strategy from PR size
 
@@ -251,14 +149,17 @@ your conversation, your context gathering, or each other's results.
 For each sub-agent, include in its prompt:
 
 1. The **full task description**: "Review the listed files in the given
-   order and return a list of concrete, evidence-grounded findings with
-   severity + `path:line` + a one-sentence failure scenario. Return an
-   empty list if you find nothing."
+   order and return a list of concrete, evidence-grounded findings.
+   Return an empty list if you find nothing."
 2. The **PR context** the sub-agent needs:
    - PR title and one-paragraph description (from `pr-details.json`).
    - The relevant `AGENTS.md` excerpts (from `agents-md.txt`).
-   - The full **Severity scale**, **What NOT to flag**, and
-     **Calibration examples** sections from this prompt (copy verbatim).
+   - An explicit instruction to **`Read`
+     `/tmp/gh-aw/.review-context/review-instructions.md` first** —
+     that file holds the severity scale, false-positive catalog,
+     calibration examples, and finding format. **Do not copy those
+     sections into the sub-agent prompt** (the file is the single
+     source of truth; copying drifts and bloats every prompt).
 3. The **assigned file list** (in the assigned ordering) and instructions
    to:
    - Read each `/tmp/gh-aw/.review-context/diff/<path>.diff` for changes.
@@ -266,20 +167,10 @@ For each sub-agent, include in its prompt:
      (full files are checked out — use `Read`).
    - Check `/tmp/gh-aw/.review-context/review-comments.txt` for existing
      threads on these files; skip duplicates per the rules above.
-4. The **output format**:
-   ```
-   - file: path/to/file.py
-     line: 42
-     severity: HIGH | MEDIUM | LOW | NITPICK | CRITICAL
-     title: one-line title
-     body: one-paragraph problem statement + concrete failure scenario
-     suggestion: (optional) concrete code suggestion
-   ```
 
-Err toward giving sub-agents **too much** context, not too little. A
-sub-agent with a 10k-token prompt outperforms one that has to rediscover
-the codebase from scratch. **Wait for all sub-agents to return** before
-proceeding.
+Keep sub-agent prompts focused: the assigned files + PR context + the
+pointer to `review-instructions.md`. **Wait for all sub-agents to
+return** before proceeding.
 
 **Merge findings:** keep findings flagged by multiple sub-agents with the
 strongest evidence; for a finding flagged by only one, scrutinize harder
@@ -293,8 +184,9 @@ Before posting **any** inline comment:
    diff hunk. Confirm the failure scenario.
 2. **Construct a concrete trigger** — what specific input or state makes
    it fail? If you can't describe one, drop it.
-3. **Apply the false-positive catalog** — match the finding against the
-   "What NOT to flag" list. If it fits, drop it.
+3. **Apply the false-positive catalog** from
+   `/tmp/gh-aw/.review-context/review-instructions.md`. If the finding
+   matches a "what NOT to flag" pattern, drop it.
 4. **Check existing threads** for the same `path:line` and apply the
    thread-handling rules above.
 5. **Confirm the line is commentable** — open
