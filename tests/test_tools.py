@@ -3866,6 +3866,12 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
 
 
 def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    """When the model has a field named like the parameter, unwrapped input is validated as-is.
+
+    `{argument: {...}}` here is genuine unwrapped input setting the `argument` field, not a wrapper
+    envelope, so it must not be unwrapped a second time.
+    """
+
     class Payload(BaseModel):
         argument: dict[str, int]
 
@@ -3876,6 +3882,48 @@ def test_single_base_model_arg_validator_keeps_same_named_model_field():
     validator = tool.function_schema.validator
 
     assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field():
+    """A model with a field named like the parameter still round-trips the already-wrapped shape.
+
+    When previously-validated args (`{argument: Payload(...)}`) are serialized out and re-validated
+    (e.g. across a Temporal activity boundary), the validator sees `{argument: {argument: ...}}`. The
+    unwrapped interpretation fails validation, so it falls back to unwrapping the envelope — keeping
+    validation idempotent even when the parameter name collides with a field name.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'argument': {'count': 1}}}) == {
+        'argument': Payload(argument={'count': 1})
+    }
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
+    """Unwrapped input validates when the model's only field uses the parameter name as its alias.
+
+    `argument` is not a field *name* (so the validator first tries to unwrap it as an envelope), but
+    it is the field's validation alias, so the fallback validates the input as-is rather than raising.
+    """
+
+    class Payload(BaseModel):
+        city: str = Field(alias='argument')
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': Payload(argument='Mexico City')}
 
 
 def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():

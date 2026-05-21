@@ -329,7 +329,7 @@ def _build_schema(
                     partial(
                         _validate_single_arg,
                         name=name,
-                        prefer_wrapped=not metadata.get('single_arg_has_field_name', False),
+                        name_is_field=metadata.get('single_arg_has_field_name', False),
                     ),
                     td_field['schema'],
                 ),
@@ -370,18 +370,28 @@ def _validate_single_arg(
     handler: core_schema.ValidatorFunctionWrapHandler,
     *,
     name: str,
-    prefer_wrapped: bool,
+    name_is_field: bool,
 ) -> dict[str, Any]:
     if not _is_wrapped_single_arg(value, name):
+        # Not shaped like `{name: ...}`, so this is the unwrapped model input the model emits
+        # against the flattened JSON schema. Validate it directly and wrap the result.
         return {name: handler(value)}
 
-    if prefer_wrapped:
-        return {name: handler(value[name])}
-
+    # `value` is shaped `{name: <payload>}`, which is ambiguous between:
+    # - a wrapper envelope around the model input, produced by a previous validation pass that
+    #   serialized the `{name: value}` output and re-validated it (e.g. a Temporal activity
+    #   round-trip, where the validator must be idempotent), and
+    # - genuine unwrapped input for a model that happens to have a field named `name`.
+    # We can't rely on `ValidationError` alone to tell these apart: under Pydantic's default
+    # `extra='ignore'`, the wrong interpretation can validate silently (dropping the payload and
+    # filling defaults) instead of raising. So we try the most likely interpretation first based
+    # on whether `name` is a real field, and fall back to the other if it raises. The fallback
+    # also covers the rare case where `name` matches a field's validation alias rather than its name.
+    primary, fallback = (value, value[name]) if name_is_field else (value[name], value)
     try:
-        return {name: handler(value)}
+        return {name: handler(primary)}
     except ValidationError:
-        return {name: handler(value[name])}
+        return {name: handler(fallback)}
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
