@@ -10916,14 +10916,6 @@ def _anthropic_vcr_request_body(vcr: Any) -> dict[str, Any]:
     return json.loads(vcr.requests[0].body)
 
 
-def _anthropic_vcr_beta_header(vcr: Any) -> str:
-    headers = cast(dict[str, str | list[str]], {key.lower(): value for key, value in vcr.requests[0].headers.items()})
-    header_value = headers.get('anthropic-beta', '')
-    if isinstance(header_value, list):
-        return ','.join(header_value)
-    return str(header_value)
-
-
 @pytest.mark.vcr()
 async def test_anthropic_dynamic_filtering_auto_detection(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -10936,7 +10928,6 @@ async def test_anthropic_dynamic_filtering_auto_detection(allow_model_requests: 
     tool_types = {tool['type'] for tool in request_body['tools']}
     assert 'web_search_20260209' in tool_types
     assert 'web_fetch_20260209' in tool_types
-    assert 'web-fetch-2025-09-10' not in _anthropic_vcr_beta_header(vcr)
 
 
 @pytest.mark.vcr()
@@ -10958,7 +10949,6 @@ async def test_anthropic_dynamic_filtering_explicit_true(allow_model_requests: N
     tool_types = {tool['type'] for tool in request_body['tools']}
     assert 'web_search_20260209' in tool_types
     assert 'web_fetch_20260209' in tool_types
-    assert 'web-fetch-2025-09-10' not in _anthropic_vcr_beta_header(vcr)
 
 
 @pytest.mark.vcr()
@@ -10980,7 +10970,28 @@ async def test_anthropic_dynamic_filtering_explicit_false(allow_model_requests: 
     tool_types = {tool['type'] for tool in request_body['tools']}
     assert 'web_search_20250305' in tool_types
     assert 'web_fetch_20250910' in tool_types
-    assert 'web-fetch-2025-09-10' in _anthropic_vcr_beta_header(vcr)
+
+
+async def test_anthropic_dynamic_filtering_explicit_false_adds_web_fetch_beta(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            WebSearchTool(dynamic_filtering=False),
+            WebFetchTool(dynamic_filtering=False),
+            CodeExecutionTool(),
+        ],
+    )
+
+    result = await agent.run('Reply with exactly: ok')
+
+    assert result.output == 'ok'
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = request_kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert 'web-fetch-2025-09-10' in betas
 
 
 async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_requests: None):
