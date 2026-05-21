@@ -125,19 +125,18 @@ Whether the agent should automatically continue is determined by `ModelResponse.
 """
 
 ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', 'interrupted']
-"""The state of a model response, indicating whether the response is final or requires further action.
+"""Lifecycle state of a model response.
 
-- `'complete'` — The response is done. This is the default state.
-- `'incomplete'` — The response is still being streamed and may receive more parts.
+- `'complete'`: the response has been fully received from the model.
+- `'incomplete'`: the response is still being streamed and may receive more parts.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
-  [`StreamedRunResult.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses]
-  while iteration is in flight, or after iteration stopped before the stream finished.
-- `'suspended'` — The model paused mid-turn and expects a continuation request.
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
+  while iteration is in flight.
+- `'suspended'`: the model paused mid-turn and expects a continuation request.
   Used by Anthropic `pause_turn` and OpenAI background mode.
-- `'interrupted'` — The response was intentionally cancelled before completion.
-  Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
-
-Additional states may be added in the future, e.g. model-side truncation.
+- `'interrupted'`: streaming was explicitly stopped via
+  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  finished generating.
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']

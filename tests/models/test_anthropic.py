@@ -1360,6 +1360,22 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=ModelSettings(top_k=40))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['top_k'] == 40
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -1412,6 +1428,18 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     betas = completion_kwargs['betas']
     assert 'interleaved-thinking-2025-05-14' in betas
     assert 'custom-feature-1' in betas
+
+
+async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 def _single_request_body(vcr: Cassette) -> dict[str, Any]:
@@ -2405,21 +2433,20 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='FINAL_PAYLOAD')],
-                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
-                        model_name='claude-3-5-haiku-123',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                        provider_url='https://api.anthropic.com',
-                        provider_details={'finish_reason': 'end_turn'},
-                        provider_response_id='msg_123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='FINAL_PAYLOAD')],
+                    usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                    model_name='claude-3-5-haiku-123',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_url='https://api.anthropic.com',
+                    provider_details={'finish_reason': 'end_turn'},
+                    provider_response_id='msg_123',
+                    finish_reason='stop',
                 )
+            )
 
 
 async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
@@ -11642,3 +11669,15 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
                             pass
                 break
             node = await agent_run.next(node)
+
+
+async def test_anthropic_top_k_propagation(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['top_k'] == 40

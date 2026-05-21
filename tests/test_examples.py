@@ -134,6 +134,9 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
     'ignore:`BuiltinToolResultEvent` is deprecated',
     # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
     'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
+    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
+    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
+    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -212,6 +215,9 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    # Doc examples use placeholder Gateway API keys (`pylf_v...`) that don't encode a region;
+    # set an explicit base URL so they don't hit region inference.
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')

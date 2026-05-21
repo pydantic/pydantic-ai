@@ -23,6 +23,7 @@ import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
+from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -193,6 +194,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -264,6 +266,7 @@ KnownModelName = TypeAliasType(
         'google-cloud:gemini-3.1-flash-image-preview',
         'google-cloud:gemini-3.1-flash-lite-preview',
         'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-3.5-flash',
         'google-cloud:gemini-flash-latest',
         'google-cloud:gemini-flash-lite-latest',
         'google:gemini-2.0-flash-lite',
@@ -280,6 +283,7 @@ KnownModelName = TypeAliasType(
         'google:gemini-3.1-flash-image-preview',
         'google:gemini-3.1-flash-lite-preview',
         'google:gemini-3.1-pro-preview',
+        'google:gemini-3.5-flash',
         'google:gemini-flash-latest',
         'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
@@ -1332,7 +1336,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1343,7 +1347,9 @@ class StreamedResponse(ABC):
             metadata=self.metadata,
         )
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
