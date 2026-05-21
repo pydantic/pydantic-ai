@@ -5,7 +5,6 @@ import os
 import re
 import time
 import uuid
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -215,21 +214,19 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    complex_agent = Agent(
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-        ],
-        tools=[get_weather],
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
-        name='complex_agent',
-    )
+complex_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='country'),
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+    ],
+    tools=[get_weather],
+    capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
+    name='complex_agent',
+)
 complex_dbos_agent = DBOSAgent(complex_agent, event_stream_handler=event_stream_handler)
 seq_complex_dbos_agent = DBOSAgent(
     complex_agent,

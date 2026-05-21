@@ -7862,23 +7862,6 @@ async def test_provider_aexit_without_aenter_then_async_with():
     assert provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
 
 
-# TODO(v2): uncomment when we re-enable the ResourceWarning in Provider.__del__
-# @requires_openai
-# async def test_provider_del_warns_on_unclosed_client():
-#     """Provider.__del__ warns if the HTTP client was never closed.
-#
-#     Regression test for PR #4421 (provider lifecycle management).
-#     https://github.com/pydantic/pydantic-ai/pull/4421
-#     """
-#     provider = OpenAIProvider(api_key='test-key')
-#     assert provider._own_http_client is not None
-#     assert not provider._own_http_client.is_closed
-#     with pytest.warns(ResourceWarning, match='was garbage collected with an open HTTP client'):
-#         provider.__del__()
-#     # Clean up
-#     await provider._own_http_client.aclose()
-
-
 @requires_openai
 async def test_provider_reentry_after_close():
     """Provider can be re-entered after exit by recreating the HTTP client."""
@@ -8269,18 +8252,6 @@ def test_many_multimodal_tool_response():
         match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
-
-
-def test_deprecated_kwargs_validation_agent_init():
-    """Test that invalid kwargs raise UserError in Agent constructor."""
-    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')  # pyright: ignore[reportCallIssue]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')  # pyright: ignore[reportCallIssue]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')  # pyright: ignore[reportCallIssue]
 
 
 def test_override_toolsets():

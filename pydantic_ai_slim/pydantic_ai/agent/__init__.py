@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar, deprecated
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -37,7 +37,6 @@ from .. import (
 from .._agent_graph import (
     CallToolsNode,
     EndStrategy,
-    HistoryProcessor,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
@@ -262,6 +261,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
+    # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
+    # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
+    # signature Pyright rejects the union argument. The two overloads are intentionally
+    # identical, so the second one overlaps the first.
     @overload
     def __init__(
         self,
@@ -287,8 +290,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> None: ...
 
     @overload
-    @deprecated('Configure deprecated kwargs via `capabilities=[...]` instead.')
-    def __init__(
+    def __init__(  # pyright: ignore[reportOverlappingOverload]
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
@@ -309,12 +311,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        # Deprecated kwargs that still flow through `**_deprecated_kwargs` and get remapped to
-        # equivalent capabilities (see `_utils.consume_deprecated_*`) before the impl runs.
-        # Typed as loose `Callable[..., Any]` since the consumer helpers handle the actual
-        # signature variations.
-        history_processors: Sequence[Any] = (),
-        prepare_output_tools: Callable[..., Any] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -338,7 +334,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> None:
         """Create an agent.
 
@@ -416,19 +411,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
-        legacy_history_processor_capabilities = _utils.consume_deprecated_history_processors_as_capabilities(
-            _deprecated_kwargs, 'Agent'
-        )
-        # `self.history_processors` stays for 1.x users who read it back off the agent (still
-        # part of the public surface even though the kwarg is gone from `__init__`); v2 drops it.
-        self.history_processors: list[HistoryProcessor[AgentDepsT]] = [
-            cap.processor for cap in legacy_history_processor_capabilities
-        ]
-
         capabilities = wrap_capability_funcs(capabilities)
-        capabilities.extend(legacy_history_processor_capabilities)
-
-        capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
 
         _inject_auto_capabilities(capabilities)
 
@@ -440,8 +423,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
-
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
@@ -601,7 +582,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
@@ -641,14 +621,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        extra_capabilities = _utils.consume_deprecated_prepare_output_tools_as_capabilities(
-            _deprecated_kwargs, 'Agent.from_spec'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         validated_spec, template_context = _validate_spec(spec, deps_type)
 
         effective_output_type: OutputSpec[Any]
@@ -668,8 +640,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         if capabilities:
             all_capabilities.extend(capabilities)
-        if extra_capabilities:
-            all_capabilities.extend(extra_capabilities)
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -782,7 +752,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
 
@@ -794,17 +763,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
-        extra_capabilities = _utils.consume_deprecated_prepare_output_tools_as_capabilities(
-            _deprecated_kwargs, 'Agent.from_file'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-        merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
-        if extra_capabilities:
-            merged_capabilities.extend(extra_capabilities)
-
         spec = AgentSpec.from_file(path, fmt=fmt)
         agent = cls.from_spec(
             spec,
@@ -826,7 +784,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
-            capabilities=merged_capabilities or None,
+            capabilities=capabilities,
         )
         return agent
 

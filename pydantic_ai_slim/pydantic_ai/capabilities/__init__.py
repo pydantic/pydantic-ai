@@ -41,10 +41,7 @@ from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
-from .process_history import (
-    HistoryProcessor,  # pyright: ignore[reportDeprecated]
-    ProcessHistory,
-)
+from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -112,7 +109,6 @@ __all__ = [
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'Instrumentation',
-    'HistoryProcessor',
     'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',

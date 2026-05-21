@@ -4868,7 +4868,7 @@ async def test_completed_streamed_response_cancel_noop():
     await streamed_response.cancel()
 
     assert streamed_response.cancelled
-    assert streamed_response.get() is response
+    assert streamed_response.response is response
     assert response.state == 'complete'
 
 
