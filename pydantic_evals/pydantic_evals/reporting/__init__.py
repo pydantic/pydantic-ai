@@ -511,7 +511,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             )
             console.print(failures_table, style='red')
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
@@ -534,7 +533,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
         with_title: bool = True,
-    ) -> Table:
+    ) -> RenderableType:
         """Return a table containing the data from this report.
 
         If a baseline is provided, returns a diff between this report and the baseline report.
@@ -637,7 +636,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         return None
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def failures_table(
         self,
         *,
@@ -648,7 +646,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_error_stacktrace: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
-    ) -> Table:
+    ) -> RenderableType:
         """Return a table containing the failures in this report."""
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -961,7 +959,6 @@ class ReportCaseRenderer:
     metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_base_table(self, title: str) -> Table:
         """Build and return a Rich Table for the diff output."""
         table = Table(title=title, show_lines=True)
@@ -988,7 +985,6 @@ class ReportCaseRenderer:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, title: str) -> Table:
         """Build and return a Rich Table for the failures output."""
         table = Table(title=title, show_lines=True)
@@ -1448,7 +1444,6 @@ class EvaluationRenderer:
             duration_renderer=duration_renderer,
         )
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_table(self, report: EvaluationReport, *, with_title: bool = True) -> Table:
         """Build a table for the report.
 
@@ -1474,7 +1469,6 @@ class EvaluationRenderer:
 
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_diff_table(
         self, report: EvaluationReport, baseline: EvaluationReport, *, with_title: bool = True
     ) -> Table:
@@ -1541,7 +1535,6 @@ class EvaluationRenderer:
 
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
         table = case_renderer.build_failures_table('Case Failures')

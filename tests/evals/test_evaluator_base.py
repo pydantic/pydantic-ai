@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -13,7 +12,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals import PydanticEvalsDeprecationWarning
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
@@ -75,55 +73,6 @@ def test_evaluation_result():
     downcast = result.downcast(int, bool)
     assert downcast is not None
     assert downcast.value is True
-
-
-def test_evaluation_result_positional_construction_warns():
-    """Positional construction of `EvaluationResult` is deprecated ahead of v2 making it kw-only."""
-
-    @dataclass
-    class DummyEvaluator(Evaluator[Any, Any, Any]):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            raise NotImplementedError
-
-    source = DummyEvaluator().as_spec()
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='positional arguments is deprecated'):
-        result = EvaluationResult('test', True, 'Success', source)
-    assert result.name == 'test'
-    assert result.value is True
-    assert result.reason == 'Success'
-    assert result.source == source
-
-
-def test_evaluator_failure_positional_construction_warns():
-    """Positional construction of `EvaluatorFailure` is deprecated ahead of v2 making it kw-only."""
-
-    @dataclass
-    class DummyEvaluator(Evaluator[Any, Any, Any]):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            raise NotImplementedError
-
-    source = DummyEvaluator().as_spec()
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='positional arguments is deprecated'):
-        failure = EvaluatorFailure('test', 'boom', 'traceback...', source)
-    assert failure.name == 'test'
-    assert failure.error_message == 'boom'
-    assert failure.error_stacktrace == 'traceback...'
-    assert failure.source == source
-
-
-def test_evaluation_result_kwargs_does_not_warn():
-    """Keyword construction should not emit a deprecation warning."""
-
-    @dataclass
-    class DummyEvaluator(Evaluator[Any, Any, Any]):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            raise NotImplementedError
-
-    source = DummyEvaluator().as_spec()
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', PydanticEvalsDeprecationWarning)
-        EvaluationResult(name='test', value=True, reason='Success', source=source)
-        EvaluatorFailure(name='test', error_message='boom', error_stacktrace='tb', source=source)
 
 
 def test_strict_abc_meta():
