@@ -330,10 +330,11 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     seen: dict[str, object] = {}
 
     class _CapturingAgent:
-        def __init__(self, model, instructions=None, tools=None, toolsets=None):  # type: ignore[no-untyped-def]
+        def __init__(self, model, instructions=None, tools=None, toolsets=None, event_stream_handler=None, **_):  # type: ignore[no-untyped-def]
             seen["model_cls"] = type(model).__name__
             seen["instructions"] = instructions
             seen["tool_names"] = [t.name for t in (tools or [])]
+            seen["event_stream_handler"] = event_stream_handler
 
         async def run(self, prompt, usage_limits=None, usage=None):  # type: ignore[no-untyped-def]
             seen["prompt"] = prompt
@@ -364,6 +365,10 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     assert "Bash" not in seen["tool_names"]  # type: ignore[operator]
     assert seen["request_limit"] == har.DEFAULT_SUBAGENT_REQUEST_LIMIT
     assert seen["usage_obj"] is parent_usage  # sub-agent tokens roll up into parent
+    # Sub-agent gets the same live event handler as the parent so its tool
+    # calls stream out interleaved with the parent's (it's spawned inside
+    # the parent's `Task` tool execution).
+    assert seen["event_stream_handler"] is har._stream_events
 
 
 # --------------------------------------------------------------------------- #

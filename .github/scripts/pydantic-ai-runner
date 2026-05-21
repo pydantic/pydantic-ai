@@ -54,7 +54,17 @@ from anthropic import AsyncAnthropic
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -840,7 +850,12 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     """
     log(f"Task spawn: {description[:120]}")
     sub_tools = select_native_tools(READ_ONLY_SUBAGENT_TOOLS, permission_mode=None)
-    sub = Agent(ctx.model, instructions=SUBAGENT_INSTRUCTIONS, tools=sub_tools)
+    sub = Agent(
+        ctx.model,
+        instructions=SUBAGENT_INSTRUCTIONS,
+        tools=sub_tools,
+        event_stream_handler=_stream_events,
+    )
     limits = UsageLimits(request_limit=_subagent_request_limit())
     # Share the parent's RunUsage so the sub-agent's tokens/requests/tool-calls
     # roll up into the run's final stream-json result — otherwise sub-agent
@@ -954,48 +969,77 @@ async def log_mcp_tools(mcp_servers: Iterable[AbstractToolset[Any]]) -> None:
         log(f"MCP server {label!r} tools={names}")
 
 
-def emit_tool_activity(messages: Sequence[Any]) -> int:
-    """Emit Claude-style tool_use / tool_result blocks from the run's message
-    history so tool calls are visible to gh-aw's parser. Returns the count."""
-    tool_calls = 0
-    for message in messages:
-        for part in getattr(message, "parts", []):
-            if isinstance(part, ToolCallPart):
-                tool_calls += 1
-                emit(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "id": part.tool_call_id or "",
-                                    "name": part.tool_name or "",
-                                    "input": part.args_as_dict(),
-                                }
-                            ],
-                        },
-                    }
+# --------------------------------------------------------------------------- #
+# Live tool-call / tool-result streaming
+# Wired in as `event_stream_handler` on both the parent agent and each `Task`
+# sub-agent so events fire as they happen, not in a batch at end-of-run.
+# Sub-agent events naturally interleave with the parent's because they're
+# spawned inside the parent's `Task` tool execution, so the stream order is
+# the true causal order. gh-aw's log parser shows each tool call live in the
+# step summary; tool results are truncated to MAX_LIVE_TOOL_RESULT_CHARS to
+# match other gh-aw harnesses (Claude, Copilot) — the model still sees the
+# full result via the message history.
+# --------------------------------------------------------------------------- #
+MAX_LIVE_TOOL_RESULT_CHARS = 100
+
+
+async def _stream_events(ctx: RunContext[Any], events: Any) -> None:
+    """`event_stream_handler` — emit tool_use / tool_result stream-json blocks
+    as they happen. Truncates result content for visibility; the model's view
+    is unaffected (the handler is observation-only)."""
+    async for event in events:
+        if isinstance(event, FunctionToolCallEvent):
+            emit(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": event.part.tool_call_id or "",
+                                "name": event.part.tool_name or "",
+                                "input": event.part.args_as_dict(),
+                            }
+                        ],
+                    },
+                }
+            )
+            log(f"tool_use: {event.part.tool_name}")
+        elif isinstance(event, FunctionToolResultEvent):
+            content = str(getattr(event.part, "content", ""))
+            if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
+                content = (
+                    content[:MAX_LIVE_TOOL_RESULT_CHARS]
+                    + f"…[+{len(content) - MAX_LIVE_TOOL_RESULT_CHARS} chars]"
                 )
-                log(f"tool_use: {part.tool_name}")
-            elif isinstance(part, ToolReturnPart):
-                emit(
-                    {
-                        "type": "user",
-                        "message": {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": part.tool_call_id or "",
-                                    "content": str(part.content),
-                                }
-                            ],
-                        },
-                    }
-                )
-    return tool_calls
+            emit(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": event.part.tool_call_id or "",
+                                "content": content,
+                            }
+                        ],
+                    },
+                }
+            )
+
+
+def count_tool_calls(messages: Sequence[Any]) -> int:
+    """Tally tool calls in the final message history for the end-of-run log
+    line. Live emission is handled by `_stream_events`, so we no longer
+    re-emit the full transcript here."""
+    return sum(
+        1
+        for m in messages
+        for p in getattr(m, "parts", [])
+        if isinstance(p, ToolCallPart)
+    )
 
 
 def log_safe_outputs_state() -> None:
@@ -1031,6 +1075,7 @@ async def run(
         tools=native_tools,
         toolsets=mcp_servers or None,
         capabilities=[ProcessHistory(_compact_history)],
+        event_stream_handler=_stream_events,
     )
     limits = UsageLimits(request_limit=_request_limit())
     emit({"type": "system", "subtype": "init", "session_id": session_id, "model": label})
@@ -1056,7 +1101,7 @@ async def run(
 
     duration_ms = round((time.perf_counter() - started) * 1000)
     messages = result.all_messages()
-    tool_calls = emit_tool_activity(messages)
+    tool_calls = count_tool_calls(messages)
     num_turns = sum(isinstance(m, ModelResponse) for m in messages)
     log(f"tool calls observed: {tool_calls}, turns: {num_turns}")
 
