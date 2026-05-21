@@ -1264,7 +1264,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
 
     async def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -1608,8 +1608,8 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
-                        RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                        ToolReturnPart(
+                            content='Tool not executed - a final result was already processed.',
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
@@ -2219,14 +2219,14 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
+                            tool_name='regular_tool',
+                            content=1,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='regular_tool',
-                            content=1,
+                            tool_name='final_result',
+                            content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -2328,25 +2328,28 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='final_result',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
@@ -2404,7 +2407,7 @@ class TestMultipleToolCalls:
         assert response.value == 'first'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got tool returns in the correct order
         assert result.all_messages() == snapshot(
@@ -2436,7 +2439,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Final result processed.',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -2485,7 +2488,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2563,7 +2566,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2644,7 +2647,7 @@ class TestMultipleToolCalls:
         assert response.value == 'valid'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2782,9 +2785,305 @@ class TestMultipleToolCalls:
             ]
         )
 
+    async def test_sequential_tool_is_a_per_tool_barrier(self):
+        """A `sequential=True` tool runs alone; other tools parallelize around it (streaming path)."""
+        active = 0
+        barrier_ran_alone = True
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='parallel_a')}
+                yield {1: DeltaToolCall(name='parallel_b')}
+                yield {2: DeltaToolCall(name='barrier')}
+                yield {3: DeltaToolCall(name='parallel_c')}
+            else:
+                yield 'done'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async def track() -> str:
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0.02)
+            active -= 1
+            return 'ok'
+
+        @agent.tool_plain
+        async def parallel_a() -> str:
+            return await track()
+
+        @agent.tool_plain
+        async def parallel_b() -> str:
+            return await track()
+
+        @agent.tool_plain(sequential=True)
+        async def barrier() -> str:
+            nonlocal barrier_ran_alone
+            if active != 0:
+                barrier_ran_alone = False  # pragma: no cover
+            await asyncio.sleep(0.02)
+            return 'barrier'
+
+        @agent.tool_plain
+        async def parallel_c() -> str:
+            return await track()
+
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+        assert barrier_ran_alone
+
+    async def test_outer_cancellation_cancels_pending_tools(self):
+        """Outer cancellation during streamed tool execution cancels still-pending tool tasks."""
+        first_done = asyncio.Event()
+        pending_started = asyncio.Event()
+        pending_cancelled = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='fast_tool')}
+                yield {1: DeltaToolCall(name='slow_tool')}
+            else:
+                yield 'done'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        async def fast_tool() -> str:
+            first_done.set()
+            return 'done'
+
+        @agent.tool_plain
+        async def slow_tool() -> str:
+            pending_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pending_cancelled.set()
+                raise
+            return 'done'  # pragma: no cover
+
+        async def run() -> None:
+            async with agent.run_stream('test') as result:
+                await result.get_output()  # pragma: no cover
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert pending_cancelled.is_set()
+
+    async def test_graceful_runs_function_tools_before_output(self):
+        """Streaming commits the output as it streams, but `graceful` still runs the function tools
+        the model emitted alongside it (their side effects happen)."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall(name='tool_b')}
+            yield {2: DeltaToolCall('final_result', '{"value": "done"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_graceful_interleaved_outputs_and_function_tools(self):
+        """Graceful streaming with outputs and function tools interleaved: the first streamed output
+        wins, later outputs are skipped, and the function tools still run."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {2: DeltaToolCall(name='tool_b')}
+            yield {3: DeltaToolCall('second_output', '{"value": "b"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_exhaustive_tool_output_sequential_barrier(self):
+        """`ToolOutput(sequential=True)` under streaming: the output is committed as it streams, so
+        (unlike the non-streaming path) it isn't held behind the function tool; the function tool
+        still runs."""
+        events: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('do_output', '{"value": "done"}')}
+
+        def do_output(output: OutputType) -> OutputType:
+            events.append('output')
+            return output
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(do_output, name='do_output', sequential=True),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            await asyncio.sleep(0.02)
+            events.append('tool_a')
+            return 'a'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert 'tool_a' in events
+
+    async def test_early_output_failure_raises_when_streaming(self):
+        """The non-streaming `early` fallback (run function tools when every output fails) has no
+        streaming equivalent: a streamed output that fails validation raises, since `run_stream()`
+        can't retry outputs."""
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('bad_output', '{"value": "x"}')}
+
+        def bad_output(output: OutputType) -> OutputType:
+            if output.value == 'x':
+                raise ModelRetry('bad')
+            return output  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(bad_output, name='bad_output'),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream\\(\\)`'):
+            async with agent.run_stream('test') as result:
+                await result.get_output()
+
+    async def test_early_multiple_outputs_and_function_tools(self):
+        """Early streaming with several output tools: the first streamed output wins, later outputs
+        are skipped, and function tools are stubbed (not run) once an output succeeds."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {1: DeltaToolCall('second_output', '{"value": "b"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert called == []
+
+    async def test_graceful_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins doesn't apply when streaming: the output is committed as it streams, so a
+        function tool's `ModelRetry` in the same response can't revoke it (`graceful`)."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        # The streamed output is committed and not suppressed, so the run ends in a single round.
+        assert output.value == 'committed'
+        assert rounds == 1
+
+    async def test_exhaustive_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins is also exempt under `exhaustive` streaming: the committed output stands."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'committed'
+        assert rounds == 1
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
+    # The retry-wins tests (a function-tool `ModelRetry` suppressing an output result) have no
+    # streaming counterpart: under `run_stream` the streamed output is committed as soon as it's
+    # detected, so retry-wins doesn't apply (see `docs/output.md`).
 
 
 async def test_custom_output_type_default_str() -> None:
@@ -3085,19 +3384,19 @@ async def test_unknown_tool_call_events():
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='known_tool',
-                    args={'x': 5},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=True,
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
                     tool_name='unknown_tool',
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
                 ),
                 args_valid=False,
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='known_tool',
+                    args={'x': 5},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 part=RetryPromptPart(
@@ -3114,14 +3413,6 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='known_tool',
-                    args={'x': 5},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=True,
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(

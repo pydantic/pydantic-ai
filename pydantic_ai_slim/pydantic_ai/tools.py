@@ -540,7 +540,8 @@ class Tool(Generic[ToolAgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -601,7 +602,8 @@ class Tool(Generic[ToolAgentDepsT]):
             json_schema: The schema for the function arguments
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -716,7 +718,14 @@ class ToolDefinition:
     """
 
     sequential: bool = False
-    """Whether this tool requires a sequential/serial execution environment."""
+    """Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+
+    A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
+    completing first and tools emitted after it starting only once it finishes. Other tools still run
+    in parallel around it. To run an entire run's tools serially, use
+    [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
+    instead.
+    """
 
     kind: ToolKind = field(default='function')
     """The kind of tool:
