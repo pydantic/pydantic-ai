@@ -166,9 +166,17 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `dynamic_filtering` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Dynamic Filtering"
+    With Anthropic models that support it, `dynamic_filtering` enables server-side filtering of search
+    results before they enter the context window. It requires [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
+    to be enabled alongside [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. By default (`None`),
+    dynamic filtering is auto-detected from the model profile and enabled only when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
+    is present. Set `dynamic_filtering=False` to force the older Anthropic web search tool version.
 
 ## X Search Tool
 
@@ -567,9 +575,16 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
+| `dynamic_filtering` | ✅ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Dynamic Filtering"
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] supports `dynamic_filtering` with the same
+    Anthropic requirements and default behavior as [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
+    Enable [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] alongside it, or set
+    `dynamic_filtering=False` to force the older Anthropic web fetch tool version.
 
 ## Memory Tool
 

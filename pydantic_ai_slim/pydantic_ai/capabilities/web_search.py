@@ -130,7 +130,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             self.blocked_domains is not None
             or self.allowed_domains is not None
             or self.max_uses is not None
-            or self.dynamic_filtering is not None
+            or self.dynamic_filtering is True
         )
 
 

@@ -133,7 +133,7 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.max_uses is not None or self.dynamic_filtering is not None
+        return self.max_uses is not None or self.dynamic_filtering is True
 
 
 install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')

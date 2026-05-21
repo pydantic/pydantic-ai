@@ -11107,6 +11107,20 @@ async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_r
         await agent.run('hello')
 
 
+async def test_anthropic_dynamic_filtering_requires_supported_model(allow_model_requests: None):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-api-key'))
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(WebSearchTool(dynamic_filtering=True)),
+            NativeTool(CodeExecutionTool()),
+        ],
+    )
+
+    with pytest.raises(UserError, match="not supported by Anthropic model 'claude-sonnet-4-5'"):
+        await agent.run('hello')
+
+
 async def test_stream_cancel(allow_model_requests: None):
     stream = [
         BetaRawMessageStartEvent(

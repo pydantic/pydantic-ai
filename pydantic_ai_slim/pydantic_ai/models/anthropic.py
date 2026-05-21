@@ -1063,15 +1063,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _use_dynamic_filtering(
-        tool: WebSearchTool | WebFetchTool, has_code_execution: bool, profile: AnthropicModelProfile
+        tool: WebSearchTool | WebFetchTool,
+        has_code_execution: bool,
+        profile: AnthropicModelProfile,
+        model_name: str,
     ) -> bool:
-        if tool.dynamic_filtering is True and not has_code_execution:
-            raise UserError(
-                '`dynamic_filtering=True` requires `CodeExecutionTool` to be enabled with the Anthropic provider.'
-            )
-        return tool.dynamic_filtering is True or (
-            tool.dynamic_filtering is None and profile.anthropic_supports_dynamic_filtering and has_code_execution
-        )
+        if tool.dynamic_filtering is True:
+            if not has_code_execution:
+                raise UserError(
+                    '`dynamic_filtering=True` requires `CodeExecutionTool` to be enabled with the Anthropic provider.'
+                )
+            if not profile.anthropic_supports_dynamic_filtering:
+                raise UserError(f'`dynamic_filtering=True` is not supported by Anthropic model {model_name!r}.')
+            return True
+        return tool.dynamic_filtering is None and profile.anthropic_supports_dynamic_filtering and has_code_execution
 
     def _add_native_tools(
         self,
@@ -1086,13 +1091,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile)
+                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile, self.model_name)
                 tools.append(self._map_web_search_tool(tool, dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile)
+                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile, self.model_name)
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, dynamic_filtering)
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:

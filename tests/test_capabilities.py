@@ -6605,6 +6605,17 @@ def test_web_tool_dynamic_filtering_requires_native():
         WebFetch(native=False, local=lambda: None, dynamic_filtering=True)
 
 
+def test_web_tool_dynamic_filtering_false_allows_local_fallback():
+    """Explicitly disabling dynamic filtering should not force native web tools."""
+    web_search = WebSearch(native=False, local=lambda: None, dynamic_filtering=False)
+    assert web_search.get_native_tools() == []
+    assert web_search.get_toolset() is not None
+
+    web_fetch = WebFetch(native=False, local=lambda: None, dynamic_filtering=False)
+    assert web_fetch.get_native_tools() == []
+    assert web_fetch.get_toolset() is not None
+
+
 def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
     """WebSearch() silently produces a native-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
