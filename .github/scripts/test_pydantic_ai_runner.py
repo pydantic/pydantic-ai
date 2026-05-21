@@ -6,7 +6,7 @@ allow-list filtering, Claude-named native tools, `--allowed-tools` /
 `--permission-mode` enforcement, structured-error guarantees, and the
 stream-json schema.
 
-The single live test is skipped unless an OpenAI-compatible endpoint is given
+The single live test is skipped unless an Anthropic-shape endpoint is given
 via env: GH_AW_HARNESS_LIVE_API_KEY / _BASE_URL / _MODEL.
 
 Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
@@ -673,54 +673,31 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
 # --------------------------------------------------------------------------- #
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #
-def test_model_defaults_to_anthropic(monkeypatch):
-    for v in (
-        "GH_AW_HARNESS_MODEL",
-        "GH_AW_MODEL_AGENT_CLAUDE",
-        "ANTHROPIC_MODEL",
-        "OPENAI_BASE_URL",
-        "ANTHROPIC_BASE_URL",
-    ):
+def test_model_defaults_to_claude_sonnet_4_5(monkeypatch):
+    for v in ("ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"):
         monkeypatch.delenv(v, raising=False)
     model, label = har.build_model(har.parse_args(["--print"]))
     assert label == "anthropic:claude-sonnet-4-5"
     assert model.__class__.__name__ == "AnthropicModel"
 
 
-def test_model_openai_prefix_builds_openai_model(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    model, label = har.build_model(har.parse_args(["--model", "openai:gpt-4o-mini"]))
-    assert label == "openai-compatible:gpt-4o-mini"
-    assert model.__class__.__name__ == "OpenAIChatModel"
-
-
-def test_anthropic_base_url_builds_anthropic_model(monkeypatch):
-    for v in ("OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GH_AW_HARNESS_API_KEY"):
-        monkeypatch.delenv(v, raising=False)
-    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.minimax.io/anthropic")
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder")
-    monkeypatch.setenv("GH_AW_HARNESS_MODEL", "MiniMax-M2.7-highspeed")
-    model, label = har.build_model(har.parse_args(["--print"]))
-    assert label == "anthropic:MiniMax-M2.7-highspeed"
+def test_model_argv_flag_wins(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_MODEL", "from-env")
+    model, label = har.build_model(har.parse_args(["--model", "from-argv"]))
+    assert label == "anthropic:from-argv"
     assert model.__class__.__name__ == "AnthropicModel"
 
 
-def test_first_env_precedence(monkeypatch):
-    for v in ("A", "B", "C"):
-        monkeypatch.delenv(v, raising=False)
-    assert har._first_env("A", "B", "C") is None
-    monkeypatch.setenv("B", "vb")
-    monkeypatch.setenv("C", "vc")
-    assert har._first_env("A", "B", "C") == "vb"
-
-
-def test_use_openai_provider_selection():
-    assert har._use_openai_provider("openai", None, None) is True
-    assert har._use_openai_provider("anthropic", "http://x", None) is False
-    assert har._use_openai_provider("", "http://x", None) is True
-    assert har._use_openai_provider("", None, "http://proxy") is False
-    assert har._use_openai_provider("", None, None) is False
+def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    # gh-aw v0.74+ sets `ANTHROPIC_MODEL` (the Anthropic SDK standard) from
+    # the workflow's `engine.model:` field. The runner picks it up because
+    # the Claude-Code CLI does the same.
+    monkeypatch.setenv("ANTHROPIC_MODEL", "MiniMax-M2.7-Highspeed")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder")
+    model, label = har.build_model(har.parse_args(["--print"]))
+    assert label == "anthropic:MiniMax-M2.7-Highspeed"
+    assert model.__class__.__name__ == "AnthropicModel"
 
 
 # --------------------------------------------------------------------------- #
@@ -857,19 +834,20 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch):
     not os.environ.get("GH_AW_HARNESS_LIVE_API_KEY"),
     reason="set GH_AW_HARNESS_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test",
 )
-def test_live_openai_compatible_endpoint(monkeypatch):
-    """End-to-end against a real OpenAI-compatible endpoint, using the exact
-    argv gh-aw passes. Credentials come from env only — never committed."""
-    monkeypatch.setenv("OPENAI_API_KEY", os.environ["GH_AW_HARNESS_LIVE_API_KEY"])
+def test_live_anthropic_compatible_endpoint(monkeypatch):
+    """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
+    MiniMax's /anthropic, etc.), using the exact argv gh-aw passes.
+    Credentials come from env only — never committed."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["GH_AW_HARNESS_LIVE_API_KEY"])
     monkeypatch.setenv(
-        "OPENAI_BASE_URL",
-        os.environ.get("GH_AW_HARNESS_LIVE_BASE_URL", "https://example.test/v1"),
+        "ANTHROPIC_BASE_URL",
+        os.environ.get("GH_AW_HARNESS_LIVE_BASE_URL", "https://api.anthropic.com"),
     )
-    model = os.environ.get("GH_AW_HARNESS_LIVE_MODEL", "gpt-4o-mini")
+    model = os.environ.get("GH_AW_HARNESS_LIVE_MODEL", "claude-sonnet-4-5")
     argv = list(GHAW_ARGV)
     i = argv.index("--mcp-config")
     del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
-    argv += ["--model", f"openai:{model}", "Reply with exactly: HARNESS_OK"]
+    argv += ["--model", model, "Reply with exactly: HARNESS_OK"]
     monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", *argv])
     buf = io.StringIO()
     with redirect_stdout(buf):

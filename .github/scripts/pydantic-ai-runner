@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[openai,anthropic,mcp]>=1.95.1",
+#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
 #   "logfire",
 # ]
 # ///
@@ -17,10 +17,15 @@ gh-aw runs the agent engine like the Claude Code CLI:
 
 With `engine.command` set, `<command>` is this script. It speaks Claude
 Code's argv, recovers the prompt, builds a `pydantic-ai` agent backed by the
-gh-aw-injected Anthropic/OpenAI-compatible proxy, exposes Claude-named native
-tools plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink),
-enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
+gh-aw-injected Anthropic-compatible proxy, exposes Claude-named native tools
+plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink), enforces
+gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 `stream-json` so gh-aw's log parser and token accounting keep working.
+
+Like Claude Code itself, the harness only talks to Anthropic-shape APIs
+(`ANTHROPIC_BASE_URL` → real Anthropic, MiniMax's Anthropic-compatible
+endpoint, etc.). No OpenAI path — the workflow's `engine.id: claude`
+contract is Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the agent
 container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF api-proxy injects
@@ -67,9 +72,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import UsageLimits
@@ -437,67 +440,36 @@ def resolve_prompt(args: Args) -> str:
     return ""
 
 
-def _first_env(*names: str) -> str | None:
-    """First non-empty value among the given environment variables."""
-    for n in names:
-        v = os.environ.get(n)
-        if v:
-            return v
-    return None
-
-
-def _use_openai_provider(provider: str, openai_base: str | None, anthropic_base: str | None) -> bool:
-    """Select the OpenAI-compatible path for an explicit `openai:` model
-    prefix, or when only OPENAI_BASE_URL is configured (local / non-gh-aw use).
-    Under gh-aw, ANTHROPIC_BASE_URL is set, so the Anthropic path is used."""
-    if provider == "openai":
-        return True
-    if provider == "anthropic":
-        return False
-    return openai_base is not None and anthropic_base is None
-
-
 def build_model(args: Args) -> tuple[Model, str]:
     """Build the `pydantic-ai` model and a human-readable label.
 
-    The harness behaves like the stock Claude Code CLI: gh-aw sets
-    `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy) and a placeholder
-    auth token; the firewall's api-proxy swaps in the real key and rewrites the
-    base path. `pydantic-ai`'s default `AnthropicProvider` requires
-    `ANTHROPIC_API_KEY` and ignores `ANTHROPIC_AUTH_TOKEN`, so the Anthropic
-    client is constructed explicitly with a bearer token, exactly like the CLI.
-    Provider selection is intentionally *not* delegated to
-    `infer_model()`: the proxy is the provider abstraction and the firewall
-    only allowlists the proxy host, so the harness must stay a proxy client.
+    Anthropic-only. The harness behaves like the stock Claude Code CLI:
+    gh-aw sets `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy) and
+    a placeholder auth token; the firewall's api-proxy swaps in the real
+    key and rewrites the base path. `pydantic-ai`'s default
+    `AnthropicProvider` requires `ANTHROPIC_API_KEY` and ignores
+    `ANTHROPIC_AUTH_TOKEN`, so the Anthropic client is constructed
+    explicitly with a bearer token, exactly like the CLI.
+
+    Model name resolution (in priority order):
+      1. `--model X` argv flag (from Claude Code's CLI surface).
+      2. `ANTHROPIC_MODEL` env var (standard Anthropic SDK convention;
+         gh-aw populates this from the workflow's `engine.model:` field).
+      3. Fallback default `claude-sonnet-4-5`.
     """
-    raw = (
-        args.model
-        or _first_env("GH_AW_MODEL", "GH_AW_HARNESS_MODEL", "GH_AW_MODEL_AGENT_CLAUDE", "ANTHROPIC_MODEL")
-        or "claude-sonnet-4-5"
-    )
-    provider, _, model_name = raw.partition(":") if ":" in raw else ("", "", raw)
-    openai_base = os.environ.get("OPENAI_BASE_URL")
+    model_name = args.model or os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-5"
     anthropic_base = os.environ.get("ANTHROPIC_BASE_URL")
-
-    if _use_openai_provider(provider, openai_base, anthropic_base):
-        api_key = _first_env(
-            "GH_AW_HARNESS_API_KEY",
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-        ) or PROXY_PLACEHOLDER
-        base_url = openai_base or anthropic_base
-        log(f"openai-compatible base_url={base_url or '(default)'}")
-        provider_obj = OpenAIProvider(api_key=api_key, base_url=base_url)
-        return OpenAIChatModel(model_name, provider=provider_obj), f"openai-compatible:{model_name}"
-
-    auth_token = _first_env(
-        "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "GH_AW_HARNESS_API_KEY"
-    ) or PROXY_PLACEHOLDER
-    log(f"anthropic base_url={anthropic_base or '(default)'} auth=token")
+    auth_token = (
+        os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or PROXY_PLACEHOLDER
+    )
+    log(f"anthropic model={model_name} base_url={anthropic_base or '(default)'}")
     client = AsyncAnthropic(auth_token=auth_token, base_url=anthropic_base)
-    label = raw if ":" in raw else f"anthropic:{model_name}"
-    return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), label
+    return (
+        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        f"anthropic:{model_name}",
+    )
 
 
 def configure_observability() -> None:

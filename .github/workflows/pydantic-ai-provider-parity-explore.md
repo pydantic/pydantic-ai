@@ -40,6 +40,10 @@ runtimes:
   uv: {}
 engine:
   id: claude
+  # Pulled from the repo's `vars.GH_AW_MODEL` (set out-of-band).
+  # gh-aw compiles this into the engine command's `--model <name>` argv,
+  # which the harness reads via `args.model`.
+  model: ${{ vars.GH_AW_MODEL }}
   # The checked-out workspace is mounted no-exec in the AWF sandbox, so a
   # pre-step stages a launcher in gh-aw's exec-able /tmp/gh-aw/bin that runs
   # `uv run --script` against the workspace harness.
@@ -47,7 +51,6 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-    GH_AW_MODEL: ${{ vars.GH_AW_MODEL }}
 tools:
   github:
     mode: gh-proxy
