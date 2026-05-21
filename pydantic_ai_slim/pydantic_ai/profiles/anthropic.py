@@ -118,6 +118,19 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
 
+    # On the direct Anthropic API, `input_examples` is a standard tool field (no beta header) on these models.
+    # Claude Haiku does not support it. On Bedrock it's a different story (see the provider overrides).
+    # TODO update when new models are released that support tool examples
+    # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#providing-tool-use-examples
+    models_that_support_tool_examples = (
+        'claude-sonnet-4-5',
+        'claude-sonnet-4-6',
+        'claude-opus-4-5',
+        'claude-opus-4-6',
+        'claude-opus-4-7',
+    )
+    supports_tool_examples = model_name.startswith(models_that_support_tool_examples)
+
     anthropic_supports_fast_speed = model_name.startswith('claude-opus-4-6')
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
@@ -155,6 +168,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
+        supports_tool_examples=supports_tool_examples,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,

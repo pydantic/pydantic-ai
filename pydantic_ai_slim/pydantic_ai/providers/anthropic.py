@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TypeAlias, overload
 
 import httpx
@@ -62,19 +62,13 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        # TODO update when new models are released that support tool examples
-        # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#providing-tool-use-examples
-        models_that_support_tool_examples = (
-            'claude-sonnet-4-5',
-            'claude-sonnet-4-6',
-            'claude-opus-4-5',
-            'claude-opus-4-6',
-        )
-        supports_tool_examples = model_name.startswith(models_that_support_tool_examples)
-        return AnthropicModelProfile(
-            json_schema_transformer=AnthropicJsonSchemaTransformer,
-            supports_tool_examples=supports_tool_examples,
-        ).update(profile)
+        result = AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        if bedrock_provider == 'anthropic':
+            # `anthropic_model_profile` enables `supports_tool_examples` for the direct Anthropic API, where
+            # `input_examples` is a standard tool field. Via Bedrock it's still beta-gated behind the
+            # `tool-examples-2025-10-29` header (which we don't send), so fall back to the description instead.
+            result = replace(result, supports_tool_examples=False)
+        return result
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

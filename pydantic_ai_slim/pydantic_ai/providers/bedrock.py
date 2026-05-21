@@ -166,7 +166,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
         bedrock_supports_strict_tool_definition=supports_structured_output,
-        # Anthropic's `input_examples` is only supported on the direct Anthropic API, not via Bedrock's Converse API.
+        # Bedrock's Converse API `toolSpec` has no `input_examples` field, so we fall back to
+        # including examples in the tool description rather than sending them natively.
         supports_tool_examples=False,
     )
 

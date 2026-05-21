@@ -77,3 +77,15 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
     assert isinstance(profile, AnthropicModelProfile)
     assert profile.supports_json_schema_output is False
     assert ToolSearchTool not in profile.supported_native_tools
+
+
+def test_anthropic_provider_model_profile_tool_examples_direct_vs_bedrock():
+    """`input_examples` is a standard tool field on the direct Anthropic API, but on Bedrock it's
+    beta-gated behind a header we don't send, so it must be disabled for Bedrock-transported ids."""
+    direct = AnthropicProvider.model_profile('claude-opus-4-7')
+    assert isinstance(direct, AnthropicModelProfile)
+    assert direct.supports_tool_examples is True
+
+    bedrock = AnthropicProvider.model_profile('us.anthropic.claude-opus-4-7-v1:0')
+    assert isinstance(bedrock, AnthropicModelProfile)
+    assert bedrock.supports_tool_examples is False
