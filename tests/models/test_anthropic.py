@@ -1359,6 +1359,22 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=ModelSettings(top_k=40))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['top_k'] == 40
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -8911,6 +8927,124 @@ async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_req
     )
 
 
+async def test_anthropic_code_execution_tool_message_replay_with_list_results(allow_model_requests: None):
+    """Serialize Anthropic code execution result lists instead of dropping them."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    bash_result = [
+        {
+            'return_code': 0,
+            'stderr': '',
+            'stdout': 'hello\n',
+            'type': 'bash_code_execution_result',
+        }
+    ]
+    text_editor_result = [
+        {
+            'content': 'Hello, world!',
+            'file_type': 'text',
+            'num_lines': 1,
+            'start_line': 1,
+            'total_lines': 1,
+            'type': 'text_editor_code_execution_view_result',
+        }
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=bash_result,
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=text_editor_result,
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_list',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_list',
+                        'content': [
+                            {
+                                'return_code': 0,
+                                'stderr': '',
+                                'stdout': 'hello\n',
+                                'type': 'bash_code_execution_result',
+                            }
+                        ],
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_list',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_list',
+                        'content': [
+                            {
+                                'content': 'Hello, world!',
+                                'file_type': 'text',
+                                'num_lines': 1,
+                                'start_line': 1,
+                                'total_lines': 1,
+                                'type': 'text_editor_code_execution_view_result',
+                            }
+                        ],
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
 async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_tool_name(
     allow_model_requests: None,
 ):
@@ -11010,3 +11144,15 @@ async def test_anthropic_service_tier_mapping(
         assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
     else:
         assert kwargs['service_tier'] == expected
+
+
+async def test_anthropic_top_k_propagation(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['top_k'] == 40

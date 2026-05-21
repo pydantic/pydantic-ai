@@ -131,6 +131,38 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, dict)
     assert anthropic_profile.get('supports_json_schema_output', False) is False
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    # Pre-4.6 Claude on Bedrock keeps the legacy `enabled + budget_tokens` translation.
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
+    assert isinstance(anthropic_profile, dict)
+    # Sonnet 4.5 is the most-recent non-adaptive model — the boundary case users compare
+    # against Sonnet 4.6 when evaluating this fix.
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
+    assert isinstance(anthropic_profile, dict)
+    # Opus 4.5 supports `effort` on the direct Anthropic API but Bedrock only honors it
+    # alongside adaptive thinking, so the Bedrock flag must stay False here.
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-6-20251015-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-6-20251015')
+    assert isinstance(anthropic_profile, dict)
+    # Sonnet 4.6+ requires adaptive thinking on Bedrock — see issue #5304.
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-6-20251015-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-6-20251015')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

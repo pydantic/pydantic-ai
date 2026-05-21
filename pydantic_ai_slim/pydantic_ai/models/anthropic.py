@@ -67,11 +67,13 @@ from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
+    AnthropicEffort,
     AnthropicModelProfile,
+    resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -348,7 +350,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     for more information.
     """
 
-    anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None
+    anthropic_effort: AnthropicEffort | None
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
@@ -731,6 +733,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
+                top_k=model_settings.get('top_k', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
@@ -1457,7 +1460,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 'code_execution_tool_result',  # Backward compatibility
                                 'bash_code_execution',
                                 'text_editor_code_execution',
-                            ) and isinstance(response_part.content, dict):
+                            ) and isinstance(response_part.content, dict | list):
                                 match _get_anthropic_code_execution_tool_name(response_part):
                                     case 'code_execution':
                                         assistant_content_params.append(
@@ -1923,7 +1926,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             assert model_request_parameters.output_object is not None
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
-        effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None = model_settings.get('anthropic_effort')
+        effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = self.profile
@@ -1932,14 +1935,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             and profile.get('anthropic_supports_effort', False)
             and isinstance(model_request_parameters.thinking, str)
         ):
-            effort_map: dict[ThinkingEffort, Literal['low', 'medium', 'high', 'xhigh', 'max']] = {
-                'minimal': 'low',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'xhigh' if profile.get('anthropic_supports_xhigh_effort', False) else 'max',
-            }
-            effort = effort_map[model_request_parameters.thinking]
+            effort = resolve_anthropic_effort(
+                model_request_parameters.thinking,
+                supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+            )
 
         task_budget = self._get_task_budget(model_settings)
 

@@ -495,6 +495,7 @@ class GoogleModel(Model[Client]):
                 generation_config=GenerationConfigDict(
                     temperature=generation_config.get('temperature'),
                     top_p=generation_config.get('top_p'),
+                    top_k=generation_config.get('top_k'),
                     max_output_tokens=generation_config.get('max_output_tokens'),
                     stop_sequences=generation_config.get('stop_sequences'),
                     presence_penalty=generation_config.get('presence_penalty'),
@@ -821,6 +822,7 @@ class GoogleModel(Model[Client]):
             system_instruction=system_instruction,
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
+            top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),

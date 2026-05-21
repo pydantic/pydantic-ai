@@ -198,7 +198,11 @@ class WebSearchUserLocation(TypedDict, total=False):
 class XSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search X/Twitter for posts and content.
 
-    This tool is exclusive to xAI models. See <https://docs.x.ai/developers/tools/x-search> for more details.
+    See <https://docs.x.ai/developers/tools/x-search> for more details.
+
+    When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
+    `fallback_model` set, this tool also works with non-xAI models by delegating to a
+    subagent running the specified xAI model.
 
     Supported by:
 

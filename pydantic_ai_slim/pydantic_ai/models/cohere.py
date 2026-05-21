@@ -190,6 +190,7 @@ class CohereModel(Model[AsyncClientV2]):
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 p=model_settings.get('top_p', OMIT),
+                k=model_settings.get('top_k', OMIT),
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),

@@ -10,7 +10,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..native_tools._tool_search import ToolSearchTool
-from ..settings import ThinkingLevel
+from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
@@ -97,6 +97,39 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     'xhigh': 32768,
 }
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
+
+
+AnthropicEffort: TypeAlias = Literal['low', 'medium', 'high', 'xhigh', 'max']
+"""Effort values Anthropic accepts at `output_config.effort`."""
+
+
+ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'max',
+}
+"""Maps unified thinking effort levels to Anthropic `output_config.effort`.
+
+`xhigh` maps to `'max'` by default; callers that target a model with
+`anthropic_supports_xhigh_effort` should pass `supports_xhigh=True` to
+[`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort]
+to preserve `xhigh` instead of downshifting.
+"""
+
+
+def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
+    """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
+
+    Shared between the direct Anthropic path and any provider that translates to the
+    Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
+    Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
+    base mapping, while letting the `xhigh` passthrough decision live in one place.
+    """
+    if level == 'xhigh' and supports_xhigh:
+        return 'xhigh'
+    return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:

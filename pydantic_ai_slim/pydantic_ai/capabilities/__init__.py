@@ -50,6 +50,7 @@ from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
+from .x_search import XSearch
 
 AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
 """A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
@@ -77,6 +78,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Toolset,
         WebFetch,
         WebSearch,
+        XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
 }
@@ -129,6 +131,7 @@ __all__ = [
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
+    'XSearch',
     'CombinedCapability',
     'DynamicCapability',
     'HandleDeferredToolCalls',

@@ -23,6 +23,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native by default, optional [local fallback](common-tools.md#duckduckgo-search-tool) via `local='duckduckgo'` | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native by default, optional [local fallback](common-tools.md#web-fetch-tool) via `local=True` | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native by default, optional subagent fallback via `fallback_model` | Yes |
+| [`XSearch`][pydantic_ai.capabilities.XSearch] | X search — native on xAI, explicit subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — runs locally by default; `native=True` opts into the model provider's native MCP support | Yes |
 | [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] | Discovery of [deferred tools](tools-advanced.md#tool-search) — native when supported, local `search_tools` function tool otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
@@ -120,7 +121,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, MCP) across two implementations:
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:
 
 - **Native** — invoked by the model provider when the model supports it. The work happens on the provider's side (e.g. Anthropic's web search runs server-side, returning results inline).
 - **Local** — runs in your Python process. Used when the model doesn't support the native tool; your code does the work (e.g. calling DuckDuckGo directly).
@@ -129,7 +130,7 @@ Configure each side via the `native=` and `local=` kwargs. `native=` accepts `Tr
 
 ```python {title="provider_adaptive_tools.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -140,13 +141,17 @@ agent = Agent(
         WebFetch(local=True),
         # Native when supported; subagent fallback via `fallback_model`
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
+        # Native on xAI; on other models, explicitly delegate to an xAI model
+        XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],
 )
 ```
 
-`MCP` defaults the other way from the other three: because MCP carries credentials, it runs locally by default and you opt into native MCP with `native=True`. The other three default to native and you opt into local with `local=`.
+`MCP` defaults the other way from the others: because MCP carries credentials, it runs locally by default and you opt into native MCP with `native=True`. The others default to native and you opt into local with `local=`.
+
+[`XSearch`][pydantic_ai.capabilities.XSearch] is slightly different from [`WebSearch`][pydantic_ai.capabilities.WebSearch] and [`WebFetch`][pydantic_ai.capabilities.WebFetch]: there is no default non-xAI fallback. If your agent is not running on an xAI model, set `fallback_model` explicitly to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool].
 
 Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
 

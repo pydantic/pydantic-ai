@@ -67,7 +67,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -696,7 +696,17 @@ class BedrockConverseModel(Model[BaseClient]):
         variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
-            if thinking is False:
+            if profile.get('bedrock_supports_adaptive_thinking', False):
+                if thinking is not False:
+                    existing['thinking'] = {'type': 'adaptive'}
+                    # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+                    if (
+                        profile.get('bedrock_supports_effort', False)
+                        and isinstance(thinking, str)
+                        and 'output_config' not in existing
+                    ):
+                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
+            elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
                 existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
