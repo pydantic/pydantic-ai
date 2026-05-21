@@ -3865,6 +3865,70 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
     assert raw == wrapped == {'argument': Payload(city='Mexico City')}
 
 
+def test_single_base_model_arg_validator_accepts_wrapped_input_extras_ignored():
+    """A single-BaseModel-arg validator correctly unwraps when extra fields are ignored."""
+    from pydantic import ConfigDict
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(extra='ignore')
+        city: str = 'default'
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_single_base_model_arg_validator_overlapping_field():
+    """When the argument name overlaps with a field name, it is treated as unwrapped first, falling back to wrapped if validation fails."""
+
+    class Payload(BaseModel):
+        argument: str = 'default'
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.argument
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    # Unwrapped shape: input is a dict matching the model fields, e.g. {'argument': 'unwrapped'}
+    # It validates as Payload(argument='unwrapped')
+    raw = validator.validate_python({'argument': 'unwrapped'})
+    assert raw == {'argument': Payload(argument='unwrapped')}
+
+    # Wrapped shape: input is {'argument': {'argument': 'wrapped'}}
+    # Note: validating {'argument': {'argument': 'wrapped'}} against Payload:
+    # 'argument' field expects str, but gets {'argument': 'wrapped'} (a dict), raising ValidationError.
+    # Therefore, the ValidationError is raised, and the fallback block triggers.
+    # The fallback unwraps it to {'argument': 'wrapped'}, which successfully validates.
+    wrapped = validator.validate_python({'argument': {'argument': 'wrapped'}})
+    assert wrapped == {'argument': Payload(argument='wrapped')}
+
+
+def test_single_base_model_arg_validator_extras_forbid():
+    """A single-BaseModel-arg validator with extra='forbid' unwraps wrapped input correctly."""
+    from pydantic import ConfigDict
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(extra='forbid')
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)

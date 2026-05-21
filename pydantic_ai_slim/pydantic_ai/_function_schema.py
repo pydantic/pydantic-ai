@@ -216,7 +216,10 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
+    defs = getattr(gen_schema, 'defs', None)
+    definitions = getattr(defs, '_definitions', {}) if defs is not None else {}
+
+    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config, definitions)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -295,10 +298,47 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     return takes_run_context(callable_obj)
 
 
+def _get_schema_fields(schema: Any, defs: dict[str, Any]) -> set[str]:
+    fields: set[str] = set()
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[str, Any], schema)
+        schema_type = schema_dict.get('type')
+        if schema_type == 'definition-ref' and 'schema_ref' in schema_dict:
+            ref = schema_dict['schema_ref']
+            if isinstance(ref, str) and ref in defs:
+                fields.update(_get_schema_fields(defs[ref], defs))
+            return fields
+        elif schema_type in ('model-fields', 'typed-dict') and 'fields' in schema_dict:
+            schema_fields = schema_dict['fields']
+            if isinstance(schema_fields, dict):
+                fields.update(cast(dict[str, Any], schema_fields).keys())
+            return fields
+        elif schema_type == 'dataclass-args' and 'fields' in schema_dict:
+            schema_fields = schema_dict['fields']
+            if isinstance(schema_fields, list):
+                for f in cast(list[Any], schema_fields):
+                    if isinstance(f, dict):
+                        f_dict = cast(dict[str, Any], f)
+                        if 'name' in f_dict:
+                            name = f_dict['name']
+                            if isinstance(name, str):
+                                fields.add(name)
+            return fields
+
+        for v in schema_dict.values():
+            fields.update(_get_schema_fields(v, defs))
+    elif isinstance(schema, list):
+        schema_list = cast(list[Any], schema)
+        for item in schema_list:
+            fields.update(_get_schema_fields(item, defs))
+    return fields
+
+
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
     core_config: core_schema.CoreConfig,
+    definitions: dict[str, Any],
 ) -> tuple[core_schema.CoreSchema, str | None]:
     """Generate a typed dict schema for function parameters.
 
@@ -306,6 +346,7 @@ def _build_schema(
         fields: The fields to generate a typed dict schema for.
         var_kwargs_schema: The variable keyword arguments schema.
         core_config: The core configuration.
+        definitions: The schema definitions dictionary to resolve definition-refs.
 
     Returns:
         tuple of (generated core schema, single arg name).
@@ -321,9 +362,10 @@ def _build_schema(
             # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
             # which is what Temporal (and any other caller) passes when re-validating previously
             # validated args after serialization round-trip.
+            model_fields = _get_schema_fields(td_field['schema'], definitions)
             return (
                 core_schema.no_info_wrap_validator_function(
-                    partial(_validate_single_arg, name=name), td_field['schema']
+                    partial(_validate_single_arg, name=name, model_fields=model_fields), td_field['schema']
                 ),
                 name,
             )
@@ -343,7 +385,15 @@ def _validate_single_arg(
     handler: core_schema.ValidatorFunctionWrapHandler,
     *,
     name: str,
+    model_fields: set[str],
 ) -> dict[str, Any]:
+    if (
+        isinstance(value, dict)
+        and list(cast(dict[Any, Any], value)) == [name]
+        and name not in model_fields
+    ):
+        return {name: handler(value[name])}
+
     try:
         return {name: handler(value)}
     except ValidationError:
