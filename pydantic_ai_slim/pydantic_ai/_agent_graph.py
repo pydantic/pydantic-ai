@@ -198,7 +198,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     root_capability: AbstractCapability[DepsT]
 
     capabilities: dict[str, AbstractCapability[DepsT]]
-    available_capability_ids: set[str]
+    loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
@@ -500,7 +500,7 @@ async def _prepare_request_parameters(
     raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
 
     def add_loaded_native_tools(capability: AbstractCapability[DepsT]) -> None:
-        if capability.defer_loading is True and capability.id in ctx.deps.available_capability_ids:
+        if capability.defer_loading is True and capability.id in ctx.deps.loaded_capability_ids:
             raw_native_tools.extend(capability.get_native_tools() or ())
 
     ctx.deps.root_capability.apply(add_loaded_native_tools)
@@ -863,7 +863,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
-        _refresh_available_capability_ids(ctx)
+        _refresh_loaded_capability_ids(ctx)
 
         _refresh_discovered_tool_names(ctx)
 
@@ -1431,7 +1431,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
-        available_capability_ids=ctx.deps.available_capability_ids,
+        loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -1439,20 +1439,17 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     return run_context
 
 
-def _refresh_available_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Refresh available capability ids from the current graph state."""
-    available_capability_ids = {
-        capability.id for capability in ctx.deps.capabilities.values() if capability.defer_loading is not True
-    }
-    available_capability_ids.update(parse_loaded_capabilities(ctx.state.message_history))
+def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived loaded capability ids from the current graph state."""
+    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
 
-    ctx.deps.available_capability_ids.clear()
-    ctx.deps.available_capability_ids.update(available_capability_ids)
+    ctx.deps.loaded_capability_ids.clear()
+    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
 
 
 def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived discovered tool names from the current graph state."""
-    discovered_tool_names = ToolSearchToolset.parse_discovered_tools(ctx.state.message_history)
+    discovered_tool_names = ToolSearchToolset._parse_discovered_tools(ctx.state.message_history)  # pyright: ignore[reportPrivateUsage]
 
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)

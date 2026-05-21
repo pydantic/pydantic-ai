@@ -77,7 +77,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         instructions_text = '\n\n'.join(parts) or None
 
-        ctx.available_capability_ids.add(capability_id)
+        ctx.loaded_capability_ids.add(capability_id)
         content: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         return ToolReturn(return_value=content)
 

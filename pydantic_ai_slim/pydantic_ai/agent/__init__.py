@@ -44,6 +44,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
@@ -1476,7 +1477,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_capability.apply(_register)
 
-        available_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
+        # The deferred capabilities the model has already loaded in prior steps; the graph
+        # refreshes this from history before each model request, so the seed only matters
+        # for pre-first-step access. Non-deferred capabilities are folded in by the
+        # `RunContext.available_capability_ids` property.
+        loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1494,7 +1499,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=self._validation_context,
             root_capability=run_capability,
             capabilities=capabilities_dict,
-            available_capability_ids=available_capability_ids,
+            loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=set(),
             native_tools=cap_native_tools,
             tool_manager=tool_manager,

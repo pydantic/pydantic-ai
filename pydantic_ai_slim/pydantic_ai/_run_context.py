@@ -117,15 +117,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """The capabilities that are available for the current run."""
 
-    available_capability_ids: set[str] = field(default_factory=set[str])
-    """IDs of the capabilities whose contributions are live to the model right now.
+    loaded_capability_ids: set[str] = field(default_factory=set[str])
+    """IDs of the deferred capabilities the model has explicitly loaded via `load_capability`.
 
-    Distinct from `capabilities`, which is the full registry of capabilities registered
-    for the run (including deferred ones not yet loaded). `available_capability_ids` is
-    the subset whose contributions are currently active: non-deferred capabilities
-    (`defer_loading=False`) plus any deferred capabilities the model has loaded via
-    `load_capability`. Seeded during run preparation from the capability registry and
-    message history; the `load_capability` tool body adds to it for in-step loads.
+    The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
+    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
+    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
+    for the full set of currently-active capabilities (auto/always-on plus these).
     """
 
     capability_loaded: bool | None = None
@@ -137,9 +135,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     discovered_tool_names: set[str] = field(default_factory=set[str])
     """Names of deferred tools revealed via tool-search return parts in the message history.
 
-    The history-derived subset that `ToolSearchToolset.get_tools` reads to decide which
-    deferred tools to make visible this turn. Populated during run preparation from
-    message history.
+    The tool-side mirror of `loaded_capability_ids`: the runtime-revealed subset that
+    `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
+    turn. Populated during run preparation from message history. Use `available_tool_names`
+    for the full set of currently-callable tools (always-visible plus these).
     """
 
     @property
@@ -148,15 +147,30 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     @property
+    def available_capability_ids(self) -> set[str]:
+        """IDs of the capabilities whose contributions are live to the model right now.
+
+        The capability-side mirror of `available_tool_names`: `available = auto/always ∪
+        runtime-revealed`. Here that's the non-deferred capabilities (`defer_loading` not
+        `True`) plus the deferred ones the model has loaded (`loaded_capability_ids`), so
+        `available_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+
+        Distinct from `capabilities`, the full registry (including deferred ones not yet
+        loaded). See `loaded_capability_ids` for the runtime-revealed subset.
+        """
+        return {
+            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
+        } | self.loaded_capability_ids
+
+    @property
     def available_tool_names(self) -> set[str]:
         """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability).
 
-        The subset of `tools` keys whose definitions are not deferred; mirrors
-        `available_capability_ids` on the capability side.
+        The subset of `tools` keys whose definitions are not deferred; the tool-side mirror
+        of `available_capability_ids`: `available = auto/always ∪ runtime-revealed`, so
+        `available_tool_names - discovered_tool_names` is the always-visible subset.
         """
-        if self.tool_manager is None or self.tool_manager.tools is None:
-            return set()
-        return {tool.tool_def.name for tool in self.tool_manager.tools.values() if not tool.tool_def.defer_loading}
+        return {name for name, tool_def in self.tools.items() if not tool_def.defer_loading}
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

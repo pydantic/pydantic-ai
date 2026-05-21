@@ -341,7 +341,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         )
 
     @staticmethod
-    def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
+    def _parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
         """Scan message history for previously-discovered tool names.
 
         Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
