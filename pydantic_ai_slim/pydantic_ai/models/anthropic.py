@@ -1450,7 +1450,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 'code_execution_tool_result',  # Backward compatibility
                                 'bash_code_execution',
                                 'text_editor_code_execution',
-                            ) and isinstance(response_part.content, dict):
+                            ) and isinstance(response_part.content, dict | list):
                                 match _get_anthropic_code_execution_tool_name(response_part):
                                     case 'code_execution':
                                         assistant_content_params.append(
