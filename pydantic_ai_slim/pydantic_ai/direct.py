@@ -416,7 +416,7 @@ class StreamedResponseSync:
     )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
-        return self._ensure_stream_ready().usage()
+        return self._ensure_stream_ready().usage
 
     @property
     def model_name(self) -> str:

@@ -23,6 +23,7 @@ import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
+from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -1328,7 +1329,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1337,7 +1338,9 @@ class StreamedResponse(ABC):
             state=state,
         )
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage

@@ -29,7 +29,7 @@ if not imports_successful():
 
 TEST_CASES = [
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/chat:gpt-5',
         'gpt-5',
         'openai',
@@ -38,7 +38,7 @@ TEST_CASES = [
         id='gateway/chat:gpt-5',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/responses:gpt-5',
         'gpt-5',
         'openai',
@@ -47,7 +47,7 @@ TEST_CASES = [
         id='gateway/responses:gpt-5',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/groq:llama-3.3-70b-versatile',
         'llama-3.3-70b-versatile',
         'groq',
@@ -56,16 +56,16 @@ TEST_CASES = [
         id='gateway/groq:llama-3.3-70b-versatile',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/gemini:gemini-1.5-flash',
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
+        'gateway/google-cloud:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google-cloud',
         'google',
         GoogleModel,
-        id='gateway/gemini:gemini-1.5-flash',
+        id='gateway/google-cloud:gemini-1.5-flash',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/anthropic:claude-opus-4-7',
         'claude-opus-4-7',
         'anthropic',
@@ -74,7 +74,7 @@ TEST_CASES = [
         id='gateway/anthropic:claude-opus-4-7',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/converse:amazon.nova-micro-v1:0',
         'amazon.nova-micro-v1:0',
         'bedrock',
