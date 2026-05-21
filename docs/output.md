@@ -380,13 +380,13 @@ Choose `'exhaustive'` to run every tool, including additional output tools whose
 
 When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
 
-###### Retrying after a tool failure
+##### Retrying after a tool failure
 
-Under the `'graceful'` and `'exhaustive'` strategies above, function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls) (see the warning above).
+Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool-calls), function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls), where the first matching output is committed immediately.
 
-###### Controlling output tool parallelism
+##### Controlling output tool parallelism
 
-Like function tools, [output tools](#tool-output) run concurrently. Under `'exhaustive'`, where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
+Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
 
 #### Native Output
 
