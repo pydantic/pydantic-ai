@@ -199,11 +199,7 @@ def function_schema(  # noqa: C901
             )
             # noinspection PyTypeChecker
             metadata = td_schema.setdefault('metadata', {})
-            model_like = is_model_like(annotation)
-            metadata['is_model_like'] = model_like
-            # As a single model-like arg, the parameter name doubles as the wrapper key, so record
-            # whether the unwrapped model would itself accept it as a top-level key (see `_build_schema`).
-            metadata['single_arg_name_is_model_key'] = model_like and _annotation_accepts_key(annotation, field_name)
+            metadata['is_model_like'] = is_model_like(annotation)
 
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
@@ -221,7 +217,7 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
+    schema, single_arg_name, single_arg_keys = _build_schema(fields, var_kwargs_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -236,6 +232,12 @@ def function_schema(  # noqa: C901
     # PluggableSchemaValidator is api compatible with SchemaValidator
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = schema_generator().generate(schema)
+
+    if single_arg_keys is not None:
+        # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
+        # are exactly the top-level keys the model accepts (aliases already resolved by Pydantic).
+        # `_validate_single_arg` reads this to tell unwrapped input from a wrapper envelope.
+        single_arg_keys.update(json_schema.get('properties', {}))
 
     # workaround for https://github.com/pydantic/pydantic/issues/10785
     # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
@@ -304,7 +306,7 @@ def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
     core_config: core_schema.CoreConfig,
-) -> tuple[core_schema.CoreSchema, str | None]:
+) -> tuple[core_schema.CoreSchema, str | None, set[str] | None]:
     """Generate a typed dict schema for function parameters.
 
     Args:
@@ -313,7 +315,8 @@ def _build_schema(
         core_config: The core configuration.
 
     Returns:
-        tuple of (generated core schema, single arg name).
+        tuple of (generated core schema, single arg name, single arg model keys). The keys set is
+        empty here and filled in by `function_schema` from the generated JSON schema.
     """
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
@@ -327,16 +330,17 @@ def _build_schema(
             # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
             # which is what Temporal (and any other caller) passes when re-validating previously
             # validated args after serialization round-trip.
+            # `accepted_keys` lets the validator tell that wrapper shape apart from genuine unwrapped
+            # input for a model with a field (or alias) named `name`; `function_schema` fills it from
+            # the generated JSON schema so we don't rebuild the model's schema just to read its keys.
+            accepted_keys: set[str] = set()
             return (
                 core_schema.no_info_wrap_validator_function(
-                    partial(
-                        _validate_single_arg,
-                        name=name,
-                        name_is_model_key=metadata.get('single_arg_name_is_model_key', False),
-                    ),
+                    partial(_validate_single_arg, name=name, accepted_keys=accepted_keys),
                     td_field['schema'],
                 ),
                 name,
+                accepted_keys,
             )
 
     extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
@@ -346,18 +350,7 @@ def _build_schema(
         extra_behavior=extra_behavior,
         extras_schema=var_kwargs_schema,
     )
-    return td_schema, None
-
-
-def _annotation_accepts_key(annotation: Any, name: str) -> bool:
-    """Whether a model-like `annotation` accepts `name` as a top-level validation key.
-
-    Used by `_build_schema` to tell a wrapper envelope `{name: ...}` (which we unwrap) apart from
-    genuine unwrapped input for a model with a field — or field alias — called `name` (which we don't).
-    Reading the keys from the validation JSON schema lets Pydantic resolve aliases for us.
-    """
-    properties = TypeAdapter(annotation).json_schema(mode='validation').get('properties', {})
-    return name in properties
+    return td_schema, None, None
 
 
 def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
@@ -369,12 +362,12 @@ def _validate_single_arg(
     handler: core_schema.ValidatorFunctionWrapHandler,
     *,
     name: str,
-    name_is_model_key: bool,
+    accepted_keys: set[str],
 ) -> dict[str, Any]:
     if not _is_wrapped_single_arg(value, name):
         # Plain unwrapped model input, as emitted against the flattened JSON schema.
         return {name: handler(value)}
-    if not name_is_model_key:
+    if name not in accepted_keys:
         # `name` isn't a key the model accepts, so `{name: ...}` can only be a wrapper envelope (e.g.
         # re-validated args after a Temporal round-trip). Unwrap it; a bad payload still raises here.
         return {name: handler(value[name])}
