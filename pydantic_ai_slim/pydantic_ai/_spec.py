@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_serializer,
     model_validator,
+    with_config,
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
@@ -314,10 +315,7 @@ def build_schema_types(
 
         def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
             td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-            return td
+            return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:
