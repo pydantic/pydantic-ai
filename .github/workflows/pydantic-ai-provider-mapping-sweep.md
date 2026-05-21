@@ -1,7 +1,7 @@
 ---
 emoji: "🔌"
 name: "Pydantic AI Provider Mapping Sweep"
-description: "Audit one model provider's request/response mapping against its SDK and file a reproducible bug. Rotates providers; runs on the Pydantic AI harness engine; the prompt is iterable from a Logfire managed variable."
+description: "Audit one model provider's request/response mapping against its SDK and file a reproducible bug. Rotates providers; runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
 # Fuzzy daily schedule (gh-aw scatters the time, auto-adds workflow_dispatch).
 # Rotates one provider per run so coverage spreads across the matrix.
 on: daily
@@ -84,13 +84,13 @@ pre-agent-steps:
   # gh-aw's repository checkout happens between pre-steps and
   # pre-agent-steps, and this step reads from .github/scripts/ in the
   # workspace.
-  - name: Stage Pydantic AI harness launcher
+  - name: Stage Pydantic AI gh-aw shim launcher
     run: |
       mkdir -p /tmp/gh-aw/bin
       install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI harness uv environment
+  - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
 
 jobs:

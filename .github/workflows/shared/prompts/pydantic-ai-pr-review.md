@@ -10,7 +10,7 @@ is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI PR Review
 
-You are running under the **Pydantic AI harness engine** (a Claude Code drop-in
+You are running under the **Pydantic AI gh-aw shim** (a Claude Code drop-in
 in gh-aw), driving a model behind gh-aw's AWF firewall. You have Claude's
 native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`, `WebFetch`, `Task`, …),
 the gh-aw GitHub tools, and the `create_pull_request_review_comment`,

@@ -1,4 +1,4 @@
-"""Offline tests for the Pydantic AI gh-aw harness (.github/scripts/pydantic-ai-runner).
+"""Offline tests for the Pydantic AI gh-aw shim (.github/scripts/pydantic-ai-runner).
 
 These cover the gh-aw compatibility surface with no network or credentials:
 argv tolerance, prompt recovery, model resolution, MCP-config translation and
@@ -7,7 +7,7 @@ allow-list filtering, Claude-named native tools, `--allowed-tools` /
 stream-json schema.
 
 The single live test is skipped unless an Anthropic-shape endpoint is given
-via env: GH_AW_HARNESS_LIVE_API_KEY / _BASE_URL / _MODEL.
+via env: GH_AW_SHIM_LIVE_API_KEY / _BASE_URL / _MODEL.
 
 Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
@@ -26,19 +26,19 @@ import pytest
 _SCRIPT = Path(__file__).parent / "pydantic-ai-runner"
 
 
-def _load_harness():
-    # The harness has no .py extension, so use an explicit source loader.
+def _load_shim():
+    # The shim has no .py extension, so use an explicit source loader.
     # Register in sys.modules before exec so dataclasses can resolve the
     # module (required with `from __future__ import annotations`).
-    loader = importlib.machinery.SourceFileLoader("par_harness", str(_SCRIPT))
-    spec = importlib.util.spec_from_loader("par_harness", loader)
+    loader = importlib.machinery.SourceFileLoader("par_shim", str(_SCRIPT))
+    spec = importlib.util.spec_from_loader("par_shim", loader)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     loader.exec_module(mod)
     return mod
 
 
-har = _load_harness()
+shim = _load_shim()
 
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
@@ -65,7 +65,7 @@ GHAW_ARGV = [
 # argv / prompt
 # --------------------------------------------------------------------------- #
 def test_parses_full_claude_argv_without_error():
-    args = har.parse_args([*GHAW_ARGV, "do the thing"])
+    args = shim.parse_args([*GHAW_ARGV, "do the thing"])
     assert args.mcp_config == "/tmp/mcp-servers.json"
     assert args.prompt_file == "/tmp/gh-aw/aw-prompts/prompt.txt"
     assert args.prompt_positional == "do the thing"
@@ -73,69 +73,69 @@ def test_parses_full_claude_argv_without_error():
 
 
 def test_unknown_future_claude_flags_are_tolerated():
-    args = har.parse_args([*GHAW_ARGV, "--some-future-flag", "x", "prompt"])
+    args = shim.parse_args([*GHAW_ARGV, "--some-future-flag", "x", "prompt"])
     assert args.prompt_positional == "prompt"
 
 
 def test_prompt_recovered_from_trailing_positional():
-    args = har.parse_args([*GHAW_ARGV, "Investigate the failing CI run."])
-    assert har.resolve_prompt(args) == "Investigate the failing CI run."
+    args = shim.parse_args([*GHAW_ARGV, "Investigate the failing CI run."])
+    assert shim.resolve_prompt(args) == "Investigate the failing CI run."
 
 
 def test_prompt_falls_back_to_prompt_file(tmp_path):
     pf = tmp_path / "prompt.txt"
     pf.write_text("from file", encoding="utf-8")
-    args = har.parse_args(["--prompt-file", str(pf)])
-    assert har.resolve_prompt(args) == "from file"
+    args = shim.parse_args(["--prompt-file", str(pf)])
+    assert shim.resolve_prompt(args) == "from file"
 
 
 def test_prompt_falls_back_to_env(tmp_path, monkeypatch):
     pf = tmp_path / "p.txt"
     pf.write_text("from env path", encoding="utf-8")
     monkeypatch.setenv("GH_AW_PROMPT", str(pf))
-    assert har.resolve_prompt(har.parse_args(["--print"])) == "from env path"
+    assert shim.resolve_prompt(shim.parse_args(["--print"])) == "from env path"
 
 
 # --------------------------------------------------------------------------- #
 # --allowed-tools parsing & enforcement
 # --------------------------------------------------------------------------- #
 def test_allowed_tools_absent_is_none():
-    assert har.parse_args(["--print"]).allowed_tools is None
-    assert har._split_allowed_tools(None) is None
+    assert shim.parse_args(["--print"]).allowed_tools is None
+    assert shim._split_allowed_tools(None) is None
 
 
 def test_allowed_tools_parsed_and_scope_stripped():
-    args = har.parse_args([*GHAW_ARGV, "p"])
+    args = shim.parse_args([*GHAW_ARGV, "p"])
     assert args.allowed_tools == frozenset(
         {"Bash", "Read", "Edit", "mcp__github__get_me", "mcp__safeoutputs"}
     )
 
 
 def test_select_native_tools_no_allowlist_keeps_all():
-    tools = har.select_native_tools(None, None)
-    assert [t.name for t in tools] == list(har.NATIVE_TOOL_NAMES)
+    tools = shim.select_native_tools(None, None)
+    assert [t.name for t in tools] == list(shim.NATIVE_TOOL_NAMES)
 
 
 def test_select_native_tools_enforces_allowlist():
-    tools = har.select_native_tools(frozenset({"Bash", "Read", "mcp__safeoutputs"}), None)
+    tools = shim.select_native_tools(frozenset({"Bash", "Read", "mcp__safeoutputs"}), None)
     assert [t.name for t in tools] == ["Bash", "Read"]
 
 
 def test_plan_mode_withholds_mutating_tools():
-    tools = har.select_native_tools(None, "plan")
+    tools = shim.select_native_tools(None, "plan")
     names = {t.name for t in tools}
-    assert names.isdisjoint(har.MUTATING_TOOLS)
+    assert names.isdisjoint(shim.MUTATING_TOOLS)
     assert "Read" in names and "Grep" in names and "Glob" in names
 
 
 def test_plan_mode_and_allowlist_compose():
-    tools = har.select_native_tools(frozenset({"Bash", "Read"}), "plan")
+    tools = shim.select_native_tools(frozenset({"Bash", "Read"}), "plan")
     assert [t.name for t in tools] == ["Read"]  # Bash dropped by plan mode
 
 
 def test_native_tools_registry_uses_claude_names():
-    assert tuple(har.NATIVE_TOOLS) == har.NATIVE_TOOL_NAMES
-    assert har.NATIVE_TOOL_NAMES == (
+    assert tuple(shim.NATIVE_TOOLS) == shim.NATIVE_TOOL_NAMES
+    assert shim.NATIVE_TOOL_NAMES == (
         "Bash",
         "Read",
         "Write",
@@ -156,61 +156,61 @@ def test_native_tools_registry_uses_claude_names():
 # --------------------------------------------------------------------------- #
 def test_native_file_tools_roundtrip(tmp_path):
     f = tmp_path / "sub" / "note.txt"
-    assert "wrote" in har.write_file(str(f), "hello\nworld\n")
-    assert har.read_file(str(f)) == "hello\nworld\n"
-    assert "edited" in har.edit_file(str(f), "world", "there")
-    assert "there" in har.read_file(str(f))
-    assert "note.txt" in har.list_dir(str(tmp_path / "sub"))
-    assert har.edit_file(str(f), "absent", "x") == "error: `old_string` not found"
+    assert "wrote" in shim.write_file(str(f), "hello\nworld\n")
+    assert shim.read_file(str(f)) == "hello\nworld\n"
+    assert "edited" in shim.edit_file(str(f), "world", "there")
+    assert "there" in shim.read_file(str(f))
+    assert "note.txt" in shim.list_dir(str(tmp_path / "sub"))
+    assert shim.edit_file(str(f), "absent", "x") == "error: `old_string` not found"
 
 
 def test_read_file_offset_and_limit(tmp_path):
     f = tmp_path / "n.txt"
     f.write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
-    assert har.read_file(str(f), offset=2, limit=2) == "l2\nl3"
+    assert shim.read_file(str(f), offset=2, limit=2) == "l2\nl3"
 
 
 def test_edit_file_replace_all(tmp_path):
     f = tmp_path / "r.txt"
     f.write_text("a a a", encoding="utf-8")
-    har.edit_file(str(f), "a", "b", replace_all=True)
+    shim.edit_file(str(f), "a", "b", replace_all=True)
     assert f.read_text(encoding="utf-8") == "b b b"
 
 
 def test_native_bash_tool():
-    out = har.bash("echo hello-from-bash")
+    out = shim.bash("echo hello-from-bash")
     assert "exit=0" in out and "hello-from-bash" in out
 
 
 def test_native_grep_tool(tmp_path):
     (tmp_path / "a.txt").write_text("alpha\nNEEDLE here\n", encoding="utf-8")
-    assert "NEEDLE here" in har.grep("NEEDLE", str(tmp_path))
+    assert "NEEDLE here" in shim.grep("NEEDLE", str(tmp_path))
 
 
 def test_native_glob_tool(tmp_path):
     (tmp_path / "x").mkdir()
     (tmp_path / "x" / "a.py").write_text("", encoding="utf-8")
     (tmp_path / "x" / "b.txt").write_text("", encoding="utf-8")
-    res = har.glob_search("**/*.py", str(tmp_path))
+    res = shim.glob_search("**/*.py", str(tmp_path))
     assert "x/a.py" in res and "b.txt" not in res
 
 
 def test_glob_outside_base_is_handled(tmp_path):
     # An absolute pattern resolves outside `base`; must not raise (ValueError
     # from relative_to is caught and reported).
-    out = har.glob_search("/etc/*", str(tmp_path))
+    out = shim.glob_search("/etc/*", str(tmp_path))
     assert out.startswith("error:") or out == "(no matches)"
 
 
 def test_multi_edit_atomic(tmp_path):
     f = tmp_path / "m.txt"
     f.write_text("one two three", encoding="utf-8")
-    ok = har.multi_edit(str(f), [{"old_string": "one", "new_string": "1"},
+    ok = shim.multi_edit(str(f), [{"old_string": "one", "new_string": "1"},
                                  {"old_string": "three", "new_string": "3"}])
     assert "applied 2 edit(s)" in ok
     assert f.read_text(encoding="utf-8") == "1 two 3"
     # A failing edit writes nothing (atomic).
-    res = har.multi_edit(str(f), [{"old_string": "1", "new_string": "X"},
+    res = shim.multi_edit(str(f), [{"old_string": "1", "new_string": "X"},
                                   {"old_string": "absent", "new_string": "Y"}])
     assert "edit #2" in res and "not found" in res
     assert f.read_text(encoding="utf-8") == "1 two 3"
@@ -219,29 +219,29 @@ def test_multi_edit_atomic(tmp_path):
 def test_multi_edit_replace_all(tmp_path):
     f = tmp_path / "r.txt"
     f.write_text("a a a", encoding="utf-8")
-    har.multi_edit(str(f), [{"old_string": "a", "new_string": "b", "replace_all": True}])
+    shim.multi_edit(str(f), [{"old_string": "a", "new_string": "b", "replace_all": True}])
     assert f.read_text(encoding="utf-8") == "b b b"
 
 
 def test_page_to_text_strips_html():
-    assert har._page_to_text("<html><body>Hi <b>there</b><script>x()</script></body></html>") == "Hi there"
+    assert shim._page_to_text("<html><body>Hi <b>there</b><script>x()</script></body></html>") == "Hi there"
 
 
 def test_fetch_page_rejects_non_http():
-    assert har._fetch_page("ftp://x/y").startswith("error:")
-    assert har._fetch_page("file:///etc/passwd").startswith("error:")
+    assert shim._fetch_page("ftp://x/y").startswith("error:")
+    assert shim._fetch_page("file:///etc/passwd").startswith("error:")
 
 
 def test_fetch_page_success_and_network_error(monkeypatch):
-    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (200, "<p>Hello</p>"))
-    out = har._fetch_page("https://example.test")
+    monkeypatch.setattr(shim, "_http_get", lambda url, timeout=20.0: (200, "<p>Hello</p>"))
+    out = shim._fetch_page("https://example.test")
     assert out.startswith("HTTP 200 for https://example.test") and "Hello" in out
 
     def boom(url, timeout=20.0):
         raise RuntimeError("blocked by firewall")
 
-    monkeypatch.setattr(har, "_http_get", boom)
-    assert har._fetch_page("https://blocked.test") == "error: fetch failed: blocked by firewall"
+    monkeypatch.setattr(shim, "_http_get", boom)
+    assert shim._fetch_page("https://blocked.test") == "error: fetch failed: blocked by firewall"
 
 
 def test_web_fetch_summarizes_via_run_model(monkeypatch):
@@ -252,45 +252,45 @@ def test_web_fetch_summarizes_via_run_model(monkeypatch):
     from pydantic_ai.models.test import TestModel
 
     monkeypatch.setattr(
-        har, "_http_get", lambda url, timeout=20.0: (200, "<html>The sky is blue.</html>")
+        shim, "_http_get", lambda url, timeout=20.0: (200, "<html>The sky is blue.</html>")
     )
 
     class _Ctx:
         model = TestModel(custom_output_text="SUMMARY: sky is blue")
 
-    out = asyncio.run(har.web_fetch(_Ctx(), "https://example.test", "what colour is the sky?"))
+    out = asyncio.run(shim.web_fetch(_Ctx(), "https://example.test", "what colour is the sky?"))
     assert out == "SUMMARY: sky is blue"
     # A fetch error short-circuits before the model is consulted.
-    monkeypatch.setattr(har, "_http_get", lambda url, timeout=20.0: (_ for _ in ()).throw(RuntimeError("nope")))
-    err = asyncio.run(har.web_fetch(_Ctx(), "https://blocked.test", "x"))
+    monkeypatch.setattr(shim, "_http_get", lambda url, timeout=20.0: (_ for _ in ()).throw(RuntimeError("nope")))
+    err = asyncio.run(shim.web_fetch(_Ctx(), "https://blocked.test", "x"))
     assert err == "error: fetch failed: nope"
 
 
 def test_todo_write_acknowledges():
-    out = har.todo_write(
+    out = shim.todo_write(
         [{"content": "do x", "status": "in_progress", "activeForm": "doing x"}]
     )
     assert "do x" in out and out.startswith("todo list")
-    assert har.todo_write([]) == "todo list cleared"
+    assert shim.todo_write([]) == "todo list cleared"
 
 
 def test_exit_plan_mode_returns_ack():
-    assert "proceeding" in har.exit_plan_mode("step 1; step 2").lower()
+    assert "proceeding" in shim.exit_plan_mode("step 1; step 2").lower()
 
 
 def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
-    names = {t.name for t in har.select_native_tools(None, "plan")}
+    names = {t.name for t in shim.select_native_tools(None, "plan")}
     assert "MultiEdit" not in names  # mutating
     assert {"WebFetch", "TodoWrite", "ExitPlanMode"} <= names  # non-mutating
 
 
 def test_request_limit_is_a_constant():
-    assert har.REQUEST_LIMIT == 200
+    assert shim.REQUEST_LIMIT == 200
 
 
 def test_instructions_encourage_parallel_tool_calls():
-    assert har.INSTRUCTIONS.strip()
-    assert "parallel" in har.INSTRUCTIONS.lower()
+    assert shim.INSTRUCTIONS.strip()
+    assert "parallel" in shim.INSTRUCTIONS.lower()
 
 
 def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
@@ -319,6 +319,8 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
                 requests = 0
                 input_tokens = 0
                 output_tokens = 0
+                cache_write_tokens = 0
+                cache_read_tokens = 0
 
             class _Result:
                 output = "done"
@@ -330,13 +332,13 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
 
             return _Result()
 
-    monkeypatch.setattr(har, "Agent", _CapturingAgent)
-    monkeypatch.setattr(har, "emit", lambda *a, **k: None)
-    monkeypatch.setattr(har, "log_safe_outputs_state", lambda: None)
+    monkeypatch.setattr(shim, "Agent", _CapturingAgent)
+    monkeypatch.setattr(shim, "emit", lambda *a, **k: None)
+    monkeypatch.setattr(shim, "log_safe_outputs_state", lambda: None)
 
     sentinel = "### WORKFLOW TASK SPEC: review the PR per the rules above ###"
     asyncio.run(
-        har.run(
+        shim.run(
             prompt=sentinel,
             model=object(),
             label="test-model",
@@ -347,27 +349,27 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
     )
 
     instructions = str(seen["instructions"])
-    assert har.INSTRUCTIONS in instructions  # baseline parallel-tool guidance
+    assert shim.INSTRUCTIONS in instructions  # baseline parallel-tool guidance
     assert sentinel in instructions  # workflow prompt embedded in system instructions
 
     # User message is the trivial trigger — task spec MUST NOT leak there.
-    assert seen["run_prompt"] == har.RUN_TRIGGER
+    assert seen["run_prompt"] == shim.RUN_TRIGGER
     assert sentinel not in str(seen["run_prompt"])
 
 
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
-    assert har.READ_ONLY_SUBAGENT_TOOLS.isdisjoint(har.MUTATING_TOOLS)
-    assert "Task" not in har.READ_ONLY_SUBAGENT_TOOLS  # no recursion
+    assert shim.READ_ONLY_SUBAGENT_TOOLS.isdisjoint(shim.MUTATING_TOOLS)
+    assert "Task" not in shim.READ_ONLY_SUBAGENT_TOOLS  # no recursion
     # All entries are real native tool names.
-    assert har.READ_ONLY_SUBAGENT_TOOLS <= set(har.NATIVE_TOOL_NAMES)
+    assert shim.READ_ONLY_SUBAGENT_TOOLS <= set(shim.NATIVE_TOOL_NAMES)
 
 
 def test_task_registered_in_native_tools():
-    assert "Task" in har.NATIVE_TOOLS and "Task" in har.NATIVE_TOOL_NAMES
+    assert "Task" in shim.NATIVE_TOOLS and "Task" in shim.NATIVE_TOOL_NAMES
 
 
 def test_subagent_request_limit_is_a_constant():
-    assert har.SUBAGENT_REQUEST_LIMIT == 75
+    assert shim.SUBAGENT_REQUEST_LIMIT == 75
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
@@ -396,7 +398,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 
             return _Result()
 
-    monkeypatch.setattr(har, "Agent", _CapturingAgent)
+    monkeypatch.setattr(shim, "Agent", _CapturingAgent)
 
     from pydantic_ai.usage import RunUsage
 
@@ -406,7 +408,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
         model = TestModel()
         usage = parent_usage
 
-    out = asyncio.run(har.task(_Ctx(), "scan models/openai.py", "find tool_call_id bugs"))
+    out = asyncio.run(shim.task(_Ctx(), "scan models/openai.py", "find tool_call_id bugs"))
     assert out == "SUB: investigated"
     assert seen["model_cls"] == "TestModel"
     # Sub-agent uses the same system-prompt routing as the parent: the
@@ -415,15 +417,15 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     # message is the trivial `RUN_TRIGGER`. This makes weaker models
     # follow long structured sub-agent prompts much more reliably.
     sub_instructions = str(seen["instructions"])
-    assert har.INSTRUCTIONS in sub_instructions
-    assert har.SUBAGENT_INSTRUCTIONS in sub_instructions
+    assert shim.INSTRUCTIONS in sub_instructions
+    assert shim.SUBAGENT_INSTRUCTIONS in sub_instructions
     assert "find tool_call_id bugs" in sub_instructions
-    assert seen["prompt"] == har.RUN_TRIGGER
+    assert seen["prompt"] == shim.RUN_TRIGGER
     assert "find tool_call_id bugs" not in str(seen["prompt"])
-    assert set(seen["tool_names"]) == har.READ_ONLY_SUBAGENT_TOOLS  # type: ignore[arg-type]
+    assert set(seen["tool_names"]) == shim.READ_ONLY_SUBAGENT_TOOLS  # type: ignore[arg-type]
     assert "Task" not in seen["tool_names"]  # type: ignore[operator]
     assert "Bash" not in seen["tool_names"]  # type: ignore[operator]
-    assert seen["request_limit"] == har.SUBAGENT_REQUEST_LIMIT
+    assert seen["request_limit"] == shim.SUBAGENT_REQUEST_LIMIT
     assert seen["usage_obj"] is parent_usage  # sub-agent tokens roll up into parent
     # Sub-agent gets the same live event handler as the parent (registered
     # as a `ProcessEventStream` capability) so its tool calls stream out
@@ -433,7 +435,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 
     capabilities = seen["capabilities"]  # type: ignore[assignment]
     assert any(
-        isinstance(c, ProcessEventStream) and c.handler is har._stream_events
+        isinstance(c, ProcessEventStream) and c.handler is shim._stream_events
         for c in capabilities  # type: ignore[union-attr]
     )
 
@@ -449,46 +451,46 @@ def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
     sub.mkdir()
     (sub / "CLAUDE.md").write_text("# pkg conventions", encoding="utf-8")
     (sub / "code.py").write_text("x = 1\n", encoding="utf-8")
-    har._reset_context_state()
+    shim._reset_context_state()
 
-    first = har._attach_context("pkg/code.py")
+    first = shim._attach_context("pkg/code.py")
     assert "context: pkg/CLAUDE.md" in first  # nearest first when walking up
     assert "context: AGENTS.md" in first
     assert "pkg conventions" in first and "repo conventions" in first
 
     # Subsequent calls in same run dedupe.
-    again = har._attach_context("pkg/code.py")
+    again = shim._attach_context("pkg/code.py")
     assert again == ""
 
     # A different path under the same dir hits no new context files.
     (sub / "other.py").write_text("", encoding="utf-8")
-    assert har._attach_context("pkg/other.py") == ""
+    assert shim._attach_context("pkg/other.py") == ""
 
 
 def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
-    big = "X" * (har.MAX_CONTEXT_FILE_CHARS + 5000)
+    big = "X" * (shim.MAX_CONTEXT_FILE_CHARS + 5000)
     (tmp_path / "AGENTS.md").write_text(big, encoding="utf-8")
-    har._reset_context_state()
-    out = har._attach_context(".")
+    shim._reset_context_state()
+    out = shim._attach_context(".")
     # Body of the AGENTS.md block is capped to MAX_CONTEXT_FILE_CHARS.
     body = out.split("---\n", 2)[-1]
-    assert len(body) <= har.MAX_CONTEXT_FILE_CHARS + 50  # +slack for trailing markers
+    assert len(body) <= shim.MAX_CONTEXT_FILE_CHARS + 50  # +slack for trailing markers
 
 
 def test_attach_context_empty_for_missing_path(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
-    har._reset_context_state()
-    assert har._attach_context(None) == ""
-    assert har._attach_context("does-not-exist.py") == ""  # parent has no AGENTS.md/CLAUDE.md
+    shim._reset_context_state()
+    assert shim._attach_context(None) == ""
+    assert shim._attach_context("does-not-exist.py") == ""  # parent has no AGENTS.md/CLAUDE.md
 
 
 def test_read_file_prepends_context(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     (tmp_path / "AGENTS.md").write_text("repo rules", encoding="utf-8")
     (tmp_path / "f.txt").write_text("file body", encoding="utf-8")
-    har._reset_context_state()
-    out = har.read_file("f.txt")
+    shim._reset_context_state()
+    out = shim.read_file("f.txt")
     assert "context: AGENTS.md" in out and "repo rules" in out and "file body" in out
 
 
@@ -498,11 +500,11 @@ def test_read_file_prepends_context(monkeypatch, tmp_path):
 def test_compaction_trigger_chars_is_derived_from_model_context():
     # COMPACTION_TRIGGER_CHARS = MODEL_CONTEXT_TOKENS * CHARS_PER_TOKEN * FRACTION
     expected = int(
-        har.MODEL_CONTEXT_TOKENS * har.CHARS_PER_TOKEN * har.COMPACTION_TRIGGER_FRACTION
+        shim.MODEL_CONTEXT_TOKENS * shim.CHARS_PER_TOKEN * shim.COMPACTION_TRIGGER_FRACTION
     )
-    assert har.COMPACTION_TRIGGER_CHARS == expected
-    assert har.MODEL_CONTEXT_TOKENS == 200_000  # default 200k-token window
-    assert 0 < har.COMPACTION_TRIGGER_FRACTION <= 1
+    assert shim.COMPACTION_TRIGGER_CHARS == expected
+    assert shim.MODEL_CONTEXT_TOKENS == 200_000  # default 200k-token window
+    assert 0 < shim.COMPACTION_TRIGGER_FRACTION <= 1
 
 
 def test_history_size_chars_sums_all_part_content():
@@ -512,7 +514,7 @@ def test_history_size_chars_sums_all_part_content():
         ModelRequest(parts=[UserPromptPart(content="hello")]),  # 5
         ModelRequest(parts=[UserPromptPart(content="x" * 20)]),  # 20
     ]
-    assert har._history_size_chars(msgs) == 25
+    assert shim._history_size_chars(msgs) == 25
 
 
 def test_compact_history_no_op_below_char_budget(monkeypatch):
@@ -526,7 +528,7 @@ def test_compact_history_no_op_below_char_budget(monkeypatch):
     class _Ctx:
         model = None
 
-    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
     assert out is msgs  # size-based: count alone never triggers
 
 
@@ -556,7 +558,7 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
 
             return _R()
 
-    monkeypatch.setattr(har, "Agent", _FakeAgent)
+    monkeypatch.setattr(shim, "Agent", _FakeAgent)
 
     from pydantic_ai.usage import RunUsage
 
@@ -566,12 +568,12 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
         model = TestModel()
         usage = parent_usage
 
-    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
     # synthetic summary (1) + last COMPACTION_KEEP_RECENT messages. We no
     # longer preserve a "head" message — pydantic-ai re-applies the system
     # `instructions=` on every request, so the task spec stays visible
     # without our help.
-    assert len(out) == 1 + har.COMPACTION_KEEP_RECENT
+    assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
     # Compaction summariser cost rolled up into the parent's usage.
     assert seen_usage["usage"] is parent_usage
     # Summary present in the leading synthetic ModelRequest.
@@ -596,7 +598,7 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
         async def run(self, *a, **k):  # type: ignore[no-untyped-def]
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(har, "Agent", _FailingAgent)
+    monkeypatch.setattr(shim, "Agent", _FailingAgent)
 
     from pydantic_ai.usage import RunUsage
 
@@ -604,9 +606,9 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(har._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
     # On failure: keep just the tail (no head, no synthetic summary).
-    assert len(out) == har.COMPACTION_KEEP_RECENT
+    assert len(out) == shim.COMPACTION_KEEP_RECENT
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
@@ -621,7 +623,7 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
         async def run(self, *a, **k):  # type: ignore[no-untyped-def]
             raise RuntimeError("downstream model exploded")
 
-    monkeypatch.setattr(har, "Agent", _FailingAgent)
+    monkeypatch.setattr(shim, "Agent", _FailingAgent)
 
     from pydantic_ai.usage import RunUsage
 
@@ -629,24 +631,24 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(har.task(_Ctx(), "x", "y"))
+    out = asyncio.run(shim.task(_Ctx(), "x", "y"))
     assert out == "error: sub-agent failed: downstream model exploded"
 
 
 # --------------------------------------------------------------------------- #
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #
-def test_model_defaults_to_claude_sonnet_4_5(monkeypatch):
+def test_model_defaults_to_claude_sonnet_4_6(monkeypatch):
     for v in ("ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"):
         monkeypatch.delenv(v, raising=False)
-    model, label = har.build_model(har.parse_args(["--print"]))
-    assert label == "anthropic:claude-sonnet-4-5"
+    model, label = shim.build_model(shim.parse_args(["--print"]))
+    assert label == "anthropic:claude-sonnet-4-6"
     assert model.__class__.__name__ == "AnthropicModel"
 
 
 def test_model_argv_flag_wins(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_MODEL", "from-env")
-    model, label = har.build_model(har.parse_args(["--model", "from-argv"]))
+    model, label = shim.build_model(shim.parse_args(["--model", "from-argv"]))
     assert label == "anthropic:from-argv"
     assert model.__class__.__name__ == "AnthropicModel"
 
@@ -658,7 +660,7 @@ def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
     # the Claude-Code CLI does the same.
     monkeypatch.setenv("ANTHROPIC_MODEL", "MiniMax-M2.7-Highspeed")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "placeholder")
-    model, label = har.build_model(har.parse_args(["--print"]))
+    model, label = shim.build_model(shim.parse_args(["--print"]))
     assert label == "anthropic:MiniMax-M2.7-Highspeed"
     assert model.__class__.__name__ == "AnthropicModel"
 
@@ -667,7 +669,7 @@ def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
 # MCP translation & allow-list filtering
 # --------------------------------------------------------------------------- #
 def test_mcp_missing_config_degrades_gracefully():
-    assert har.build_mcp_servers(har.Args(mcp_config="/no/such/file.json")) == []
+    assert shim.build_mcp_servers(shim.Args(mcp_config="/no/such/file.json")) == []
 
 
 def _mcp_cfg(tmp_path):
@@ -691,14 +693,14 @@ def _mcp_cfg(tmp_path):
 
 
 def test_mcp_translates_stdio_and_http_unfiltered(tmp_path):
-    servers = har.build_mcp_servers(har.Args(mcp_config=str(_mcp_cfg(tmp_path))))
+    servers = shim.build_mcp_servers(shim.Args(mcp_config=str(_mcp_cfg(tmp_path))))
     assert len(servers) == 2
     assert {s.__class__.__name__ for s in servers} == {"MCPToolset"}
 
 
 def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path):
-    servers = har.build_mcp_servers(
-        har.Args(mcp_config=str(_mcp_cfg(tmp_path)), allowed_tools=frozenset({"mcp__safeoutputs"}))
+    servers = shim.build_mcp_servers(
+        shim.Args(mcp_config=str(_mcp_cfg(tmp_path)), allowed_tools=frozenset({"mcp__safeoutputs"}))
     )
     assert len(servers) == 2
     assert {s.__class__.__name__ for s in servers} == {"FilteredToolset"}
@@ -710,12 +712,12 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
             self.name = name
 
     # whole-server allow
-    pred = har._mcp_tool_allowed("safeoutputs", frozenset({"mcp__safeoutputs"}))
+    pred = shim._mcp_tool_allowed("safeoutputs", frozenset({"mcp__safeoutputs"}))
     assert pred(None, _TD("add_comment")) is True
     assert pred(None, _TD("create_issue")) is True
 
     # specific-tool allow only
-    pred = har._mcp_tool_allowed("github", frozenset({"mcp__github__get_me"}))
+    pred = shim._mcp_tool_allowed("github", frozenset({"mcp__github__get_me"}))
     assert pred(None, _TD("get_me")) is True
     assert pred(None, _TD("delete_repo")) is False
 
@@ -726,7 +728,7 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 def test_emit_result_matches_claude_stream_json_schema():
     buf = io.StringIO()
     with redirect_stdout(buf):
-        har.emit_result("answer", usage=None, session_id="run-1")
+        shim.emit_result("answer", usage=None, session_id="run-1")
     obj = json.loads(buf.getvalue().strip())
     assert obj["type"] == "result"
     assert obj["subtype"] == "success"
@@ -739,7 +741,7 @@ def test_emit_result_matches_claude_stream_json_schema():
 def test_emit_result_passes_through_turns_and_duration():
     buf = io.StringIO()
     with redirect_stdout(buf):
-        har.emit_result("x", usage=None, session_id="s", num_turns=3, duration_ms=1234)
+        shim.emit_result("x", usage=None, session_id="s", num_turns=3, duration_ms=1234)
     obj = json.loads(buf.getvalue().strip())
     assert obj["num_turns"] == 3 and obj["duration_ms"] == 1234
 
@@ -747,7 +749,7 @@ def test_emit_result_passes_through_turns_and_duration():
 def test_emit_result_error_subtype():
     buf = io.StringIO()
     with redirect_stdout(buf):
-        har.emit_result("boom", usage=None, session_id="run-1", is_error=True)
+        shim.emit_result("boom", usage=None, session_id="run-1", is_error=True)
     obj = json.loads(buf.getvalue().strip())
     assert obj["subtype"] == "error" and obj["is_error"] is True
 
@@ -756,12 +758,17 @@ def test_emit_result_reads_usage_attributes():
     class U:
         input_tokens = 22
         output_tokens = 292
+        cache_write_tokens = 5
+        cache_read_tokens = 7
 
     buf = io.StringIO()
     with redirect_stdout(buf):
-        har.emit_result("x", usage=U(), session_id="s")
+        shim.emit_result("x", usage=U(), session_id="s")
     usage = json.loads(buf.getvalue().strip())["usage"]
-    assert usage["input_tokens"] == 22 and usage["output_tokens"] == 292
+    assert usage["input_tokens"] == 22
+    assert usage["output_tokens"] == 292
+    assert usage["cache_creation_input_tokens"] == 5  # mapped from cache_write_tokens
+    assert usage["cache_read_input_tokens"] == 7
 
 
 def test_main_emits_structured_error_on_empty_prompt(monkeypatch):
@@ -769,7 +776,7 @@ def test_main_emits_structured_error_on_empty_prompt(monkeypatch):
     monkeypatch.delenv("GH_AW_PROMPT", raising=False)
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = har.main()
+        rc = shim.main()
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj["type"] == "result" and obj["is_error"] is True
@@ -781,32 +788,32 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch):
     def boom(_args):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr(har, "build_model", boom)
+    monkeypatch.setattr(shim, "build_model", boom)
     monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", "--print", "hello"])
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = har.main()
+        rc = shim.main()
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj["is_error"] is True
-    assert "harness startup failed" in obj["result"]
+    assert "shim startup failed" in obj["result"]
     assert "kaboom" in obj["result"]
 
 
 @pytest.mark.skipif(
-    not os.environ.get("GH_AW_HARNESS_LIVE_API_KEY"),
-    reason="set GH_AW_HARNESS_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test",
+    not os.environ.get("GH_AW_SHIM_LIVE_API_KEY"),
+    reason="set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test",
 )
 def test_live_anthropic_compatible_endpoint(monkeypatch):
     """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
     MiniMax's /anthropic, etc.), using the exact argv gh-aw passes.
     Credentials come from env only — never committed."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["GH_AW_HARNESS_LIVE_API_KEY"])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["GH_AW_SHIM_LIVE_API_KEY"])
     monkeypatch.setenv(
         "ANTHROPIC_BASE_URL",
-        os.environ.get("GH_AW_HARNESS_LIVE_BASE_URL", "https://api.anthropic.com"),
+        os.environ.get("GH_AW_SHIM_LIVE_BASE_URL", "https://api.anthropic.com"),
     )
-    model = os.environ.get("GH_AW_HARNESS_LIVE_MODEL", "claude-sonnet-4-5")
+    model = os.environ.get("GH_AW_SHIM_LIVE_MODEL", "claude-sonnet-4-6")
     argv = list(GHAW_ARGV)
     i = argv.index("--mcp-config")
     del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
@@ -814,7 +821,7 @@ def test_live_anthropic_compatible_endpoint(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["pydantic-ai-runner", *argv])
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = har.main()
+        rc = shim.main()
     assert rc == 0
     lines = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
     result = next(x for x in lines if x["type"] == "result")

@@ -1,7 +1,7 @@
 ---
 emoji: "🐛"
 name: "Pydantic AI Bug Hunter"
-description: "Find a reproducible, user-impacting bug in pydantic-ai and file a report issue. Runs on the Pydantic AI harness engine; the task prompt is iterable from a Logfire managed variable."
+description: "Find a reproducible, user-impacting bug in pydantic-ai and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
 # Fuzzy schedule: gh-aw scatters the daily run to a repo-stable off-peak time
 # (avoids the top-of-hour stampede) and auto-adds workflow_dispatch.
 on: daily
@@ -84,13 +84,13 @@ pre-agent-steps:
   # gh-aw's repository checkout happens between pre-steps and
   # pre-agent-steps, and this step reads from .github/scripts/ in the
   # workspace.
-  - name: Stage Pydantic AI harness launcher
+  - name: Stage Pydantic AI gh-aw shim launcher
     run: |
       mkdir -p /tmp/gh-aw/bin
       install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI harness uv environment
+  - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
 
 jobs:

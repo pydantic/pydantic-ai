@@ -6,7 +6,7 @@
 #   "logfire",
 # ]
 # ///
-"""Pydantic AI harness — a drop-in replacement for the Claude Code CLI in gh-aw.
+"""Pydantic AI gh-aw shim — a drop-in replacement for the Claude Code CLI in gh-aw.
 
 gh-aw runs the agent engine like the Claude Code CLI:
 
@@ -22,14 +22,14 @@ plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink), enforces
 gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 `stream-json` so gh-aw's log parser and token accounting keep working.
 
-Like Claude Code itself, the harness only talks to Anthropic-shape APIs
+Like Claude Code itself, the shim only talks to Anthropic-shape APIs
 (`ANTHROPIC_BASE_URL` → real Anthropic, MiniMax's Anthropic-compatible
 endpoint, etc.). No OpenAI path — the workflow's `engine.id: claude`
 contract is Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the agent
 container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF api-proxy injects
-it transparently; the harness only ever sends a placeholder token to the
+it transparently; the shim only ever sends a placeholder token to the
 proxy base URL — never a real upstream key.
 """
 
@@ -38,6 +38,7 @@ import asyncio
 import contextvars
 import glob as globlib
 import json
+import logging
 import os
 import pathlib
 import re
@@ -75,12 +76,12 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 PROXY_PLACEHOLDER = "gh-aw-proxy-injected"
 
 # Cap on model requests for the parent agent and each `Task` sub-agent.
-# The Claude Code CLI the harness replaces has no such cap; pydantic-ai's
+# The Claude Code CLI the shim replaces has no such cap; pydantic-ai's
 # built-in default is only 50, which deep multi-step agents exhaust
 # mid-task. gh-aw's api-proxy still enforces the real backstop
 # (maxRuns/token budget).
@@ -108,9 +109,9 @@ INSTRUCTIONS = (
 # user message is just a "begin" signal.
 RUN_TRIGGER = "Begin the task per the instructions above."
 
-# Claude Code native tools the harness implements. The model is trained on
+# Claude Code native tools the shim implements. The model is trained on
 # these exact names/parameters, so matching them (rather than a custom set +
-# a fragile rename map) makes the harness a faithful drop-in.
+# a fragile rename map) makes the shim a faithful drop-in.
 NATIVE_TOOL_NAMES = (
     "Bash",
     "Read",
@@ -167,14 +168,23 @@ COMPACTION_SUMMARY_INSTRUCTIONS = (
 )
 
 
+def _part_text(part: Any) -> str:
+    """Best-effort text for any pydantic-ai message part. `ToolCallPart` has
+    `tool_name` + `args` but no `content`; every other part subclass exposes
+    `content` (str or a structured object). Used by the compaction trigger
+    (char budget) and the summariser's transcript view."""
+    if isinstance(part, ToolCallPart):
+        return part.tool_name
+    return str(part.content)
+
+
 def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
     """Render a slice of pydantic-ai messages into a compact transcript."""
     out: list[str] = []
     for m in messages:
         kind = "user" if isinstance(m, ModelRequest) else "assistant"
-        for part in getattr(m, "parts", []):
-            text = getattr(part, "content", None) or getattr(part, "tool_name", None) or ""
-            out.append(f"[{kind}/{type(part).__name__}] {str(text)[:1500]}")
+        for part in m.parts:
+            out.append(f"[{kind}/{type(part).__name__}] {_part_text(part)[:1500]}")
     return "\n".join(out)
 
 
@@ -184,12 +194,7 @@ def _history_size_chars(messages: list[ModelMessage]) -> int:
     A cheap, model-free proxy for token cost (~3-4 chars per token). Used to
     decide when to compact; precise tokenisation isn't worth the cost or the
     per-provider tokenizer dependency."""
-    total = 0
-    for m in messages:
-        for part in getattr(m, "parts", []):
-            text = getattr(part, "content", None) or getattr(part, "tool_name", None) or ""
-            total += len(str(text))
-    return total
+    return sum(len(_part_text(part)) for m in messages for part in m.parts)
 
 
 async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -231,7 +236,7 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
 
 # --------------------------------------------------------------------------- #
 # Directory-scoped AGENTS.md / CLAUDE.md auto-loading
-# When the agent touches a file, the harness transparently surfaces the
+# When the agent touches a file, the shim transparently surfaces the
 # directory's `AGENTS.md` / `CLAUDE.md` the first time it's relevant (walking
 # up to the workspace root). Per-run state ensures each file is shown at most
 # once. Held in a `ContextVar` so each `run()` (and each test) gets its own
@@ -303,14 +308,25 @@ def _attach_context(path_arg: str | None) -> str:
     return "\n".join(blocks) + "\n"
 
 
+# stdout is reserved for Claude-compatible stream-json output (gh-aw parses
+# it line-by-line); send diagnostic logs to stderr only.
+logging.basicConfig(
+    level=logging.INFO,
+    format="[pydantic-ai-gh-aw-shim] %(message)s",
+    stream=sys.stderr,
+)
+logger = logging.getLogger("pydantic_ai_gh_aw_shim")
+
+
 def log(msg: str) -> None:
-    """Diagnostics go to stderr; stdout is reserved for stream-json."""
-    print(f"[pydantic-ai-harness] {msg}", file=sys.stderr, flush=True)
+    """Compatibility wrapper for legacy call sites — use `logger.info` directly
+    for new code."""
+    logger.info(msg)
 
 
 @dataclass(slots=True)
 class Args:
-    """The subset of Claude Code's CLI surface the harness acts on."""
+    """The subset of Claude Code's CLI surface the shim acts on."""
 
     model: str | None = None
     mcp_config: str | None = None
@@ -379,28 +395,37 @@ def resolve_prompt(args: Args) -> str:
 def build_model(args: Args) -> tuple[Model, str]:
     """Build the `pydantic-ai` model and a human-readable label.
 
-    Anthropic-only. The harness behaves like the stock Claude Code CLI:
-    gh-aw sets `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy) and
-    a placeholder auth token; the firewall's api-proxy swaps in the real
-    key and rewrites the base path. `pydantic-ai`'s default
-    `AnthropicProvider` requires `ANTHROPIC_API_KEY` and ignores
-    `ANTHROPIC_AUTH_TOKEN`, so the Anthropic client is constructed
-    explicitly with a bearer token, exactly like the CLI.
+    Anthropic-only — the shim behaves like the stock Claude Code CLI:
+    gh-aw sets `ANTHROPIC_BASE_URL` (its in-cluster transparent proxy)
+    and the AWF api-proxy injects the real key on outgoing requests.
+
+    **Why we construct `AsyncAnthropic` ourselves** instead of letting
+    `pydantic-ai`'s `AnthropicProvider` auto-configure: gh-aw runs the
+    agent step in a sandbox that excludes `ANTHROPIC_API_KEY` from the
+    container env (`awf --exclude-env ANTHROPIC_API_KEY` — a security
+    measure so the real key never reaches the agent). `pydantic-ai`'s
+    auto-config requires that env var to be present, so it errors out
+    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path
+    sends a placeholder bearer that the AWF api-proxy swaps for the
+    real key on the wire — the same dance the Claude Code CLI does.
+    This is a gh-aw constraint, not a pydantic-ai one; upstream gh-aw
+    could lift it by allowing the agent to read the key directly, but
+    that would break the credential-isolation guarantee.
 
     Model name resolution (in priority order):
       1. `--model X` argv flag (from Claude Code's CLI surface).
       2. `ANTHROPIC_MODEL` env var (standard Anthropic SDK convention;
          gh-aw populates this from the workflow's `engine.model:` field).
-      3. Fallback default `claude-sonnet-4-5`.
+      3. Fallback default `claude-sonnet-4-6`.
     """
-    model_name = args.model or os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-5"
+    model_name = args.model or os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-6"
     anthropic_base = os.environ.get("ANTHROPIC_BASE_URL")
     auth_token = (
         os.environ.get("ANTHROPIC_AUTH_TOKEN")
         or os.environ.get("ANTHROPIC_API_KEY")
         or PROXY_PLACEHOLDER
     )
-    log(f"anthropic model={model_name} base_url={anthropic_base or '(default)'}")
+    logger.info("anthropic model=%s base_url=%s", model_name, anthropic_base or "(default)")
     client = AsyncAnthropic(auth_token=auth_token, base_url=anthropic_base)
     return (
         AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
@@ -423,10 +448,20 @@ def configure_observability() -> None:
             send_to_logfire="if-token-present",
             console=False,
         )
-        logfire.instrument_pydantic_ai()
-        log("Logfire/OTLP instrumentation enabled")
+        # Capture full payloads (prompts, tool args/results, HTTP bodies)
+        # so the trace is debuggable end-to-end. The agent runs in the
+        # AWF sandbox; these spans land in Logfire/OTLP and never on
+        # disk in the shim.
+        logfire.instrument_pydantic_ai(
+            include_content=True, include_binary_content=True
+        )
+        logfire.instrument_httpx(capture_all=True)
+        logfire.instrument_mcp()
+        logger.info(
+            "Logfire/OTLP instrumentation enabled (pydantic_ai + httpx + mcp)"
+        )
     except Exception as exc:  # noqa: BLE001 - telemetry must never fail the run
-        log(f"observability disabled: {exc!r}")
+        logger.warning("observability disabled: %r", exc)
 
 
 # --------------------------------------------------------------------------- #
@@ -436,7 +471,7 @@ def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> Callable[[RunCont
     """Build a `MCPToolset.filtered` predicate enforcing gh-aw's allow-list.
 
     gh-aw lists MCP tools as `mcp__<server>` (whole server) or
-    `mcp__<server>__<tool>` (one tool). The harness does not prefix tool
+    `mcp__<server>__<tool>` (one tool). The shim does not prefix tool
     names, so the model sees a server tool by its canonical name; map it back
     to the gh-aw identifier here.
     """
@@ -693,7 +728,7 @@ def _http_get(url: str, timeout: float = 20.0) -> tuple[int, str]:
         url,
         timeout=timeout,
         follow_redirects=True,
-        headers={"User-Agent": "pydantic-ai-harness"},
+        headers={"User-Agent": "pydantic-ai-gh-aw-shim"},
     )
     return r.status_code, r.text
 
@@ -727,7 +762,7 @@ async def web_fetch(ctx: RunContext[None], url: str, prompt: str) -> str:
 
     Faithful to Claude Code: the page is fetched, reduced to text, then the
     `prompt` is run against that content using the current run's model
-    (Claude's WebFetch uses a fast model; the harness reuses the run model).
+    (Claude's WebFetch uses a fast model; the shim reuses the run model).
     Subject to the AWF network firewall.
     """
     page = _fetch_page(url)
@@ -747,7 +782,7 @@ async def web_fetch(ctx: RunContext[None], url: str, prompt: str) -> str:
 def todo_write(todos: list[TodoItem]) -> str:
     """Record the agent's task checklist.
 
-    The harness runs autonomously with no interactive UI, so this is a
+    The shim runs autonomously with no interactive UI, so this is a
     stateless tracker: it acknowledges the list (keeping the Claude-trained
     model on its planning rails) without external side effects.
     """
@@ -759,7 +794,7 @@ def todo_write(todos: list[TodoItem]) -> str:
 
 
 def exit_plan_mode(plan: str) -> str:
-    """Acknowledge the end of planning. The harness has no interactive plan
+    """Acknowledge the end of planning. The shim has no interactive plan
     gate, so it records the plan and lets the agent proceed."""
     log(f"ExitPlanMode: {plan[:200]}")
     return "Plan acknowledged — proceeding with execution."
@@ -851,19 +886,29 @@ def emit(obj: dict[str, Any]) -> None:
 
 def emit_result(
     text: str,
-    usage: Any,
+    usage: RunUsage | None,
     session_id: str,
     is_error: bool = False,
     num_turns: int = 1,
     duration_ms: int = 0,
 ) -> None:
-    def tok(*names: str) -> int:
-        for n in names:
-            v = getattr(usage, n, None)
-            if isinstance(v, int):
-                return v
-        return 0
-
+    # `RunUsage` exposes the canonical token counts directly; map them onto
+    # Claude Code's stream-json field names. `usage=None` is used on the
+    # error/startup path where there's no run to count.
+    if usage is None:
+        token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        }
+    else:
+        token_usage = {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cache_creation_input_tokens": usage.cache_write_tokens,
+            "cache_read_input_tokens": usage.cache_read_tokens,
+        }
     emit(
         {
             "type": "result",
@@ -874,31 +919,23 @@ def emit_result(
             "num_turns": num_turns,
             "duration_ms": duration_ms,
             "total_cost_usd": 0,
-            "usage": {
-                "input_tokens": tok("input_tokens", "request_tokens"),
-                "output_tokens": tok("output_tokens", "response_tokens"),
-                "cache_creation_input_tokens": tok("cache_write_tokens", "cache_creation_input_tokens"),
-                "cache_read_input_tokens": tok("cache_read_tokens", "cache_read_input_tokens"),
-            },
+            "usage": token_usage,
         }
     )
 
 
-async def log_mcp_tools(mcp_servers: Iterable[AbstractToolset[Any]]) -> None:
+async def log_mcp_tools(mcp_servers: Iterable[MCPToolset]) -> None:
     """Log the tool names each connected MCP server exposes (post-filter), so a
     missing or renamed safe-outputs tool is immediately visible."""
     for server in mcp_servers:
-        label = getattr(server, "label", None) or getattr(server, "id", "?")
-        lister = getattr(server, "list_tools", None)
-        if lister is None:
-            continue
+        label = server.label or server.id
         names: list[str] | str
         try:
-            tools: Any = await lister()
-            names = [str(getattr(t, "name", "?")) for t in tools]
+            tools = await server.list_tools()
+            names = [t.name for t in tools]
         except Exception as exc:  # noqa: BLE001 - discovery is diagnostic only
             names = f"<list_tools failed: {exc!r}>"
-        log(f"MCP server {label!r} tools={names}")
+        logger.info("MCP server %r tools=%s", label, names)
 
 
 # --------------------------------------------------------------------------- #
@@ -909,7 +946,7 @@ async def log_mcp_tools(mcp_servers: Iterable[AbstractToolset[Any]]) -> None:
 # spawned inside the parent's `Task` tool execution, so the stream order is
 # the true causal order. gh-aw's log parser shows each tool call live in the
 # step summary; tool results are truncated to MAX_LIVE_TOOL_RESULT_CHARS to
-# match other gh-aw harnesses (Claude, Copilot) — the model still sees the
+# match other gh-aw engines (Claude, Copilot) — the model still sees the
 # full result via the message history.
 # --------------------------------------------------------------------------- #
 MAX_LIVE_TOOL_RESULT_CHARS = 100
@@ -943,7 +980,7 @@ async def _stream_events(ctx: RunContext[Any], events: Any) -> None:
             )
             log(f"tool_use: {event.part.tool_name}")
         elif isinstance(event, ToolResultEvent):
-            content = str(getattr(event.part, "content", ""))
+            content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (
                     content[:MAX_LIVE_TOOL_RESULT_CHARS]
@@ -966,14 +1003,14 @@ async def _stream_events(ctx: RunContext[Any], events: Any) -> None:
             )
 
 
-def count_tool_calls(messages: Sequence[Any]) -> int:
+def count_tool_calls(messages: Sequence[ModelMessage]) -> int:
     """Tally tool calls in the final message history for the end-of-run log
     line. Live emission is handled by `_stream_events`, so we no longer
     re-emit the full transcript here."""
     return sum(
         1
         for m in messages
-        for p in getattr(m, "parts", [])
+        for p in m.parts
         if isinstance(p, ToolCallPart)
     )
 
@@ -1086,7 +1123,7 @@ def main() -> int:
         return rc
     except Exception as exc:  # noqa: BLE001 - startup failures must still be structured
         log(f"FATAL startup error: {exc!r}")
-        emit_result(f"harness startup failed: {exc}", usage=None, session_id=session_id, is_error=True)
+        emit_result(f"shim startup failed: {exc}", usage=None, session_id=session_id, is_error=True)
         return 1
 
 

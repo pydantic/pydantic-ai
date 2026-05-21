@@ -10,7 +10,7 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Provider Parity Explore
 
-You are running under the **Pydantic AI harness engine** (not the Claude Code
+You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
 proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
 `WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /

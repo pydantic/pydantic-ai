@@ -17,7 +17,7 @@
 # TODO(consolidate): This is a fork of scripts/gather-review-context.sh used
 # by the legacy Claude-action workflow (.github/workflows/bots.yml). The two
 # will be consolidated once the Claude-action workflow is migrated to the
-# Pydantic AI harness — until then, keep edits scoped to whichever consumer
+# Pydantic AI gh-aw shim — until then, keep edits scoped to whichever consumer
 # needs them and leave the other script alone.
 
 set -euo pipefail
