@@ -148,15 +148,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     @property
-    def available_tools(self) -> set[str]:
-        """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability)."""
+    def available_tool_names(self) -> set[str]:
+        """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability).
+
+        The subset of `tools` keys whose definitions are not deferred; mirrors
+        `available_capability_ids` on the capability side.
+        """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set()
         return {tool.tool_def.name for tool in self.tool_manager.tools.values() if not tool.tool_def.defer_loading}
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
-        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tools` names into this for the callable subset."""
+        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tool_names` into this for the callable subset."""
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}

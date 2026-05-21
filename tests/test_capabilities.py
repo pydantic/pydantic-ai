@@ -2819,7 +2819,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 async def test_deferred_capability_tool_stays_available_across_turns() -> None:
     """A capability-owned tool stays callable across every turn after `load_capability`.
 
-    Regression guard: the `available_tools`/`discovered_tool_names` split must keep a
+    Regression guard: the `available_tool_names`/`discovered_tool_names` split must keep a
     loaded deferred tool non-deferred on the second (and later) post-load model request,
     not just on the turn immediately following the load.
     """
@@ -3199,19 +3199,19 @@ async def test_capability_for_run_default_returns_self():
     assert await cap.for_run(ctx) is cap
 
 
-async def test_run_context_available_tools_empty_before_tool_manager_is_ready() -> None:
-    """Early capability hooks can ask for available tools before the tool manager is populated."""
-    seen_available_tools: list[set[str]] = []
+async def test_run_context_available_tool_names_empty_before_tool_manager_is_ready() -> None:
+    """Early capability hooks can ask for available tool names before the tool manager is populated."""
+    seen_available_tool_names: list[set[str]] = []
 
     @dataclass
     class AvailableToolsCap(AbstractCapability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
-            seen_available_tools.append(ctx.available_tools)
+            seen_available_tool_names.append(ctx.available_tool_names)
 
     agent = Agent(TestModel(), capabilities=[AvailableToolsCap()])
     await agent.run('hello')
 
-    assert seen_available_tools == [set()]
+    assert seen_available_tool_names == [set()]
 
 
 async def test_combined_capability_for_run_propagates():
