@@ -1286,6 +1286,42 @@ async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
     assert {'stock_price', 'crypto_price', 'calculate_mortgage'} <= set(tools)
 
 
+def test_parse_discovered_tools_reads_legacy_metadata():
+    """`parse_discovered_tools` reads the pre-typed-content legacy sideband directly.
+
+    `get_tools` now consults `ctx.discovered_tool_names` rather than re-parsing history, so the
+    legacy `metadata['discovered_tools']` reader is exercised through this classmethod (which
+    run preparation calls to populate `discovered_tool_names`). A valid legacy list surfaces its
+    names; a malformed one (wrong shape) is silently skipped via the `ValidationError` guard."""
+    valid = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='legacy text return',
+                    metadata={'discovered_tools': ['stock_price', 'crypto_price']},
+                ),
+            ]
+        ),
+    ]
+    assert ToolSearchToolset.parse_discovered_tools(valid) == {'stock_price', 'crypto_price'}
+
+    # Malformed legacy metadata (`discovered_tools` is not a `list[str]`) trips
+    # `_LEGACY_METADATA_TA.validate_python`, so `_collect_legacy` hits its `except: return`.
+    malformed = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='another',
+                    metadata={'discovered_tools': 'not a list'},
+                ),
+            ]
+        ),
+    ]
+    assert ToolSearchToolset.parse_discovered_tools(malformed) == set()
+
+
 async def test_deferred_loading_toolset_marks_all_tools():
     """`DeferredLoadingToolset` (with `tool_names=None`) flips `defer_loading=True`
     on every tool. After wrapping with `ToolSearchToolset`, all of them appear under

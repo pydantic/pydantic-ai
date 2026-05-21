@@ -80,6 +80,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -96,6 +97,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -2837,6 +2839,17 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
         defer_loading=True,
     )
 
+    # Full `ctx.tools` snapshot (keyed by name, includes still-deferred entries) per turn.
+    tools_per_turn: list[dict[str, ToolDefinition]] = []
+
+    @dataclass
+    class ToolsSnapshotCap(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            tools_per_turn.append(ctx.tools)
+            return request_context
+
     # Names of non-deferred function tools the model sees on each request.
     available_per_turn: list[set[str]] = []
 
@@ -2873,7 +2886,7 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
 
         return make_text_response('done')
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, ToolsSnapshotCap()])
     result = await agent.run('Can I get a refund?')
 
     assert result.output == 'done'
@@ -2887,6 +2900,16 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
     for turn_tools in post_load_turns:
         assert 'lookup_refund_policy' in turn_tools
 
+    # `ctx.tools` is a name-keyed dict of `ToolDefinition`s and is a superset of the callable
+    # subset: even on turn 1, where `lookup_refund_policy` is still deferred and absent from
+    # `available_tool_names`, its definition is present in `ctx.tools`.
+    assert len(tools_per_turn) >= 2
+    first_turn_tools = tools_per_turn[0]
+    assert isinstance(first_turn_tools, dict)
+    assert all(name == tool_def.name for name, tool_def in first_turn_tools.items())
+    assert 'lookup_refund_policy' in first_turn_tools
+    assert first_turn_tools['lookup_refund_policy'].defer_loading is True
+
 
 async def test_deferred_capability_synthetic_tool_search_persists_in_history() -> None:
     """The synthetic tool-search exchange injected after a capability load persists to
@@ -2894,7 +2917,7 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
         """Look up the refund policy for an order."""
         return f'{order_id}: refund allowed for 30 days'
 
@@ -2947,6 +2970,332 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     result2 = await agent.run('And another refund?', message_history=messages)
     new_messages = result2.all_messages()[len(messages) :]
     assert synthetic_pairs(new_messages) == []
+
+
+class _NoNativeToolSearchModel(FunctionModel):
+    """`FunctionModel` that forces the local `search_tools` function path.
+
+    `FunctionModel` reports support for every native tool (including native tool search),
+    which would route deferred standalone tools through the provider rather than the
+    synthetic `search_tools` function. Dropping `ToolSearchTool` mirrors a model without
+    native tool-search support, exercising the function-tool discovery path.
+    """
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
+
+async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available() -> None:
+    """Loading a second deferred capability does not drop the first one's tool.
+
+    Trajectory: load A and call A's tool, then on a later turn load B and call B's tool,
+    then one more turn. Both capabilities' tools must be non-deferred on every turn after
+    their respective loads, proving loads are additive and sticky.
+    """
+    toolset_a = FunctionToolset[None]()
+
+    @toolset_a.tool_plain
+    def alpha_tool() -> str:
+        """Capability A's tool."""
+        return 'alpha-result'
+
+    toolset_b = FunctionToolset[None]()
+
+    @toolset_b.tool_plain
+    def beta_tool() -> str:
+        """Capability B's tool."""
+        return 'beta-result'
+
+    cap_a = Capability[None](id='alpha', description='Alpha tools.', toolset=toolset_a, defer_loading=True)
+    cap_b = Capability[None](id='beta', description='Beta tools.', toolset=toolset_b, defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: load A.
+        if 'alpha' not in {part.args.get('id') for part in _load_calls(messages)}:  # type: ignore[union-attr]
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'alpha'}, tool_call_id='load-a')]
+            )
+        # Turn 2: use A's tool.
+        if 'alpha_tool' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='alpha_tool', args={}, tool_call_id='call-a')])
+        # Turn 3: load B.
+        if 'beta' not in {part.args.get('id') for part in _load_calls(messages)}:  # type: ignore[union-attr]
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'beta'}, tool_call_id='load-b')]
+            )
+        # Turn 4: use B's tool.
+        if 'beta_tool' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='beta_tool', args={}, tool_call_id='call-b')])
+        # Turn 5+: just respond.
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap_a, cap_b])
+    result = await agent.run('Use both capabilities.')
+
+    assert result.output == 'done'
+    # >= 5 turns: load A, use A, load B, use B, final.
+    assert len(available_per_turn) >= 5
+
+    # Identify the first turn on which each capability's tool became available.
+    a_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'alpha_tool' in tools)
+    b_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'beta_tool' in tools)
+    assert a_loaded_from < b_loaded_from
+
+    # Once loaded, each tool stays available on every later turn — loading B never drops A.
+    for tools in available_per_turn[a_loaded_from:]:
+        assert 'alpha_tool' in tools
+    for tools in available_per_turn[b_loaded_from:]:
+        assert 'beta_tool' in tools
+    # Both present together on the final turn.
+    assert {'alpha_tool', 'beta_tool'} <= available_per_turn[-1]
+
+
+async def test_tool_search_discovery_and_capability_load_coexist() -> None:
+    """A tool-search-discovered standalone tool and a load_capability tool coexist and persist.
+
+    Trajectory: discover a standalone deferred tool via `search_tools`, load a deferred
+    capability via `load_capability`, then continue for extra turns. Both the searched tool
+    and the capability's tool must be available together and stay available afterwards.
+    """
+    standalone = FunctionToolset[None]()
+
+    @standalone.tool_plain(defer_loading=True)
+    def searchable_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'{city}: sunny'
+
+    cap_toolset = FunctionToolset[None]()
+
+    @cap_toolset.tool_plain
+    def lookup_refund(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refundable'
+
+    refunds = Capability[None](id='refunds', description='Refund tools.', toolset=cap_toolset, defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: search for the standalone deferred tool.
+        if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='search')]
+            )
+        # Turn 2: load the deferred capability.
+        if not _load_calls(messages):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        # Turn 3: use the discovered standalone tool.
+        if 'searchable_weather' not in names:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='searchable_weather', args={'city': 'Paris'}, tool_call_id='call-w')]
+            )
+        # Turn 4: use the capability's tool.
+        if 'lookup_refund' not in names:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup_refund', args={'order_id': 'o1'}, tool_call_id='call-r')]
+            )
+        # Turn 5+: respond.
+        return make_text_response('done')
+
+    agent = Agent(_NoNativeToolSearchModel(model_fn), capabilities=[standalone_capability(standalone), refunds])
+    result = await agent.run('Find weather and refund tools.')
+
+    assert result.output == 'done'
+
+    weather_from = next(i for i, tools in enumerate(available_per_turn) if 'searchable_weather' in tools)
+    refund_from = next(i for i, tools in enumerate(available_per_turn) if 'lookup_refund' in tools)
+
+    # Each reveal mechanism is sticky from the turn it first exposes its tool.
+    for tools in available_per_turn[weather_from:]:
+        assert 'searchable_weather' in tools
+    for tools in available_per_turn[refund_from:]:
+        assert 'lookup_refund' in tools
+    # Both available together once both are revealed, including on the final turn.
+    assert {'searchable_weather', 'lookup_refund'} <= available_per_turn[-1]
+
+
+async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_trajectory() -> None:
+    """The synthetic tool-search exchange for a loaded capability appears exactly once.
+
+    Extends the persistence test to >= 3 model-request turns after the load: the deterministic
+    `auto_load_*` call_id must keep the synthetic call/return pair singular across the whole
+    trajectory, and the capability's tool stays available on every post-load turn.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', toolset=toolset, defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        # Three post-load turns that each call the loaded tool, then respond.
+        lookup_calls = [part for part in tool_returns if part.tool_name == 'lookup_refund_policy']
+        if len(lookup_calls) < 3:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': f'order-{len(lookup_calls)}'},
+                        tool_call_id=f'lookup-{len(lookup_calls)}',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Refund please.')
+
+    assert result.output == 'done'
+
+    messages = result.all_messages()
+    synthetic_call_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_')
+    ]
+    synthetic_return_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id.startswith('auto_load_')
+    ]
+    # Exactly one synthetic exchange survives the long trajectory — no per-turn duplication.
+    assert len(synthetic_call_ids) == 1
+    assert synthetic_return_ids == synthetic_call_ids
+
+    # The capability's tool was deferred on turn 1 and available on every post-load turn.
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    post_load_turns = available_per_turn[1:]
+    assert len(post_load_turns) >= 3
+    for tools in post_load_turns:
+        assert 'lookup_refund_policy' in tools
+
+
+async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
+    """A loaded capability's tool stays available on a turn that does not call it.
+
+    After loading, the model calls an unrelated visible tool (not the capability's tool) and
+    then responds. The capability's tool must remain non-deferred on those turns — loading is
+    sticky, not gated on per-turn usage.
+    """
+    visible_toolset = FunctionToolset[None]()
+
+    @visible_toolset.tool_plain
+    def ping() -> str:
+        """An always-visible tool unrelated to the capability."""
+        return 'pong'
+
+    cap_toolset = FunctionToolset[None]()
+
+    @cap_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds', description='Refund policy tools.', toolset=cap_toolset, defer_loading=True
+    )
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: load the capability.
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        # Turn 2: call an UNRELATED tool, never the capability's tool.
+        if 'ping' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='call-ping')])
+        # Turn 3: respond without ever calling the capability's tool.
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), tools=[ping], capabilities=[refunds])
+    # `ping` is registered via a function tool on the agent; ensure both paths see it.
+    result = await agent.run('Load refunds but use ping.')
+
+    assert result.output == 'done'
+    assert len(available_per_turn) >= 3
+
+    # Turn 1: capability tool still deferred.
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    # Every turn after the load: capability tool available even though it is never called.
+    for tools in available_per_turn[1:]:
+        assert 'lookup_refund_policy' in tools
+
+
+def _load_calls(messages: list[ModelMessage]) -> list[LoadCapabilityCallPart]:
+    """All `load_capability` call parts in the message history."""
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityCallPart)
+    ]
+
+
+def standalone_capability(toolset: FunctionToolset[None]) -> Capability[None]:
+    """Wrap a toolset of standalone deferred tools in an eager capability (tools keep their own defer flag)."""
+    return Capability[None](id='standalone', description='Standalone searchable tools.', toolset=toolset)
 
 
 async def test_deferred_capability_load_includes_toolset_instructions() -> None:
@@ -3202,16 +3551,20 @@ async def test_capability_for_run_default_returns_self():
 async def test_run_context_available_tool_names_empty_before_tool_manager_is_ready() -> None:
     """Early capability hooks can ask for available tool names before the tool manager is populated."""
     seen_available_tool_names: list[set[str]] = []
+    seen_tools: list[dict[str, ToolDefinition]] = []
 
     @dataclass
     class AvailableToolsCap(AbstractCapability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
             seen_available_tool_names.append(ctx.available_tool_names)
+            seen_tools.append(ctx.tools)
 
     agent = Agent(TestModel(), capabilities=[AvailableToolsCap()])
     await agent.run('hello')
 
     assert seen_available_tool_names == [set()]
+    # The `tools` empty-guard mirrors `available_tool_names`: no tool manager yet → empty dict.
+    assert seen_tools == [{}]
 
 
 async def test_combined_capability_for_run_propagates():
