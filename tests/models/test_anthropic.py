@@ -11099,6 +11099,37 @@ async def test_anthropic_dynamic_filtering_explicit_false_adds_web_fetch_beta(al
     assert 'web-fetch-2025-09-10' in betas
 
 
+async def test_anthropic_dynamic_filtering_preserves_web_fetch_citations(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(WebFetchTool(enable_citations=True, dynamic_filtering=True)),
+            NativeTool(CodeExecutionTool()),
+        ],
+    )
+
+    result = await agent.run('Reply with exactly: ok')
+
+    assert result.output == 'ok'
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request_kwargs.get('tools') == [
+        {
+            'name': 'web_fetch',
+            'type': 'web_fetch_20260209',
+            'max_uses': None,
+            'allowed_domains': None,
+            'blocked_domains': None,
+            'citations': {'enabled': True},
+            'max_content_tokens': None,
+        },
+        {'name': 'code_execution', 'type': 'code_execution_20260120'},
+    ]
+    assert request_kwargs.get('betas') is OMIT
+
+
 async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_requests: None):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-api-key'))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool(dynamic_filtering=True))])
