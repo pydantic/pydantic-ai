@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import warnings
 from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
@@ -10,7 +9,6 @@ from typing import Any, Generic, cast
 from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
-from .._warnings import PydanticEvalsDeprecationWarning
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -182,19 +180,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
-        # Back-compat: if the subclass set an `evaluation_name` attribute (class or instance), honor it,
-        # but warn — that pattern is being replaced by overriding this method.
-        # TODO(v2): drop this fallback; subclasses must override `get_default_evaluation_name`.
-        evaluation_name = getattr(self, 'evaluation_name', None)
-        if isinstance(evaluation_name, str):
-            warnings.warn(
-                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluation_name` attribute '
-                f'to customize the default evaluation name. This is deprecated; override `get_default_evaluation_name` '
-                f'in your evaluator class to retain this behavior in pydantic-evals v2.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-            return evaluation_name
         return self.get_serialization_name()
 
     def get_evaluator_version(self) -> str | None:
@@ -205,18 +190,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         whenever behavior changes in a way that invalidates prior scores. Override this method to set
         a non-`None` version.
         """
-        # Back-compat: honor an `evaluator_version` attribute (class or instance) but warn.
-        # TODO(v2): drop this fallback; subclasses must override `get_evaluator_version`.
-        evaluator_version = getattr(self, 'evaluator_version', None)
-        if isinstance(evaluator_version, str):
-            warnings.warn(
-                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluator_version` attribute '
-                f'to set its version. This is deprecated; override `get_evaluator_version` in your evaluator class '
-                f'to retain this behavior in pydantic-evals v2.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-            return evaluator_version
         return None
 
     @abstractmethod
