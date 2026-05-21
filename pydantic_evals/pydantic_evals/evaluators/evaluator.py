@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any, Generic, cast
 from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
+from .._warnings import PydanticEvalsDeprecationWarning
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -68,9 +70,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         reason: An optional explanation of the evaluation result.
         source: The spec of the evaluator that produced this result.
         evaluator_version: Optional version tag for the evaluator that produced this result
-            (e.g. `'v2'`). Sourced automatically from the `evaluator_version` class attribute
-            on the `Evaluator` subclass. Lets online-evaluation dashboards filter out results
-            from retired versions without deleting historical rows.
+            (e.g. `'v2'`). Sourced automatically from the evaluator's
+            [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]
+            method. Lets online-evaluation dashboards filter out results from retired versions
+            without deleting historical rows.
     """
 
     name: str
@@ -109,7 +112,8 @@ class EvaluatorFailure:
     source: EvaluatorSpec
     evaluator_version: str | None = None
     """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
-    from the `evaluator_version` class attribute on the `Evaluator` subclass."""
+    from the evaluator's
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] method."""
     error_type: str | None = None
     """Class name of the exception that caused the failure (e.g. `'ValueError'`). Populated
     automatically when `EvaluatorFailure` is constructed from a caught exception; surfaced
@@ -148,15 +152,10 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             return ctx.output == ctx.expected_output
     ```
 
-    Optional class-level attributes:
-
-    - `evaluation_name`: override the default name used in reports for this evaluator's output
-      (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
-      always use their own keys).
-    - `evaluator_version`: an optional version tag (e.g. `'v2'`) describing the evaluator's
-      behavior. Propagated to online-evaluation sinks so dashboards can filter out results
-      produced by retired versions without deleting rows. Applies to every result the
-      evaluator emits. Bump whenever behavior changes in a way that invalidates prior scores.
+    Override [`get_default_evaluation_name`][pydantic_evals.evaluators.Evaluator.get_default_evaluation_name]
+    to customize the name used in reports, and
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] to tag the
+    evaluator with a version that downstream sinks can filter on.
 
     Example:
     ```python
@@ -167,27 +166,58 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
 
     @dataclass
     class LLMJudge(Evaluator):
-        evaluator_version = 'v2'  # bumped after prompt rewrite
-
         def evaluate(self, ctx: EvaluatorContext) -> bool: ...
+
+        def get_evaluator_version(self) -> str | None:
+            return 'v2'  # bumped after prompt rewrite
     ```
     """
 
     def get_default_evaluation_name(self) -> str:
         """Return the default name to use in reports for the output of this evaluator.
 
-        By default, if the evaluator has an attribute called `evaluation_name` of type string, that will be used.
-        Otherwise, the serialization name of the evaluator (which is usually the class name) will be used.
-
-        This can be overridden to get a more descriptive name in evaluation reports, e.g. using instance information.
+        Defaults to the serialization name of the evaluator (which is usually the class name). Override this
+        method to customize the name, e.g. using instance information.
 
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
+        # Back-compat: if the subclass set an `evaluation_name` attribute (class or instance), honor it,
+        # but warn — that pattern is being replaced by overriding this method.
+        # TODO(v2): drop this fallback; subclasses must override `get_default_evaluation_name`.
         evaluation_name = getattr(self, 'evaluation_name', None)
         if isinstance(evaluation_name, str):
+            warnings.warn(
+                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluation_name` attribute '
+                f'to customize the default evaluation name. This is deprecated; override `get_default_evaluation_name` '
+                f'in your evaluator class to retain this behavior in pydantic-evals v2.',
+                PydanticEvalsDeprecationWarning,
+                stacklevel=2,
+            )
             return evaluation_name
         return self.get_serialization_name()
+
+    def get_evaluator_version(self) -> str | None:
+        """Return the version tag for this evaluator, or `None` if it has no version.
+
+        Propagated to online-evaluation sinks so dashboards can filter out results produced by retired
+        versions without deleting historical rows. Applies to every result the evaluator emits; bump
+        whenever behavior changes in a way that invalidates prior scores. Override this method to set
+        a non-`None` version.
+        """
+        # Back-compat: honor an `evaluator_version` attribute (class or instance) but warn.
+        # TODO(v2): drop this fallback; subclasses must override `get_evaluator_version`.
+        evaluator_version = getattr(self, 'evaluator_version', None)
+        if isinstance(evaluator_version, str):
+            warnings.warn(
+                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluator_version` attribute '
+                f'to set its version. This is deprecated; override `get_evaluator_version` in your evaluator class '
+                f'to retain this behavior in pydantic-evals v2.',
+                PydanticEvalsDeprecationWarning,
+                stacklevel=2,
+            )
+            return evaluator_version
+        return None
 
     @abstractmethod
     def evaluate(

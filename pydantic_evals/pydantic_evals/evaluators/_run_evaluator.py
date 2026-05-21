@@ -59,9 +59,7 @@ async def run_evaluator(
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
-    raw_version = getattr(evaluator, 'evaluator_version', None)
-    evaluator_version: str | None = raw_version if isinstance(raw_version, str) else None
-
+    evaluator_version = evaluator.get_evaluator_version()
     evaluator_name = evaluator.get_default_evaluation_name()
     source = evaluator.as_spec()
 

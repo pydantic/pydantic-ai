@@ -199,9 +199,10 @@ class OnlineEvaluator:
     evaluator: Evaluator
     """The evaluator to run.
 
-    To version an evaluator, set `evaluator_version` as a class attribute on the
-    `Evaluator` subclass itself (see `Evaluator` docstring). The framework reads it
-    via `getattr` at dispatch time and propagates it to sinks alongside each result.
+    To version an evaluator, override
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+    `Evaluator` subclass (see `Evaluator` docstring). The framework calls it at dispatch time and
+    propagates the value to sinks alongside each result.
     """
     sample_rate: float | Callable[[SamplingContext], float | bool] | None = None
     """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
@@ -507,8 +508,9 @@ class OnlineEvalConfig:
         `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
 
-        To version an evaluator, set `evaluator_version` on the `Evaluator` subclass
-        itself — the framework reads it at dispatch time and records it on every
+        To version an evaluator, override
+        [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+        `Evaluator` subclass — the framework calls it at dispatch time and records the value on every
         [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and
         [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] the evaluator emits:
 
@@ -521,10 +523,11 @@ class OnlineEvalConfig:
 
         @dataclass
         class Tone(Evaluator):
-            evaluator_version = 'v2'
-
             def evaluate(self, ctx: EvaluatorContext) -> str:
                 return 'neutral'
+
+            def get_evaluator_version(self) -> str | None:
+                return 'v2'
 
 
         @evaluate(Tone())
