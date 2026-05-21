@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol, cast
+from typing import Any, Generic, Literal, Protocol
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
@@ -56,7 +56,7 @@ __all__ = (
     'TableResult',
 )
 
-from ..evaluators.evaluator import EvaluatorFailure
+from ..evaluators.evaluator import EvaluationScalar, EvaluatorFailure
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
@@ -932,6 +932,7 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 
 
 T = TypeVar('T')
+ScalarT = TypeVar('ScalarT', bound=EvaluationScalar)
 
 
 @dataclass(kw_only=True)
@@ -1018,10 +1019,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
 
         if self.include_scores:
-            row.append(self._render_dict({k: v for k, v in case.scores.items()}, self.score_renderers))
+            row.append(self._render_eval_result_dict(case.scores, self.score_renderers))
 
         if self.include_labels:
-            row.append(self._render_dict({k: v for k, v in case.labels.items()}, self.label_renderers))
+            row.append(self._render_eval_result_dict(case.labels, self.label_renderers))
 
         if self.include_metrics:
             row.append(self._render_dict(case.metrics, self.metric_renderers))
@@ -1258,16 +1259,27 @@ class ReportCaseRenderer:
 
     def _render_dict(
         self,
-        case_dict: Mapping[str, EvaluationResult[T] | T],
+        case_dict: Mapping[str, T],
         renderers: Mapping[str, _AbstractRenderer[T]],
+        *,
+        include_names: bool = True,
+    ) -> str:
+        diff_lines = [
+            renderers[key].render_value(key if include_names else None, val) for key, val in case_dict.items()
+        ]
+        return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
+
+    def _render_eval_result_dict(
+        self,
+        case_dict: Mapping[str, EvaluationResult[ScalarT]],
+        renderers: Mapping[str, _AbstractRenderer[ScalarT]],
         *,
         include_names: bool = True,
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
-            rendered = renderers[key].render_value(key if include_names else None, value)
-            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
+            rendered = renderers[key].render_value(key if include_names else None, val.value)
+            if self.include_reasons and (reason := val.reason):
                 rendered += f'\n  Reason: {reason}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
