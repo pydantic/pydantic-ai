@@ -1,6 +1,6 @@
 # Upgrade Guide
 
-In September 2025, Pydantic AI reached V1, which means we're committed to API stability: we will not introduce changes that break your code until V2. For more information, review our [Version Policy](version-policy.md).
+In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available as a [beta pre-release](version-policy.md#v2-beta), collecting the breaking and behavior changes that stability guarantee didn't allow. This guide lists the breaking changes for each version, with our recommended path to V2 below; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
 
 ## Breaking Changes
 
@@ -12,12 +12,18 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 The first V2 beta, forked from **v1.100.0**, which deprecates most of what V2 removes. V2 leans into a harness-first design with [capabilities](capabilities.md) as a core primitive: a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings, reaching every layer of the agent through one concept. Many of V2's changes move configuration that used to be spread across `Agent` arguments onto that primitive, alongside the behavior changes that V1's stability guarantee didn't allow.
 
-Recommended upgrade path (see the [Version Policy](version-policy.md#v2-beta)): upgrade to **v1.100.0**, resolve every deprecation warning, then upgrade to V2.
-
 The breaking changes below are split into two groups:
 
 - [**Changes not covered by deprecation warnings**](#changes-not-covered-by-deprecation-warnings) — removals and behavior changes that couldn't be announced via a V1 deprecation warning. Review these even if you're already on the latest V1 with no warnings.
 - [**Changes covered by deprecation warnings**](#changes-covered-by-deprecation-warnings) — if you upgraded to the latest V1 and resolved every deprecation warning, you've already made these. They're listed with full before → after for reference.
+
+**Recommended upgrade path.** To make the jump as smooth as possible:
+
+1. **Upgrade to the latest V1 release.** Most of what V2 removes is deprecated as of **v1.100.0** (the release this beta is forked from), so any V1 at or above that version surfaces those warnings.
+2. **Resolve every deprecation warning.** The [changes covered by deprecation warnings](#changes-covered-by-deprecation-warnings) were announced in V1 via warnings that name the new API and, where possible, include a migration snippet. Run your test suite (or app) with warnings visible and address each one — by hand or by pointing a coding agent at them — to migrate across the bulk of V2 ahead of time.
+3. **Upgrade to V2** and make the [changes not covered by deprecation warnings](#changes-not-covered-by-deprecation-warnings) — primarily default-behavior changes and a handful of removals with no V1 deprecation.
+
+You can also upgrade straight to V2 and work through the list below directly — it's organized so a coding agent can apply the code changes mechanically. Resolving deprecation warnings on the latest V1 first is still the smoother path, since it spreads the work out and leaves you only the behavior changes to reason about consciously at the end.
 
 Message history serialized with V1 (via [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]) continues to deserialize in V2.
 
