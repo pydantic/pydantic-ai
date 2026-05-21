@@ -550,6 +550,13 @@ async def test_google_model_top_p(allow_model_requests: None, google_provider: G
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
+async def test_google_model_top_k(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-3.1-flash-lite', provider=google_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_k': 40})
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
 async def test_google_model_thinking_config(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})

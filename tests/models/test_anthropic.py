@@ -1360,6 +1360,22 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=ModelSettings(top_k=40))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['top_k'] == 40
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
