@@ -361,6 +361,11 @@ _(This example is complete, it can be run "as is")_
 
 An [output tool](#tool-output) call is what ends a run and produces its final result. When a model emits one in the *same* response as other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to the rest. Most agents never need to think about this, since most responses don't mix an output tool with other tools — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.
 
+!!! warning "Priority of output and deferred tools in streaming methods"
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
+
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
+
 | Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
 |---|---|---|---|
 | `'graceful'` (default) | Run in emission order; first success is the final result, later output tools skipped | Run, in parallel where possible, in emission order | Run; the run continues |
@@ -373,28 +378,15 @@ Choose `'early'` to end the run the instant an output tool succeeds — function
 
 Choose `'exhaustive'` to run every tool, including additional output tools whose results won't be used. This gives the model full visibility that each tool ran, at the cost of executing output-tool side effects that are ultimately discarded.
 
-When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round. `run_stream()` behaves like `'early'` in this respect: it commits the first matching output the instant it streams, so that result is locked in regardless of `end_strategy`.
+When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
 
-#### Retrying after a tool failure
+###### Retrying after a tool failure
 
-Under `'graceful'` and `'exhaustive'`, if a function tool raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'` (function tools don't run once an output succeeds).
+Under the `'graceful'` and `'exhaustive'` strategies above, function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls) (see the warning above).
 
-#### Controlling parallelism
+###### Controlling output tool parallelism
 
-Tools run concurrently by default. To stop a specific tool from overlapping with others, mark it `sequential=True` — it then acts as a barrier: tools the model emitted before it finish first, it runs alone, and tools emitted after it start only once it finishes.
-
-```python {title="sequential_tool.py" lint="skip" test="skip"}
-@agent.tool_plain(sequential=True)
-def write_to_database(record: str) -> str: ...
-```
-
-Under `'exhaustive'`, where output tools also run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. To run an entire run's tools serially regardless of which tools were called, wrap the run in [`agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
-
-!!! warning "Priority of output and deferred tools in streaming methods"
-    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
-
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. For the same reason, the retry-after-tool-failure behavior above does not apply when streaming: the streamed output is committed as soon as it is detected.
-
+Like function tools, [output tools](#tool-output) run concurrently. Under `'exhaustive'`, where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
 
 #### Native Output
 
