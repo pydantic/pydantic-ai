@@ -304,6 +304,9 @@ print(result.all_messages())
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "Tool result ordering"
+    Tool results follow the order in which the model emitted the corresponding tool calls. In the message history above, `delete_file`'s denied result appears before `update_file`'s result for `.env` because the model emitted `delete_file` first. This is an intentional behavior change in v2: results are no longer grouped by tool kind, so the ordering you see reflects the model's emission order.
+
 ## External Tool Execution
 
 When the result of a tool call cannot be generated inside the same agent run in which it was called, the tool is considered to be external.

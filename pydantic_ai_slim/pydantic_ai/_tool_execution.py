@@ -27,7 +27,7 @@ DepsT = TypeVar('DepsT')
 
 # Status messages synthesized as the `content` of an output/function tool's `ToolReturnPart`
 # when the tool isn't run (or its result isn't used). Centralized so the same wording is shared
-# by the producers and by `_apply_retry_wins`, which rewrites the winning output's status part.
+# by the producers and by `_apply_retry_wins`, which replaces the winning output's status part.
 _FINAL_RESULT_PROCESSED = 'Final result processed.'
 _RETRY_WINS = 'Output not used as the final result - addressing tool retries from this round first.'
 _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED = 'Output tool not used - a final result was already processed.'
@@ -99,6 +99,7 @@ def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool
 
 async def process_tool_calls(
     tool_manager: ToolManager[DepsT],
+    *,
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
@@ -204,7 +205,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     # `output_retries_increment`: accumulates output-retry-budget increments to apply once execution
     # settles, so parallel output tasks don't race the counter.
     # `winning_output_part`: a direct reference to the winning output's 'Final result processed.'
-    # status part, so retry-wins can rewrite it in place without scanning/string-matching.
+    # status part, so retry-wins can replace it in `output_parts` by index without scanning/string-matching.
     final_result_was_set_externally: bool = dataclasses.field(init=False)
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
@@ -343,8 +344,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _emit_winning_output(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record the winning output's 'processed' status part and emit its events.
 
-        Tracks the part directly (`winning_output_part`) so `_apply_retry_wins` can rewrite it
-        without scanning `output_parts`.
+        Tracks the part directly (`winning_output_part`) so `_apply_retry_wins` can replace it
+        in `output_parts` without scanning the list.
         """
         part = self._make_output_status_part(call, _FINAL_RESULT_PROCESSED)
         self.winning_output_part = part
@@ -457,13 +458,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             deferred_metadata=self.deferred_metadata,
         ):
             yield event
-        # A `RetryPromptPart` from an actual function tool (a `ModelRetry` or arg-validation
-        # failure) triggers retry-wins. Retries from unknown/hallucinated tools don't — they
-        # aren't work that needs to complete before the output is valid.
+        # Check the parts this batch just appended for retry-wins triggers, deriving each part's
+        # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
+        # but both funnel through `_is_retry_wins_trigger`).
         for part in self.output_parts[before:]:
             if isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None:
                 tool_def = self.tool_manager.get_tool_def(part.tool_name)
-                if tool_def is not None and tool_def.kind == 'function':
+                kind = tool_def.kind if tool_def is not None else 'unknown'
+                if self._is_retry_wins_trigger(part, kind=kind):
                     self.retry_wins_triggered = True
 
     async def _call_tool(
@@ -685,18 +687,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Retry-wins and deferred resolution ---------------------------------
 
+    def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
+        """Whether a settled tool part triggers retry-wins.
+
+        A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function
+        tool suppresses an otherwise-valid output, so the model addresses the retry next round.
+        Retries from unknown/hallucinated tools don't — they aren't work that needs to complete
+        before the output is valid. This single predicate backs both the emission-order paths
+        (graceful/early) and the parallel exhaustive path so the rule lives in one place.
+        """
+        return isinstance(part, _messages.RetryPromptPart) and kind == 'function'
+
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
 
-        The suppressed output's `ToolReturnPart` is rewritten so the model addresses the retry
-        next round. Doesn't apply when the final result was committed externally (`run_stream`).
+        The suppressed output's `ToolReturnPart` is replaced in `output_parts` so the model
+        addresses the retry next round. Doesn't apply when the final result was committed
+        externally (`run_stream`).
         """
         if not (
             self.retry_wins_triggered and self.final_result is not None and not self.final_result_was_set_externally
         ):
             return
         # The winning output's status part was tracked directly when it was created, so we can
-        # rewrite it in place without scanning `output_parts` for a content match.
+        # locate it by identity and replace it in `output_parts` without scanning for a content match.
         assert self.winning_output_part is not None
         idx = self.output_parts.index(self.winning_output_part)
         self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
@@ -715,6 +729,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
+        # Grouping by kind (all `external`, then all `unapproved`) is intentional and distinct from the
+        # emission-order execution used elsewhere: deferred tools are resolved externally, so the order in
+        # which we emit/collect them here doesn't affect behavior.
         calls = [*self.tool_calls_by_kind['external'], *self.tool_calls_by_kind['unapproved']]
         if self.final_result:
             # If the run was already determined to end on deferred tool calls,
@@ -944,13 +961,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
-                    pending: set[asyncio.Task[Any]] = set(tasks)
+                    pending: set[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]] = set(tasks)
                     while pending:
                         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                         for task in done:
                             index, payload = task.result()
-                            if self.call_kinds[index] == 'output':
-                                assert isinstance(payload, _OutputCallResult)
+                            if isinstance(payload, _OutputCallResult):
                                 output_results[index] = payload
                             elif isinstance(payload, exceptions.CallDeferred):
                                 deferred_by_index[index] = 'external'
@@ -963,12 +979,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 function_parts[index] = tool_part
                                 if tool_user_content:
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
-                                # Only retries from actual function tools trigger retry-wins; retries from
-                                # unknown/hallucinated tools don't suppress an otherwise-valid output.
-                                if (
-                                    isinstance(tool_part, _messages.RetryPromptPart)
-                                    and self.call_kinds[index] == 'function'
-                                ):
+                                if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
                                 if ordered_events:
