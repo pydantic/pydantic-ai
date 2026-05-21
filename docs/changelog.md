@@ -10,7 +10,7 @@ Here's a filtered list of the breaking changes for each version to help you upgr
 
 <!-- TODO(v2-launch): at stable V2.0 release, add a `v2.0.0 (<date>)` heading for any changes since the last beta, resolve the #5339 NOT-YET-MERGED markers below, and drop "beta" framing from the intro. -->
 
-The first V2 beta, forked from **v1.100.0** — the final V1 release, in which every API that V2 removes is already deprecated. V2 leans into a harness-first design with [capabilities](capabilities.md) as a core primitive: a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings, reaching every layer of the agent through one concept. Many of V2's changes move configuration that used to be spread across `Agent` arguments onto that primitive, alongside the behavior changes that V1's stability guarantee didn't allow.
+The first V2 beta, forked from **v1.100.0**, in which every API that V2 removes is already deprecated. V2 leans into a harness-first design with [capabilities](capabilities.md) as a core primitive: a single, composable unit that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings, reaching every layer of the agent through one concept. Many of V2's changes move configuration that used to be spread across `Agent` arguments onto that primitive, alongside the behavior changes that V1's stability guarantee didn't allow.
 
 Recommended upgrade path (see the [Version Policy](version-policy.md#v2-beta)): upgrade to **v1.100.0**, resolve every deprecation warning, then upgrade to V2.
 

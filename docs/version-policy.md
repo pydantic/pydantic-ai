@@ -1,8 +1,8 @@
 ## Version Policy
 
-<!-- TODO(v2-launch): this page is written V2-forward for the V2 beta docs. At stable V2.0 launch, set the release month below, remove the beta-specific caveats, and confirm the next-major / V1-support dates. -->
+Pydantic AI V1 was released in September 2025. The first V2 beta (`v2.0.0b1`) was released on May 20, 2026, with a stable V2.0 expected within roughly two weeks — see [V2 Beta](#v2-beta) below.
 
-Pydantic AI V2 was released in <!-- TODO(v2-launch): confirm month -->2026<!-- /TODO --> (V1 was released in September 2025). We will not intentionally make breaking changes in minor releases, and functionality marked as deprecated in a release is not removed until the next major version — which we will not release sooner than 3 months after V2.
+We will not intentionally make breaking changes in minor releases. Functionality marked as deprecated in a release is not removed until the next major version, which we won't release sooner than 3 months after V2.0 ships stable.
 
 We'll continue to provide security fixes for V1 for at least 6 months after V2's stable release, so you have time to upgrade your applications. See [Upgrading to V2](#upgrading-to-v2) for the recommended path.
 
@@ -18,13 +18,13 @@ pip/uv-add "pydantic-ai==2.0.0bN"
 
 During the beta the V2 API and behaviors aren't yet covered by the stability guarantee above — we don't expect major changes but may still adjust in response to feedback before the stable V2.0 release. Please [try it and report issues](https://github.com/pydantic/pydantic-ai/issues), or reach out in the `#pydantic-ai` channel on [Slack](help.md#slack).
 
-<!-- TODO(v2-launch): once V2.0 is stable, replace this section with the standard install instructions (drop the pre-release pinning), and fold the "capabilities and hooks foundation" framing into the release announcement instead. -->
+<!-- TODO(v2-launch): once V2.0 is stable, update the beta/GA dates in the Version Policy section above, replace this section with standard install instructions (drop the pre-release pinning), and fold the capabilities framing into the release announcement instead. -->
 
 ### Upgrading to V2
 
 To make the upgrade as smooth as possible, we recommend the following path:
 
-1. **Upgrade to the latest V1 release** — **v1.100.0**, which V2.0.0b1 is forked from and in which every API that V2 removes is already deprecated.
+1. **Upgrade to the latest V1 release.** Every API that V2 removes is deprecated as of **v1.100.0** (the release V2.0.0b1 is forked from), so any V1 at or above that version surfaces the warnings you need.
 2. **Resolve every deprecation warning.** [Most of V2's breaking changes](changelog.md#changes-covered-by-deprecation-warnings) were announced in V1 via deprecation warnings that name the new API and, where possible, include a migration snippet. Running your test suite (or app) with warnings visible and addressing each one — by hand or by pointing a coding agent at them — migrates you across the bulk of V2 ahead of time.
 3. **Upgrade to V2** and make the [changes that couldn't be pre-announced](changelog.md#changes-not-covered-by-deprecation-warnings) via a deprecation — primarily default-behavior changes and a handful of removals with no V1 deprecation.
 
