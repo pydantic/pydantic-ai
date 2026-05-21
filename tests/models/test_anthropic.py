@@ -11468,3 +11468,15 @@ async def test_anthropic_service_tier_mapping(
         assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
     else:
         assert kwargs['service_tier'] == expected
+
+
+async def test_anthropic_top_k_propagation(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['top_k'] == 40
