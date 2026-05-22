@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
+from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, fill_run_metadata
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 

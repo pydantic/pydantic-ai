@@ -11,7 +11,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from .exceptions import UserError
-from .messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, UserPromptPart
+from .messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    ToolReturnPart,
+    ToolSearchReturnPart,
+    UserPromptPart,
+)
 
 if TYPE_CHECKING:
     from .messages import UserContent
@@ -29,51 +39,70 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
 """
 
 
-EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequestPart | ModelMessage'
+EnqueueContent: TypeAlias = 'UserContent | ModelRequestPart | ModelMessage'
 """A single item accepted by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
 and [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
 
-- `str` or `Sequence[UserContent]`: wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]
-    (matching the shape of `Agent.run(user_prompt=...)`).
+`enqueue` is variadic, so each item is one positional argument:
+
+- [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or a piece of multi-modal content
+    like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]): adjacent user content is gathered into a
+    single [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so `enqueue('caption', image)`
+    forms one user turn. To pass an existing list, spread it: `enqueue(*items)`.
 - [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
     [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]): included verbatim.
 - [`ModelMessage`][pydantic_ai.messages.ModelMessage] (a complete
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
     [`ModelResponse`][pydantic_ai.messages.ModelResponse]): emitted as its own message.
 
-Consecutive part-style items (`str` / `Sequence[UserContent]` / `ModelRequestPart`) are coalesced
-into a single `ModelRequest`; complete `ModelMessage`s stay separate. This lets one `enqueue`
-call inject an interleaved exchange (e.g. a synthetic tool-search call + result — a `ModelResponse`
-followed by a `ModelRequest`). The assembled sequence must end in a `ModelRequest` so the agent has
-something to respond to.
+Consecutive part-style items (user content and `ModelRequestPart`s) are coalesced into a single
+`ModelRequest`; complete `ModelMessage`s stay separate. This lets one `enqueue` call inject an
+interleaved exchange (e.g. a synthetic tool call + result — a `ModelResponse` followed by a
+`ModelRequest`). The assembled sequence must end in a `ModelRequest` so the agent has something to
+respond to.
 """
 
 
 def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessage]:
     """Assemble enqueue items into a list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s.
 
-    Part-style items (`str` / `Sequence[UserContent]` / `ModelRequestPart`) are coalesced into a
-    single [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete `ModelMessage`s are emitted
-    as-is. Order is preserved, so a `ModelResponse` followed by part-style items produces the
-    response then a request built from those parts.
+    Adjacent [`UserContent`][pydantic_ai.messages.UserContent] items are gathered into one
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and part-style items (user content and
+    [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into a single
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete `ModelMessage`s are emitted as-is.
+    Order is preserved, so a `ModelResponse` followed by part-style items produces the response then
+    a request built from those parts.
     """
     messages: list[ModelMessage] = []
-    loose_parts: list[ModelRequestPart] = []
+    parts: list[ModelRequestPart] = []
+    content: list[UserContent] = []
 
-    def flush() -> None:
-        if loose_parts:
-            messages.append(ModelRequest(parts=list(loose_parts)))
-            loose_parts.clear()
+    def flush_content() -> None:
+        if content:
+            # Collapse a lone string to `str` content, matching `Agent.run('...')`; anything else
+            # (multiple items, or a single non-string like an image) becomes a content list.
+            single = content[0] if len(content) == 1 and isinstance(content[0], str) else list(content)
+            parts.append(UserPromptPart(content=single))
+            content.clear()
+
+    def flush_request() -> None:
+        flush_content()
+        if parts:
+            messages.append(ModelRequest(parts=list(parts)))
+            parts.clear()
 
     for item in items:
         if isinstance(item, (ModelRequest, ModelResponse)):
-            flush()
+            flush_request()
             messages.append(item)
-        elif isinstance(item, (str, Sequence)):
-            loose_parts.append(UserPromptPart(content=item))
+        elif isinstance(
+            item, (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart, ToolSearchReturnPart)
+        ):
+            flush_content()
+            parts.append(item)
         else:
-            loose_parts.append(item)
-    flush()
+            content.append(item)
+    flush_request()
     return messages
 
 
@@ -115,7 +144,7 @@ class PendingMessage:
             return None
         if not isinstance(messages[-1], ModelRequest):
             raise UserError(
-                'Enqueued content must end with a `ModelRequest` (or `str` / `Sequence[UserContent]` / '
-                '`ModelRequestPart` items that form one), so the agent has a request to respond to.'
+                'Enqueued content must end with a `ModelRequest` (or user content / `ModelRequestPart` '
+                'items that form one), so the agent has a request to respond to.'
             )
         return cls(messages=messages, priority=priority)

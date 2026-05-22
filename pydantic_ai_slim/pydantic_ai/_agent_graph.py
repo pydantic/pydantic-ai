@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
@@ -900,7 +900,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
-        _messages.fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -957,7 +957,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        _messages.fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -1009,7 +1009,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
-        _messages.fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)

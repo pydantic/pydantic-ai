@@ -451,8 +451,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
-                Each `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
-                and each [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
+                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
+                [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
                 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
                 part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] or

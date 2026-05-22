@@ -62,6 +62,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -11692,7 +11693,8 @@ async def test_enqueue_coerces_string_to_user_prompt():
 
 
 async def test_enqueue_accepts_multimodal_user_content():
-    """A `Sequence[UserContent]` (matching `Agent.run(user_prompt=...)`) is wrapped in one `UserPromptPart`."""
+    """Adjacent user-content args (text + multi-modal) are gathered into one `UserPromptPart`."""
+    image = ImageUrl(url='https://example.com/image.png')
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -11709,7 +11711,7 @@ async def test_enqueue_accepts_multimodal_user_content():
 
     @agent.tool
     def inject_msg(ctx: RunContext[None]) -> str:
-        ctx.enqueue(['part one', 'part two'])
+        ctx.enqueue('look at this', image)
         return 'ok'
 
     result = await agent.run('Hello')
@@ -11718,7 +11720,7 @@ async def test_enqueue_accepts_multimodal_user_content():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, UserPromptPart) and part.content == ['part one', 'part two']
+        if isinstance(part, UserPromptPart) and part.content == ['look at this', image]
     ]
     assert len(injected) == 1
 
