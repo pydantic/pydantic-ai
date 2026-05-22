@@ -38,7 +38,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     for example `'xai:grok-4-1-fast-non-reasoning'`.
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
-    that returns a `Model` instance.
+    that returns a `Model` instance or model name string.
     """
 
     allowed_x_handles: list[str] | None
@@ -82,7 +82,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         fallback_model: Model
         | KnownModelName
         | str
-        | Callable[[RunContext[AgentDepsT]], Awaitable[Model] | Model]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
         allowed_x_handles: list[str] | None = None,
         excluded_x_handles: list[str] | None = None,

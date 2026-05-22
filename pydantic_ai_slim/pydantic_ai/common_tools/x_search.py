@@ -14,9 +14,13 @@ from pydantic_ai.tools import RunContext, Tool
 
 XSearchFallbackModelFunc = Callable[
     [RunContext[Any]],
-    Awaitable[Model] | Model,
+    Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
 ]
-"""Callable that resolves a fallback model dynamically per-run."""
+"""Callable that resolves a fallback model dynamically per-run.
+
+May return a `Model` instance or a model name string (e.g. `'xai:grok-4-1-fast-non-reasoning'`);
+strings are resolved to a model at call time.
+"""
 
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""

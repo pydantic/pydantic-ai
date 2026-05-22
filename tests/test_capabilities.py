@@ -4808,7 +4808,7 @@ class TestXSearchCapability:
             inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
         )
 
-        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+        async def model_factory(ctx: RunContext) -> FunctionModel:
             return inner_model
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4817,7 +4817,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])  # pyright: ignore[reportCallIssue, reportArgumentType]
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
         result = await agent.run('What is happening on X?')
         assert result.output == 'done'
         assert result.all_messages() == snapshot(
@@ -4876,7 +4876,7 @@ class TestXSearchCapability:
             inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
         )
 
-        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+        def model_factory(ctx: RunContext) -> FunctionModel:
             return inner_model
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4885,7 +4885,7 @@ class TestXSearchCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])  # pyright: ignore[reportCallIssue, reportArgumentType]
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
         result = await agent.run('search X')
         assert result.output == 'done'
         tool_returns = [
@@ -5320,7 +5320,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 

@@ -43,7 +43,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     * `'google:gemini-3-pro-image-preview'` — Google image generation model
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
-    that returns a `Model` instance.
+    that returns a `Model` instance or model name string.
     """
 
     # Keep these fields in sync with ImageGenerationTool in native_tools.py.
@@ -119,7 +119,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         fallback_model: Model
         | KnownModelName
         | str
-        | Callable[[RunContext[AgentDepsT]], Awaitable[Model] | Model]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
         action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
