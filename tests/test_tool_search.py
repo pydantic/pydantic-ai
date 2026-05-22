@@ -24,7 +24,6 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -122,14 +121,13 @@ with try_import() as openai_available:
     from openai.types.responses.file_search_tool import FileSearchTool
 
     from pydantic_ai.models.openai import (
-        _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        _apply_client_tool_search_for_deferred_capability_tools,  # pyright: ignore[reportPrivateUsage]
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
         _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
+        _tool_search_namespace_for_synthesis,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -4921,110 +4919,6 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
     # Dict with `paths` present but of a non-list type.
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
         _normalize_tool_search_args({'paths': 'not a list'})
-
-
-# --- `_apply_client_tool_search_for_deferred_capability_tools` branch coverage ---
-#
-# The helper switches OpenAI's hosted `tool_search` to client execution when any
-# capability-owned tool is registered with the deferred marker. The happy path
-# (single hosted `tool_search` to flip, no custom `search_fn`) is covered by the
-# e2e `test_openai_deferred_capability_tool_reveal_uses_client_tool_search`. The
-# tests below cover the remaining input-shape branches.
-
-
-@pytest.fixture
-def capability_marked_tool_def() -> ToolDefinition:
-    """A `ToolDefinition` shaped like one emitted by `CapabilityOwnedToolset` for a
-    `defer_loading=True` capability — `with_native='tool_search'` plus the metadata
-    marker that signals the deferred-capability tool-search switch."""
-    return ToolDefinition(
-        name='lookup_refund_policy',
-        description='Revealed by a deferred capability.',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-        with_native='tool_search',
-        metadata={DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True},
-    )
-
-
-def test_apply_client_tool_search_skips_non_matching_entries_in_tools_list(
-    capability_marked_tool_def: ToolDefinition,
-) -> None:
-    """Line 4347 (`continue`): the loop must skip past tools that aren't a hosted
-    `tool_search` dict needing conversion — both unrelated entries and a
-    `tool_search` already at `execution='client'` (the second-request state on a
-    multi-turn run) — and convert the first applicable entry it finds."""
-    pytest.importorskip('openai')
-
-    params = ModelRequestParameters(function_tools=[capability_marked_tool_def])
-    tools: list[Any] = [
-        {'type': 'web_search'},
-        {'type': 'tool_search', 'execution': 'client', 'description': 'already client'},
-        {'type': 'tool_search', 'execution': 'auto'},
-    ]
-
-    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
-
-    # The skipped entries (indices 0 and 1) are preserved verbatim and only the
-    # auto-executed `tool_search` at index 2 flips to client mode.
-    converted_indices = [
-        i for i, tool in enumerate(tools) if tool.get('description') == _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
-    ]
-    assert converted_indices == [2]
-
-
-def test_apply_client_tool_search_reuses_custom_search_tool_definition_schema(
-    capability_marked_tool_def: ToolDefinition,
-) -> None:
-    """Lines 4358-4359: when the user configured a custom `search_fn`,
-    `ToolSearchToolset` leaves `search_tools` in `function_tools` with the
-    author's own schema and description. The client-mode `tool_search` we emit
-    must surface *those*, not the default `{queries: array<string>}` shape."""
-    pytest.importorskip('openai')
-
-    custom_schema = {
-        'type': 'object',
-        'properties': {
-            'queries': {'type': 'array', 'items': {'type': 'string'}},
-            'top_k': {'type': 'integer', 'description': 'Max results to return.'},
-        },
-        'required': ['queries'],
-    }
-    search_tool_def = ToolDefinition(
-        name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
-        description='Custom keyword search across the refund tool corpus.',
-        parameters_json_schema=custom_schema,
-    )
-    params = ModelRequestParameters(function_tools=[search_tool_def, capability_marked_tool_def])
-    tools: list[Any] = [{'type': 'tool_search', 'execution': 'auto'}]
-
-    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
-
-    assert tools == [
-        {
-            'type': 'tool_search',
-            'execution': 'client',
-            'description': 'Custom keyword search across the refund tool corpus.',
-            'parameters': {**custom_schema, 'additionalProperties': False},
-        }
-    ]
-
-
-def test_apply_client_tool_search_no_op_when_tools_list_has_no_hosted_tool_search(
-    capability_marked_tool_def: ToolDefinition,
-) -> None:
-    """Line 4345 -> exit: the deferred-capability marker is present but the
-    rendered `tools` list contains no hosted `tool_search` entry (e.g. a
-    downstream caller already stripped or replaced it). The helper should
-    iterate to completion without mutating anything."""
-    pytest.importorskip('openai')
-
-    params = ModelRequestParameters(function_tools=[capability_marked_tool_def])
-    tools: list[Any] = [{'type': 'web_search'}, {'type': 'file_search'}]
-    snapshot_before = [dict(t) for t in tools]
-
-    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
-
-    assert tools == snapshot_before
 
 
 # --- Cross-provider local→native promotion ---

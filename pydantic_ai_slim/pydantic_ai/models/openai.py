@@ -17,7 +17,6 @@ from pydantic_core import to_json
 from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
@@ -2203,7 +2202,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
-        _apply_client_tool_search_for_deferred_capability_tools(tools, model_request_parameters)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -2850,7 +2848,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and (ns := item.provider_details.get('namespace'))
                             ):
                                 param['namespace'] = ns
-                            elif synthesized_ns := _deferred_capability_tool_name_for_namespace_synthesis(
+                            elif synthesized_ns := _tool_search_namespace_for_synthesis(
                                 item.tool_name, model_request_parameters
                             ):
                                 # Cross-provider replay: prior turn ran on a non-OpenAI
@@ -4304,25 +4302,24 @@ def _map_code_interpreter_tool_call(
     )
 
 
-def _deferred_capability_tool_name_for_namespace_synthesis(
+def _tool_search_namespace_for_synthesis(
     tool_name: str, model_request_parameters: ModelRequestParameters
 ) -> str | None:
-    """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`."""
-    # OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI
-    # history lacks that field, but OpenAI rejects replayed tool-search-loaded
-    # function calls without a namespace (even when tool_search ran client-side).
-    # For the flat deferred function tools this adapter emits, OpenAI-generated
-    # calls use `namespace == tool_name` — verified by live probe against a
-    # capability owning multiple deferred tools. Scoped to the capability-owned
-    # tool-search corpus so unrelated functions (and any future `NamespaceTool`
-    # wrapper) stay out of this fallback.
+    """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
+
+    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history
+    lacks that field, but OpenAI rejects replayed tool-search-discovered function calls
+    without a namespace (even when tool_search ran client-side). For the flat deferred
+    function tools this adapter emits, OpenAI-generated calls use `namespace == tool_name`
+    — verified by live probe against a capability owning multiple deferred tools. Scoped
+    to the tool-search corpus (any function tool with `with_native='tool_search'`) so
+    unrelated functions and any future `NamespaceTool` wrapper stay out of this fallback —
+    gating on `with_native` rather than a capability-only marker because plain
+    `defer_loading=True` tools without a capability owner also flow through tool-search
+    and need the same namespace round-trip on cross-provider replay.
+    """
     for tool in model_request_parameters.function_tools:
-        if (
-            tool.name == tool_name
-            and tool.with_native == ToolSearchTool.kind
-            and tool.metadata is not None
-            and tool.metadata.get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-        ):
+        if tool.name == tool_name and tool.with_native == ToolSearchTool.kind:
             return tool_name
     return None
 
@@ -4356,47 +4353,6 @@ def _find_search_tool_definition(
         (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),
         None,
     )
-
-
-def _apply_client_tool_search_for_deferred_capability_tools(
-    tools: list[responses.ToolParam],
-    model_request_parameters: ModelRequestParameters,
-) -> None:
-    """Switch hosted OpenAI `tool_search` to client execution when capability-owned tools can be revealed."""
-    needs_client_tool_search = any(
-        t.with_native == ToolSearchTool.kind
-        and t.metadata is not None
-        and t.metadata.get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
-        for t in model_request_parameters.function_tools
-    )
-    if not needs_client_tool_search:
-        return
-
-    for i, tool in enumerate(tools):
-        if not (isinstance(tool, dict) and tool.get('type') == 'tool_search' and tool.get('execution') != 'client'):
-            continue
-
-        search_tool_def = _find_search_tool_definition(model_request_parameters)
-        if search_tool_def is None:
-            parameters: dict[str, Any] = {
-                'type': 'object',
-                'properties': {'queries': {'type': 'array', 'items': {'type': 'string'}}},
-                'required': ['queries'],
-            }
-            description = _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
-        else:
-            parameters = dict(search_tool_def.parameters_json_schema)
-            description = search_tool_def.description or _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
-        parameters.setdefault('additionalProperties', False)
-
-        tool_search_param: ToolSearchToolParam = {
-            'type': 'tool_search',
-            'execution': 'client',
-            'description': description,
-            'parameters': parameters,
-        }
-        tools[i] = tool_search_param
-        return
 
 
 def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:

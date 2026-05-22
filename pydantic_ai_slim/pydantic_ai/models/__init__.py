@@ -949,11 +949,41 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
+        # Detect the capability-gated tool-search case: any function tool in the search
+        # corpus that's owned by a capability means provider-side search would bypass
+        # capability gating and reveal not-yet-loaded tools. We respond by promoting
+        # `ToolSearchTool(strategy=None)` to `'custom'` (both adapters wire that as client-
+        # executed) and keeping the local `search_tools` function tool on the wire (rule 1
+        # below skips dropping it when promotion fires). Named-native strategies have no
+        # local equivalent — fail loudly instead of substituting the keyword algorithm.
+        capability_gates_search = any(
+            t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in params.function_tools
+        )
+        if capability_gates_search:
+            for i, t in enumerate(supported_natives):
+                if not isinstance(t, ToolSearchTool):
+                    continue
+                if t.strategy in ('bm25', 'regex'):
+                    raise UserError(
+                        f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                        "capabilities. Named-native strategies run server-side, where the provider can't "
+                        "honor capability gating and would reveal tools whose owning capability hasn't "
+                        'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                        "deferred capability is present), `strategy='keywords'`, or a custom callable."
+                    )
+                if t.strategy is None:
+                    supported_natives[i] = replace(t, strategy='custom')
+                break
+
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported.
+            # Rule 1: drop local fallback when the native tool is supported — except for
+            # `search_tools` when capability gating forced client-executed promotion above,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
             if t.unless_native and t.unless_native in supported_ids:
-                continue
+                if not (capability_gates_search and t.unless_native == ToolSearchTool.kind):
+                    continue
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
             if t.with_native and t.with_native not in supported_ids and t.defer_loading:
                 continue

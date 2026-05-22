@@ -3725,8 +3725,8 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert result.output == snapshot('done')
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('hidden_tool', True)],
-            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
+            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
         ]
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
@@ -10572,9 +10572,9 @@ async def test_prefix_tools_can_be_deferred():
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('billing_lookup_refund_policy', True)],
-            [('load_capability', False), ('billing_lookup_refund_policy', False)],
-            [('load_capability', False), ('billing_lookup_refund_policy', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
         ]
     )
 
@@ -20379,9 +20379,9 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('lookup_refund_policy', True)],
-            [('load_capability', False), ('lookup_refund_policy', False)],
-            [('load_capability', False), ('lookup_refund_policy', False)],
+            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
         ]
     )
 
