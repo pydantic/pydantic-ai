@@ -3142,7 +3142,10 @@ async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict
             seen_tools.append(ctx.tools)
             return request_context
 
-    agent = Agent(FunctionModel(lambda *_: make_text_response('done')), capabilities=[refunds, CaptureCtxToolsCap()])
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, CaptureCtxToolsCap()])
     await agent.run('hi')
 
     [tools] = seen_tools
