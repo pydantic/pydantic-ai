@@ -388,6 +388,58 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
     )
 
 
+async def test_xai_tool_call_attaches_to_preceding_reasoning_message(allow_model_requests: None):
+    """ToolCallPart after ThinkingPart must land on the same assistant message, not a new one.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5329.
+    Before the fix, _append_tool_call only merged onto messages[-1] when
+    messages[-1].tool_calls was truthy.  A reasoning message has an empty
+    tool_calls list, so the condition evaluated to False and a brand-new
+    assistant message was created for the tool call — orphaning the
+    reasoning_content from the tool calls it produced.
+    """
+    response1 = create_response(
+        reasoning_content='let me think',
+        tool_calls=[create_tool_call('call_a', 'tool_a', {})],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    result = await agent.run('Run tool')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+
+    # There must be exactly ONE assistant message that carries both
+    # reasoning_content and tool_calls (not two separate messages).
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    reasoning_msgs = [m for m in assistant_msgs if m.get('reasoning_content')]
+    tool_call_msgs = [m for m in assistant_msgs if m.get('tool_calls')]
+
+    assert len(reasoning_msgs) == 1, (
+        f'Expected 1 assistant message with reasoning, got {len(reasoning_msgs)}'
+    )
+    assert len(tool_call_msgs) == 1, (
+        f'Expected 1 assistant message with tool calls, got {len(tool_call_msgs)}'
+    )
+    assert reasoning_msgs[0] is tool_call_msgs[0], (
+        'reasoning_content and tool_calls must be on the same assistant message'
+    )
+
+
 async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_requests: None):
     response = create_response(
         content='done',
