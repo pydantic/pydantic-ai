@@ -318,7 +318,6 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 settings = GoogleModelSettings(
     temperature=0.2,
     max_tokens=1024,
-    google_thinking_config={'thinking_level': 'low'},
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -333,33 +332,29 @@ agent = Agent(model, model_settings=settings)
 
 ### Configure thinking
 
-Gemini 3 models use `thinking_level` to control thinking behavior:
+Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent('google:gemini-3.5-flash', capabilities=[Thinking(effort='medium')])
+...
+```
+
+For advanced usage, you can pass Google's native thinking config through [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config]:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-# Set thinking level for Gemini 3 models
-model_settings = GoogleModelSettings(google_thinking_config={'thinking_level': 'low'})  # 'low' or 'high'
-model = GoogleModel('gemini-3-flash-preview')
+model = GoogleModel('gemini-3.5-flash')
+model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
 agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
-For older models (pre-Gemini 3), you can use `thinking_budget` instead:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-
-# Disable thinking on older models by setting budget to 0
-model_settings = GoogleModelSettings(google_thinking_config={'thinking_budget': 0})
-model = GoogleModel('gemini-2.5-flash')  # Older model
-agent = Agent(model, model_settings=model_settings)
-...
-```
-
-Check out the [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for more on thinking.
+See [Thinking](../thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
 
@@ -421,7 +416,7 @@ See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reason
 !!! warning "Cancellation limitations"
     The `google-genai` SDK exposes streaming responses only as an async iterator, with no separate handle for closing the underlying HTTP transport. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
 
-    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] and call `cancel()` from the same task that's iterating:
+    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response] and call `cancel()` from the same task that's iterating:
 
     ```python {title="cancel_google.py" test="skip"}
     from pydantic_ai import Agent

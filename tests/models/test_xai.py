@@ -449,9 +449,9 @@ async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_reques
                             },
                         ],
                     },
-                    {'content': [{'text': 'tool_a'}], 'role': 'ROLE_TOOL'},
-                    {'content': [{'text': 'tool_c'}], 'role': 'ROLE_TOOL'},
-                    {'content': [{'text': 'tool_b'}], 'role': 'ROLE_TOOL'},
+                    {'content': [{'text': 'tool_a'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_a'},
+                    {'content': [{'text': 'tool_c'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_c'},
+                    {'content': [{'text': 'tool_b'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_b'},
                 ],
                 'tools': None,
                 'tool_choice': None,
@@ -527,14 +527,17 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
                     {
                         'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_a',
                     },
                     {
                         'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_c',
                     },
                     {
                         'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_b',
                     },
                 ],
                 'tools': None,
@@ -964,20 +967,19 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name=XAI_NON_REASONING_MODEL,
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                        provider_url='https://api.x.ai/v1',
-                        provider_response_id='grok-123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=2, output_tokens=1),
+                    model_name=XAI_NON_REASONING_MODEL,
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id='grok-123',
+                    finish_reason='stop',
                 )
+            )
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -3294,9 +3296,8 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         assert result.is_complete
         # Ensure the final accumulated response contains the expected ThinkingPart (reasoning + signature).
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                final_response = response
+        async for response in result.stream_response(debounce_by=None):
+            final_response = response
         assert final_response is not None
         assert any(
             isinstance(p, ThinkingPart) and p.content == '...' and p.signature == 'sig' and p.provider_name == 'xai'
@@ -4517,8 +4518,8 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4562,8 +4563,8 @@ async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4594,8 +4595,8 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4646,8 +4647,8 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4682,8 +4683,8 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None

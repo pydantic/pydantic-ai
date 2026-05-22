@@ -120,8 +120,18 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
-"""Lifecycle state of a model response."""
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+"""Lifecycle state of a model response.
+
+- `'complete'`: the response has been fully received from the model.
+- `'incomplete'`: the response is still being streamed and may receive more parts.
+  Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
+  while iteration is in flight.
+- `'interrupted'`: streaming was explicitly stopped via
+  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  finished generating.
+"""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -2129,7 +2139,7 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response."""
+    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
     @property
     def text(self) -> str | None:
@@ -2348,6 +2358,7 @@ class ModelResponse:
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
+
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')

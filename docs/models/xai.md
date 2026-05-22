@@ -75,13 +75,13 @@ agent = Agent(model)
 
 ## X Search
 
-xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.models.xai.XSearch] capability, which configures the underlying `x_search` native tool and can be passed alongside any other capabilities on the agent. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
+xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).
 
 ```py {title="xai_x_search.py"}
 from datetime import datetime
 
 from pydantic_ai import Agent
-from pydantic_ai.models.xai import XSearch
+from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
     'xai:grok-4-1-fast',
@@ -121,7 +121,7 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
 !!! warning "Cancellation limitations"
     The `xai-sdk` SDK exposes streaming responses only as an async iterator, with no separate handle for cancelling the underlying gRPC call. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
 
-    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] and call `cancel()` from the same task that's iterating:
+    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response] and call `cancel()` from the same task that's iterating:
 
     ```python {title="cancel_xai.py" test="skip"}
     from pydantic_ai import Agent
