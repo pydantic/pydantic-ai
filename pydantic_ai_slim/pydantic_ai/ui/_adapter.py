@@ -19,7 +19,7 @@ from typing import (
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
-from typing_extensions import Self, TypeVar
+from typing_extensions import Self, TypeVar, assert_never
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._tool_search import NativeToolSearchReturnPart, ToolSearchReturnPart
@@ -369,7 +369,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 # Otherwise drop the final response entirely so we don't leave an empty
                 # `ModelResponse(parts=[])` in history.
             else:
-                sanitized.append(message)
+                assert_never(message)
 
         if stripped_system_prompt:
             warnings.warn(
