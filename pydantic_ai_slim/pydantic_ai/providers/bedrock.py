@@ -166,9 +166,10 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
-    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    # These Opus models support structured output on the direct Anthropic API but are not listed
+    # in the Bedrock Runtime structured-output docs:
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7')
     downstream = anthropic_model_profile(model_name)
     # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
     # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
