@@ -385,6 +385,18 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
+    """Fill in framework-tracked metadata (`timestamp`, `run_id`, `conversation_id`) that's still unset.
+
+    Producer-supplied values are preserved; only unset fields are filled in. Centralizing the field
+    list here means a new framework-tracked field only needs to be handled in one place, rather than
+    every site that materializes a message into the history.
+    """
+    message.timestamp = message.timestamp or now_utc()
+    message.run_id = message.run_id or run_id
+    message.conversation_id = message.conversation_id or conversation_id
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart

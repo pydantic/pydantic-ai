@@ -117,6 +117,11 @@ agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[hooks])
 
 All hooks receive [`RunContext`][pydantic_ai.tools.RunContext], which provides access to the running agent via [`ctx.agent`][pydantic_ai.tools.RunContext.agent] — useful for logging, metrics, and other cross-cutting concerns that need to identify which agent is running.
 
+Hooks can also push follow-up messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful for capability
+authors that need to surface an event to the model mid-run without rebuilding the
+cached system prompt. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run).
+
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
 
 ### Provider-adaptive tools

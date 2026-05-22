@@ -17,6 +17,7 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -214,7 +215,20 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
-        return self._task_to_node(task)
+        node = self._task_to_node(task)
+        if isinstance(node, End) and self._graph_run.state.pending_messages:
+            # `asap` messages drain in `before_model_request` (which fires either way), but
+            # `when_idle` messages and end-of-run redirects drain in `after_node_run`, which
+            # bare iteration skips. Reaching `End` with a non-empty queue means those were
+            # stranded — fail loudly rather than silently dropping the messages.
+            raise exceptions.UndrainedPendingMessagesError(
+                'The agent run ended with undrained pending messages enqueued via `enqueue`. '
+                'Bare `async for node in agent_run` does not drain `when_idle` messages or '
+                'end-of-run redirects, because they fire in `after_node_run`, which bare iteration '
+                'skips. Use `agent_run.next(node)` to advance the run, or `agent.run()` which drives '
+                'via `next()` automatically.'
+            )
+        return node
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -406,6 +420,49 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def conversation_id(self) -> str:
         """The unique identifier for the conversation this run belongs to."""
         return self._graph_run.state.conversation_id
+
+    @property
+    def pending_messages(self) -> list[PendingMessage]:
+        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        """
+        return self._graph_run.state.pending_messages
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Designed to be called from the same event loop driving `agent.iter()`. If
+        you're forwarding events from a different thread (e.g. a webhook handler
+        running on its own loop or thread), marshal the call back onto the agent's
+        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
+        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
+        atomic against concurrent appends from a different thread.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
+                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
+                [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
+                part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+                [`ModelResponse`][pydantic_ai.messages.ModelResponse] is kept as its own message. The
+                assembled sequence must end in a request. Calling with no positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+        """
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return
+        self._graph_run.state.pending_messages.append(pending)
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

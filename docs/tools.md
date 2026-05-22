@@ -375,6 +375,14 @@ _(This example is complete, it can be run "as is")_
 
     This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
+## Injecting Follow-up Messages from a Tool
+
+A tool can push extra messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful when a tool wants
+to add follow-up context, redirect the agent's plan, or surface an event the model
+should react to. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run)
+for the full pattern.
+
 ## See Also
 
 For more tool features and integrations, see:

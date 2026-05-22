@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
@@ -28,7 +28,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
@@ -151,6 +151,9 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
+    """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
+    for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -927,14 +930,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        if messages[-1].timestamp is None:
-            messages[-1].timestamp = now_utc()
-
-        if messages and messages[-1].run_id is None:
-            messages[-1].run_id = ctx.state.run_id
-        if messages and messages[-1].conversation_id is None:
-            messages[-1].conversation_id = ctx.state.conversation_id
+        # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
+        fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -991,8 +988,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -1044,8 +1040,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
@@ -1458,6 +1453,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

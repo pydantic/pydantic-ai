@@ -65,3 +65,28 @@ Good uses:
 - removing PII before provider calls
 - summarizing old messages
 - applying app-specific history policies
+
+## Inject Messages Mid-Run
+
+Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
+
+`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`).
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('anthropic:claude-opus-4-7')
+
+
+@agent.tool
+def trigger_alert(ctx: RunContext[None]) -> str:
+    ctx.enqueue('Alert: production is degraded, prioritize triage.')
+    return 'alert raised'
+```
+
+A `priority` controls delivery:
+
+- `'asap'` (default): delivered at the earliest opportunity — added to the next model request, or, if the agent would otherwise terminate, used to redirect the run into one more request. This is "steering" an in-flight agent.
+- `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
+
+`'when_idle'` redirects need `agent.run()` or explicit `AgentRun.next()` driving; they aren't drained inside a bare `async for node in agent_run:` loop. See [message history docs](https://ai.pydantic.dev/message-history/#injecting-messages-mid-run) for details.
