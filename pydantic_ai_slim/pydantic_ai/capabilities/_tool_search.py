@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .._run_context import AgentDepsT, RunContext
+from .._tool_search import REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY
 from ..messages import (
     ModelRequest,
     ModelResponse,
@@ -245,6 +246,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                             ]
                         },
                         tool_call_id=call_id,
+                        metadata={REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY: True},
                     ),
                 ]
             )

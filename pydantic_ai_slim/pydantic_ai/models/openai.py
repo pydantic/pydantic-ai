@@ -21,6 +21,7 @@ from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
+from .._tool_search import REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY
 from .._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
@@ -2200,6 +2201,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        _apply_client_tool_search_replay(tools, messages, model_request_parameters)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -2700,9 +2702,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
         # pair them with the builtin and unlock the discovered tools. The current
         # request's builtin configuration is the source of truth: a `ToolCallPart` for
-        # `search_tools` originating from this provider (`provider_name == self.system`)
-        # belongs in the client-execution flow whenever a custom-callable tool search is
-        # active.
+        # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
 
@@ -4317,6 +4317,49 @@ def _find_search_tool_definition(
         (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),
         None,
     )
+
+
+def _apply_client_tool_search_replay(
+    tools: list[responses.ToolParam],
+    messages: list[ModelRequest | ModelResponse],
+    model_request_parameters: ModelRequestParameters,
+) -> None:
+    """Switch hosted OpenAI `tool_search` to client execution when replay requires it."""
+    has_marked_replay = any(
+        part.metadata is not None and part.metadata.get(REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY) is True
+        for message in reversed(messages)
+        if isinstance(message, ModelRequest)
+        for part in reversed(message.parts)
+        if isinstance(part, ToolSearchReturnPart)
+    )
+    if not has_marked_replay:
+        return
+
+    for i, tool in enumerate(tools):
+        if not (isinstance(tool, dict) and tool.get('type') == 'tool_search' and tool.get('execution') != 'client'):
+            continue
+
+        search_tool_def = _find_search_tool_definition(model_request_parameters)
+        if search_tool_def is None:
+            parameters: dict[str, Any] = {
+                'type': 'object',
+                'properties': {'queries': {'type': 'array', 'items': {'type': 'string'}}},
+                'required': ['queries'],
+            }
+            description = None
+        else:
+            parameters = dict(search_tool_def.parameters_json_schema)
+            description = search_tool_def.description
+        parameters.setdefault('additionalProperties', False)
+
+        tool_search_param: ToolSearchToolParam = {
+            'type': 'tool_search',
+            'execution': 'client',
+            'description': description,
+            'parameters': parameters,
+        }
+        tools[i] = tool_search_param
+        return
 
 
 def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:

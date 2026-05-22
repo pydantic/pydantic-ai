@@ -26,6 +26,7 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
+    REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY,
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
@@ -111,6 +112,7 @@ with try_import() as anthropic_available:
 with try_import() as openai_available:
     from openai.types.responses import (
         FunctionTool,
+        ResponseFunctionToolCall,
         ResponseFunctionToolCallParam,
         ResponseOutputMessage,
         ResponseOutputText,
@@ -2117,6 +2119,87 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
     # No envelope marker any more: replay derives intent from the current request's
     # builtin configuration + a `provider_name` match against `self.system`.
     assert part.provider_details is None
+
+
+async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(allow_model_requests: None):
+    """A `load_capability` reveal synthesizes marked client-executed tool-search history.
+
+    OpenAI requires the current request's top-level `tool_search` registration to be
+    client-executed for that replay shape; the marker keeps that decision at the
+    tool-search boundary rather than making the OpenAI adapter inspect capabilities.
+    """
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset[None]()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        instructions='Use the refund policy tool before answering refund questions.',
+        defer_loading=True,
+        toolset=refunds_toolset,
+    )
+    responses = [
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id='fc_load',
+                    arguments='{"id":"refunds"}',
+                    call_id='call_load',
+                    name=LOAD_CAPABILITY_TOOL_NAME,
+                    status='completed',
+                    type='function_call',
+                )
+            ]
+        ),
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_done',
+                    content=[ResponseOutputText(text='Loaded.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(responses)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    result = await agent.run('Can I get a refund on order-123?')
+
+    assert result.output == 'Loaded.'
+    assert any(
+        isinstance(part, ToolSearchReturnPart)
+        and part.metadata is not None
+        and part.metadata.get(REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY) is True
+        for message in result.all_messages()
+        for part in message.parts
+    )
+    [first_request, second_request] = get_mock_responses_kwargs(mock_client)
+    [first_tool_search] = [
+        tool for tool in cast(list[dict[str, Any]], first_request['tools']) if tool['type'] == 'tool_search'
+    ]
+    assert first_tool_search == {'type': 'tool_search'}
+
+    [second_tool_search] = [
+        tool for tool in cast(list[dict[str, Any]], second_request['tools']) if tool['type'] == 'tool_search'
+    ]
+    assert second_tool_search['execution'] == 'client'
+    assert cast(dict[str, Any], second_tool_search['parameters'])['required'] == ['queries']
+
+    second_input = cast(list[dict[str, Any]], second_request['input'])
+    replay_calls = [item for item in second_input if item.get('type') == 'tool_search_call']
+    replay_outputs = [item for item in second_input if item.get('type') == 'tool_search_output']
+    assert replay_calls and all(item.get('execution') == 'client' for item in replay_calls)
+    assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
 
 
 async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
@@ -4649,18 +4732,11 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
 
 async def test_openai_promotes_local_search_history_with_default_native_strategy() -> None:
     """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
-    into OpenAI's native tool_search wire when the current turn is the default
-    server-executed strategy (`ToolSearchTool()` / `strategy=None`).
+    into OpenAI's client-executed tool-search replay items when tool-search replay is active.
 
     The wire shape uses `tool_search_call` + `tool_search_output` items with
-    `execution='client'` per empirical research — even though the current turn is
-    server-executed, the historical replay must use `execution='client'` because
-    the prior turn was framework-executed locally and OpenAI accepts `'client'` as
-    the historical-replay shape regardless of the current turn's mode.
-
-    Currently fails because both `_get_tools` and the `_map_messages` replay
-    branches are gated on `_has_custom_tool_search` (i.e. `strategy='custom'` on
-    the active builtin), so the default-native case never activates the promotion.
+    `execution='client'`; request-building decides when that replay shape also requires
+    the current top-level OpenAI `tool_search` registration to use client execution.
     """
     pytest.importorskip('openai')
 

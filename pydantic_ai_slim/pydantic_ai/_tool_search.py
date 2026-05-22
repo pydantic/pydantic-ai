@@ -23,7 +23,7 @@ accessible across provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
 import pydantic_core
@@ -60,6 +60,9 @@ Shared by the local-fallback toolset's `_empty_return` and the Anthropic adapter
 custom-callable empty-results path (where wire-time filtering left
 `tool_result.content=[]`, which Anthropic rejects, so we send a single text block instead).
 """
+
+REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY = 'pydantic_ai_requires_client_tool_search'
+"""Metadata key used on synthetic local tool-search returns that need client-executed native replay."""
 
 
 class ToolSearchMatch(TypedDict):
@@ -343,6 +346,9 @@ class ToolSearchReturnPart(ToolReturnPart):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data accessible by the application but not sent to the LLM."""
 
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
