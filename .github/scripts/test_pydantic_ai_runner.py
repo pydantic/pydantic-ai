@@ -1075,7 +1075,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch):
     monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = asyncio.run(shim._run_with_timeout('p', object(), 'lbl', object(), [], 'sess-test'))  # type: ignore[arg-type]
+        rc = asyncio.run(shim._run_with_timeout('p', object(), 'lbl', object(), [], 'sess-test'))
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
