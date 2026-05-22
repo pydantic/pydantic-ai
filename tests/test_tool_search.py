@@ -26,7 +26,6 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
-    REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY,
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
@@ -175,39 +174,41 @@ if evals_available():
     class UsedSearchTools(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model used search_tools when expected tools exist."""
 
-        evaluation_name: str | None = field(default='used_search_tools')
-
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             if not ctx.metadata or not ctx.metadata.expected_tools:
                 return True
             return 'search_tools' in ctx.output.tool_calls
 
+        def get_default_evaluation_name(self) -> str:
+            return 'used_search_tools'
+
     @dataclass(repr=False)
     class FoundExpectedTools(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model found and called the expected tools."""
-
-        evaluation_name: str | None = field(default='found_expected_tools')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             if not ctx.metadata or not ctx.metadata.expected_tools:
                 return True
             return all(t in ctx.output.tool_calls for t in ctx.metadata.expected_tools)
 
+        def get_default_evaluation_name(self) -> str:
+            return 'found_expected_tools'
+
     @dataclass(repr=False)
     class ReasonableToolUsage(Evaluator[str, EvalOutput, EvalMetadata]):
         """Check that the model didn't use an excessive number of tool calls."""
 
         max_calls: int = 10
-        evaluation_name: str | None = field(default='reasonable_usage')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
             return len(ctx.output.tool_calls) <= self.max_calls
 
+        def get_default_evaluation_name(self) -> str:
+            return 'reasonable_usage'
+
     @dataclass(repr=False)
     class KeywordCount(Evaluator[str, EvalOutput, EvalMetadata]):
         """Score the number of keywords used in the search query. Best is <= 3."""
-
-        evaluation_name: str | None = field(default='keyword_count')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
             if not ctx.output.search_args:
@@ -215,6 +216,9 @@ if evals_available():
             raw: Any = ctx.output.search_args[0].get('queries')
             queries = cast('list[str]', raw) if isinstance(raw, list) else ([str(raw)] if raw else [])
             return len(' '.join(queries).split())
+
+        def get_default_evaluation_name(self) -> str:
+            return 'keyword_count'
 
 
 # --- Helpers ---
@@ -2122,11 +2126,11 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
 
 
 async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(allow_model_requests: None):
-    """A `load_capability` reveal synthesizes marked client-executed tool-search history.
+    """A `load_capability` reveal synthesizes tool-search history for newly visible tools.
 
     OpenAI requires the current request's top-level `tool_search` registration to be
-    client-executed for that replay shape; the marker keeps that decision at the
-    tool-search boundary rather than making the OpenAI adapter inspect capabilities.
+    client-executed for that replay shape; the adapter derives that from the current
+    request's revealed capability-owned tool definitions.
     """
     pytest.importorskip('openai')
 
@@ -2178,8 +2182,7 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     assert result.output == 'Loaded.'
     assert any(
         isinstance(part, ToolSearchReturnPart)
-        and part.metadata is not None
-        and part.metadata.get(REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY) is True
+        and [match['name'] for match in part.discovered_tools] == ['lookup_refund_policy']
         for message in result.all_messages()
         for part in message.parts
     )

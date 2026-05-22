@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -36,8 +37,8 @@ class MistralProvider(Provider[Mistral]):
         return self._client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
-        return mistral_model_profile(model_name)
+    def model_profile(model_name: str) -> ModelProfile:
+        return replace(mistral_model_profile(model_name) or ModelProfile(), supports_inline_system_prompts=True)
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...

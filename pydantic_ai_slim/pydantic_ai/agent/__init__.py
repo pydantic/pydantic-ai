@@ -53,6 +53,7 @@ from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
+from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -1335,6 +1336,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if instrumentation_settings
             else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
+            pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
         )
@@ -2907,7 +2909,10 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 `PydanticAIDeprecationWarning` raised by `AgentSpec._warn_retry_field_deprecations`.
 """
 
-_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
+    ToolSearchCap,
+    PendingMessageDrainCapability,
+)
 """Infrastructure capabilities auto-injected when not already present."""
 
 

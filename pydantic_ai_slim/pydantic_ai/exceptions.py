@@ -24,6 +24,7 @@ __all__ = (
     'SkipToolValidation',
     'SkipToolExecution',
     'UserError',
+    'UndrainedPendingMessagesError',
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -164,6 +165,17 @@ class UserError(RuntimeError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+class UndrainedPendingMessagesError(UserError):
+    """Error raised when an agent run ends with messages still queued via `enqueue`.
+
+    A bare `async for node in agent_run` loop only drains `'asap'` messages (in
+    `before_model_request`); `'when_idle'` messages and end-of-run redirects drain in
+    `after_node_run`, which bare iteration skips. Reaching the run's `End` with a non-empty
+    queue means those messages were stranded — drive the run with `agent.run()` or
+    `AgentRun.next()` instead.
+    """
 
 
 class AgentRunError(RuntimeError):

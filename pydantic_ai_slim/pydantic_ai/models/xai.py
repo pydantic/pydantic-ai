@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,8 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from .._utils import install_deprecated_kwarg_alias
-from ..capabilities.native_or_local import NativeOrLocalTool
+from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -57,8 +56,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
-from ..tools import AgentDepsT, Tool, ToolDefinition
-from ..toolsets import AbstractToolset
+from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
 
@@ -200,93 +198,6 @@ class XaiModelSettings(ModelSettings, total=False):
     """
 
 
-@dataclass(init=False)
-class XSearch(NativeOrLocalTool[AgentDepsT]):
-    """X (Twitter) search capability for xAI models.
-
-    Uses the xAI model's native x_search builtin tool. Only works with xAI models.
-    """
-
-    allowed_x_handles: list[str] | None
-    """If provided, only posts from these X handles will be included (max 10). Requires builtin support."""
-
-    excluded_x_handles: list[str] | None
-    """If provided, posts from these X handles will be excluded (max 10). Requires builtin support."""
-
-    from_date: datetime | None
-    """If provided, only posts created on or after this datetime will be included."""
-
-    to_date: datetime | None
-    """If provided, only posts created on or before this datetime will be included."""
-
-    enable_image_understanding: bool
-    """Enable image analysis from X posts. Defaults to `False`."""
-
-    enable_video_understanding: bool
-    """Enable video analysis from X content. Defaults to `False`."""
-
-    include_output: bool
-    """Include raw X search results in the response as
-    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Defaults to `False`.
-    """
-
-    def __init__(
-        self,
-        *,
-        native: XSearchTool
-        | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
-        | bool = True,
-        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
-        allowed_x_handles: list[str] | None = None,
-        excluded_x_handles: list[str] | None = None,
-        from_date: datetime | None = None,
-        to_date: datetime | None = None,
-        enable_image_understanding: bool = False,
-        enable_video_understanding: bool = False,
-        include_output: bool = False,
-        id: str | None = None,
-        description: str | None = None,
-        defer_loading: bool = False,
-    ) -> None:
-        self.allowed_x_handles = allowed_x_handles
-        self.excluded_x_handles = excluded_x_handles
-        self.from_date = from_date
-        self.to_date = to_date
-        self.enable_image_understanding = enable_image_understanding
-        self.enable_video_understanding = enable_video_understanding
-        self.include_output = include_output
-        super().__init__(
-            native=native,
-            local=local,
-            id=id,
-            description=description,
-            defer_loading=defer_loading,
-        )
-
-    def _default_native(self) -> XSearchTool:
-        return XSearchTool(
-            allowed_x_handles=self.allowed_x_handles,
-            excluded_x_handles=self.excluded_x_handles,
-            from_date=self.from_date,
-            to_date=self.to_date,
-            enable_image_understanding=self.enable_image_understanding,
-            enable_video_understanding=self.enable_video_understanding,
-            include_output=self.include_output,
-        )
-
-    def _native_unique_id(self) -> str:
-        return XSearchTool.kind
-
-    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        return None
-
-    def _requires_native(self) -> bool:
-        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
-
-
-install_deprecated_kwarg_alias(XSearch, old='builtin', new='native')
-
-
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
 _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
@@ -426,10 +337,10 @@ class XaiModel(Model[AsyncClient]):
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
                     text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text))
+                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                     file_content.extend(files)
                 else:
-                    xai_messages.append(tool_result(part.model_response()))
+                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch

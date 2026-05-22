@@ -61,6 +61,7 @@ custom-callable empty-results path (where wire-time filtering left
 `tool_result.content=[]`, which Anthropic rejects, so we send a single text block instead).
 """
 
+
 class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 
