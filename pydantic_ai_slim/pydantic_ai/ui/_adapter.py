@@ -173,7 +173,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     in client-submitted messages.
 
     Defaults to `{'http', 'https'}`. Parts whose URL scheme is not in this set are
-    dropped with a warning before the messages are passed to the agent.
+    dropped with a warning before the messages are passed to the agent. This applies
+    both to file URLs in user content and to those nested in tool return parts.
 
     Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Google Cloud) cause the model
     provider to fetch the object using the server-side IAM role or service account,
@@ -360,6 +361,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     message.parts,
                     resolved_tool_call_ids=resolved_tool_call_ids,
                     dangling_names=dangling_tool_call_names if index == last_index else None,
+                    disallowed_schemes=disallowed_url_schemes,
                     reset_force_download_values=reset_force_download_values,
                 )
                 if new_response_parts:
@@ -446,10 +448,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
                 # Skip narrower subclasses (`tool_kind` set) — their `content` isn't the recursive
                 # `ToolReturnContent` the walker is built for.
+                keep_content, sanitized_content = self._sanitize_tool_return_content(
+                    part.content, disallowed_schemes, reset_force_download_values
+                )
                 new_parts.append(
                     replace(
                         part,
-                        content=self._sanitize_tool_return_content(part.content, reset_force_download_values),
+                        content=sanitized_content if keep_content else None,
                     )
                 )
             else:
@@ -499,30 +504,47 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     def _sanitize_tool_return_content(
         self,
         content: ToolReturnContent,
+        disallowed_schemes: set[str],
         reset_force_download_values: set[ForceDownloadMode],
-    ) -> ToolReturnContent:
+    ) -> tuple[bool, ToolReturnContent]:
         """Recursively sanitize [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return content.
 
         Tool return content is an arbitrarily nested structure of files, sequences, and mappings,
-        so any `FileUrl` it contains — including those introduced by multimodal tool returns — is
-        walked and has its `force_download` reset the same way file URLs in user content are.
+        so any `FileUrl` it contains — including those introduced by multimodal tool returns — is walked
+        and has its scheme and `force_download` sanitized the same way file URLs in user content are.
 
-        `reset_force_download_values` is updated in place with any reset `force_download` values.
+        `disallowed_schemes` and `reset_force_download_values` are updated in place with any disallowed
+        schemes and reset `force_download` values encountered.
         """
         if isinstance(content, FileUrl):
-            return self._sanitize_file_url(content, reset_force_download_values)
+            scheme = urlparse(content.url).scheme.lower()
+            if scheme and scheme not in self.allowed_file_url_schemes:
+                disallowed_schemes.add(scheme)
+                return False, content
+            return True, self._sanitize_file_url(content, reset_force_download_values)
         # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
         # but resolves to `Any` at type-check time, so pyright can't infer the element types.
         if isinstance(content, Mapping):
             mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
-            return {
-                key: self._sanitize_tool_return_content(value, reset_force_download_values)
-                for key, value in mapping.items()
-            }
+            sanitized_mapping: dict[str, ToolReturnContent] = {}
+            for key, value in mapping.items():
+                keep, sanitized_value = self._sanitize_tool_return_content(
+                    value, disallowed_schemes, reset_force_download_values
+                )
+                if keep:
+                    sanitized_mapping[key] = sanitized_value
+            return True, sanitized_mapping
         if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
             sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
-            return [self._sanitize_tool_return_content(item, reset_force_download_values) for item in sequence]
-        return content
+            sanitized_sequence: list[ToolReturnContent] = []
+            for item in sequence:
+                keep, sanitized_item = self._sanitize_tool_return_content(
+                    item, disallowed_schemes, reset_force_download_values
+                )
+                if keep:
+                    sanitized_sequence.append(sanitized_item)
+            return True, sanitized_sequence
+        return True, content
 
     def _sanitize_response_parts(
         self,
@@ -530,11 +552,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         resolved_tool_call_ids: set[str],
         dangling_names: list[str] | None,
+        disallowed_schemes: set[str],
         reset_force_download_values: set[ForceDownloadMode],
     ) -> list[ModelResponsePart]:
         """Sanitize the parts of a client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
-        Resets non-allowlisted `force_download` values on `FileUrl`s nested in tool return parts.
+        Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on `FileUrl`s
+        nested in tool return parts.
         When `dangling_names` is not `None` (i.e. this is the trailing response), also drops tool
         calls that aren't resolved by `deferred_tool_results`, appending their names to it.
         """
@@ -550,10 +574,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
                 # Skip narrower subclasses (`tool_kind` set) — their `content` isn't the recursive
                 # `ToolReturnContent` the walker is built for.
+                keep_content, sanitized_content = self._sanitize_tool_return_content(
+                    part.content, disallowed_schemes, reset_force_download_values
+                )
                 new_parts.append(
                     replace(
                         part,
-                        content=self._sanitize_tool_return_content(part.content, reset_force_download_values),
+                        content=sanitized_content if keep_content else None,
                     )
                 )
             else:

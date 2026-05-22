@@ -1327,6 +1327,61 @@ def test_sanitize_messages_resets_force_download_in_tool_return_parts():
     assert native_return.content == snapshot(ImageUrl(url='https://example.com/native.png', force_download=False))
 
 
+def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
+    """`FileUrl`s nested in tool return parts are also checked against `allowed_file_url_schemes`."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            ImageUrl(url='s3://bucket/top.png'),
+                            {
+                                'blocked': DocumentUrl(url='gs://bucket/deep.pdf'),
+                                'ok': ImageUrl(url='https://example.com/ok.png'),
+                            },
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=ImageUrl(url='s3://bucket/native.png'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'.*'s3'"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(
+        [
+            'see file',
+            {
+                'ok': ImageUrl(url='https://example.com/ok.png'),
+            },
+        ]
+    )
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content is None
+
+
 def test_sanitize_messages_strips_dangling_tool_calls():
     """A trailing ModelResponse with unresolved ToolCallParts has them dropped with a warning."""
     adapter = _make_dummy_adapter(
