@@ -2422,6 +2422,7 @@ def test_combined_capability_get_model_settings_none():
 
 def test_combined_capability_get_model_settings_deferred():
     """Deferred capability model settings resolve only after the capability is loaded."""
+    seen_dynamic_loaded: list[bool | None] = []
 
     @dataclass
     class StaticSettingsCap(AbstractCapability[None]):
@@ -2432,7 +2433,10 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability[None]):
         def get_model_settings(self) -> Callable[[RunContext[None]], _ModelSettings]:
             def settings(ctx: RunContext[None]) -> _ModelSettings:
-                return _ModelSettings(temperature=0.2)
+                seen_dynamic_loaded.append(ctx.capability_loaded)
+                if ctx.capability_loaded:
+                    return _ModelSettings(temperature=0.2)
+                return _ModelSettings()
 
             return settings
 
@@ -2466,6 +2470,7 @@ def test_combined_capability_get_model_settings_deferred():
             {'max_tokens': 123, 'temperature': 0.2},
         ]
     )
+    assert seen_dynamic_loaded == [True]
 
 
 def test_toolset_capability_get_toolset():
@@ -3917,6 +3922,63 @@ def test_apply_wrapper_capability():
     visited: list[AbstractCapability[None]] = []
     wrapper.apply(visited.append)
     assert visited == [wrapper]
+
+
+def test_apply_wrapper_over_combined_capability():
+    """WrapperCapability.apply() also visits children when the wrapped capability is a container."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    wrapper = WrapperCapability(wrapped=CombinedCapability([cap_a, cap_b]))
+
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
+    assert visited == [wrapper, cap_a, cap_b]
+
+
+async def test_wrapper_over_combined_capability_registers_child_tool_owners():
+    """Child-owned toolsets still resolve capability ids when a wrapper contains a CombinedCapability."""
+    toolset_a = FunctionToolset[None]()
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    toolset_b = FunctionToolset[None]()
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    wrapper = WrapperCapability(
+        wrapped=CombinedCapability(
+            [
+                Toolset(toolset_a, id='a'),
+                Toolset(toolset_b, id='b'),
+            ]
+        )
+    )
+    seen_capability_ids: list[str] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for tool in info.function_tools:
+            assert tool.capability_id is not None
+            seen_capability_ids.append(tool.capability_id)
+        return ModelResponse(parts=[TextPart(','.join(sorted(tool.name for tool in info.function_tools)))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    result = await agent.run('list tools')
+
+    assert result.output == 'tool_a,tool_b'
+    assert sorted(seen_capability_ids) == ['a', 'b']
 
 
 def test_apply_prefix_tools():

@@ -66,6 +66,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
+        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
+        # over a container still needs the container's leaves registered for child-owned hooks
+        # and toolsets to resolve their capability ids.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
+            for capability in wrapped_capabilities:
+                visitor(capability)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

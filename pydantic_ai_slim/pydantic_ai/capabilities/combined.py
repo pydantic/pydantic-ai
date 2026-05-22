@@ -109,7 +109,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
                 ) -> ModelSettings:
                     if capability_id in ctx.available_capability_ids:
-                        return cap_settings(ctx) if callable(cap_settings) else cap_settings
+                        if callable(cap_settings):
+                            return cap_settings(replace(ctx, capability_loaded=True))
+                        return cap_settings
                     return ModelSettings()
 
                 settings_chain.append(deferred_settings)
