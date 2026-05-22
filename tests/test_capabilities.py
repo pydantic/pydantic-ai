@@ -1545,6 +1545,13 @@ Supported by:
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
+                    'required': ['XSearch'],
+                    'title': 'spec_XSearch',
+                    'type': 'object',
+                },
                 'spec_params_ReinjectSystemPrompt': {
                     'additionalProperties': False,
                     'properties': {
@@ -1571,13 +1578,6 @@ Supported by:
                         },
                     },
                     'title': 'spec_params_Thinking',
-                    'type': 'object',
-                },
-                'spec_XSearch': {
-                    'additionalProperties': False,
-                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
-                    'required': ['XSearch'],
-                    'title': 'spec_XSearch',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -1852,6 +1852,9 @@ Supported by:
                             'title': 'Enable Video Understanding',
                         },
                         'include_output': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Include Output'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'title': 'spec_params_XSearch',
                     'type': 'object',
@@ -10247,8 +10250,13 @@ async def test_prefix_tools_with_callable_toolset():
     assert result.output == 'dyn_dynamic_tool'
 
 
-async def test_prefix_tools_uses_own_metadata_for_registration():
-    """PrefixTools registers the wrapper capability, not wrapped metadata."""
+async def test_prefix_tools_inherits_wrapped_metadata_for_registration():
+    """A wrapper with no id of its own delegates identity to the capability it wraps.
+
+    This is what lets a wrapper sit over a deferred capability without losing its deferral or
+    its place in the load catalog: the wrapper registers under the wrapped capability's id and
+    keeps `defer_loading` and `description`.
+    """
     toolset = FunctionToolset[None]()
     wrapped = Toolset(
         toolset,
@@ -10262,12 +10270,12 @@ async def test_prefix_tools_uses_own_metadata_for_registration():
     cap.apply(visited.append)
     capability_map, available_ids = await _registered_capability_context(cap)
 
-    assert cap.id is None
-    assert cap.description is None
-    assert capability_map == {'prefix_tools': cap}
-    assert 'prefix_tools' in available_ids
-    assert cap.defer_loading is False
-    assert cap.get_description() is None
+    assert cap.id == 'leaf-tools'
+    assert cap.defer_loading is True
+    assert cap.get_description() == 'Leaf tool bundle.'
+    assert capability_map == {'leaf-tools': cap}
+    # Deferred and not yet loaded, so it is registered but not available this turn.
+    assert 'leaf-tools' not in available_ids
     assert visited == [cap]
 
 
@@ -10294,31 +10302,107 @@ async def test_prefix_tools_can_override_metadata():
     assert visited == [cap]
 
 
-async def test_prefix_tools_registration_matches_wrapper_metadata_cases():
-    """Wrappers register themselves with their own metadata."""
+async def test_prefix_tools_registration_inherits_or_overrides_wrapper_metadata():
+    """A wrapper inherits the wrapped capability's identity, unless it sets its own id."""
 
     github = Capability[None](
         id='github',
         description='GitHub MCP server.',
         defer_loading=True,
     )
+
+    # No id of its own: inherit the wrapped capability's id, deferral, and description, so the
+    # deferred capability still shows up in the load catalog under its own id.
     prefixed = PrefixTools(github, prefix='github')
 
     registered, available_ids = await _registered_capability_context(prefixed)
 
-    assert registered['prefix_tools'] is prefixed
-    assert 'prefix_tools' in available_ids
-    assert prefixed.id is None
-    assert prefixed.defer_loading is False
-    assert prefixed.get_description() is None
+    assert registered['github'] is prefixed
+    assert 'github' not in available_ids
+    assert prefixed.id == 'github'
+    assert prefixed.defer_loading is True
+    assert prefixed.get_description() == 'GitHub MCP server.'
 
+    # An explicit id makes the wrapper its own capability: it no longer inherits the wrapped
+    # capability's id or deferral, though it still falls back to its description.
     explicit_id = PrefixTools(github, prefix='github', id='github_prefixed')
     registered, available_ids = await _registered_capability_context(explicit_id)
 
     assert registered['github_prefixed'] is explicit_id
     assert 'github_prefixed' in available_ids
     assert explicit_id.defer_loading is False
-    assert explicit_id.get_description() is None
+    assert explicit_id.get_description() == 'GitHub MCP server.'
+
+
+async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() -> None:
+    """Wrapping a deferred capability keeps it deferred through a full run.
+
+    Regression guard for metadata delegation: a wrapper with no id of its own must surface the
+    wrapped deferred capability in the load catalog and reveal its (prefixed) tools after
+    `load_capability`, rather than silently becoming an always-available capability.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+    wrapped = PrefixTools(refunds, prefix='refunds')
+
+    first_request_instructions: list[str | None] = []
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            first_request = messages[0]
+            assert isinstance(first_request, ModelRequest)
+            first_request_instructions.append(first_request.instructions)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        if not any(part.tool_name == 'refunds_lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='refunds_lookup_refund_policy',
+                        args={'order_id': 'order-1'},
+                        tool_call_id='lookup',
+                    )
+                ]
+            )
+
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[wrapped])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    # The deferred capability is surfaced in the catalog under the wrapped capability's id.
+    assert first_request_instructions == [
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- refunds: Refund policy tools.'
+    ]
+    # The prefixed tool is hidden until the capability is loaded, then becomes callable.
+    assert 'refunds_lookup_refund_policy' not in available_per_turn[0]
+    assert 'refunds_lookup_refund_policy' in available_per_turn[-1]
 
     explicit_deferred = PrefixTools(
         Capability[None](),

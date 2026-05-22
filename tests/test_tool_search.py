@@ -2392,18 +2392,18 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
     )
     assert asdict(anthropic_result.usage) == snapshot(
         {
-            'input_tokens': 2877,
-            'cache_write_tokens': 1072,
-            'cache_read_tokens': 0,
-            'output_tokens': 227,
+            'input_tokens': 3055,
+            'cache_write_tokens': 1154,
+            'cache_read_tokens': 1069,
+            'output_tokens': 251,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {
-                'input_tokens': 1805,
-                'output_tokens': 227,
-                'cache_creation_input_tokens': 1072,
-                'cache_read_input_tokens': 0,
+                'input_tokens': 832,
+                'output_tokens': 251,
+                'cache_creation_input_tokens': 1154,
+                'cache_read_input_tokens': 1069,
             },
             'requests': 3,
             'tool_calls': 2,
@@ -2449,9 +2449,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         ]
     )
     assert google_result.output == snapshot("""\
-For order-456, the policy is the same: a refund is allowed within 30 days of the purchase. \n\
+For order-456, the policy is the same: **a refund is allowed within 30 days** of your purchase.
 
-Are you looking to initiate a refund for this order as well?\
+Is there anything else I can assist you with?\
 """)
 
 

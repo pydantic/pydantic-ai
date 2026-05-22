@@ -23,7 +23,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await self.wrapped.get_tools(ctx)
-        capability_id = _capability_id(ctx, self.capability)
+        capability_id = resolve_capability_id(ctx, self.capability)
         defer_loading = self.capability.defer_loading is True
         result: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in tools.items():
@@ -54,7 +54,13 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
         self.wrapped.apply(visitor)
 
 
-def _capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str:
+def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str:
+    """Recover the run-local id a capability was registered under in `ctx.capabilities`.
+
+    A capability with no explicit `id` is registered under a derived id (see
+    `_build_run_capabilities`), so the resolved id only exists as a registry key — look it up by
+    identity rather than reading `capability.id`.
+    """
     return next(
         capability_id
         for capability_id, registered_capability in ctx.capabilities.items()
