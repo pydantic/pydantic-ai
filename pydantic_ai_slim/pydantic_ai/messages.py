@@ -28,7 +28,6 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
-    from .tools import DeferredToolRequests, DeferredToolResults
 
 # Key used to wrap malformed tool-call arguments so they can still be round-tripped
 # through a model API without crashing.  The specific string 'INVALID_JSON' is the
@@ -2959,6 +2958,15 @@ class OutputToolResultEvent(ToolResultEvent):
 
     event_kind: Literal['output_tool_result'] = 'output_tool_result'
     """Event type identifier, used as a discriminator."""
+
+
+# Deferred tool types live in `_deferred.py` to break the circular import
+# chain (tools → _function_schema → _run_context → messages).  Same late-import
+# pattern as `_tool_search` above.
+from ._deferred import (  # noqa: E402
+    DeferredToolRequests as DeferredToolRequests,
+    DeferredToolResults as DeferredToolResults,
+)
 
 
 @dataclass(repr=False)
