@@ -608,6 +608,8 @@ For more information on how `end_strategy` works with both function tools and ou
 
 Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
+For workflow *bundles* — instructions, tools, model settings, and hooks that travel together — see [on-demand capabilities](capabilities.md#on-demand-capabilities), which build on the same machinery but disclose at the bundle level rather than the individual-tool level.
+
 Reach for it when:
 
 * the agent exposes ~10+ tools or more than ~10k tokens of tool definitions
@@ -626,7 +628,7 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
 
-For standalone deferred tools, OpenAI Responses uses OpenAI's hosted tool search by default. If a run includes tools owned by on-demand capabilities, Pydantic AI registers OpenAI's client-executed tool-search surface from the first request. That keeps later `load_capability` reveals cache-stable; the tradeoff is that the deferred function-tool corpus in that run is searched by Pydantic AI rather than OpenAI's hosted search.
+On OpenAI Responses, runs that include tools owned by [on-demand capabilities](capabilities.md#on-demand-capabilities) trade hosted-search quality for cache stability: deferred function tools are searched by Pydantic AI rather than OpenAI's hosted `tool_search`, so each `load_capability` reveal can keep the prompt-cache prefix warm. Runs with only standalone deferred tools (no on-demand capabilities) keep using OpenAI's hosted search.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 

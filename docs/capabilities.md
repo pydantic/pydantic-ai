@@ -13,21 +13,18 @@ This makes them the primary extension point for Pydantic AI. Whether you're buil
 
 ## On-demand capabilities {#on-demand-capabilities}
 
-By default, every capability you register contributes to the prompt on every turn — its instructions, tool schemas, and model settings all sit in the context window whether the model uses them that turn or not. As the number of registered capabilities grows, so does the per-turn token count, and a larger context also tends to hurt the model's ability to pick the right tool.
+A multi-workflow agent typically carries every workflow's instructions, tool schemas, model settings, and hooks in the context window on every turn — even though any given user request usually needs one. The cost compounds in two ways: input tokens grow linearly with the number of registered capabilities, and tool selection accuracy degrades as the visible tool set gets larger (the same threshold that motivates [tool search](tools-advanced.md#tool-search) — past ~30–50 tools, models start picking the wrong one).
 
-Marking a capability with `defer_loading=True` keeps its instructions, tools, model settings, and hooks out of the context window until the model asks for them. Up front the model only sees a short catalog: `id` and `description` per deferred capability. When the model calls `load_capability(id)`, that capability's contents are added to the context from the next turn onward and stay active for the rest of the run.
+Marking a capability with `defer_loading=True` keeps everything it provides — instructions, function tools, model settings, lifecycle hooks, and native tools — out of the context window until the model asks for it. Up front the model sees only a short catalog: one line per deferred capability. When it calls `load_capability(id)`, that bundle activates and stays active for the rest of the run.
 
-If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), this should feel familiar — a skill is a markdown file the model can pull in on demand. An on-demand capability is the same idea generalised: instead of just instructions, a single `load_capability` call can also activate typed function tools, per-step model settings, and lifecycle hooks for the rest of the run. Skills are effectively the instructions-only special case; see [Skills](#skills) for the side-by-side and a markdown loader.
+What you get from one flag:
 
-If you have a large flat set of tools with no surrounding instructions or hooks, [tool search](tools-advanced.md#tool-search) is the better fit — it discovers individual tools by name rather than loading bundles.
-
-### How it works
-
-1. On the first model request, Pydantic AI sends a small catalog: each on-demand capability's `id` plus its `description` (if set). Its instructions and tools are **not** sent.
-2. When the model needs a capability, it calls the framework-managed `load_capability(id)` tool.
-3. On the next request, that capability's instructions, function tools, model settings, and hooks are all active. Already-loaded capabilities stay loaded for the rest of the run.
-
-`load_capability` is a reserved tool name whenever any on-demand capability is present.
+- **Smaller initial prompt** — instructions, tool schemas, settings, and hooks for unused workflows never enter the context window.
+- **Better tool selection** — the model picks from a small visible toolset until it opts into a workflow, instead of disambiguating across every workflow's tools at once.
+- **Bundle-level loading** — unlike instruction-only skill systems, one `load_capability` call also activates that workflow's typed function tools, per-step model settings, and lifecycle hooks. Instructions-only is the special case, not the whole feature.
+- **No architectural change** — same agent, same run loop, same `capabilities=[...]` argument. Adding `defer_loading=True` to a capability you already register is a one-line change.
+- **Cross-provider** — works on every model. Native progressive-disclosure surfaces (Anthropic tool search, OpenAI Responses `tool_search`) are used automatically where supported; other providers get a local discovery tool with the same context-shrinking benefit.
+- **Resumable** — loaded state is reconstructed from message history, so a conversation persisted to a database can resume days later — or continue on a different model — with the same capabilities already loaded.
 
 ### What you can defer
 
@@ -40,6 +37,21 @@ Every part of a capability bundle defers together as a single unit:
 | Model settings (static or per-step) | No | Merged into the run's settings for subsequent requests |
 | Lifecycle [hooks](#hooking-into-the-lifecycle) | No (do not fire) | Fire on subsequent steps |
 | [Native tools](native-tools.md) | No | Exposed on the next request — see [Cache implications](#cache-implications) |
+
+### When to use it
+
+**Reach for on-demand capabilities when:**
+
+- the agent serves multiple distinct workflows (refunds, returns, fraud review, account security…) where most turns need one
+- a workflow needs *more than instructions* — its own tools, raised reasoning effort, an approval hook — and those should travel together as a unit
+- you want skills-style progressive disclosure but also want the loaded bundle to bring tools and settings, not just a runbook
+
+**Skip it when:**
+
+- the capability is used on most turns — the discovery round-trip costs more than the tokens it saves
+- you have a flat catalog of individually-discoverable tools with no shared instructions — use [tool search](tools-advanced.md#tool-search) instead, which discovers individual tools by name rather than loading bundles
+
+If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), this is the same idea generalised: a skill is a markdown file the model can pull in on demand. An on-demand capability does that *plus* typed function tools, per-step model settings, and lifecycle hooks.
 
 ### Example
 
@@ -72,13 +84,27 @@ result = agent.run_sync('What is the refund status of order ABC-123?')
 print(result.output)
 ```
 
-On the first model call, the model sees `load_capability` plus the catalog entry `{id: 'refunds', description: ...}`. The refund-specific instructions and the `refund_status` schema are **not** sent. When the model calls `load_capability(id='refunds')`, Pydantic AI returns the refund instructions and exposes `refund_status` on the next request.
+On the first turn, the model sees only its base instructions, the framework-managed `load_capability` tool, and a short catalog appended to the instructions:
 
-Each on-demand capability needs a stable, unique [`id`][pydantic_ai.capabilities.AbstractCapability.id] — autogenerated IDs are rejected because they can't be matched against past `load_capability` calls when message history is replayed.
+```
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Use for refund eligibility, refund status, or processing a refund.
+```
 
-### Deferring an existing capability
+That's it — no refund instructions, no `refund_status` schema. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
-`defer_loading=True` is not specific to the [`Capability`][pydantic_ai.capabilities.Capability] convenience class — every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass accepts `id`, `description`, and `defer_loading` on construction. The same flag works on capabilities shipped by Pydantic AI:
+1. **Request 1.** The model sees the catalog above and the user's prompt. It calls `load_capability(id='refunds')`.
+2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result, and registers `refund_status` for the next request.
+3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
+
+Already-loaded capabilities stay loaded for the rest of the run. The model never re-loads a capability it has already opened.
+
+!!! note
+    `load_capability` is a reserved tool name whenever any on-demand capability is present. Capability `id` values must be stable and explicit — see [Resumable across runs](#resumable-across-runs).
+
+### Retrofitting an existing capability
+
+`defer_loading=True` is not specific to the [`Capability`][pydantic_ai.capabilities.Capability] convenience class — every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass accepts `id`, `description`, and `defer_loading` on construction. Adding it to a capability you already register is a one-line change:
 
 ```python {title="defer_existing_capability.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -98,7 +124,30 @@ agent = Agent(
 )
 ```
 
-Until the model loads `analytics-mcp`, none of the MCP server's tool definitions enter the prompt. See [Building custom capabilities](#building-custom-capabilities) for adding `defer_loading` to your own subclass.
+Until the model loads `analytics-mcp`, none of the MCP server's tool definitions enter the prompt. The same flag works on [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`Hooks`][pydantic_ai.capabilities.Hooks], and any custom [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass — see [Building custom capabilities](#building-custom-capabilities) for adding `defer_loading` to your own subclass.
+
+### Resumable across runs {#resumable-across-runs}
+
+Loaded-capability state lives in message history, not in the agent. When a conversation is persisted to a database and resumed later — possibly on a different process, machine, or model — Pydantic AI reconstructs the loaded set from the `load_capability` call/return pairs in history. Capabilities the model loaded earlier stay loaded; capabilities it never loaded stay collapsed in the catalog. No re-discovery round-trip on resume.
+
+This is why deferred capabilities require a stable explicit `id`: history replay matches calls to capabilities by id, so a class-derived id would silently break the moment a class is renamed. The same property makes cross-provider replay work — a run that loaded `refunds` on Anthropic and continued on OpenAI Responses keeps `refunds` loaded after the switch.
+
+### Cross-provider behavior
+
+On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface — Anthropic tool search on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI Responses `tool_search` on GPT-5.4+ — Pydantic AI uses it so the deferred function tools never enter the prompt prefix and capability reveals keep the prompt-cache prefix warm. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
+
+#### Cache implications {#cache-implications}
+
+`load_capability` reveals capability behavior between requests. Whether that breaks the provider's prompt-cache prefix depends on what's revealed:
+
+| What loads | Cache prefix |
+|---|---|
+| Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
+| Function tools on a model with native [tool search](tools-advanced.md#tool-search) (OpenAI Responses, Anthropic) | **Stable** — the function tools visible to the provider don't change across loads. |
+| Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
+| Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
+
+When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable live in [tools-advanced.md](tools-advanced.md#tool-search).
 
 ### The `Capability` convenience class
 
@@ -126,9 +175,9 @@ In addition to [`@capability.tool`][pydantic_ai.capabilities.Capability.tool] an
 
 For anything beyond instructions, function tools, and a toolset — model settings, hooks, a dynamic description — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. Override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] when the catalog entry needs to vary by run — return a callable that produces the description string.
 
-### Skills
+### Beyond instructions: tools, settings, hooks, native tools {#beyond-instructions}
 
-[Agent Skills](https://www.anthropic.com/news/agent-skills) — small descriptions surfaced up front, full instructions loaded only when needed — are the instructions-only special case of an on-demand capability. A skill changes what the model *knows*; an on-demand capability changes what the model knows, what it can do, and how it does it, in one load:
+You'd be forgiven for assuming `defer_loading=True` just hides instructions and the odd tool schema — the two things you obviously can't afford to ship up front. But the same flag defers a workflow's model settings *and* its lifecycle hooks too. [Agent Skills](https://www.anthropic.com/news/agent-skills) defer instructions only — a skill changes what the model *knows*. On-demand capabilities defer the whole personality: what the model knows, what it can *do*, and *how* it does it, in one load:
 
 - typed function tools the model can call directly
 - per-step model settings (e.g. raise reasoning effort just for this workflow)
@@ -169,7 +218,7 @@ agent = Agent(
 
 #### Deferred lifecycle hooks
 
-Hooks on a deferred capability don't fire until it's loaded — useful for guardrails that should only kick in once the model has opted into a workflow:
+Bundle a hook into a deferred capability and the model effectively opts into the hook by loading the capability — useful for guardrails that should only kick in once the workflow is active. The hook is dispatched on every step regardless, so guard it with `ctx.capability_loaded` (true once *this* capability has been loaded in the current run) and bail early otherwise:
 
 ```python {title="deferred_hooks.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -184,13 +233,18 @@ approvals = Hooks(
 
 @approvals.on.before_tool_execute
 async def require_approval(ctx, *, call, tool_def, args):
-    # Inspect the call, prompt the operator, raise to block — only runs
-    # once `approvals` has been loaded.
+    if not ctx.capability_loaded:
+        # `approvals` hasn't been loaded yet — leave the call alone.
+        return args
+    # Inspect the call, prompt the operator, raise to block.
     return args
 
 
 agent = Agent('openai:gpt-5.2', capabilities=[approvals])
 ```
+
+!!! warning "Hook dispatch is not gated on load"
+    Capability hooks (`before_tool_execute`, `before_model_request`, `before_run`, …) fire on every matching event for every registered capability, including deferred ones. `ctx.capability_loaded` and `ctx.loaded_capability_ids` are the levers — use them to decide whether to act. The same hook signatures apply, but `ctx.run_step`, `ctx.messages`, and other per-step state will be at whatever value they hold on the firing step, including step `0` for `before_run` — so don't assume your hook will only see post-load state unless you've checked.
 
 #### Deferred native tools
 
@@ -213,7 +267,146 @@ agent = Agent(
 )
 ```
 
-#### Loading skills from Markdown files
+### Putting it together: a multi-workflow support agent
+
+A realistic on-demand capability rarely consists of just one piece. The example below defines a customer-support agent with two deferred workflows that exercise different parts of the bundle:
+
+- `orders` — instructions plus a function tool, defined inline with [`Capability`][pydantic_ai.capabilities.Capability].
+- `account-security` — instructions, a function tool, raised reasoning effort, *and* an approval hook, all bundled as one [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass.
+
+On turn 1 the model sees only the two-line catalog. Loading `account-security` activates the runbook, the destructive tool, the higher reasoning effort, *and* the approval gate together — that's what we mean by bundle-level disclosure.
+
+```python {title="support_agent.py" test="skip" lint="skip"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai.capabilities import AbstractCapability, Capability
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
+
+
+@dataclass
+class Store:
+    orders: dict[str, str]
+
+
+# Workflow 1: instructions + function tool, defined inline.
+orders = Capability[Store](
+    id='orders',
+    description='Use for order tracking, delivery status, or questions involving an order ID.',
+    instructions='Quote the order ID and item name when discussing an order.',
+    defer_loading=True,
+)
+
+
+@orders.tool
+def order_status(ctx: RunContext[Store], order_id: str) -> str:
+    """Look up shipping or delivery status for an order."""
+    return ctx.deps.orders.get(order_id, f'No order found with id {order_id}.')
+
+
+# Workflow 2: instructions + tool + per-step model settings + approval hook,
+# all hidden until the model loads `account-security`.
+security_tools = FunctionToolset[Store]()
+
+
+@security_tools.tool
+def revoke_sessions(ctx: RunContext[Store], account_id: str) -> str:
+    """Revoke all active sessions for an account."""
+    return f'Revoked sessions for {account_id}.'
+
+
+@dataclass
+class AccountSecurity(AbstractCapability[Store]):
+    id: str = 'account-security'
+    description: str = 'Use for suspicious logins, account takeover, or session revocation.'
+    defer_loading: bool = True
+
+    def get_instructions(self) -> str:
+        return 'Confirm the customer identity before revoking sessions.'
+
+    def get_toolset(self) -> AgentToolset[Store]:
+        return security_tools
+
+    def get_model_settings(self) -> ModelSettings:
+        # Raise reasoning effort just for sensitive workflows.
+        return ModelSettings(extra_body={'reasoning_effort': 'high'})
+
+    async def before_tool_execute(self, ctx, *, call, tool_def, args):
+        if not ctx.capability_loaded:
+            return args
+        # Approval gate for destructive actions, active once the model
+        # has loaded `account-security`.
+        return args
+
+
+support_agent = Agent(
+    'openai:gpt-5.2',
+    deps_type=Store,
+    instructions='You are a customer-support agent for an e-commerce store.',
+    capabilities=[orders, AccountSecurity()],
+)
+```
+
+A "where is my order?" request loads only `orders`. A "someone is logging into my account" request loads only `account-security` — and from that point on, every tool call in the run passes through the approval hook *and* benefits from the raised reasoning effort, without either being visible to the model on requests that never touched the workflow.
+
+### Enforcing read-before-act
+
+Want the model to actually *read the runbook* before taking a destructive action? Make the runbook a deferred capability, then check `ctx.loaded_capability_ids` in a one-method hook:
+
+```python {title="runbook_required.py" test="skip" lint="skip"}
+from dataclasses import dataclass, field
+
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.capabilities import AbstractCapability, Capability
+
+
+@dataclass
+class RunbookRequired(AbstractCapability[None]):
+    """Bounces a tool call back until the matching runbook has been loaded."""
+
+    requirements: dict[str, str] = field(default_factory=dict)
+
+    async def before_tool_execute(self, ctx, *, call, tool_def, args):
+        required = self.requirements.get(tool_def.name)
+        if required and required not in ctx.loaded_capability_ids:
+            raise ModelRetry(
+                f'Call `load_capability(id={required!r})` and follow its '
+                f'guidance before calling `{tool_def.name}`.'
+            )
+        return args
+
+
+refund_policy = Capability(
+    id='refund-policy',
+    description='Read before issuing refunds. Eligibility rules and approval limits.',
+    instructions=(
+        'Refunds over $500 require manager approval. '
+        'Refunds outside the 30-day window require a documented exception.'
+    ),
+    defer_loading=True,
+)
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        refund_policy,
+        RunbookRequired(requirements={'issue_refund': 'refund-policy'}),
+    ],
+)
+
+
+@agent.tool_plain
+def issue_refund(order_id: str, amount: float) -> str:
+    """Issue a refund for an order."""
+    return f'Refund of ${amount} issued for {order_id}.'
+```
+
+The model sees `issue_refund` from turn 1. If it tries to call it before opening `refund-policy`, the hook bounces the call back with a message pointing at the exact `load_capability` to call. The model loads the policy, the policy text lands in its recent context, and the refund runs *within* the rules — and only then. Same shape for any tool-and-runbook pair.
+
+Because the loaded set is just runtime data on [`RunContext`][pydantic_ai.tools.RunContext], the pattern generalises: dynamic instructions can warn when a risky pair of workflows is open, audit hooks can tag traces with the loaded set, escalation hooks can require an extra confirmation when both `payments` and `account-security` are active.
+
+### Loading skills from Markdown files
 
 If you already keep your skills as Markdown files with YAML frontmatter — the format used by [Anthropic Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) — you can wrap each one in a [`Capability`][pydantic_ai.capabilities.Capability] with a few lines of glue.
 
@@ -257,21 +450,16 @@ agent = Agent(
 )
 ```
 
-Each file shows up in the model's catalog as its `id` plus `description`; the body is only sent once the model calls `load_capability`. To go beyond instructions — add function tools, model settings, or hooks for a particular skill — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as in the example above.
+Each file shows up in the model's catalog as its `id` plus `description`; the body is only sent once the model calls `load_capability`. To go beyond instructions — add function tools, model settings, or hooks for a particular skill — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as in the examples above.
 
-### Cache implications
+!!! note "Composes with"
+    On-demand capabilities are orthogonal to the rest of the framework — they layer onto features you may already be using:
 
-`load_capability` reveals capability behavior between requests. Whether that breaks the provider's prompt-cache prefix depends on what's revealed:
-
-| What loads | Cache prefix |
-|---|---|
-| Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools on a model with native [tool search](tools-advanced.md#tool-search) (OpenAI Responses, Anthropic) | **Stable** — the provider-visible function-tool array does not change across loads. |
-| Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
-| Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
-
-On models without native tool search, on-demand capabilities still shrink the initial context window; they just don't preserve the prefix across loads. When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable — notably OpenAI Responses' client-executed `tool_search` switch — live in [tools-advanced.md](tools-advanced.md#tool-search).
-
+    - **[Tool search](tools-advanced.md#tool-search)** — tools marked `defer_loading=True` *inside* a capability stay hidden behind `search_tools` even after the bundle loads, so per-tool discovery layers on top of per-capability discovery.
+    - **[MCP servers](mcp/client.md)** — the [`MCP`][pydantic_ai.capabilities.MCP] capability accepts `defer_loading=True`, hiding the server's full tool list until the model opts in.
+    - **[Native tools](native-tools.md)** — [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] all defer the same way as function tools (see [Cache implications](#cache-implications)).
+    - **[Hooks](hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.
+    - **[Message history](message-history.md)** — loaded state round-trips through history, so persisted conversations resume in the same state (see [Resumable across runs](#resumable-across-runs)).
 
 ## Native capabilities
 
