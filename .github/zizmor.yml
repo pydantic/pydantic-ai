@@ -34,6 +34,7 @@ rules:
       - pydantic-ai-regression-detector.lock.yml
       - pydantic-ai-roundtrip-sweep.lock.yml
       - pydantic-ai-streaming-resilience-sweep.lock.yml
+      - pydantic-ai-ui-security-review.lock.yml
 
   # `harness-compat.yml` calls a reusable workflow in `pydantic/pydantic-ai-harness`, an
   # org-internal repo under the same maintenance group. SHA-pinning the cross-repo reference
