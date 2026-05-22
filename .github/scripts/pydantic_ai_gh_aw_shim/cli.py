@@ -46,6 +46,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from dataclasses import dataclass
 from typing import TypeAlias, cast
 
+import httpx
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic import ValidationError
@@ -118,6 +119,19 @@ def _anthropic_native_capabilities() -> list[NativeTool]:
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
 REQUEST_LIMIT = 200
 SUBAGENT_REQUEST_LIMIT = 75
+
+# Per-request HTTP timeout for every LLM call.  The read timeout is the
+# critical one: MiniMax's proxy can hold a streaming connection open without
+# sending data.  5 min is generous enough for large generations but prevents
+# indefinite hangs.  SDK-level retries cover transient 429/5xx before raising.
+_LLM_TIMEOUT = httpx.Timeout(timeout=120.0, connect=10.0)
+_LLM_MAX_RETRIES = 4
+
+# Wall-clock caps (seconds).  These are last-resort guards on top of the
+# per-request timeout so a burst of slow requests can't accumulate forever.
+RUN_TIMEOUT_SECS = 28 * 60       # 28 min — just under the 30 min gh-aw job cap
+SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
+COMPACTION_TIMEOUT_SECS = 120    # 2 min for the compaction summariser call
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -318,10 +332,13 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     # (parent + summariser). Merge the totals back regardless of outcome.
     sub_usage = RunUsage()
     try:
-        r = await Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
-            f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
-            usage_limits=UsageLimits(request_limit=2),
-            usage=sub_usage,
+        r = await asyncio.wait_for(
+            Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
+                f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
+                usage_limits=UsageLimits(request_limit=2),
+                usage=sub_usage,
+            ),
+            timeout=COMPACTION_TIMEOUT_SECS,
         )
         summary = str(r.output or '').strip() or '(empty summary)'
     except Exception as exc:
@@ -445,7 +462,12 @@ def build_model(args: Args) -> tuple[Model, str]:
         os.environ.get('ANTHROPIC_AUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY') or PROXY_BEARER_PLACEHOLDER
     )
     logger.info('anthropic model=%s base_url=%s', model_name, anthropic_base or '(default)')
-    client = AsyncAnthropic(auth_token=auth_token, base_url=anthropic_base)
+    client = AsyncAnthropic(
+        auth_token=auth_token,
+        base_url=anthropic_base,
+        timeout=_LLM_TIMEOUT,
+        max_retries=_LLM_MAX_RETRIES,
+    )
     return (
         AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
         f'anthropic:{model_name}',
@@ -702,8 +724,9 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
     try:
-        result = await sub.run(
-            RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage
+        result = await asyncio.wait_for(
+            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
+            timeout=SUBAGENT_TIMEOUT_SECS,
         )
     except Exception as exc:
         ctx.usage.incr(sub_usage)
@@ -711,6 +734,31 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
     return str(result.output or '')
+
+
+async def _run_with_timeout(
+    prompt: str,
+    model: Model,
+    label: str,
+    claude_code_toolset: AbstractToolset[None],
+    mcp_servers: list[AbstractToolset[None]],
+    session_id: str,
+) -> int:
+    """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    try:
+        return await asyncio.wait_for(
+            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
+            timeout=RUN_TIMEOUT_SECS,
+        )
+    except asyncio.TimeoutError:
+        logger.error('run timed out after %.0f min', RUN_TIMEOUT_SECS / 60)
+        emit_result(
+            f'run timed out after {RUN_TIMEOUT_SECS // 60}min',
+            usage=None,
+            session_id=session_id,
+            is_error=True,
+        )
+        return 1
 
 
 async def run(
@@ -790,7 +838,7 @@ def main() -> int:
             len(prompt),
         )
         started = time.time()
-        rc = asyncio.run(run(prompt, model, label, claude_code_toolset, mcp_servers, session_id))
+        rc = asyncio.run(_run_with_timeout(prompt, model, label, claude_code_toolset, mcp_servers, session_id))
         logger.info('done in %.1fs rc=%d', time.time() - started, rc)
         return rc
     except (Exception, SystemExit) as exc:

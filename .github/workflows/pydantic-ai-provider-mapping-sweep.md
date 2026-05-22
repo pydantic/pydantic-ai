@@ -68,7 +68,7 @@ safe-outputs:
     close-older-key: "[provider-mapping-sweep]"
     close-older-issues: false
     expires: 7d
-timeout-minutes: 90
+timeout-minutes: 30
 imports:
   - shared/otel-logfire.md
 pre-steps:

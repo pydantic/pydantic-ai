@@ -12,6 +12,7 @@ via env: GH_AW_SHIM_LIVE_API_KEY / _BASE_URL / _MODEL.
 Run:  uv run --with pytest pytest .github/scripts/test_pydantic_ai_runner.py
 """
 
+import asyncio
 import io
 import json
 import os
@@ -1054,6 +1055,31 @@ def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
     model, label = shim.build_model(shim.parse_args(['--print']))
     assert label == 'anthropic:MiniMax-M2.7-Highspeed'
     assert model.__class__.__name__ == 'AnthropicModel'
+
+
+def test_build_model_applies_llm_timeout_and_retries(monkeypatch):
+    monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
+    monkeypatch.delenv('ANTHROPIC_MODEL', raising=False)
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    # The underlying AsyncAnthropic client should carry our timeout + retries.
+    client = model.provider.client  # type: ignore[attr-defined]
+    assert client.timeout == shim._LLM_TIMEOUT
+    assert client.max_retries == shim._LLM_MAX_RETRIES
+
+
+def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch):
+    async def _hang(*_a, **_kw):
+        await asyncio.sleep(9999)
+
+    monkeypatch.setattr(shim, 'run', _hang)
+    monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = asyncio.run(shim._run_with_timeout('p', object(), 'lbl', object(), [], 'sess-test'))  # type: ignore[arg-type]
+    assert rc == 1
+    obj = json.loads(buf.getvalue().strip())
+    assert obj['type'] == 'result' and obj['is_error'] is True
+    assert 'timed out' in obj['result']
 
 
 # --------------------------------------------------------------------------- #

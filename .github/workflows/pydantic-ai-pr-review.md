@@ -74,7 +74,7 @@ safe-outputs:
     max: 30
   submit-pull-request-review:
     max: 1
-timeout-minutes: 90
+timeout-minutes: 30
 imports:
   - shared/otel-logfire.md
 pre-steps:

@@ -12,9 +12,9 @@
 # literal below to match and recompile.
 #
 # Required secret:
-#   LOGFIRE_WRITE_TOKEN — a Logfire project *write* token (distinct from the
-#   LOGFIRE_READ_EXTERNAL_VARIABLES read key used for dynamic prompts). Used as
-#   the Authorization header value for OTLP ingest.
+#   LOGFIRE_TOKEN — a Logfire project write token. Used as the Authorization
+#   header value for OTLP ingest and passed directly to the agent container so
+#   the Logfire Python SDK can also use it natively.
 #
 # Usage:
 #   imports:
@@ -23,6 +23,6 @@ observability:
   otlp:
     endpoint: https://logfire-api.pydantic.dev
     headers:
-      Authorization: ${{ secrets.LOGFIRE_WRITE_TOKEN }}
+      Authorization: ${{ secrets.LOGFIRE_TOKEN }}
     if-missing: warn
 ---
