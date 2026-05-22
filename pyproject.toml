@@ -156,6 +156,8 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
+    ".github/scripts/test_pydantic_ai_runner.py",
 ]
 
 [tool.ruff.lint]
@@ -204,6 +206,7 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -219,6 +222,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    ".github/scripts/pydantic_ai_gh_aw_shim",
+    ".github/scripts/test_pydantic_ai_runner.py",
 ]
 venvPath = '.'
 venv = ".venv"
@@ -226,6 +231,10 @@ venv = ".venv"
 # which are not otherwise used
 executionEnvironments = [
     { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # `extraPaths` lets pyright resolve the shim package (which sits next to
+    # the test file, not under the project root) the same way the runtime
+    # `sys.path.insert(...)` at the top of the test does.
+    { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
