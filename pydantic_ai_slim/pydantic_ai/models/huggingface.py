@@ -16,8 +16,6 @@ from ..messages import (
     AgentContextPart,
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -29,6 +27,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -395,7 +395,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, ThinkingPart):
                         start_tag, end_tag = self.profile.thinking_tags
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
                     elif isinstance(item, FilePart):  # pragma: no cover

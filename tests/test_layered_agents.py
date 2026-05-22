@@ -6,8 +6,8 @@ Two Pydantic AI agents are stacked:
 - L1 — outer agent using `OpenResponsesModel` to call L2 via `httpx.ASGITransport` (in-process,
   no real network).
 
-These tests assert that backend tool calls L2 runs come back to L1 as `BuiltinToolCallPart` /
-`BuiltinToolReturnPart` (lossless round-trip via `pydantic_ai:custom_tool_call*` extension items),
+These tests assert that backend tool calls L2 runs come back to L1 as `NativeToolCallPart` /
+`NativeToolReturnPart` (lossless round-trip via `pydantic_ai:custom_tool_call*` extension items),
 and that `pydantic_ai:agent_context` items L1 emits surface to its own outer caller in the same
 extension shape.
 """
@@ -23,10 +23,10 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     AgentContextPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     TextPart,
     ToolReturnPart,
 )
@@ -88,7 +88,7 @@ async def _l1_layered_app() -> tuple[Agent[None, str], httpx.AsyncClient]:
 
 
 async def test_layered_round_trip_streaming_lossless(allow_model_requests: None) -> None:
-    """L2's backend `get_weather` call surfaces to L1 as BuiltinToolCallPart/BuiltinToolReturnPart.
+    """L2's backend `get_weather` call surfaces to L1 as NativeToolCallPart/NativeToolReturnPart.
 
     This is the load-bearing layered-agent assertion: a Pydantic AI agent acting as an
     OpenResponses client of another Pydantic AI agent gets the inner agent's tool calls
@@ -106,13 +106,13 @@ async def test_layered_round_trip_streaming_lossless(allow_model_requests: None)
     assert response_messages, 'expected at least one ModelResponse'
     parts = [p for m in response_messages for p in m.parts]
 
-    builtin_calls = [p for p in parts if isinstance(p, BuiltinToolCallPart)]
-    builtin_returns = [p for p in parts if isinstance(p, BuiltinToolReturnPart)]
+    builtin_calls = [p for p in parts if isinstance(p, NativeToolCallPart)]
+    builtin_returns = [p for p in parts if isinstance(p, NativeToolReturnPart)]
     text_parts = [p for p in parts if isinstance(p, TextPart)]
 
     assert builtin_calls == snapshot(
         [
-            BuiltinToolCallPart(
+            NativeToolCallPart(
                 tool_name='get_weather',
                 args='{"city": "Paris"}',
                 tool_call_id='call_w1',
@@ -121,7 +121,7 @@ async def test_layered_round_trip_streaming_lossless(allow_model_requests: None)
     )
     assert builtin_returns == snapshot(
         [
-            BuiltinToolReturnPart(
+            NativeToolReturnPart(
                 tool_name='get_weather',
                 content='sunny, 22°C in Paris',
                 tool_call_id='call_w1',

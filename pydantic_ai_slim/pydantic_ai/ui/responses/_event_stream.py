@@ -51,9 +51,9 @@ except ImportError as e:  # pragma: no cover
 
 from ...messages import (
     AgentContextPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -213,7 +213,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
 
         usage = self._empty_usage()
         if self._result is not None:
-            run_usage = self._result.usage()
+            run_usage = self._result.usage
             usage = ResponseUsage(
                 input_tokens=run_usage.input_tokens or 0,
                 input_tokens_details=InputTokensDetails(cached_tokens=run_usage.cache_read_tokens or 0),
@@ -490,7 +490,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         }
         self._output_index += 1
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[Any]:
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[Any]:
         item = self._build_builtin_item(part, status='in_progress')
         if item is None:
             return
@@ -510,12 +510,12 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         async for ev in self._builtin_in_progress_event(part.tool_name, item, output_index):
             yield ev
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[Any]:
-        # `BuiltinToolReturnPart` carries the result; closing the item is deferred to that handler.
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[Any]:
+        # `NativeToolReturnPart` carries the result; closing the item is deferred to that handler.
         return
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[Any]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[Any]:
         if part.tool_call_id not in self._open_builtin_calls:
             return
 
@@ -565,7 +565,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
 
     @staticmethod
     def _build_builtin_item(
-        part: BuiltinToolCallPart, *, status: Literal['in_progress', 'completed']
+        part: NativeToolCallPart, *, status: Literal['in_progress', 'completed']
     ) -> _BuiltinItem | None:
         item_id = part.tool_call_id
         match part.tool_name:

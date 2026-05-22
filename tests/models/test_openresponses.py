@@ -17,11 +17,11 @@ import pytest
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     AgentContextPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -129,8 +129,8 @@ async def test_request_dispatches_all_output_item_types(allow_model_requests: No
 
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
     tool_calls = [p for p in response.parts if isinstance(p, ToolCallPart)]
-    builtin_calls = [p for p in response.parts if isinstance(p, BuiltinToolCallPart)]
-    builtin_returns = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
+    builtin_calls = [p for p in response.parts if isinstance(p, NativeToolCallPart)]
+    builtin_returns = [p for p in response.parts if isinstance(p, NativeToolReturnPart)]
     contexts = [p for p in response.parts if isinstance(p, AgentContextPart)]
 
     assert [p.content for p in text_parts] == ['hello world']
@@ -270,8 +270,8 @@ async def test_request_stream_dispatches_all_event_types(allow_model_requests: N
     assert response.finish_reason == 'stop'
     assert any(isinstance(p, TextPart) and p.content == 'hi' for p in response.parts)
     assert any(isinstance(p, ToolCallPart) and p.tool_name == 'frontend_tool' for p in response.parts)
-    assert any(isinstance(p, BuiltinToolCallPart) and p.tool_name == 'backend_tool' for p in response.parts)
-    assert any(isinstance(p, BuiltinToolReturnPart) and p.content == 'backend-result' for p in response.parts)
+    assert any(isinstance(p, NativeToolCallPart) and p.tool_name == 'backend_tool' for p in response.parts)
+    assert any(isinstance(p, NativeToolReturnPart) and p.content == 'backend-result' for p in response.parts)
     assert any(isinstance(p, AgentContextPart) and p.from_agent == 'guardrail' for p in response.parts)
     assert cancel_errors == (httpx.StreamError, httpx.TransportError)
 

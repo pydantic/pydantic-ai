@@ -18,8 +18,6 @@ from ..messages import (
     AgentContextPart,
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -31,6 +29,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -590,7 +590,7 @@ class MistralModel(Model[Mistral]):
                         thinking_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(part, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from mistral
                         pass
                     elif isinstance(part, FilePart):  # pragma: no cover

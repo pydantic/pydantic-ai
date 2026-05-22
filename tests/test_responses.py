@@ -17,11 +17,11 @@ from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.messages import (
     AgentContextPart,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -1062,7 +1062,7 @@ async def test_builtin_tool_emits_dedicated_events(
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[BuiltinToolCallsReturns | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=tool_kind,
                 args='{}',
                 tool_call_id='b_1',
@@ -1070,7 +1070,7 @@ async def test_builtin_tool_emits_dedicated_events(
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=tool_kind,
                 content={'ok': True},
                 tool_call_id='b_1',
@@ -1103,9 +1103,9 @@ async def test_builtin_tool_in_middle_of_text_closes_message_item() -> None:
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[BuiltinToolCallsReturns | str]:
         yield 'Searching... '
-        yield {0: BuiltinToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function')}
+        yield {0: NativeToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function')}
         yield {
-            1: BuiltinToolReturnPart(tool_name='web_search', content={}, tool_call_id='ws_1', provider_name='function')
+            1: NativeToolReturnPart(tool_name='web_search', content={}, tool_call_id='ws_1', provider_name='function')
         }
         yield 'Found nothing.'
 
@@ -1138,7 +1138,7 @@ async def test_builtin_tool_after_open_text_closes_item_first() -> None:
         yield PartStartEvent(index=0, part=TextPart(content='thinking'))
         yield PartStartEvent(
             index=1,
-            part=BuiltinToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function'),
+            part=NativeToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function'),
         )
 
     events = await _collect_from_stream(event_stream, parts())
@@ -1153,17 +1153,17 @@ async def test_builtin_tool_after_open_text_closes_item_first() -> None:
 
 
 async def test_unknown_builtin_tool_kind_is_silently_suppressed() -> None:
-    """A `BuiltinToolCallPart` with an unmapped kind is dropped — no events, no item."""
+    """A `NativeToolCallPart` with an unmapped kind is dropped — no events, no item."""
     event_stream = _bare_event_stream()
 
     async def parts() -> AsyncIterator[Any]:
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
+            part=NativeToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
         )
         yield PartEndEvent(
             index=0,
-            part=BuiltinToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
+            part=NativeToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
         )
 
     events = await _collect_from_stream(event_stream, parts())
@@ -1179,7 +1179,7 @@ async def test_builtin_tool_return_without_open_call_is_ignored() -> None:
     async def parts() -> AsyncIterator[Any]:
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolReturnPart(
+            part=NativeToolReturnPart(
                 tool_name='web_search', content={}, tool_call_id='orphan', provider_name='function'
             ),
         )
@@ -1387,10 +1387,13 @@ async def test_gateway_with_deps_factory() -> None:
     assert captured == ['acme']
 
 
+@pytest.mark.filterwarnings(
+    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_to_ag_ui_accepts_deps_factory() -> None:
     """`Agent.to_ag_ui` exposes `deps_factory` in parity with `Agent.beta.to_responses`."""
     agent = Agent('test')
-    app = agent.to_ag_ui(deps_factory=lambda _request: None)
+    app = agent.to_ag_ui(deps_factory=lambda _request: None)  # pyright: ignore[reportDeprecated]
     assert isinstance(app, Starlette)
 
 

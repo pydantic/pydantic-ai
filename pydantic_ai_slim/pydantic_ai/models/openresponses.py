@@ -25,14 +25,14 @@ from .._utils import is_str_dict, now_utc as _now_utc
 from ..exceptions import ModelHTTPError
 from ..messages import (
     AgentContextPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -353,7 +353,7 @@ class OpenResponsesModel(OpenAIResponsesModel):
                 # doesn't try to re-execute. Round-trip back to L2 happens via the adapter's
                 # `pydantic_ai:custom_tool_call` input-item parse, which restores `ToolCallPart`.
                 parts.append(
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name=name,
                         tool_call_id=call_id,
                         args=item.get('arguments'),
@@ -364,7 +364,7 @@ class OpenResponsesModel(OpenAIResponsesModel):
             if isinstance(call_id, str):
                 tool_name = tool_call_names.get(call_id, '')
                 parts.append(
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name=tool_name,
                         tool_call_id=call_id,
                         content=str(item.get('output', '')),
@@ -489,7 +489,7 @@ class OpenResponsesStreamedResponse(StreamedResponse):
                 self._tool_call_names[call_id] = name
                 yield self._parts_manager.handle_part(
                     vendor_part_id=call_id,
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name=name,
                         tool_call_id=call_id,
                         args=item.get('arguments'),
@@ -519,7 +519,7 @@ class OpenResponsesStreamedResponse(StreamedResponse):
                 tool_name = self._tool_call_names.get(call_id, '')
                 yield self._parts_manager.handle_part(
                     vendor_part_id=f'{call_id}-output',
-                    part=BuiltinToolReturnPart(
+                    part=NativeToolReturnPart(
                         tool_name=tool_name,
                         tool_call_id=call_id,
                         content=str(item.get('output', '')),

@@ -8,8 +8,23 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_OPENAI_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+)
+"""Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
+`OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
+profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
@@ -91,6 +106,17 @@ class OpenAIModelProfile(ModelProfile):
 
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
+
+    supports_inline_system_prompts: bool = True
+    """OpenAI's APIs accept `system`/`developer`/`user`-role messages at any position."""
+
+    openai_chat_supports_multiple_system_messages: bool = True
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
+
+    OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
+    Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
+    exactly one initial system message; consecutive system messages at the start will be merged into one
+    (joined with two newlines) before being sent."""
 
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
@@ -197,6 +223,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on
+    # GPT-5.4 and later mainline models.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -214,6 +245,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
         openai_supports_phase=supports_phase,
+        supported_native_tools=supported_native_tools,
     )
 
 
@@ -244,7 +276,23 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
     'uuid',
 ]
 
+_REGEX_LOOKAROUND_TOKENS = ('(?=', '(?!', '(?<=', '(?<!')
+
 _sentinel = object()
+
+
+def _regex_contains_lookaround(pattern: str) -> bool:
+    escaped = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if pattern.startswith(_REGEX_LOOKAROUND_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -308,6 +356,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if format := schema.get('format'):
             if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
                 incompatible_values['format'] = format
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
+            incompatible_values['pattern'] = pattern
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
