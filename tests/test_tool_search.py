@@ -2281,9 +2281,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for message in messages:
         part_trace: list[dict[str, Any]] = []
         for part in message.parts:
-            part_info: dict[str, Any] = {'type': type(part).__name__}
             if isinstance(part, UserPromptPart):
-                part_info = {'type': 'user', 'content': part.content}
+                part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
                 part_info = {'type': 'load_capability_call', 'id': part.capability_id}
             elif isinstance(part, LoadCapabilityReturnPart):
@@ -2304,6 +2303,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                 part_info = {'type': 'tool_return', 'tool_name': part.tool_name, 'content': part.content}
             elif isinstance(part, TextPart):
                 part_info = {'type': 'text'}
+            else:
+                raise AssertionError(f'cross-provider replay trace helper saw unexpected part type: {type(part).__name__}')  # pragma: no cover
             part_trace.append(part_info)
         # Use a flat lowercase tag so inline-snapshot writes a plain string instead
         # of "helpfully" resolving the class name to `'request'`.
@@ -2638,9 +2639,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for message in messages:
             part_trace: list[dict[str, Any]] = []
             for part in message.parts:
-                part_info = {'type': type(part).__name__}
                 if isinstance(part, UserPromptPart):
-                    part_info = {'type': 'user', 'content': part.content}
+                    part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):
                     part_info = {'type': 'load_capability_call', 'id': part.capability_id}
                 elif isinstance(part, LoadCapabilityReturnPart):
@@ -2659,6 +2659,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     part_info = {'type': 'tool_return', 'tool_name': part.tool_name, 'content': part.content}
                 elif isinstance(part, TextPart):
                     part_info = {'type': 'text'}
+                else:
+                    raise AssertionError(f'anthropic→google replay trace helper saw unexpected part type: {type(part).__name__}')  # pragma: no cover
                 part_trace.append(part_info)
             trace.append((type(message).__name__, part_trace))
         return trace
