@@ -949,38 +949,14 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        # Detect the capability-gated tool-search case: any function tool in the search
-        # corpus that's owned by a capability means provider-side search would bypass
-        # capability gating and reveal not-yet-loaded tools. We respond by promoting
-        # `ToolSearchTool(strategy=None)` to `'custom'` (both adapters wire that as client-
-        # executed) and keeping the local `search_tools` function tool on the wire (rule 1
-        # below skips dropping it when promotion fires). Named-native strategies have no
-        # local equivalent — fail loudly instead of substituting the keyword algorithm.
-        capability_gates_search = any(
-            t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in params.function_tools
-        )
-        if capability_gates_search:
-            for i, t in enumerate(supported_natives):
-                if not isinstance(t, ToolSearchTool):
-                    continue
-                if t.strategy in ('bm25', 'regex'):
-                    raise UserError(
-                        f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
-                        "capabilities. Named-native strategies run server-side, where the provider can't "
-                        "honor capability gating and would reveal tools whose owning capability hasn't "
-                        'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
-                        "deferred capability is present), `strategy='keywords'`, or a custom callable."
-                    )
-                if t.strategy is None:
-                    supported_natives[i] = replace(t, strategy='custom')
-                break
+        capability_gates_search = _apply_capability_gated_tool_search_promotion(supported_natives, params.function_tools)
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
             # Rule 1: drop local fallback when the native tool is supported — except for
-            # `search_tools` when capability gating forced client-executed promotion above,
-            # where the local function tool is the callback the client-executed native
-            # surface dispatches to.
+            # `search_tools` when capability gating forced client-executed promotion, where
+            # the local function tool is the callback the client-executed native surface
+            # dispatches to.
             if t.unless_native and t.unless_native in supported_ids:
                 if not (capability_gates_search and t.unless_native == ToolSearchTool.kind):
                     continue
@@ -1782,6 +1758,44 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _apply_capability_gated_tool_search_promotion(
+    supported_natives: list[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> bool:
+    """Force client-executed tool search when a capability owns a search-corpus tool.
+
+    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
+    can't honor capability gating — it would reveal corpus tools whose owning capability hasn't
+    been loaded yet. When any function tool carries both `with_native='tool_search'` and a
+    `capability_id`, we promote `ToolSearchTool(strategy=None)` to `'custom'` so the adapter
+    wires the client-executed native surface, which dispatches into the local `search_tools`
+    function tool — that's where capability gating is enforced. Named-native strategies have
+    no local equivalent; we raise rather than silently substitute the keyword algorithm.
+
+    Mutates `supported_natives` in place. Returns `True` when promotion fired, so the caller
+    can keep `search_tools` on the wire (its `unless_native='tool_search'` would otherwise
+    drop it now that the native is "supported").
+    """
+    capability_gates_search = any(t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in function_tools)
+    if not capability_gates_search:
+        return False
+
+    for i, t in enumerate(supported_natives):
+        if not isinstance(t, ToolSearchTool):
+            continue
+        if t.strategy in ('bm25', 'regex'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Named-native strategies run server-side, where the provider can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        if t.strategy is None:
+            supported_natives[i] = replace(t, strategy='custom')
+        return True
+    return True
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:

@@ -63,7 +63,7 @@ from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchMatch, ToolSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
@@ -5317,3 +5317,122 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
     return_value = cast(dict[str, Any], result)
     discovered_names = {match['name'] for match in return_value['discovered_tools']}
     assert 'calculate_mortgage' in discovered_names
+
+
+# --- Capability-gated tool-search forces client-executed promotion ---
+#
+# Provider-side tool search can't honor capability gating — it would reveal corpus tools
+# whose owning capability hasn't been loaded yet. When any function tool has both
+# `with_native='tool_search'` and a `capability_id`, `_resolve_native_tool_swap` either
+# raises (named-native strategies have no local equivalent) or promotes `strategy=None` to
+# `'custom'` (client-executed), keeping `search_tools` on the wire as the callback.
+
+
+def _capability_owned_corpus_tool() -> ToolDefinition:
+    return ToolDefinition(
+        name='lookup_refund_policy',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        with_native=ToolSearchTool.kind,
+        capability_id='refunds',
+        defer_loading=True,
+    )
+
+
+def _local_search_tools_def() -> ToolDefinition:
+    return ToolDefinition(name=_SEARCH_TOOLS_NAME, parameters_json_schema={}, unless_native=ToolSearchTool.kind)
+
+
+@pytest.mark.parametrize('strategy', ['bm25', 'regex'])
+def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: str) -> None:
+    """Named-native strategies have no local equivalent — silently substituting `keywords`
+    would change the user's chosen algorithm, so we raise."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    params = ModelRequestParameters(
+        function_tools=[_capability_owned_corpus_tool()],
+        native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
+    )
+    with pytest.raises(UserError, match=rf"strategy={strategy!r}.*incompatible with deferred-loading"):
+        M().prepare_request(None, params)
+
+
+def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> None:
+    """Promotion: `strategy=None` → `'custom'` and `search_tools` stays on the wire as the
+    client-executed callback."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    params = ModelRequestParameters(
+        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        native_tools=[ToolSearchTool(strategy=None, optional=True)],
+    )
+    _, prepared = M().prepare_request(None, params)
+
+    [native] = prepared.native_tools
+    assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
+    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+
+
+def test_capability_gated_tool_search_leaves_non_capability_corpus_alone() -> None:
+    """No `capability_id` → no promotion: `strategy=None` reaches the adapter unchanged and
+    rule 1 still strips the local `search_tools` since the native is supported."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    plain_deferred = ToolDefinition(
+        name='deferred_tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        with_native=ToolSearchTool.kind,
+        defer_loading=True,
+    )
+    params = ModelRequestParameters(
+        function_tools=[_local_search_tools_def(), plain_deferred],
+        native_tools=[ToolSearchTool(strategy=None, optional=True)],
+    )
+    _, prepared = M().prepare_request(None, params)
+
+    [native] = prepared.native_tools
+    assert isinstance(native, ToolSearchTool) and native.strategy is None
+    assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
+
+
+# --- Namespace synthesis for any tool-search corpus member ---
+#
+# OpenAI rejects replayed tool-search-discovered function calls without a `namespace`. For
+# cross-provider replay there's no captured namespace, so the adapter synthesizes one from
+# the tool name. The gate is `with_native='tool_search'` (any corpus member), not just
+# capability-owned tools — plain `defer_loading=True` tools also need this on replay.
+
+
+def test_tool_search_namespace_synthesis_returns_tool_name_for_corpus_member() -> None:
+    """A function tool with `with_native='tool_search'` and no `capability_id` still gets a
+    synthesized namespace — the gate is corpus membership, not capability ownership."""
+    pytest.importorskip('openai')
+
+    plain_corpus_tool = ToolDefinition(
+        name='lookup_refund_policy',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        with_native=ToolSearchTool.kind,
+    )
+    params = ModelRequestParameters(function_tools=[plain_corpus_tool])
+    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
+
+
+def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_tool() -> None:
+    """A regular function tool (no `with_native`) must not be tagged — synthesizing a
+    namespace there would inject a field the API didn't request."""
+    pytest.importorskip('openai')
+
+    regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    params = ModelRequestParameters(function_tools=[regular_tool])
+    assert _tool_search_namespace_for_synthesis('get_weather', params) is None
