@@ -433,11 +433,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
+    def emit_event(self, event: _messages.AgentStreamEvent) -> None:
+        """Emit an event into this run's event stream."""
+        self._graph_run.state.event_stream_buffer.append(event)
+
     def enqueue(
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Designed to be called from the same event loop driving `agent.iter()`. If
@@ -465,8 +469,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self._graph_run.state.pending_messages.append(pending)
+        return pending.enqueue_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

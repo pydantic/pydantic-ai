@@ -35,6 +35,14 @@ Before editing, identify which contracts can change:
 - When changing tool/output execution, check ordering, retry semantics, deferred calls, output finalization, streaming events, and durable wrappers together.
 - When removing deprecated APIs, distinguish public surface cleanup from persisted-data compatibility. Old constructors/imports may be removed in a major version; old serialized histories may still need to deserialize.
 
+## Run Event Stream Internals
+
+`GraphAgentState.event_stream_buffer` is the internal queue for framework events emitted outside the direct model/tool event generators. Use `RunContext.emit_event(event)` or `AgentRun.emit_event(event)` to append events; capabilities should avoid mutating `event_stream_buffer` directly.
+
+Node streams own buffer draining into `wrap_run_event_stream` / `event_stream_handler` before the next dependent event. `ModelRequestNode` delegates this to `AgentStream` so the public `AgentStream` API is preserved; `CallToolsNode` wraps its handle-response event iterator with the same buffer-draining behavior.
+
+Feature-specific code should keep its own pending state separately, then emit typed `AgentStreamEvent`s into the buffer once the public event semantics are true. Pending messages follow this pattern: they record delivery state first, then emit `EnqueuedMessagesEvent` after the delivered messages have stable final history indices.
+
 ## Test Shape
 
 - Use public agent/model/toolset behavior for most tests. Prefer snapshots for message history, event streams, provider request payloads, and protocol shapes.

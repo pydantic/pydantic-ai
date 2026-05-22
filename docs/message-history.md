@@ -414,6 +414,8 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
+Both `enqueue` methods return an `enqueue_id` (`str`) for non-empty calls, or `None` when called with no content. When the queued content is actually delivered into run history, the event stream yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] with that `enqueue_id`, the delivered messages, and their final history indices. This event is emitted after the messages are written to [`all_messages()`][pydantic_ai.run.AgentRun.all_messages] and before the next model-response event that can depend on them.
+
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
@@ -428,15 +430,15 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 @agent.tool
 def trigger_alert(ctx: RunContext[None]) -> str:
-    ctx.enqueue('Alert: production is degraded, prioritize triage.')
-    return 'alert raised'
+    enqueue_id = ctx.enqueue('Alert: production is degraded, prioritize triage.')
+    return f'alert raised: {enqueue_id}'
 
 
 @agent.tool
 def enter_incident_mode(ctx: RunContext[None]) -> str:
     # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
-    ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
-    return 'incident mode enabled'
+    enqueue_id = ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
+    return f'incident mode enabled: {enqueue_id}'
 ```
 
 The `'asap'` message is appended to the agent's message history and is visible to the
@@ -463,10 +465,11 @@ async def main():
         # An external system pushes a follow-up while the agent is working.
         # When the agent would otherwise finish, the message redirects it
         # into a fresh model request so it can incorporate the new context.
-        agent_run.enqueue(
+        enqueue_id = agent_run.enqueue(
             'A new error was just reported — include it in the summary.',
             priority='when_idle',
         )
+        assert enqueue_id is not None
         node = agent_run.next_node
         while not isinstance(node, End):
             node = await agent_run.next(node)
