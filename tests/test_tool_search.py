@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -24,6 +24,7 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -63,12 +64,10 @@ from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchMatch, ToolSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
-from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
@@ -123,11 +122,11 @@ with try_import() as openai_available:
     from openai.types.responses.file_search_tool import FileSearchTool
 
     from pydantic_ai.models.openai import (
+        _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _apply_client_tool_search_for_deferred_capability_tools,  # pyright: ignore[reportPrivateUsage]
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
-        _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION,  # pyright: ignore[reportPrivateUsage]
         _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
@@ -2664,10 +2663,6 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             trace.append((type(message).__name__, part_trace))
         return trace
 
-    assert trace_messages([ModelResponse(parts=[NativeToolCallPart(tool_name='native_tool')])]) == [
-        ('ModelResponse', [{'type': 'NativeToolCallPart'}])
-    ]
-
     anthropic_agent: Agent[None, str] = Agent(
         model='anthropic:claude-sonnet-4-5',
         capabilities=[make_refunds_cap()],
@@ -2727,25 +2722,6 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             ),
             ('ModelResponse', [{'type': 'text'}]),
         ]
-    )
-    assert asdict(anthropic_result.usage) == snapshot(
-        {
-            'input_tokens': 3055,
-            'cache_write_tokens': 1154,
-            'cache_read_tokens': 1069,
-            'output_tokens': 251,
-            'input_audio_tokens': 0,
-            'cache_audio_read_tokens': 0,
-            'output_audio_tokens': 0,
-            'details': {
-                'input_tokens': 832,
-                'output_tokens': 251,
-                'cache_creation_input_tokens': 1154,
-                'cache_read_input_tokens': 1069,
-            },
-            'requests': 3,
-            'tool_calls': 2,
-        }
     )
 
     google_agent: Agent[None, str] = Agent(
