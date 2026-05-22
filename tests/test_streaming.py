@@ -23,6 +23,9 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    DeferredToolCallEvent,
+    DeferredToolRequests,
+    DeferredToolResultEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -52,7 +55,12 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    HandleDeferredToolCalls,
+    WrapModelRequestHandler,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
@@ -60,7 +68,7 @@ from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
@@ -3938,8 +3946,86 @@ async def test_deferred_tool_iter():
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
+            DeferredToolCallEvent(
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                args_valid=True,
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
+            ),
+            DeferredToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+                args_valid=True,
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
+            ),
         ]
     )
+
+
+async def test_deferred_tool_call_and_result_events():
+    """DeferredToolCallEvent is emitted per deferred call; DeferredToolResultEvent is emitted once when resolved."""
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    events: list[Any] = []
+
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+
+    event_kinds = [e.event_kind for e in events]
+    # FunctionToolCallEvent fires first (validation), then DeferredToolCallEvent, then
+    # DeferredToolResultEvent (once for the batch), then FunctionToolResultEvent (re-execution)
+    assert event_kinds == snapshot(
+        [
+            'function_tool_call',
+            'deferred_tool_call',
+            'deferred_tool_result',
+            'function_tool_result',
+        ]
+    )
+
+    deferred_call_evt = next(e for e in events if e.event_kind == 'deferred_tool_call')
+    assert isinstance(deferred_call_evt, DeferredToolCallEvent)
+    assert deferred_call_evt.part.tool_name == 'my_tool'
+    assert deferred_call_evt.args_valid is True
+    assert len(deferred_call_evt.requests.approvals) == 1
+    assert deferred_call_evt.requests.approvals[0].tool_name == 'my_tool'
+
+    deferred_result_evt = next(e for e in events if e.event_kind == 'deferred_tool_result')
+    assert isinstance(deferred_result_evt, DeferredToolResultEvent)
+    assert len(deferred_result_evt.results.approvals) == 1
 
 
 async def test_tool_raises_call_deferred_approval_required_iter():
@@ -3995,6 +4081,36 @@ async def test_tool_raises_call_deferred_approval_required_iter():
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
+            DeferredToolCallEvent(
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                args_valid=True,
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
+            ),
+            DeferredToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+                args_valid=True,
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
             ),
         ]
     )
