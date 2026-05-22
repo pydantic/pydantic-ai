@@ -19,8 +19,10 @@ import os
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+from pytest import LogCaptureFixture
 
 # `.github/scripts/` isn't on sys.path by default — the shim package lives
 # there. The runtime equivalent is the PEP-723 launcher script
@@ -35,6 +37,10 @@ from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
 )
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model as _Model
+from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import AbstractToolset
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -77,14 +83,14 @@ def test_prompt_recovered_from_trailing_positional():
     assert shim.resolve_prompt(args) == 'Investigate the failing CI run.'
 
 
-def test_prompt_falls_back_to_prompt_file(tmp_path):
+def test_prompt_falls_back_to_prompt_file(tmp_path: Path):
     pf = tmp_path / 'prompt.txt'
     pf.write_text('from file', encoding='utf-8')
     args = shim.parse_args(['--prompt-file', str(pf)])
     assert shim.resolve_prompt(args) == 'from file'
 
 
-def test_prompt_falls_back_to_env(tmp_path, monkeypatch):
+def test_prompt_falls_back_to_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pf = tmp_path / 'p.txt'
     pf.write_text('from env path', encoding='utf-8')
     monkeypatch.setenv('GH_AW_PROMPT', str(pf))
@@ -96,7 +102,7 @@ def test_prompt_falls_back_to_env(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_allowed_tools_absent_is_none():
     assert shim.parse_args(['--print']).allowed_tools is None
-    assert shim._split_allowed_tools(None) is None
+    assert shim._split_allowed_tools(None) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_allowed_tools_parsed_and_scope_stripped():
@@ -108,19 +114,18 @@ async def _toolset_names(
     allowed: frozenset[str] | None,
     permission_mode: str | None,
     *,
-    task=None,
+    task: shim.TaskCallable | None = None,
 ) -> list[str]:
     """Resolve a `select_claude_code_toolset(...)` result to its post-filter tool
     name list. The filtered toolset reports its tools through
     `.get_tools(ctx)`, so we drive it with a minimal RunContext.
     """
-    from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
 
     toolset = shim.select_claude_code_toolset(allowed, permission_mode, task=task)
     ctx = RunContext(
         deps=None,
-        model=None,
+        model=cast(_Model[Any], None),
         usage=RunUsage(),
         prompt=None,
         messages=[],
@@ -183,7 +188,7 @@ def test_claude_code_tool_names():
 # --------------------------------------------------------------------------- #
 # Claude Code tool behavior
 # --------------------------------------------------------------------------- #
-def test_file_tools_roundtrip(tmp_path):
+def test_file_tools_roundtrip(tmp_path: Path):
     f = tmp_path / 'sub' / 'note.txt'
     assert 'wrote' in pkg.write_file(str(f), 'hello\nworld\n')
     assert pkg.read_file(str(f)) == 'hello\nworld\n'
@@ -193,13 +198,13 @@ def test_file_tools_roundtrip(tmp_path):
     assert pkg.edit_file(str(f), 'absent', 'x') == 'error: `old_string` not found'
 
 
-def test_read_file_offset_and_limit(tmp_path):
+def test_read_file_offset_and_limit(tmp_path: Path):
     f = tmp_path / 'n.txt'
     f.write_text('l1\nl2\nl3\nl4\n', encoding='utf-8')
     assert pkg.read_file(str(f), offset=2, limit=2) == 'l2\nl3'
 
 
-def test_edit_file_replace_all(tmp_path):
+def test_edit_file_replace_all(tmp_path: Path):
     f = tmp_path / 'r.txt'
     f.write_text('a a a', encoding='utf-8')
     pkg.edit_file(str(f), 'a', 'b', replace_all=True)
@@ -211,12 +216,12 @@ def test_bash_tool():
     assert 'exit=0' in out and 'hello-from-bash' in out
 
 
-def test_grep_tool(tmp_path):
+def test_grep_tool(tmp_path: Path):
     (tmp_path / 'a.txt').write_text('alpha\nNEEDLE here\n', encoding='utf-8')
     assert 'NEEDLE here' in pkg.grep('NEEDLE', str(tmp_path))
 
 
-def test_glob_tool(tmp_path):
+def test_glob_tool(tmp_path: Path):
     (tmp_path / 'x').mkdir()
     (tmp_path / 'x' / 'a.py').write_text('', encoding='utf-8')
     (tmp_path / 'x' / 'b.txt').write_text('', encoding='utf-8')
@@ -224,14 +229,14 @@ def test_glob_tool(tmp_path):
     assert 'x/a.py' in res and 'b.txt' not in res
 
 
-def test_glob_outside_base_is_handled(tmp_path):
+def test_glob_outside_base_is_handled(tmp_path: Path):
     # An absolute pattern resolves outside `base`; must not raise (ValueError
     # from relative_to is caught and reported).
     out = pkg.glob_search('/etc/*', str(tmp_path))
     assert out.startswith('error:') or out == '(no matches)'
 
 
-def test_multi_edit_atomic(tmp_path):
+def test_multi_edit_atomic(tmp_path: Path):
     f = tmp_path / 'm.txt'
     f.write_text('one two three', encoding='utf-8')
     ok = pkg.multi_edit(str(f), [{'old_string': 'one', 'new_string': '1'}, {'old_string': 'three', 'new_string': '3'}])
@@ -243,28 +248,28 @@ def test_multi_edit_atomic(tmp_path):
     assert f.read_text(encoding='utf-8') == '1 two 3'
 
 
-def test_multi_edit_replace_all(tmp_path):
+def test_multi_edit_replace_all(tmp_path: Path):
     f = tmp_path / 'r.txt'
     f.write_text('a a a', encoding='utf-8')
     pkg.multi_edit(str(f), [{'old_string': 'a', 'new_string': 'b', 'replace_all': True}])
     assert f.read_text(encoding='utf-8') == 'b b b'
 
 
-def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch):
+def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatch):
     """`web_fetch_20250910` is an Anthropic-server-side tool; compat
     endpoints (MiniMax etc.) reject it with HTTP 400. The capability is
     gated by `ANTHROPIC_BASE_URL`."""
     from pydantic_ai.capabilities import NativeTool
 
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
-    caps = shim._anthropic_native_capabilities()
+    caps = shim._anthropic_native_capabilities()  # pyright: ignore[reportPrivateUsage]
     assert len(caps) == 1 and isinstance(caps[0], NativeTool)
 
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
-    assert len(shim._anthropic_native_capabilities()) == 1
+    assert len(shim._anthropic_native_capabilities()) == 1  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.minimax.io/anthropic')
-    assert shim._anthropic_native_capabilities() == []
+    assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_todo_write_acknowledges():
@@ -295,28 +300,28 @@ def test_instructions_encourage_parallel_tool_calls():
     assert 'parallel' in shim.INSTRUCTIONS.lower()
 
 
-def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
+def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch: pytest.MonkeyPatch):
     """Workflow prompt rides in the system instruction; user message is RUN_TRIGGER."""
     import asyncio
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     seen_instructions: list[str] = []
     received: list[ModelMessage] = []
     emitted: list[dict[str, object]] = []
 
-    def _respond(messages, info):
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_instructions.append(info.instructions or '')
         received.extend(messages)
         return ModelResponse(parts=[TextPart('done')])
 
-    async def _stream(messages, info):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
         seen_instructions.append(info.instructions or '')
         received.extend(messages)
         yield 'done'
 
-    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
 
     sentinel = '### WORKFLOW TASK SPEC: review the PR per the rules above ###'
@@ -369,29 +374,29 @@ def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
 
 
-def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
+def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.
     import asyncio
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.usage import RunUsage
 
     seen_instructions: list[str] = []
     received_messages: list[ModelMessage] = []
     received_tool_names: set[str] = set()
 
-    def _capture(messages, info):
+    def _capture(messages: list[ModelMessage], info: AgentInfo) -> None:
         seen_instructions.append(info.instructions or '')
         received_messages.extend(messages)
         received_tool_names.update(td.name for td in info.function_tools)
 
-    def _respond(messages, info):
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         _capture(messages, info)
         return ModelResponse(parts=[TextPart('SUB: investigated')])
 
-    async def _stream(messages, info):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
         _capture(messages, info)
         yield 'SUB: investigated'
 
@@ -403,7 +408,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
         model = FunctionModel(_respond, stream_function=_stream)
         usage = parent_usage
 
-    out = asyncio.run(shim.task(_Ctx(), 'scan models/openai.py', 'find tool_call_id bugs'))
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'scan models/openai.py', 'find tool_call_id bugs'))
     assert out == 'SUB: investigated'
 
     instructions = seen_instructions[0]
@@ -426,7 +431,7 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 # --------------------------------------------------------------------------- #
 # directory-scoped AGENTS.md / CLAUDE.md auto-loading
 # --------------------------------------------------------------------------- #
-def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
+def test_attach_context_surfaces_files_once_per_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # AGENTS.md at root of the "workspace" + CLAUDE.md in a subdir.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'AGENTS.md').write_text('# repo conventions', encoding='utf-8')
@@ -450,7 +455,7 @@ def test_attach_context_surfaces_files_once_per_run(monkeypatch, tmp_path):
     assert shared.attach_context('pkg/other.py') == ''
 
 
-def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
+def test_attach_context_truncates_large_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     big = 'X' * (shared.MAX_CONTEXT_FILE_CHARS + 5000)
     (tmp_path / 'AGENTS.md').write_text(big, encoding='utf-8')
@@ -461,14 +466,14 @@ def test_attach_context_truncates_large_files(monkeypatch, tmp_path):
     assert len(body) <= shared.MAX_CONTEXT_FILE_CHARS + 50  # +slack for trailing markers
 
 
-def test_attach_context_empty_for_missing_path(monkeypatch, tmp_path):
+def test_attach_context_empty_for_missing_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     shared.reset_context_state()
     assert shared.attach_context(None) == ''
     assert shared.attach_context('does-not-exist.py') == ''  # parent has no AGENTS.md/CLAUDE.md
 
 
-def test_read_file_prepends_context(monkeypatch, tmp_path):
+def test_read_file_prepends_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'AGENTS.md').write_text('repo rules', encoding='utf-8')
     (tmp_path / 'f.txt').write_text('file body', encoding='utf-8')
@@ -491,25 +496,25 @@ def test_compaction_thresholds_are_sane():
 def test_history_size_chars_sums_all_part_content():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    msgs = [
+    msgs: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),  # 5
         ModelRequest(parts=[UserPromptPart(content='x' * 20)]),  # 20
     ]
-    assert shim._history_size_chars(msgs) == 25
+    assert shim._history_size_chars(msgs) == 25  # pyright: ignore[reportPrivateUsage]
 
 
-def test_compact_history_no_op_below_char_budget(monkeypatch):
+def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch):
     import asyncio
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     # Many tiny messages — total chars stays well below the default 80k budget.
-    msgs = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(100)]
+    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(100)]
 
     class _Ctx:
         model = None
 
-    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
     assert out is msgs  # size-based: count alone never triggers
 
 
@@ -525,10 +530,10 @@ def test_compact_history_summarises_with_fresh_usage_then_merges():
     big = 'x' * 50_000
     msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
 
-    def _respond(_messages, _info):
+    def _respond(_messages: list[ModelMessage], _info: object) -> ModelResponse:
         return ModelResponse(parts=[TextPart('SHORT SUMMARY')])
 
-    async def _stream(_messages, _info):
+    async def _stream(_messages: list[ModelMessage], _info: object):
         yield 'SHORT SUMMARY'
 
     # Parent has already done 50 requests; the old shared-usage bug would
@@ -539,7 +544,7 @@ def test_compact_history_summarises_with_fresh_usage_then_merges():
         model = FunctionModel(_respond, stream_function=_stream)
         usage = parent_usage
 
-    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
     assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
     assert parent_usage.requests > 50  # summariser's cost merged into parent
     summary_part = out[0].parts[0]
@@ -579,7 +584,7 @@ def test_trim_dedupes_superseded_reads_and_truncates_large_results():
     for i in range(shim.COMPACTION_KEEP_RECENT):
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f'tail{i}')]))
 
-    out = shim._trim_tool_results(msgs)
+    out = shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
     assert len(out) == len(msgs)
 
     # r1 (superseded by r2 and r3) → marker.
@@ -651,7 +656,7 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
     for i in range(shim.COMPACTION_KEEP_RECENT):
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
 
-    out = shim._trim_tool_results(msgs)
+    out = shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
 
     # s1 (superseded by s3 — same args) → marker that mentions the slice args.
     s1_return = out[1].parts[0]
@@ -668,7 +673,7 @@ def test_trim_preserves_distinct_read_slices_of_same_file():
     assert 'trimmed' in s2_content
 
 
-def test_trim_logs_substitution_counts_only_when_changes_fired(caplog):
+def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptureFixture):
     """Trim logs once when it substitutes; silent on a no-op pass."""
     from pydantic_ai.messages import (
         ModelMessage,
@@ -683,7 +688,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog):
         ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(shim.COMPACTION_KEEP_RECENT + 5)
     ]
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
-        shim._trim_tool_results(tiny_msgs)
+        shim._trim_tool_results(tiny_msgs)  # pyright: ignore[reportPrivateUsage]
     assert not any('compaction trim' in m for m in caplog.messages)
     caplog.clear()
 
@@ -699,13 +704,13 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog):
     for i in range(shim.COMPACTION_KEEP_RECENT):
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
-        shim._trim_tool_results(msgs)
+        shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
     log_line = next((m for m in caplog.messages if 'compaction trim' in m), None)
     assert log_line is not None
     assert 'deduped 1' in log_line and 'truncated 2' in log_line and 'saved' in log_line
 
 
-def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch):
+def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.MonkeyPatch):
     """Trim alone is enough — the LLM summariser must not fire."""
     import asyncio
 
@@ -729,7 +734,7 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch):
     for i in range(shim.COMPACTION_KEEP_RECENT):
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
 
-    def _fail_agent_ctor(*_a, **_kw):
+    def _fail_agent_ctor(*_a: object, **_kw: object) -> None:
         raise AssertionError('summariser should not be invoked when trim is enough')
 
     monkeypatch.setattr(shim, 'Agent', _fail_agent_ctor)
@@ -737,7 +742,7 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch):
     class _Ctx:
         model = None
 
-    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
     assert len(out) == len(msgs)
     # The first read result is now a marker, not the original payload.
     first_return = out[1].parts[0]
@@ -745,7 +750,7 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch):
     assert 'superseded read' in str(first_return.content)
 
 
-def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
+def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
     import asyncio
 
     from pydantic_ai.messages import ModelRequest, UserPromptPart
@@ -753,13 +758,13 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
 
     # Same size-driven setup as the previous test — 13 big msgs > trigger.
     big = 'x' * 50_000
-    msgs = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
+    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
 
     class _FailingAgent:
-        def __init__(self, *a, **k):
+        def __init__(self, *a: object, **k: object) -> None:
             pass
 
-        async def run(self, *a, **k):
+        async def run(self, *a: object, **k: object) -> None:
             raise RuntimeError('boom')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
@@ -770,12 +775,12 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
     # On failure: keep just the tail (no head, no synthetic summary).
     assert len(out) == shim.COMPACTION_KEEP_RECENT
 
 
-def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch):
+def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pytest.MonkeyPatch):
     """A second compaction round whose summary fails (or doesn't fit) must
     keep the earlier round's `[compacted history]` block. Dropping it would
     silently forget the entire run's prior work."""
@@ -786,13 +791,13 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch):
 
     big = 'x' * 50_000
     prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
-    msgs = [prior_synthetic, *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12))]
+    msgs: list[ModelMessage] = [prior_synthetic, *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12))]
 
     class _FailingAgent:
-        def __init__(self, *a, **k):
+        def __init__(self, *a: object, **k: object) -> None:
             pass
 
-        async def run(self, *a, **k):
+        async def run(self, *a: object, **k: object) -> None:
             raise RuntimeError('boom')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
@@ -803,22 +808,22 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch):
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
     # First element is the preserved prior synthetic; rest is the tail.
     assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
     assert out[0] is prior_synthetic
 
 
-def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
+def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.MonkeyPatch):
     import asyncio
 
     from pydantic_ai.models.test import TestModel
 
     class _FailingAgent:
-        def __init__(self, *a, **k):
+        def __init__(self, *a: object, **k: object) -> None:
             pass
 
-        async def run(self, *a, **k):
+        async def run(self, *a: object, **k: object) -> None:
             raise RuntimeError('downstream model exploded')
 
     monkeypatch.setattr(shim, 'Agent', _FailingAgent)
@@ -829,16 +834,16 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(shim.task(_Ctx(), 'x', 'y'))
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: sub-agent failed: downstream model exploded'
 
 
-def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch, tmp_path):
+def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Sub-agents start with a fresh AGENTS.md seen-set, not the parent's."""
     import asyncio
 
     from pydantic_ai.messages import ModelResponse, TextPart
-    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.usage import RunUsage
 
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
@@ -850,17 +855,17 @@ def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch, tmp_pa
     parent_first = shared.attach_context('f.txt')
     assert 'AGENTS.md' in parent_first
 
-    def _respond(_messages, _info):
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('SUB: done')])
 
-    async def _stream(_messages, _info):
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
         yield 'SUB: done'
 
     class _Ctx:
         model = FunctionModel(_respond, stream_function=_stream)
         usage = RunUsage()
 
-    asyncio.run(shim.task(_Ctx(), 'sub', 'work'))
+    asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'sub', 'work'))
 
     # After the sub-agent ran, the parent's seen set still includes AGENTS.md
     # (sub-agent's reset only affected its own context branch). If we re-call
@@ -896,7 +901,7 @@ def test_stream_events_emits_tool_use_and_tool_result_lines():
     with redirect_stdout(buf):
         # `_stream_events` discards its `ctx` arg; passing None keeps the test
         # free of pydantic-ai RunContext construction noise.
-        asyncio.run(shim._stream_events(None, _events()))
+        asyncio.run(shim._stream_events(cast(RunContext[None], None), _events()))  # pyright: ignore[reportPrivateUsage]
 
     lines = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
     assert len(lines) == 2
@@ -931,7 +936,7 @@ def test_stream_events_truncates_long_tool_results():
 
     buf = io.StringIO()
     with redirect_stdout(buf):
-        asyncio.run(shim._stream_events(None, _events()))
+        asyncio.run(shim._stream_events(cast(RunContext[None], None), _events()))  # pyright: ignore[reportPrivateUsage]
 
     line = json.loads(buf.getvalue().strip())
     emitted = line['message']['content'][0]['content']
@@ -957,7 +962,7 @@ def test_stream_events_tags_retry_prompt_as_error():
 
     buf = io.StringIO()
     with redirect_stdout(buf):
-        asyncio.run(shim._stream_events(None, _events()))
+        asyncio.run(shim._stream_events(cast(RunContext[None], None), _events()))  # pyright: ignore[reportPrivateUsage]
 
     lines = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
     assert lines[0]['message']['content'][0]['is_error'] is False
@@ -967,27 +972,27 @@ def test_stream_events_tags_retry_prompt_as_error():
 # --------------------------------------------------------------------------- #
 # disk / IO failure paths for the file tools
 # --------------------------------------------------------------------------- #
-def test_read_missing_file_returns_error(tmp_path):
+def test_read_missing_file_returns_error(tmp_path: Path):
     out = pkg.read_file(str(tmp_path / 'nope.txt'))
     assert out.startswith('error:')
 
 
-def test_edit_missing_file_returns_error(tmp_path):
+def test_edit_missing_file_returns_error(tmp_path: Path):
     out = pkg.edit_file(str(tmp_path / 'missing.txt'), 'old', 'new')
     assert out.startswith('error:')
 
 
-def test_multi_edit_missing_file_returns_error(tmp_path):
+def test_multi_edit_missing_file_returns_error(tmp_path: Path):
     out = pkg.multi_edit(str(tmp_path / 'absent.txt'), [{'old_string': 'a', 'new_string': 'b'}])
     assert out.startswith('error:')
 
 
-def test_list_dir_missing_path_returns_error(tmp_path):
+def test_list_dir_missing_path_returns_error(tmp_path: Path):
     out = pkg.list_dir(str(tmp_path / 'nope'))
     assert out.startswith('error:')
 
 
-def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path):
+def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path: Path):
     # write_file's own `parent.mkdir(parents=True, exist_ok=True)` handles
     # missing parents; the OSError path triggers only on a real permission
     # error or invalid path. Verify the happy + nested-parent paths here.
@@ -999,10 +1004,10 @@ def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path):
 # --------------------------------------------------------------------------- #
 # grep — ripgrep-only after dropping the Python fallback
 # --------------------------------------------------------------------------- #
-def test_grep_returns_error_when_ripgrep_missing(monkeypatch):
+def test_grep_returns_error_when_ripgrep_missing(monkeypatch: pytest.MonkeyPatch):
     # The fallback is gone; if `rg` isn't on PATH we surface a clean error
     # so the agent can fall back to `Bash` (`grep -rn …`) on its own.
-    monkeypatch.setattr(pkg.grep.__globals__['shutil'], 'which', lambda _name: None)
+    monkeypatch.setattr(pkg.grep.__globals__['shutil'], 'which', lambda _name: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     out = pkg.grep('NEEDLE', '.')
     assert out.startswith('error:') and 'ripgrep' in out
 
@@ -1010,7 +1015,7 @@ def test_grep_returns_error_when_ripgrep_missing(monkeypatch):
 # --------------------------------------------------------------------------- #
 # safe-outputs log diagnostic
 # --------------------------------------------------------------------------- #
-def test_log_safe_outputs_state_reports_entry_count(tmp_path, monkeypatch, caplog):
+def test_log_safe_outputs_state_reports_entry_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: LogCaptureFixture):
     safe_path = tmp_path / 'safe-outputs.jsonl'
     safe_path.write_text('{"a": 1}\n{"b": 2}\n\n', encoding='utf-8')
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(safe_path))
@@ -1020,7 +1025,7 @@ def test_log_safe_outputs_state_reports_entry_count(tmp_path, monkeypatch, caplo
     assert 'entries=2' in joined and 'bytes=' in joined
 
 
-def test_log_safe_outputs_state_handles_missing_env(monkeypatch, caplog):
+def test_log_safe_outputs_state_handles_missing_env(monkeypatch: pytest.MonkeyPatch, caplog: LogCaptureFixture):
     monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim.log_safe_outputs_state()
@@ -1030,7 +1035,7 @@ def test_log_safe_outputs_state_handles_missing_env(monkeypatch, caplog):
 # --------------------------------------------------------------------------- #
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #
-def test_model_defaults_to_claude_sonnet_4_6(monkeypatch):
+def test_model_defaults_to_claude_sonnet_4_6(monkeypatch: pytest.MonkeyPatch):
     for v in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'):
         monkeypatch.delenv(v, raising=False)
     model, label = shim.build_model(shim.parse_args(['--print']))
@@ -1038,14 +1043,14 @@ def test_model_defaults_to_claude_sonnet_4_6(monkeypatch):
     assert model.__class__.__name__ == 'AnthropicModel'
 
 
-def test_model_argv_flag_wins(monkeypatch):
+def test_model_argv_flag_wins(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('ANTHROPIC_MODEL', 'from-env')
     model, label = shim.build_model(shim.parse_args(['--model', 'from-argv']))
     assert label == 'anthropic:from-argv'
     assert model.__class__.__name__ == 'AnthropicModel'
 
 
-def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
+def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     # gh-aw v0.74+ sets `ANTHROPIC_MODEL` (the Anthropic SDK standard) from
     # the workflow's `engine.model:` field. The runner picks it up because
@@ -1057,25 +1062,26 @@ def test_model_anthropic_env_falls_back_when_no_argv(monkeypatch):
     assert model.__class__.__name__ == 'AnthropicModel'
 
 
-def test_build_model_applies_llm_timeout_and_retries(monkeypatch):
+def test_build_model_applies_llm_timeout_and_retries(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     monkeypatch.delenv('ANTHROPIC_MODEL', raising=False)
     model, _ = shim.build_model(shim.parse_args(['--print']))
     # The underlying AsyncAnthropic client should carry our timeout + retries.
     client = model.provider.client  # type: ignore[attr-defined]
-    assert client.timeout == shim._LLM_TIMEOUT
-    assert client.max_retries == shim._LLM_MAX_RETRIES
+    assert client.timeout == shim._LLM_TIMEOUT  # pyright: ignore[reportPrivateUsage]
+    assert client.max_retries == shim._LLM_MAX_RETRIES  # pyright: ignore[reportPrivateUsage]
 
 
-def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch):
-    async def _hang(*_a, **_kw):
+def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
+    async def _hang(*_a: object, **_kw: object) -> int:
         await asyncio.sleep(9999)
+        return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
     monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = asyncio.run(shim._run_with_timeout('p', object(), 'lbl', object(), [], 'sess-test'))
+        rc = asyncio.run(shim._run_with_timeout('p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[None], object()), [], 'sess-test'))  # pyright: ignore[reportPrivateUsage]
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
@@ -1089,7 +1095,7 @@ def test_mcp_missing_config_degrades_gracefully():
     assert shim.build_mcp_servers(shim.Args(mcp_config='/no/such/file.json')) == []
 
 
-def _mcp_cfg(tmp_path):
+def _mcp_cfg(tmp_path: Path) -> Path:
     cfg = tmp_path / 'mcp.json'
     cfg.write_text(
         json.dumps(
@@ -1109,7 +1115,7 @@ def _mcp_cfg(tmp_path):
     return cfg
 
 
-def test_mcp_translates_stdio_and_http_unfiltered(tmp_path):
+def test_mcp_translates_stdio_and_http_unfiltered(tmp_path: Path):
     # `load_mcp_toolsets` wraps each server in a `PrefixedToolset`; the shim
     # then re-prefixes to Claude Code's wire format.
     servers = shim.build_mcp_servers(shim.Args(mcp_config=str(_mcp_cfg(tmp_path))))
@@ -1117,7 +1123,7 @@ def test_mcp_translates_stdio_and_http_unfiltered(tmp_path):
     assert {s.__class__.__name__ for s in servers} == {'PrefixedToolset'}
 
 
-def test_mcp_tools_use_claude_code_wire_format(tmp_path):
+def test_mcp_tools_use_claude_code_wire_format(tmp_path: Path):
     """The re-prefix step makes the model-visible tool name exactly equal to
     gh-aw's `mcp__<server>__<tool>` allow-list entry — the same name Claude
     Code uses on the wire and that Claude was trained to call. With matching
@@ -1133,7 +1139,7 @@ def test_mcp_tools_use_claude_code_wire_format(tmp_path):
     assert {s.prefix for s in prefixed} == {'mcp__github_', 'mcp__safeoutputs_'}
 
 
-def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path):
+def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
     servers = shim.build_mcp_servers(
         shim.Args(mcp_config=str(_mcp_cfg(tmp_path)), allowed_tools=frozenset({'mcp__safeoutputs'}))
     )
@@ -1142,9 +1148,7 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path):
 
 
 def test_mcp_allow_predicate_server_wildcard_vs_specific():
-    class _TD:  # minimal stand-in for ToolDefinition (predicate only reads .name)
-        def __init__(self, name):
-            self.name = name
+    from pydantic_ai.tools import ToolDefinition
 
     # The model-visible tool name is Claude Code's wire form
     # `mcp__<server>__<tool>` (see `_apply_claude_mcp_prefix`), identical to
@@ -1152,14 +1156,14 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
     # check, with a wildcard for whole-server allows.
 
     # whole-server allow
-    pred = shim._mcp_tool_allowed('safeoutputs', frozenset({'mcp__safeoutputs'}))
-    assert pred(None, _TD('mcp__safeoutputs__create_issue')) is True
-    assert pred(None, _TD('mcp__safeoutputs__create_pull_request_review_comment')) is True
+    pred = shim._mcp_tool_allowed('safeoutputs', frozenset({'mcp__safeoutputs'}))  # pyright: ignore[reportPrivateUsage]
+    assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__safeoutputs__create_issue')) is True
+    assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__safeoutputs__create_pull_request_review_comment')) is True
 
     # specific-tool allow only
-    pred = shim._mcp_tool_allowed('github', frozenset({'mcp__github__get_me'}))
-    assert pred(None, _TD('mcp__github__get_me')) is True
-    assert pred(None, _TD('mcp__github__delete_repo')) is False
+    pred = shim._mcp_tool_allowed('github', frozenset({'mcp__github__get_me'}))  # pyright: ignore[reportPrivateUsage]
+    assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__github__get_me')) is True
+    assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__github__delete_repo')) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -1201,9 +1205,11 @@ def test_emit_result_reads_usage_attributes():
         cache_write_tokens = 5
         cache_read_tokens = 7
 
+    from pydantic_ai.usage import RunUsage as _RunUsage
+
     buf = io.StringIO()
     with redirect_stdout(buf):
-        shim.emit_result('x', usage=U(), session_id='s')
+        shim.emit_result('x', usage=cast(_RunUsage, U()), session_id='s')
     usage = json.loads(buf.getvalue().strip())['usage']
     assert usage['input_tokens'] == 22
     assert usage['output_tokens'] == 292
@@ -1211,7 +1217,7 @@ def test_emit_result_reads_usage_attributes():
     assert usage['cache_read_input_tokens'] == 7
 
 
-def test_main_emits_structured_error_on_empty_prompt(monkeypatch):
+def test_main_emits_structured_error_on_empty_prompt(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print'])
     monkeypatch.delenv('GH_AW_PROMPT', raising=False)
     buf = io.StringIO()
@@ -1222,10 +1228,10 @@ def test_main_emits_structured_error_on_empty_prompt(monkeypatch):
     assert obj['type'] == 'result' and obj['is_error'] is True
 
 
-def test_main_emits_structured_error_on_startup_failure(monkeypatch):
+def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.MonkeyPatch):
     # A failure *before* the agent loop (e.g. model build) must still produce a
     # parseable stream-json result, never an opaque "no entries" run.
-    def boom(_args):
+    def boom(_args: object) -> None:
         raise RuntimeError('kaboom')
 
     monkeypatch.setattr(shim, 'build_model', boom)
@@ -1240,7 +1246,7 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch):
     assert 'kaboom' in obj['result']
 
 
-def test_main_emits_structured_error_on_argparse_rejection(monkeypatch):
+def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.MonkeyPatch):
     # argparse `action='store_true'` raises `SystemExit(2)` on
     # `--print=true`; gh-aw still needs a structured `result` line.
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print=true', 'hi'])
@@ -1257,7 +1263,7 @@ def test_main_emits_structured_error_on_argparse_rejection(monkeypatch):
     not os.environ.get('GH_AW_SHIM_LIVE_API_KEY'),
     reason='set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test',
 )
-def test_live_anthropic_compatible_endpoint(monkeypatch):
+def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
     """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
     MiniMax's /anthropic, etc.). Verifies the shim+endpoint integration —
     not the model's instruction-following.
