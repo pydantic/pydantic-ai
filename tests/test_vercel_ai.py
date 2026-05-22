@@ -77,13 +77,13 @@ with try_import() as starlette_import_successful:
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
         DataUIPart,
-        DynamicToolApprovalRequestedPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
         DynamicToolOutputDeniedPart,
         DynamicToolOutputErrorPart,
+        DynamicToolUIPart,
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
@@ -96,6 +96,7 @@ with try_import() as starlette_import_successful:
         ToolOutputAvailablePart,
         ToolOutputDeniedPart,
         ToolOutputErrorPart,
+        ToolUIPart,
         UIMessage,
     )
     from pydantic_ai.ui.vercel_ai.response_types import (
@@ -160,7 +161,24 @@ def test_build_run_input_allows_regenerate_without_message_id():
         {'state': 'output-denied', 'input': {'query': 'test'}},
     ],
 )
-def test_submit_message_accepts_dynamic_tool_parent_fields(part: dict[str, Any]):
+@pytest.mark.parametrize(
+    'part_type, tool_name',
+    [
+        ('tool-web_search', None),
+        ('dynamic-tool', 'web_search'),
+    ],
+)
+def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part_type: str, tool_name: str | None):
+    tool_part: dict[str, object] = {
+        'type': part_type,
+        'toolCallId': 'call_1',
+        'title': 'Web Search',
+        'providerExecuted': True,
+        **part,
+    }
+    if tool_name:
+        tool_part['toolName'] = tool_name
+
     data = {
         'trigger': 'submit-message',
         'id': 'req_123',
@@ -169,14 +187,7 @@ def test_submit_message_accepts_dynamic_tool_parent_fields(part: dict[str, Any])
                 'id': 'msg_1',
                 'role': 'assistant',
                 'parts': [
-                    {
-                        'type': 'dynamic-tool',
-                        'toolName': 'web_search',
-                        'toolCallId': 'call_1',
-                        'title': 'Web Search',
-                        'providerExecuted': True,
-                        **part,
-                    }
+                    tool_part,
                 ],
             }
         ],
@@ -185,18 +196,7 @@ def test_submit_message_accepts_dynamic_tool_parent_fields(part: dict[str, Any])
     request = SubmitMessage.model_validate(data)
     parsed_part = request.messages[0].parts[0]
 
-    assert isinstance(
-        parsed_part,
-        (
-            DynamicToolInputStreamingPart,
-            DynamicToolInputAvailablePart,
-            DynamicToolOutputAvailablePart,
-            DynamicToolOutputErrorPart,
-            DynamicToolApprovalRequestedPart,
-            DynamicToolApprovalRespondedPart,
-            DynamicToolOutputDeniedPart,
-        ),
-    )
+    assert isinstance(parsed_part, ToolUIPart | DynamicToolUIPart)
     assert parsed_part.title == 'Web Search'
     assert parsed_part.provider_executed is True
 
@@ -5840,6 +5840,74 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
             )
         ]
     )
+
+
+async def test_adapter_load_messages_provider_executed_dynamic_tool():
+    """Test dynamic provider-executed tool parts are loaded as native tool parts."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputAvailablePart(
+                    tool_name='web_search',
+                    tool_call_id='tc_123',
+                    title='Web Search',
+                    input={'query': 'pydantic ai'},
+                    output={'results': ['example']},
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {'provider_name': 'openai'},
+                            'return_meta': {'provider_name': 'openai_return'},
+                        }
+                    },
+                ),
+                DynamicToolOutputErrorPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_456',
+                    input={'query': 'logfire'},
+                    error_text='Search failed',
+                    provider_executed=True,
+                ),
+                DynamicToolOutputDeniedPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_789',
+                    input={'query': 'secret'},
+                    provider_executed=True,
+                    approval=ToolApprovalResponded(id='deny_1', approved=False, reason='Blocked by policy'),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(messages) == 1
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert [type(part) for part in response.parts] == [
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+    ]
+
+    tool_calls = [part for part in response.parts if isinstance(part, NativeToolCallPart)]
+    assert [(part.tool_call_id, part.args, part.provider_name) for part in tool_calls] == [
+        ('tc_123', {'query': 'pydantic ai'}, 'openai'),
+        ('tc_456', {'query': 'logfire'}, None),
+        ('tc_789', {'query': 'secret'}, None),
+    ]
+
+    tool_returns = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [(part.tool_call_id, part.content, part.outcome, part.provider_name) for part in tool_returns] == [
+        ('tc_123', {'results': ['example']}, 'success', 'openai_return'),
+        ('tc_456', 'Search failed', 'failed', None),
+        ('tc_789', 'Blocked by policy', 'denied', None),
+    ]
 
 
 async def test_adapter_file_part_with_provider_metadata():
