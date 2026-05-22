@@ -781,6 +781,23 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://evil.com/page', allowed_domains=['example.com'])
 
+    @pytest.mark.parametrize(
+        'url', ['https://example.com./page', 'https://EXAMPLE.com/page', 'https://Example.Com./page']
+    )
+    async def test_allowed_domains_normalizes_host(
+        self, url: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """A trailing FQDN dot or uppercasing must not cause false rejection by the allowed-domains list."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        await safe_download(url, allowed_domains=['example.com'])
+
     async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that blocked domain is rejected."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
