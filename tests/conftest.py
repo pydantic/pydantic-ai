@@ -25,14 +25,14 @@ from vcr import VCR, request as vcr_request
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -419,6 +419,21 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
     vcr.before_record_request = scrub_aws_account_id
 
+    # Normalize Bedrock hostnames to ignore region differences
+    # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
+    bedrock_host_pattern = re.compile(r'bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com')
+
+    def host_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        host1 = r1.host  # pyright: ignore[reportUnknownVariableType]
+        host2 = r2.host  # pyright: ignore[reportUnknownVariableType]
+        # Normalize Bedrock hosts by removing region
+        host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
+        host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        if host1_normalized != host2_normalized:
+            raise AssertionError(f'{host1} != {host2}')
+
+    vcr.register_matcher('host', host_matcher)
+
 
 def pytest_addoption(parser: Any) -> None:
     parser.addoption(
@@ -474,7 +489,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
-    companion ``close_httpx_clients`` fixture handles async cleanup first.
+    companion `close_httpx_clients` fixture handles async cleanup first.
     """
     cache: _HttpClientCache = {}
     original = pydantic_ai.models.create_async_http_client
@@ -508,6 +523,29 @@ async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClie
     for client in track_httpx_clients.values():
         if not client.is_closed:
             await client.aclose()
+
+
+try:
+    from huggingface_hub.inference._providers._common import (
+        _fetch_inference_provider_mapping as _hf_provider_mapping_func,  # pyright: ignore[reportPrivateUsage]
+    )
+except (ImportError, AttributeError):
+    _hf_provider_mapping_func = None
+
+
+@pytest.fixture(autouse=True)
+def clear_huggingface_provider_cache():
+    """Clear HuggingFace SDK's LRU cache after each test.
+
+    The huggingface_hub library caches _fetch_inference_provider_mapping() with
+    @lru_cache(maxsize=None), causing issues with VCR cassettes. The first test
+    records the GET request, but subsequent tests skip it because the result is
+    cached. This fixture ensures a fresh cache state for subsequent tests.
+    """
+    yield
+
+    if _hf_provider_mapping_func is not None:
+        _hf_provider_mapping_func.cache_clear()
 
 
 @pytest.fixture(autouse=True, scope='session')
@@ -654,6 +692,7 @@ def _patch_hf_provider_mappings():
 
     models: list[tuple[str, str, str]] = [
         ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
     ]
@@ -797,13 +836,14 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+        from pydantic_ai.providers.google import GoogleCloudLocation
+        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
-    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
+    yield GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))
 
 
 @pytest.fixture()
@@ -871,17 +911,22 @@ def model(
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
         elif request.param == 'outlines':
+            import warnings
+
             from outlines.models.transformers import from_transformers
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            from pydantic_ai.models.outlines import OutlinesModel
+            from pydantic_ai._warnings import PydanticAIDeprecationWarning
+            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
 
-            return OutlinesModel(
-                from_transformers(
-                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+                return OutlinesModel(  # pyright: ignore[reportDeprecated]
+                    from_transformers(
+                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    )
                 )
-            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
@@ -897,7 +942,7 @@ def mock_snapshot_id(mocker: MockerFixture):
         i += 1
         return f'{node_id}:{i}'
 
-    return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture
@@ -927,7 +972,7 @@ def disable_ssrf_protection_for_vcr():
 _RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
-    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
 )
 
 

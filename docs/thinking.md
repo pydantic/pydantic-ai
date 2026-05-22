@@ -3,20 +3,12 @@
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before
 providing its final answer.
 
-This capability is typically disabled by default and depends on the specific model being used.
-See the sections below for how to enable thinking for each provider.
+The simplest way to enable thinking across supported providers is the [`Thinking`][pydantic_ai.capabilities.Thinking] capability.
+Provider-specific settings are available for advanced usage when you need direct access to a provider's native thinking controls.
 
 ## Unified thinking settings
 
-The simplest way to enable thinking across any supported provider is the `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings]:
-
-```python {title="unified_thinking.py"}
-from pydantic_ai import Agent
-
-agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
-```
-
-Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
+Use the [`Thinking` capability](capabilities.md#thinking) to enable thinking:
 
 ```python {title="thinking_capability.py"}
 from pydantic_ai import Agent
@@ -25,19 +17,28 @@ from pydantic_ai.capabilities import Thinking
 agent = Agent('anthropic:claude-opus-4-7', capabilities=[Thinking(effort='high')])
 ```
 
-The `thinking` setting accepts:
+You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings] directly:
+
+```python {title="unified_thinking.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
+```
+
+The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 
 - `True` — enable thinking with the provider's default effort level
 - `False` — disable thinking (silently ignored on always-on models)
 - `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
+These are the same values accepted by the underlying `thinking` model setting.
 When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
 
 ### Provider translation
 
-The unified `thinking` setting maps to each provider's native format:
+The `Thinking` capability maps each effort value to the selected provider's native format:
 
-| Provider | `thinking=True` | `thinking='high'` | Notes |
+| Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
 | Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 also supports `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
@@ -48,7 +49,8 @@ The unified `thinking` setting maps to each provider's native format:
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
-| Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
+| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
+| Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 
 ## OpenAI
@@ -144,19 +146,23 @@ The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.ant
 !!! note
     Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
 
+Thinking tokens count against Anthropic's loop-wide [task budgets](models/anthropic.md#task-budgets-beta), so adaptive thinking naturally scales down as the budget depletes.
+
 ## Google
 
-To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agent.md#model-run-settings).
+For advanced usage, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agent.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-model = GoogleModel('gemini-3-pro-preview')
-settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
+model = GoogleModel('gemini-3.5-flash')
+settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+See the [Google model docs](models/google.md#configure-thinking) for more details.
 
 ## xAI
 
@@ -174,7 +180,9 @@ agent = Agent(model, model_settings=settings)
 
 ## Bedrock
 
-Although Bedrock Converse doesn't provide a unified API to enable thinking, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agent.md#model-run-settings) to pass provider-specific configuration:
+For Claude Sonnet 4.6+ and Opus 4.6+, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+For older Claude models or to pin a specific `budget_tokens`, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agent.md#model-run-settings) to pass provider-specific configuration directly:
 
 === "Claude"
 

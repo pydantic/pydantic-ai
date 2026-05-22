@@ -30,47 +30,48 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1084'
+      - '1058'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a4df1010eecc8c4c79093216d1e71063-2e9c841ff6d8bdce-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-23T08:17:13.199245Z'
-        id: container_011CaLHz8ZTgxUq8TeCULao8
+        expires_at: '2026-05-08T20:54:01.401735Z'
+        id: container_011Caqgq9X3d68B2So2LZGmk
       content:
-      - id: srvtoolu_018jG85HfqPrf3Sqs4TKGSqW
+      - id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
         input:
-          code: |2
-
-            result = 3 * 12390
-            print(result)
-        name: code_execution
+          command: echo $((3 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
-          abort_reason: null
           content: []
           return_code: 0
           stderr: ''
-          stdout: '37170'
-          type: code_execution_result
-        tool_use_id: srvtoolu_018jG85HfqPrf3Sqs4TKGSqW
-        type: code_execution_tool_result
-      - text: 3 × 12,390 = **37,170**
+          stdout: |
+            37170
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+        type: bash_code_execution_tool_result
+      - text: 3 * 12390 = **37,170**
         type: text
-      id: msg_01CSsc4t4e4ThJfJp8nsPxc5
+      id: msg_01LZfXQfnKjDzM8MfBWwnVqV
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -84,8 +85,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 1983
-        output_tokens: 85
+        input_tokens: 4612
+        output_tokens: 80
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0
@@ -102,16 +103,14 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '972'
+      - '946'
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=wlOFVBz7pGNcgkpqo9ixoACVEdIejgnfatQEGJ9gSBk-1776928628.386463-1.0.1.1-eFuFMgbRRP3R8Oj61ibJ6VI6TW1imyimNfGvsUdnToY
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      container: container_011CaLHz8ZTgxUq8TeCULao8
+      container: container_011Caqgq9X3d68B2So2LZGmk
       max_tokens: 4096
       messages:
       - content:
@@ -119,24 +118,21 @@ interactions:
           type: text
         role: user
       - content:
-        - id: srvtoolu_018jG85HfqPrf3Sqs4TKGSqW
+        - id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
           input:
-            code: |2
-
-              result = 3 * 12390
-              print(result)
-          name: code_execution
+            command: echo $((3 * 12390))
+          name: bash_code_execution
           type: server_tool_use
         - content:
-            abort_reason: null
             content: []
             return_code: 0
             stderr: ''
-            stdout: '37170'
-            type: code_execution_result
-          tool_use_id: srvtoolu_018jG85HfqPrf3Sqs4TKGSqW
-          type: code_execution_tool_result
-        - text: 3 × 12,390 = **37,170**
+            stdout: |
+              37170
+            type: bash_code_execution_result
+          tool_use_id: srvtoolu_01HdeXFEfm2TUaENsFep6QUJ
+          type: bash_code_execution_tool_result
+        - text: 3 * 12390 = **37,170**
           type: text
         role: assistant
       - content:
@@ -152,47 +148,48 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1084'
+      - '1058'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d186f93dd09da03366734fe85363e627-7e8ef916dad99a56-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-23T08:17:17.120973Z'
-        id: container_011CaLHz8ZTgxUq8TeCULao8
+        expires_at: '2026-05-08T20:54:05.797524Z'
+        id: container_011Caqgq9X3d68B2So2LZGmk
       content:
-      - id: srvtoolu_01TTbZCiryn9gpeCLSZdhs8z
+      - id: srvtoolu_01XXQYLc95uCBCjeX52Pjopu
         input:
-          code: |2
-
-            result = 4 * 12390
-            print(result)
-        name: code_execution
+          command: echo $((4 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
-          abort_reason: null
           content: []
           return_code: 0
           stderr: ''
-          stdout: '49560'
-          type: code_execution_result
-        tool_use_id: srvtoolu_01TTbZCiryn9gpeCLSZdhs8z
-        type: code_execution_tool_result
-      - text: 4 × 12,390 = **49,560**
+          stdout: |
+            49560
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01XXQYLc95uCBCjeX52Pjopu
+        type: bash_code_execution_tool_result
+      - text: 4 * 12390 = **49,560**
         type: text
-      id: msg_016hgHtSKi8fEDBmSkEtL364
+      id: msg_016CCM7vKzHb1YyMDsVofT35
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -206,8 +203,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 2219
-        output_tokens: 85
+        input_tokens: 4840
+        output_tokens: 80
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0

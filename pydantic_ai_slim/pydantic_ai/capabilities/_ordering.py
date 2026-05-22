@@ -160,7 +160,8 @@ def _effective_ordering(leaves: list[AbstractCapability[Any]]) -> CapabilityOrde
         if ordering.position is not None:
             if merged_position is not None and merged_position != ordering.position:
                 raise UserError(
-                    f'Conflicting positions in nested CombinedCapability: {merged_position!r} and {ordering.position!r}'
+                    f'Conflicting positions among nested leaves: {merged_position!r} and {ordering.position!r}. '
+                    f'Wrap each tier in its own capability or expose the leaves as siblings.'
                 )
             merged_position = ordering.position
         merged_wraps.extend(ordering.wraps)

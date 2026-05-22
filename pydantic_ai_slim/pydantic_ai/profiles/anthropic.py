@@ -1,9 +1,34 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
-from ..settings import ThinkingLevel
+from ..native_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
+from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
+
+_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+"""Builtin tool types Anthropic generally supports across the model line. Mirrors
+`AnthropicModel.supported_builtin_tools()` minus `ToolSearchTool`, which is gated
+per-model in the profile below."""
+
+AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
+"""Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+)
 
 
 @dataclass(kw_only=True)
@@ -52,6 +77,18 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
+    anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = '20250825'
+    """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`."""
+
+    anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
+    """The Anthropic code execution tool versions supported by the model."""
+
+    anthropic_supports_task_budgets: bool = False
+    """Whether the model supports `output_config.task_budget`.
+
+    Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -62,6 +99,39 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     'xhigh': 32768,
 }
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
+
+
+AnthropicEffort: TypeAlias = Literal['low', 'medium', 'high', 'xhigh', 'max']
+"""Effort values Anthropic accepts at `output_config.effort`."""
+
+
+ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'max',
+}
+"""Maps unified thinking effort levels to Anthropic `output_config.effort`.
+
+`xhigh` maps to `'max'` by default; callers that target a model with
+`anthropic_supports_xhigh_effort` should pass `supports_xhigh=True` to
+[`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort]
+to preserve `xhigh` instead of downshifting.
+"""
+
+
+def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
+    """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
+
+    Shared between the direct Anthropic path and any provider that translates to the
+    Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
+    Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
+    base mapping, while letting the `xhigh` passthrough decision live in one place.
+    """
+    if level == 'xhigh' and supports_xhigh:
+        return 'xhigh'
+    return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
@@ -92,6 +162,27 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
+    default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
+        model_name
+    )
+    supports_task_budgets = model_name.startswith('claude-opus-4-7')
+
+    # Native tool search requires the `tool_search_tool_bm25_20251119` /
+    # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
+    # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
+    supports_tool_search = model_name.startswith(
+        (
+            'claude-sonnet-4-5',
+            'claude-sonnet-4-6',
+            'claude-opus-4-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-haiku-4-5',
+        )
+    )
+    supported_native_tools = (
+        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
+    )
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -103,4 +194,19 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
+        anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
+        anthropic_supports_task_budgets=supports_task_budgets,
+        supported_native_tools=supported_native_tools,
     )
+
+
+def _code_execution_tool_versions(
+    model_name: str,
+) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
+    versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
+    default_version: AnthropicCodeExecutionToolVersion = '20250825'
+    if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
+        default_version = '20260120'
+        versions = (*versions, default_version)
+    return default_version, versions
