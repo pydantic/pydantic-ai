@@ -6533,3 +6533,97 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
             ),
         ]
     )
+
+
+async def test_google_stream_cache_read_tokens_accumulated(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that cache_read_tokens is accumulated across streaming chunks.
+
+    When using Google Gemini models via streaming, the cached_content_token_count
+    may not be present in every chunk. This test verifies that we accumulate
+    cache_read_tokens across chunks instead of overwriting.
+
+    See: https://github.com/pydantic/pydantic-ai/issues/5205
+    """
+    from google.genai.types import (
+        Candidate,
+        Content,
+        FinishReason,
+        GenerateContentResponse,
+        GenerateContentResponseUsageMetadata,
+        Part,
+    )
+
+    model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
+
+    # Create streaming chunks where:
+    # - First chunk has usage_metadata with cached_content_token_count
+    # - Subsequent chunks have usage_metadata without cached_content_token_count
+    # This simulates real API behavior where cache info may only appear in certain chunks
+
+    prompt_tokens = 1000
+    cached_tokens = 800
+    output_tokens = 50
+
+    # First chunk with cached content
+    chunk1 = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='Hello ')]),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=prompt_tokens,
+            candidates_token_count=output_tokens,
+            total_token_count=prompt_tokens + output_tokens,
+            cached_content_token_count=cached_tokens,
+        ),
+    )
+
+    # Second chunk without cached content (simulating subsequent chunks)
+    chunk2 = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='world!')]),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=prompt_tokens,
+            candidates_token_count=output_tokens,
+            total_token_count=prompt_tokens + output_tokens,
+        ),
+    )
+
+    # Final chunk with complete usage
+    chunk3 = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='\n')]),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=prompt_tokens,
+            candidates_token_count=output_tokens,
+            total_token_count=prompt_tokens + output_tokens,
+        ),
+    )
+
+    async def stream_iterator():
+        yield chunk1
+        yield chunk2
+        yield chunk3
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            pass
+
+    # The key assertion: cache_read_tokens should be accumulated
+    # even though not all chunks have cached_content_token_count
+    assert result.usage.cache_read_tokens == cached_tokens

@@ -129,9 +129,9 @@ _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
 # per-request timeout so a burst of slow requests can't accumulate forever.
-RUN_TIMEOUT_SECS = 28 * 60       # 28 min — just under the 30 min gh-aw job cap
+RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
-COMPACTION_TIMEOUT_SECS = 120    # 2 min for the compaction summariser call
+COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
