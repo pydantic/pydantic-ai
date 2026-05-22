@@ -1088,10 +1088,10 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
-            shim._run_with_timeout(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
                 'p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[None], object()), [], 'sess-test'
             )
-        )  # pyright: ignore[reportPrivateUsage]
+        )
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
