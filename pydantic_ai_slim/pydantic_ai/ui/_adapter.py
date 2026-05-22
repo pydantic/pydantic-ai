@@ -22,12 +22,12 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._tool_search import NativeToolSearchReturnPart, ToolSearchReturnPart
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BaseToolCallPart,
-    BaseToolReturnPart,
     FileUrl,
     ForceDownloadMode,
     ModelMessage,
@@ -35,8 +35,10 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolReturnPart,
     SystemPromptPart,
     ToolReturnContent,
+    ToolReturnPart,
     UserContent,
     UserPromptPart,
 )
@@ -443,7 +445,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     part.content, disallowed_schemes, reset_force_download_values
                 )
                 new_parts.append(replace(part, content=filtered_content))
-            elif isinstance(part, BaseToolReturnPart):
+            elif isinstance(part, (ToolReturnPart, NativeToolReturnPart)) and not isinstance(
+                part, (ToolSearchReturnPart, NativeToolSearchReturnPart)
+            ):
+                # Only `ToolReturnPart`/`NativeToolReturnPart` carry the recursive `ToolReturnContent`
+                # the walker expects. The `ToolSearchReturnPart`/`NativeToolSearchReturnPart` subclasses
+                # narrow `content` to a `ToolSearchReturnContent` `TypedDict` that holds no `FileUrl`s.
                 new_parts.append(
                     replace(
                         part,
@@ -545,7 +552,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ):
                 dangling_names.append(part.tool_name)
                 continue
-            if isinstance(part, BaseToolReturnPart):
+            if isinstance(part, (ToolReturnPart, NativeToolReturnPart)) and not isinstance(
+                part, (ToolSearchReturnPart, NativeToolSearchReturnPart)
+            ):
+                # See `_sanitize_request_parts`: only the non-search tool-return parts carry the
+                # recursive `ToolReturnContent` the walker is built for.
                 new_parts.append(
                     replace(
                         part,
