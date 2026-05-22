@@ -375,6 +375,29 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+### Auxen
+
+[Auxen](https://auxen.ai) hosts per-customer **dedicated** LLM endpoints (Llama 3.1/3.2, Qwen 2.5, Mistral, Gemma 2, Mixtral, Phi-3, Command R) with an OpenAI-compatible `/v1/chat/completions` API. Each instance is a dedicated GPU billed per-minute of runtime — no token charges, no monthly minimums.
+
+Because every Auxen instance has its own per-instance base URL of the form `https://api.auxen.ai/v1/inst_xxx/v1` (issued by the Auxen dashboard), there is no shared default endpoint, so the integration uses [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with explicit `base_url` and `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'llama-3.1-8b',  # the model your instance is provisioned to serve
+    provider=OpenAIProvider(
+        base_url='https://api.auxen.ai/v1/inst_xxx/v1',  # from the Auxen dashboard
+        api_key='auxk_...',                              # from the Auxen dashboard
+    ),
+)
+agent = Agent(model)
+```
+
+Auxen-hosted models include: `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.2-3b`, `qwen2.5-7b`, `qwen2.5-14b`, `qwen2.5-32b`, `mistral-7b`, `mistral-nemo-12b`, `mixtral-8x7b`, `gemma2-9b`, `phi-3-mini`, `command-r-7b`. Each instance is provisioned with one model at creation time. See [auxen.ai/pricing](https://auxen.ai/pricing) for per-minute hourly rates.
+
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
