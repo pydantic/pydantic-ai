@@ -88,3 +88,16 @@ async def test_replay_aiter_bytes_result() -> None:
     ws.recv = bytes_recv
     result = await ws.__anext__()
     assert isinstance(result, str)
+
+
+@pytest.mark.anyio
+async def test_replay_aiter_yields_str_frames() -> None:
+    """Iterating a `ReplayWebSocket` yields each received frame as a JSON string, then stops."""
+    cassette = WebSocketCassette(
+        interactions=[
+            CassetteInteraction(direction='received', data={'type': 'first'}),
+            CassetteInteraction(direction='received', data={'type': 'second'}),
+        ]
+    )
+    received = [frame async for frame in ReplayWebSocket(cassette)]
+    assert received == ['{"type": "first"}', '{"type": "second"}']

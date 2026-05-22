@@ -56,7 +56,7 @@ class _StubWebSocket:
 
     @property
     def protocol(self) -> Any:
-        return None
+        return None  # pragma: no cover
 
 
 class _StubConnect:
@@ -72,7 +72,7 @@ class _StubConnect:
         return _resolve().__await__()
 
     async def __aenter__(self) -> _StubWebSocket:
-        return self._ws
+        return self._ws  # pragma: no cover
 
     async def __aexit__(self, *args: Any) -> None:
         pass
@@ -246,12 +246,11 @@ async def test_ws_error_event_raises_streaming(openai_ws_model: OpenAIResponsesM
     """An `error` event over a streamed WebSocket request surfaces as `ModelAPIError`."""
     agent: Agent[None, str] = Agent(openai_ws_model)
 
+    # The error event surfaces while the stream is set up, so `run_stream()` raises on entry.
     async with openai_ws_model.connect():
-        with pytest.raises(ModelAPIError) as exc_info:
-            async with agent.run_stream('trigger an error') as result:
-                await result.get_output()
-
-    assert 'server had an error' in str(exc_info.value)
+        with pytest.raises(ModelAPIError, match='server had an error'):
+            async with agent.run_stream('trigger an error'):
+                pass  # pragma: no cover
 
 
 @pytest.mark.ws_cassette
@@ -269,10 +268,24 @@ async def test_ws_connection_closed_before_terminal_streaming(openai_ws_model: O
     """A streamed WebSocket request whose connection closes before a terminal event raises `UnexpectedModelBehavior`."""
     agent: Agent[None, str] = Agent(openai_ws_model)
 
+    # The connection is exhausted while the stream is set up, so `run_stream()` raises on entry.
     async with openai_ws_model.connect():
         with pytest.raises(UnexpectedModelBehavior, match='closed before a terminal'):
-            async with agent.run_stream('hello') as result:
-                await result.get_output()
+            async with agent.run_stream('hello'):
+                pass  # pragma: no cover
+
+
+@pytest.mark.ws_cassette
+async def test_ws_stream_cancel(openai_ws_model: OpenAIResponsesModel) -> None:
+    """Cancelling a streamed WebSocket run closes the underlying `_ws_send_stream` async generator."""
+    agent: Agent[None, str] = Agent(openai_ws_model)
+
+    async with openai_ws_model.connect():
+        async with agent.run_stream('Say "hello" and nothing else.') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break
+            await result.cancel()
+            assert result.cancelled
 
 
 # ---------------------------------------------------------------------------

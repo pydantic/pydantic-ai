@@ -51,7 +51,7 @@ class _ReplayConnect:
         return _resolve().__await__()
 
     async def __aenter__(self) -> ReplayWebSocket:
-        return self._ws
+        return self._ws  # pragma: no cover
 
     async def __aexit__(self, *args: Any) -> None:
         pass
