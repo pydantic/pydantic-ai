@@ -1264,28 +1264,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self.provider_details = {'timestamp': self._provider_timestamp}
         try:
             async for chunk in self._response:
-                chunk_usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
-                # For streaming, regular tokens (input/output) should come from the latest chunk,
-                # but cache tokens need to be accumulated across chunks since cached_content_token_count
-                # may not be present in every chunk.
-                # We use assignment for regular tokens and incr for cache tokens.
-                self._usage.input_tokens = chunk_usage.input_tokens
-                self._usage.output_tokens = chunk_usage.output_tokens
-                self._usage.input_audio_tokens = chunk_usage.input_audio_tokens
-                self._usage.output_audio_tokens = chunk_usage.output_audio_tokens
-                # Accumulate cache tokens across chunks
-                self._usage.cache_read_tokens += chunk_usage.cache_read_tokens
-                self._usage.cache_write_tokens += chunk_usage.cache_write_tokens
-                self._usage.cache_audio_read_tokens += chunk_usage.cache_audio_read_tokens
-                # Merge details, preferring the latest values but accumulating cache-related ones
-                for key, value in chunk_usage.details.items():
-                    if isinstance(value, (int, float)):
-                        if 'cache' in key.lower():
-                            # Accumulate cache-related details
-                            self._usage.details[key] = self._usage.details.get(key, 0) + value
-                        else:
-                            # Use the latest value for non-cache details
-                            self._usage.details[key] = value
+                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
                 if (
                     chunk.sdk_http_response
