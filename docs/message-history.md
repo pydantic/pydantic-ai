@@ -442,8 +442,9 @@ def enter_incident_mode(ctx: RunContext[None]) -> str:
 The `'asap'` message is appended to the agent's message history and is visible to the
 model on the next request, alongside any tool returns from the same step. A
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
-providers that hoist system prompts (e.g. Anthropic, Google) it's rendered inline as a regular
-user-role message so it keeps its mid-conversation position rather than being lifted to the top.
+providers that hoist system prompts (e.g. Anthropic, Google) a non-leading one is sent as a
+`<system>`-tagged user-role message, so it keeps its mid-conversation position rather than being
+lifted to the top.
 
 ### From external code driving `agent.iter()`
 
@@ -477,13 +478,15 @@ drained when the agent would otherwise reach an `End` — that drain happens in 
 which doesn't fire inside a bare `async for node in agent_run:` loop. `'asap'` messages are
 drained in `before_model_request` (which fires either way) and also at the same end-of-run point
 if anything arrived during the final step. Reaching the end of a bare `async for` loop with
-undrained pending messages emits a warning, since those messages would otherwise be silently lost.
+undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
+since those messages would otherwise be silently lost.
 
 !!! info "Limitations"
     - End-of-run redirects need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
       explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
-      aren't drained inside a bare `async for node in agent_run:` loop (which emits a
-      warning if it ends with undrained messages). Messages delivered into a
+      aren't drained inside a bare `async for node in agent_run:` loop (which raises
+      [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError]
+      if it ends with undrained messages). Messages delivered into a
       `before_model_request` work in either case.
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
       activities and don't share state with the workflow, so `ctx.enqueue` from a

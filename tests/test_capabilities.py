@@ -55,6 +55,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -11517,12 +11518,13 @@ async def test_enqueue_from_agent_run():
     )
 
 
-async def test_bare_async_for_warns_with_undrained_pending_messages():
-    """Bare `async for` reaching End with undrained `when_idle` messages warns about the misuse.
+async def test_bare_async_for_raises_with_undrained_pending_messages():
+    """Bare `async for` reaching End with undrained `when_idle` messages raises rather than stranding them.
 
     `when_idle` (and end-of-step `asap` leftovers) drain in `after_node_run`, which bare
-    iteration skips — so they're silently stranded. `__anext__` flags this when it yields the
-    `End` node with a non-empty queue, pointing the user at `next()` driving.
+    iteration skips — so they'd be silently lost. `__anext__` raises
+    `UndrainedPendingMessagesError` when it would yield the `End` node with a non-empty queue,
+    pointing the user at `next()` driving.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -11533,24 +11535,14 @@ async def test_bare_async_for_warns_with_undrained_pending_messages():
 
     agent = Agent(FunctionModel(model_fn))
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        async with agent.iter('hi') as agent_run:
-            agent_run.enqueue('stranded follow-up', priority='when_idle')
+    async with agent.iter('hi') as agent_run:
+        agent_run.enqueue('stranded follow-up', priority='when_idle')
+        with pytest.raises(UndrainedPendingMessagesError, match='undrained pending messages'):
             async for _ in agent_run:
                 pass
 
-    drain_warnings = [w for w in caught if 'undrained pending messages' in str(w.message)]
-    assert len(drain_warnings) == 1
-    # The message was never delivered: it's still queued and absent from history.
-    assert len(agent_run.pending_messages) == 1
-    assert agent_run.result is not None
-    assert not any(
-        isinstance(p, UserPromptPart) and p.content == 'stranded follow-up'
-        for msg in agent_run.result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for p in msg.parts
-    )
+        # The message was never delivered: it's still queued.
+        assert len(agent_run.pending_messages) == 1
 
 
 async def test_pending_messages_accessible_on_run_context():
