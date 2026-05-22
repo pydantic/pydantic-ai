@@ -89,7 +89,7 @@ _BASE_TOOLS: tuple[tuple[str, ClaudeCodeToolFn, str], ...] = (
 )
 
 
-# Claude Code Claude Code tool names the shim implements as Python callables.
+# Claude Code tool names the shim implements as Python callables.
 # Excludes `WebFetch` (a `NativeTool` capability) and `Task` (registered by
 # the main shim via `build_claude_code_toolset(task=...)`). Kept as a separate
 # tuple for tests / introspection that just need the name list.

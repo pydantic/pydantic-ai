@@ -62,6 +62,7 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
+    RetryPromptPart,
     ToolCallEvent,
     ToolCallPart,
     ToolResultEvent,
@@ -275,6 +276,21 @@ def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
 
 
+_SYNTHETIC_SUMMARY_TAG = '[compacted history]'
+
+
+def _is_synthetic_summary(message: ModelMessage) -> bool:
+    """A `ModelRequest` we synthesised in a prior `_compact_history` round."""
+    if not isinstance(message, ModelRequest):
+        return False
+    parts = message.parts
+    return (
+        len(parts) == 1
+        and isinstance(parts[0], UserPromptPart)
+        and str(parts[0].content).startswith(_SYNTHETIC_SUMMARY_TAG)
+    )
+
+
 async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
     if len(messages) <= COMPACTION_KEEP_RECENT:
@@ -293,8 +309,13 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         len(middle),
         COMPACTION_KEEP_RECENT,
     )
+    # Preserve any earlier-round synthetic at the head of the middle so a
+    # fallback (`return [prior_synthetic, *tail]`) doesn't silently forget
+    # the entire run's compacted history.
+    prior_synthetic = middle[0] if middle and _is_synthetic_summary(middle[0]) else None
+
     # Fresh `RunUsage` so `request_limit=2` bounds the summariser, not
-    # (parent + summariser). We merge the totals back after the call.
+    # (parent + summariser). Merge the totals back regardless of outcome.
     sub_usage = RunUsage()
     try:
         r = await Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
@@ -302,25 +323,26 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
             usage_limits=UsageLimits(request_limit=2),
             usage=sub_usage,
         )
-        ctx.usage.incr(sub_usage)
         summary = str(r.output or '').strip() or '(empty summary)'
     except Exception as exc:
-        logger.warning('compaction summarisation failed (%r); truncating instead', exc)
-        return tail
+        ctx.usage.incr(sub_usage)
+        logger.warning('compaction summarisation failed (%r); falling back', exc)
+        return [prior_synthetic, *tail] if prior_synthetic else tail
+    ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
     # the next compaction round would trip on the same too-large synthetic
-    # message and never converge — fall back to tail-only.
+    # and never converge — fall back to the prior synthetic + tail.
     middle_size = _history_size_chars(middle)
     if len(summary) >= middle_size:
-        logger.info('compaction summary discarded (%d >= %d chars); truncating instead', len(summary), middle_size)
-        return tail
+        logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
+        return [prior_synthetic, *tail] if prior_synthetic else tail
     logger.info(
         'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
         len(middle),
         middle_size,
         len(summary),
     )
-    synthetic = ModelRequest(parts=[UserPromptPart(content=f'[compacted history]\n{summary}')])
+    synthetic = ModelRequest(parts=[UserPromptPart(content=f'{_SYNTHETIC_SUMMARY_TAG}\n{summary}')])
     return [synthetic, *tail]
 
 
@@ -600,8 +622,8 @@ async def _stream_events(_ctx: RunContext[None], events: AsyncIterable[AgentStre
                         'content': [
                             {
                                 'type': 'tool_use',
-                                'id': event.part.tool_call_id or '',
-                                'name': event.part.tool_name or '',
+                                'id': event.part.tool_call_id,
+                                'name': event.part.tool_name,
                                 'input': event.part.args_as_dict(),
                             }
                         ],
@@ -610,6 +632,11 @@ async def _stream_events(_ctx: RunContext[None], events: AsyncIterable[AgentStre
             )
             logger.info('tool_use: %s', event.part.tool_name)
         elif isinstance(event, ToolResultEvent):
+            # `event.part` is `ToolReturnPart | RetryPromptPart`; the latter
+            # means the tool result failed validation and pydantic-ai is
+            # asking the model to retry. Tag it so gh-aw doesn't read it as
+            # success.
+            is_retry = isinstance(event.part, RetryPromptPart)
             content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (
@@ -623,8 +650,9 @@ async def _stream_events(_ctx: RunContext[None], events: AsyncIterable[AgentStre
                         'content': [
                             {
                                 'type': 'tool_result',
-                                'tool_use_id': event.part.tool_call_id or '',
+                                'tool_use_id': event.part.tool_call_id,
                                 'content': content,
+                                'is_error': is_retry,
                             }
                         ],
                     },
@@ -765,7 +793,9 @@ def main() -> int:
         rc = asyncio.run(run(prompt, model, label, claude_code_toolset, mcp_servers, session_id))
         logger.info('done in %.1fs rc=%d', time.time() - started, rc)
         return rc
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
+        # `argparse` raises `SystemExit` (not `Exception`) on unknown-flag
+        # rejection; gh-aw still needs a structured result line.
         logger.error('FATAL startup error: %r', exc)
         emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
         return 1

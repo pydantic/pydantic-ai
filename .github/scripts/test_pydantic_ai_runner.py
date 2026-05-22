@@ -303,6 +303,7 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
 
     seen_instructions: list[str] = []
     received: list[ModelMessage] = []
+    emitted: list[dict[str, object]] = []
 
     def _respond(messages, info):
         seen_instructions.append(info.instructions or '')
@@ -314,7 +315,7 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
         received.extend(messages)
         yield 'done'
 
-    monkeypatch.setattr(shim, 'emit', lambda *_a, **_k: None)
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))
     monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
 
     sentinel = '### WORKFLOW TASK SPEC: review the PR per the rules above ###'
@@ -332,9 +333,14 @@ def test_run_routes_workflow_prompt_to_system_instructions(monkeypatch):
     instructions = seen_instructions[0]
     user_text = '\n'.join(str(p.content) for m in received for p in m.parts if isinstance(p, UserPromptPart))
 
-    assert shim.INSTRUCTIONS in instructions
+    # Order matters for prompt-prefix caching: INSTRUCTIONS must come first.
+    assert instructions.startswith(shim.INSTRUCTIONS)
     assert sentinel in instructions
     assert user_text == shim.RUN_TRIGGER
+    # `run()` must emit both a `system`/`init` line and a `result` line for gh-aw.
+    kinds = [(e.get('type'), e.get('subtype')) for e in emitted]
+    assert ('system', 'init') in kinds
+    assert any(t == 'result' and s == 'success' for t, s in kinds)
     assert sentinel not in user_text
 
 
@@ -768,6 +774,40 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch):
     assert len(out) == shim.COMPACTION_KEEP_RECENT
 
 
+def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch):
+    """A second compaction round whose summary fails (or doesn't fit) must
+    keep the earlier round's `[compacted history]` block. Dropping it would
+    silently forget the entire run's prior work."""
+    import asyncio
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models.test import TestModel
+
+    big = 'x' * 50_000
+    prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
+    msgs = [prior_synthetic, *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12))]
+
+    class _FailingAgent:
+        def __init__(self, *a, **k):
+            pass
+
+        async def run(self, *a, **k):
+            raise RuntimeError('boom')
+
+    monkeypatch.setattr(shim, 'Agent', _FailingAgent)
+
+    from pydantic_ai.usage import RunUsage
+
+    class _Ctx:
+        model = TestModel()
+        usage = RunUsage()
+
+    out = asyncio.run(shim._compact_history(_Ctx(), msgs))
+    # First element is the preserved prior synthetic; rest is the tail.
+    assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
+    assert out[0] is prior_synthetic
+
+
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch):
     import asyncio
 
@@ -896,6 +936,31 @@ def test_stream_events_truncates_long_tool_results():
     emitted = line['message']['content'][0]['content']
     assert len(emitted) < len(huge)
     assert '…[+' in emitted and 'chars]' in emitted
+
+
+def test_stream_events_tags_retry_prompt_as_error():
+    """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
+    means tool-call validation failed — gh-aw must see `is_error=True` so it
+    doesn't read it as a successful result."""
+    import asyncio
+
+    from pydantic_ai.messages import FunctionToolResultEvent, RetryPromptPart, ToolReturnPart
+
+    async def _events():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='Bash', content='ok', tool_call_id='c1'),
+        )
+        yield FunctionToolResultEvent(
+            part=RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c2'),
+        )
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        asyncio.run(shim._stream_events(None, _events()))
+
+    lines = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
+    assert lines[0]['message']['content'][0]['is_error'] is False
+    assert lines[1]['message']['content'][0]['is_error'] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -1149,6 +1214,19 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch):
     assert 'kaboom' in obj['result']
 
 
+def test_main_emits_structured_error_on_argparse_rejection(monkeypatch):
+    # argparse `action='store_true'` raises `SystemExit(2)` on
+    # `--print=true`; gh-aw still needs a structured `result` line.
+    monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print=true', 'hi'])
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = shim.main()
+    assert rc == 1
+    obj = json.loads(buf.getvalue().strip())
+    assert obj['type'] == 'result' and obj['is_error'] is True
+    assert 'shim startup failed' in obj['result']
+
+
 @pytest.mark.skipif(
     not os.environ.get('GH_AW_SHIM_LIVE_API_KEY'),
     reason='set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test',
@@ -1177,4 +1255,7 @@ def test_live_anthropic_compatible_endpoint(monkeypatch):
     result = next(x for x in lines if x['type'] == 'result')
     assert result['is_error'] is False
     assert result['result']
+    # `input_tokens > 0` proves the prompt round-tripped; `output_tokens > 0`
+    # proves the model actually responded.
+    assert result['usage']['input_tokens'] > 0
     assert result['usage']['output_tokens'] > 0

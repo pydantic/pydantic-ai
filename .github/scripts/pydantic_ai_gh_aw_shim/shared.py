@@ -97,7 +97,7 @@ def attach_context(path_arg: str | None) -> str:
     seen = _seen_context_files()
     cur = target if target.is_dir() else target.parent
     blocks: list[str] = []
-    while True:
+    while cur.is_relative_to(ws):
         for name in CONTEXT_FILE_NAMES:
             candidate = cur / name
             if not candidate.is_file() or candidate in seen:
@@ -107,11 +107,11 @@ def attach_context(path_arg: str | None) -> str:
                 content = candidate.read_text(encoding='utf-8', errors='replace')
             except OSError:
                 continue
-            rel = candidate.relative_to(ws) if candidate.is_relative_to(ws) else candidate
+            rel = candidate.relative_to(ws)
             blocks.append(
                 f'--- context: {rel} (auto-loaded; shown once per run) ---\n{content[:MAX_CONTEXT_FILE_CHARS]}\n'
             )
-        if cur == ws or cur.parent == cur or not cur.is_relative_to(ws):
+        if cur == ws or cur.parent == cur:
             break
         cur = cur.parent
     if not blocks:
