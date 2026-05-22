@@ -142,6 +142,7 @@ class ToolInputStreamingPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -154,6 +155,7 @@ class ToolInputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -166,6 +168,7 @@ class ToolOutputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any | None = None
     output: Any | None = None
@@ -180,6 +183,7 @@ class ToolOutputErrorPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any | None = None
     raw_input: Any | None = None
@@ -194,6 +198,7 @@ class ToolApprovalRequestedPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['approval-requested'] = 'approval-requested'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -206,6 +211,7 @@ class ToolApprovalRespondedPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['approval-responded'] = 'approval-responded'
     input: Any | None = None
     provider_executed: bool | None = None
@@ -218,6 +224,7 @@ class ToolOutputDeniedPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-denied'] = 'output-denied'
     input: Any | None = None
     provider_executed: bool | None = None

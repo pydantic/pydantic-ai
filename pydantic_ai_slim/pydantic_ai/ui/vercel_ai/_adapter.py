@@ -54,6 +54,9 @@ from ._utils import (
 )
 from .request_types import (
     DataUIPart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
+    DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -340,7 +343,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
-                            builtin_tool = False
+                            builtin_tool = part.provider_executed
                         else:
                             tool_name = part.type.removeprefix('tool-')
                             builtin_tool = part.provider_executed
@@ -372,7 +375,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # So we extract and return them to the respective parts
                             call_meta = return_meta = {}
                             has_tool_output = isinstance(
-                                part, (ToolOutputAvailablePart, ToolOutputErrorPart, ToolOutputDeniedPart)
+                                part,
+                                (
+                                    ToolOutputAvailablePart,
+                                    ToolOutputErrorPart,
+                                    ToolOutputDeniedPart,
+                                    DynamicToolOutputAvailablePart,
+                                    DynamicToolOutputErrorPart,
+                                    DynamicToolOutputDeniedPart,
+                                ),
                             )
 
                             if has_tool_output:
@@ -390,14 +401,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if has_tool_output:
-                                if isinstance(part, ToolOutputErrorPart):
+                                if isinstance(part, ToolOutputErrorPart | DynamicToolOutputErrorPart):
                                     output: Any = part.error_text
                                     outcome: Literal['success', 'failed', 'denied'] = 'failed'
-                                elif isinstance(part, ToolOutputDeniedPart):
+                                elif isinstance(part, ToolOutputDeniedPart | DynamicToolOutputDeniedPart):
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    output = (
+                                        part.output
+                                        if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
+                                        else None
+                                    )
                                     outcome = 'success'
                                 builder.add(
                                     NativeToolReturnPart(
