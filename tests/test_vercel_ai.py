@@ -3867,6 +3867,7 @@ async def test_adapter_dump_messages_with_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test query'},
                         'provider_executed': False,
@@ -3934,6 +3935,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4007,6 +4009,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                     {
                         'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4096,6 +4099,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4252,6 +4256,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': {'status': 'completed'},
@@ -4312,6 +4317,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
+                        'title': None,
                         'state': 'input-available',
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
@@ -4474,6 +4480,7 @@ async def test_adapter_dump_messages_with_retry():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'arg': 'value'},
@@ -4658,6 +4665,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 't1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'output': 'result',
@@ -4943,6 +4951,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
@@ -5016,6 +5025,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
                     {
                         'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'city': 'New York'},
@@ -5050,6 +5060,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
         {
             'type': 'tool-dangerous_action',
             'tool_call_id': 'deferred_tc1',
+            'title': None,
             'state': 'approval-requested',
             'input': {'target': 'production'},
             'provider_executed': False,
@@ -5163,6 +5174,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     {
                         'type': 'tool-t',
                         'tool_call_id': 'tc1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {},
@@ -5775,6 +5787,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'arg': 'value'},
                         'provider_executed': False,
@@ -6045,6 +6058,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': '{"results":[]}',
@@ -6121,6 +6135,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
+                        'title': None,
                         'state': 'output-error',
                         'input': {'query': 'test'},
                         'raw_input': None,
@@ -6380,6 +6395,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                     {
                         'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'x': 1},
@@ -7358,6 +7374,7 @@ async def test_adapter_dump_messages_tool_return_error():
             {
                 'type': 'tool-my_tool',
                 'tool_call_id': 'tc_err',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'x': 1},
@@ -7404,6 +7421,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
             {
                 'type': 'tool-web_search',
                 'tool_call_id': 'bt_old',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'query': 'test'},
