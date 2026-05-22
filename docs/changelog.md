@@ -6,6 +6,18 @@ In September 2025, Pydantic AI reached V1 and committed to API stability: no cha
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0.0b2 (2026-05-22)
+
+The second V2 beta, forked from **v1.101.0**. There are no new V2 breaking changes since [v2.0.0b1](#v200b1-2026-05-20) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which adds the [pending message queue](https://github.com/pydantic/pydantic-ai/pull/4980) (`ctx.enqueue` / `agent_run.enqueue`).
+
+Install it the same way, pinning the exact pre-release version:
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0b2"
+```
+
+For the full breaking-change list and the recommended upgrade path, see the [v2.0.0b1](#v200b1-2026-05-20) entry below; the only difference is that the latest V1 to upgrade through first is now **v1.101.0**.
+
 ### v2.0.0b1 (2026-05-20)
 
 <!-- TODO(v2-launch): at stable V2.0 release, add a `v2.0.0 (<date>)` heading for any changes since the last beta, drop the "beta" framing and the pre-release install pinning below, and update the dates in the Version Policy intro. -->
