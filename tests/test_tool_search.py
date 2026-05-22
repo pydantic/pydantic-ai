@@ -2298,27 +2298,259 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                     'tools': [tool['name'] for tool in part.content['discovered_tools']],
                 }
             elif isinstance(part, ToolCallPart):
-                part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
+                # Normalize args from JSON string to dict so per-row snapshots don't
+                # pin on provider-specific whitespace or key ordering.
+                part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args_as_dict()}
             elif isinstance(part, ToolReturnPart):
                 part_info = {'type': 'tool_return', 'tool_name': part.tool_name, 'content': part.content}
             elif isinstance(part, TextPart):
                 part_info = {'type': 'text'}
             part_trace.append(part_info)
-        trace.append((type(message).__name__, part_trace))
+        # Use a flat lowercase tag so inline-snapshot writes a plain string instead
+        # of "helpfully" resolving the class name to `'request'`.
+        tag = 'request' if isinstance(message, ModelRequest) else 'response'
+        trace.append((tag, part_trace))
     return trace
 
 
+# Both turns vary per provider — first-turn trajectory differs (Anthropic prepends
+# prose, Google may run native search), and even the resume turn isn't uniform
+# (some providers prepend a text part before the tool_call). A single `snapshot()`
+# literal can only hold one row's value, so we key both expected traces by
+# `(first_model, resume_model)` and let inline-snapshot fill each entry on
+# `--record-mode=once --inline-snapshot=create`.
+_TraceShape = list[tuple[str, list[dict[str, Any]]]]
+
+_FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
+    ('anthropic:claude-sonnet-4-5', 'openai-responses:gpt-5.4'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'text'}, {'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-4-5'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('google:gemini-3-flash-preview', 'openai-responses:gpt-5.4'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'tool_search_call', 'queries': ['order details', 'order status']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': []}]),
+            ('response', [{'type': 'tool_search_call', 'queries': ['get order', 'order information']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': []}]),
+            ('response', [{'type': 'tool_search_call', 'queries': ['refund order', 'process refund']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': []}]),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('openai-responses:gpt-5.4', 'google:gemini-3-flash-preview'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
+            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+}
+
+
+# Resume-turn structure also varies per provider — some prepend a text part before the
+# tool_call. Keyed like `_FIRST_TURN_EXPECTED` so each row's record stays distinct.
+_RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
+    ('anthropic:claude-sonnet-4-5', 'openai-responses:gpt-5.4'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [
+                    {'type': 'text'},
+                    {'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}},
+                ],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-4-5'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('google:gemini-3-flash-preview', 'openai-responses:gpt-5.4'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('openai-responses:gpt-5.4', 'google:gemini-3-flash-preview'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+}
+
+
 # Cassette names depend on the parametrize id, so we keep these stable across the
-# matrix. Recording: `pytest --record-mode=new --inline-snapshot=create`.
-@pytest.mark.parametrize(
-    'first_model_name,resume_model_name',
-    [
-        ('anthropic:claude-sonnet-4-5', 'openai:gpt-5.4'),
-        ('openai:gpt-5.4', 'anthropic:claude-sonnet-4-5'),
-        ('google:gemini-3-flash-preview', 'openai:gpt-5.4'),
-        ('openai:gpt-5.4', 'google:gemini-3-flash-preview'),
-    ],
-)
+# matrix. Recording: `pytest --record-mode=once --inline-snapshot=create`.
+@pytest.mark.parametrize('first_model_name,resume_model_name', list(_FIRST_TURN_EXPECTED.keys()))
 @pytest.mark.vcr
 @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
@@ -2335,9 +2567,8 @@ async def test_cross_provider_capability_replay(
     capability-owned tools, treats the prior turn's tool-search history as
     already-discovered, and dispatches `lookup_refund_policy` directly.
 
-    Asserting the trace-level story (`_trace_capability_messages`) over both turns
-    is enough — per-provider wire shape is already covered by the dedicated
-    OpenAI/Anthropic/Google adapter tests."""
+    Asserting the trace-level story over both turns is enough — per-provider wire
+    shape is already covered by the dedicated OpenAI/Anthropic/Google adapter tests."""
     pytest.importorskip('anthropic')
     pytest.importorskip('openai')
     pytest.importorskip('google.genai')
@@ -2367,38 +2598,12 @@ async def test_cross_provider_capability_replay(
         message_history=first_result.all_messages(),
     )
 
-    # The trajectory of the *first* turn varies per provider (some run native search,
-    # some run the local fallback), so each row gets its own snapshot.
-    assert _trace_capability_messages(first_result.all_messages()) == snapshot()
-    # The *resume* turn should be uniform regardless of which provider ran first: the
-    # capability is already loaded, the tool was discovered, so the resuming provider
-    # calls `lookup_refund_policy` directly.
-    assert _trace_capability_messages(resume_result.new_messages()) == snapshot(
-        [
-            ('ModelRequest', [{'type': 'user', 'content': 'And what about order-456?'}]),
-            (
-                'ModelResponse',
-                [
-                    {
-                        'type': 'tool_call',
-                        'tool_name': 'lookup_refund_policy',
-                        'args': {'order_id': 'order-456'},
-                    }
-                ],
-            ),
-            (
-                'ModelRequest',
-                [
-                    {
-                        'type': 'tool_return',
-                        'tool_name': 'lookup_refund_policy',
-                        'content': 'order-456: refund allowed for 30 days',
-                    }
-                ],
-            ),
-            ('ModelResponse', [{'type': 'text'}]),
-        ]
-    )
+    # Per-row records pin each provider pair's full trajectory. The resume turn must
+    # dispatch `lookup_refund_policy` off the replayed history without a fresh
+    # load_capability or tool_search — drift in that contract surfaces as a diff here.
+    key = (first_model_name, resume_model_name)
+    assert _trace_capability_messages(first_result.all_messages()) == _FIRST_TURN_EXPECTED[key]
+    assert _trace_capability_messages(resume_result.new_messages()) == _RESUME_TURN_EXPECTED[key]
 
 
 @pytest.mark.vcr
@@ -4779,7 +4984,9 @@ def test_apply_client_tool_search_skips_non_matching_entries_in_tools_list(
 
     # The skipped entries (indices 0 and 1) are preserved verbatim and only the
     # auto-executed `tool_search` at index 2 flips to client mode.
-    converted_indices = [i for i, tool in enumerate(tools) if tool.get('description') == _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION]
+    converted_indices = [
+        i for i, tool in enumerate(tools) if tool.get('description') == _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
+    ]
     assert converted_indices == [2]
 
 

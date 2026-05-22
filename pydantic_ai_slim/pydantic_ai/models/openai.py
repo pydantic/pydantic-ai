@@ -2850,6 +2850,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and (ns := item.provider_details.get('namespace'))
                             ):
                                 param['namespace'] = ns
+                            elif synthesized_ns := _deferred_capability_tool_name_for_namespace_synthesis(
+                                item.tool_name, model_request_parameters
+                            ):
+                                # Cross-provider replay: prior turn ran on a non-OpenAI
+                                # provider, so no namespace was captured. See helper for the
+                                # evidence behind synthesizing `namespace = tool_name`.
+                                param['namespace'] = synthesized_ns
                             openai_messages.append(param)
                     elif isinstance(item, NativeToolCallPart):
                         if should_send_item_id:  # pragma: no branch
@@ -4295,6 +4302,29 @@ def _map_code_interpreter_tool_call(
         ),
         file_parts,
     )
+
+
+def _deferred_capability_tool_name_for_namespace_synthesis(
+    tool_name: str, model_request_parameters: ModelRequestParameters
+) -> str | None:
+    """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`."""
+    # OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI
+    # history lacks that field, but OpenAI rejects replayed tool-search-loaded
+    # function calls without a namespace (even when tool_search ran client-side).
+    # For the flat deferred function tools this adapter emits, OpenAI-generated
+    # calls use `namespace == tool_name` — verified by live probe against a
+    # capability owning multiple deferred tools. Scoped to the capability-owned
+    # tool-search corpus so unrelated functions (and any future `NamespaceTool`
+    # wrapper) stay out of this fallback.
+    for tool in model_request_parameters.function_tools:
+        if (
+            tool.name == tool_name
+            and tool.with_native == ToolSearchTool.kind
+            and tool.metadata is not None
+            and tool.metadata.get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        ):
+            return tool_name
+    return None
 
 
 def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
