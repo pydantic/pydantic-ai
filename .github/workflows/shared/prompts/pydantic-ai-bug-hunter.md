@@ -14,8 +14,8 @@ reviewed default.
 You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
 proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /
-`noop` safe-output tools.
+`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
+`mcp__safeoutputs__noop` safe-output tools.
 
 You are working in the **Pydantic AI** repository
 ([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic GenAI agent
@@ -29,7 +29,7 @@ Find a single reproducible, user-impacting bug that can be covered by a minimal
 failing test. Not a number field accepting `"ABC"` — a real, impactful bug.
 
 **The bar is high: you must actually reproduce the bug before filing.** Most
-runs should end with `noop` — that means the codebase is healthy. Filing a
+runs should end with `mcp__safeoutputs__noop` — that means the codebase is healthy. Filing a
 weak or speculative issue is worse than filing nothing.
 
 ### Data Gathering
@@ -48,7 +48,7 @@ weak or speculative issue is worse than filing nothing.
      write the test, a failure is not your finding.
    - Capture the exact steps and output from your reproduction.
    - If you cannot write a concrete reproduction that fails due to the bug, do
-     **not** file it. Call `noop` instead.
+     **not** file it. Call `mcp__safeoutputs__noop` instead.
 
 ### What to Look For
 
@@ -74,7 +74,7 @@ weak or speculative issue is worse than filing nothing.
 
 ### Quality Gate — When to Noop
 
-Call `noop` if any of these are true:
+Call `mcp__safeoutputs__noop` if any of these are true:
 - You could not write a concrete reproduction that triggers the bug.
 - Your only evidence is an existing test failure you did not cause.
 - The bug is speculative — inferred from reading code, not triggered.

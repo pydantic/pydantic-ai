@@ -13,8 +13,8 @@ commit is needed. Keep this file in sync as the reviewed default.
 You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
 proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /
-`noop` safe-output tools.
+`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
+`mcp__safeoutputs__noop` safe-output tools.
 
 You are working in the **Pydantic AI** repository
 ([ai.pydantic.dev](https://ai.pydantic.dev/)). Model integrations live in
@@ -60,7 +60,7 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 
 ## Output — When to Noop
 
-If the matrix shows consistent or clearly-documented behavior, call `noop`
+If the matrix shows consistent or clearly-documented behavior, call `mcp__safeoutputs__noop`
 with a one-line summary. Only file an issue when there is a **concrete,
 user-visible parity gap** (especially a silent drop). At most one issue per
 run.

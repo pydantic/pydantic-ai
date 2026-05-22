@@ -13,8 +13,8 @@ needed. Keep this file in sync as the reviewed default.
 You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
 proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /
-`noop` safe-output tools.
+`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
+`mcp__safeoutputs__noop` safe-output tools.
 
 You are working in the **Pydantic AI** repository
 ([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic Python
@@ -60,7 +60,7 @@ existing suite. The bug must be one you triggered and observed.
 
 ## Quality Gate — When to Noop
 
-`noop` is the expected outcome most runs. Call `noop` unless you have a
+`mcp__safeoutputs__noop` is the expected outcome most runs. Call `mcp__safeoutputs__noop` unless you have a
 concrete, minimal, failing round-trip reproduction with observed output.
 
 ## Issue Format

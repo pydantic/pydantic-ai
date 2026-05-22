@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# In-sandbox launcher for the Pydantic AI harness.
+# In-sandbox launcher for the Pydantic AI gh-aw shim.
 #
 # The checked-out workspace is mounted no-exec in the AWF sandbox, so this
 # script is installed into gh-aw's exec-able /tmp/gh-aw/bin/ by the workflow's
 # pre-step (`install -m 755 ... /tmp/gh-aw/bin/pydantic-ai-runner-launch`).
 # It is gh-aw's `engine.command` for every Pydantic AI agentic workflow and
-# `uv run --script`s the in-tree harness with the agent's argv.
+# `uv run --script`s the in-tree runner stub with the agent's argv. The stub
+# (`pydantic-ai-runner`) is a tiny `runpy` shim that hands off to the
+# `pydantic_ai_gh_aw_shim` package in the same directory.
 #
 # setup-uv points UV_CACHE_DIR at ${RUNNER_TEMP}/setup-uv-cache, which is not
 # writable by the chrooted sandbox user (UID 1001). Only /tmp/gh-aw is owned

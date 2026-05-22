@@ -14,8 +14,8 @@ reviewed default.
 You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
 CLI), driving a model through gh-aw's AWF firewall and credential-injecting
 proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `create_issue` /
-`noop` safe-output tools.
+`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
+`mcp__safeoutputs__noop` safe-output tools.
 
 You are working in the **Pydantic AI** repository
 ([ai.pydantic.dev](https://ai.pydantic.dev/)). Documentation lives in `docs/`
@@ -35,7 +35,7 @@ removed/renamed public interface is still referenced in docs.
 ### Data Gathering
 
 1. Run `git log --since="7 days ago" --oneline --stat` for a summary of recent
-   commits. If there are no commits in the window, call `noop` and stop.
+   commits. If there are no commits in the window, call `mcp__safeoutputs__noop` and stop.
 2. Inventory documentation: scan `docs/`, `mkdocs.yml`, `README.md`,
    `CONTRIBUTING.md`, and `AGENTS.md` files. Do not assume a fixed structure.
 
