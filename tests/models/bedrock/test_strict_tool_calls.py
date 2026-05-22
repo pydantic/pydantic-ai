@@ -29,7 +29,7 @@ from ...conftest import IsDatetime, IsStr, try_import
 from .conftest import CityInfo, PersonQuery
 
 with try_import() as imports_successful:
-    from botocore.model import Shape, StructureShape
+    from botocore.model import StructureShape
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -145,13 +145,14 @@ def test_bedrock_strict_dropped_when_botocore_too_old(
 
     # `shape_for` builds a fresh `Shape` each call, so drop `strict` from `ToolSpecification`'s
     # members on every lookup to mimic a `botocore` that predates strict tool calls.
+    # `_supports_strict_tool_param` only ever looks up `ToolSpecification`.
     service_model = model.client.meta.service_model
     real_shape_for = service_model.shape_for
 
-    def shape_for_without_strict(name: str) -> Shape:
+    def shape_for_without_strict(name: str) -> StructureShape:
         shape = real_shape_for(name)
-        if name == 'ToolSpecification' and isinstance(shape, StructureShape):
-            object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'strict'})
+        assert isinstance(shape, StructureShape)
+        object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'strict'})
         return shape
 
     monkeypatch.setattr(service_model, 'shape_for', shape_for_without_strict)
