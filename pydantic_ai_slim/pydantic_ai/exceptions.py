@@ -14,7 +14,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelResponse, RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart, ToolReturnPart
 
 __all__ = (
     'ModelRetry',
@@ -33,6 +33,7 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
+    'ToolFailed',
 )
 
 
@@ -74,6 +75,14 @@ class ModelRetry(Exception):
                 return_schema=schema,
             ),
         )
+
+
+class ToolFailed(Exception):
+    """Exception to raise when a tool fails."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
 
 
 class CallDeferred(Exception):
@@ -291,6 +300,16 @@ class ToolRetryError(Exception):
             lines.append(loc)
             lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
         return '\n'.join(lines)
+
+
+class ToolFailedError(Exception):
+    """Exception to raise when a tool fails."""
+
+    def __init__(self, tool_failed: ToolReturnPart):
+        self.tool_failed = tool_failed
+        super().__init__()
+        message = tool_failed.content
+        super().__init__(message)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

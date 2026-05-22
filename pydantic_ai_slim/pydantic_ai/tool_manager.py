@@ -27,6 +27,7 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -334,6 +335,8 @@ class ToolManager(Generic[AgentDepsT]):
                     )
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
                     raise  # Control flow, not errors
+                except ToolFailed:
+                    raise  # Propagate to outer handler
                 except ModelRetry:
                     raise  # Propagate to outer handler
                 except Exception as e:

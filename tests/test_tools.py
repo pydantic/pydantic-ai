@@ -30,7 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -1445,6 +1445,17 @@ def test_tool_retries():
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
     assert call_max_retries == snapshot([5, 5, 5, 5, 5, 5])
     assert call_last_attempt == snapshot([False, False, False, False, False, True])
+
+
+def test_tool_failed():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def infinite_retry_tool() -> int:
+        raise ToolFailed('Tool failed')
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages() == snapshot()
 
 
 def test_tool_raises_call_deferred():

@@ -584,7 +584,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
                 message = '\n'.join(text_parts)
 
-            raise exceptions.ModelRetry(message or 'MCP tool call failed')
+            raise exceptions.ToolFailed(message or 'MCP tool call failed')
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
