@@ -11,16 +11,22 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai import Agent, ModelAPIError, UnexpectedModelBehavior
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
-    from pydantic_ai.models.openai import _WS_CONNECTION, OpenAIResponsesModel  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai import (
+        _WS_CONNECTION,  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -204,7 +210,6 @@ async def test_ws_request_with_tools(openai_ws_model: OpenAIResponsesModel) -> N
 @pytest.mark.ws_cassette
 async def test_ws_request_with_structured_output(openai_ws_model: OpenAIResponsesModel) -> None:
     """Agent with output_type processes structured output correctly over WebSocket."""
-    from pydantic import BaseModel
 
     class CityInfo(BaseModel):
         name: str
@@ -217,3 +222,91 @@ async def test_ws_request_with_structured_output(openai_ws_model: OpenAIResponse
 
     assert isinstance(result.output, CityInfo)
     assert result.output.name
+
+
+# ---------------------------------------------------------------------------
+# Error events
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ws_cassette
+async def test_ws_error_event_raises(openai_ws_model: OpenAIResponsesModel) -> None:
+    """An `error` event over WebSocket surfaces as `ModelAPIError`, not a misleading 'stream ended' error."""
+    agent: Agent[None, str] = Agent(openai_ws_model)
+
+    async with openai_ws_model.connect():
+        with pytest.raises(ModelAPIError) as exc_info:
+            await agent.run('trigger an error')
+
+    assert 'server had an error' in str(exc_info.value)
+
+
+@pytest.mark.ws_cassette
+async def test_ws_error_event_raises_streaming(openai_ws_model: OpenAIResponsesModel) -> None:
+    """An `error` event over a streamed WebSocket request surfaces as `ModelAPIError`."""
+    agent: Agent[None, str] = Agent(openai_ws_model)
+
+    async with openai_ws_model.connect():
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('trigger an error') as result:
+                await result.get_output()
+
+    assert 'server had an error' in str(exc_info.value)
+
+
+@pytest.mark.ws_cassette
+async def test_ws_connection_closed_before_terminal(openai_ws_model: OpenAIResponsesModel) -> None:
+    """A WebSocket that closes before a terminal event raises `UnexpectedModelBehavior`."""
+    agent: Agent[None, str] = Agent(openai_ws_model)
+
+    async with openai_ws_model.connect():
+        with pytest.raises(UnexpectedModelBehavior, match='closed before a terminal'):
+            await agent.run('hello')
+
+
+@pytest.mark.ws_cassette
+async def test_ws_connection_closed_before_terminal_streaming(openai_ws_model: OpenAIResponsesModel) -> None:
+    """A streamed WebSocket request whose connection closes before a terminal event raises `UnexpectedModelBehavior`."""
+    agent: Agent[None, str] = Agent(openai_ws_model)
+
+    async with openai_ws_model.connect():
+        with pytest.raises(UnexpectedModelBehavior, match='closed before a terminal'):
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+
+# ---------------------------------------------------------------------------
+# Request payload
+# ---------------------------------------------------------------------------
+
+
+class _CapturingConnection:
+    """Captures the kwargs passed to `connection.response.create` without a real WebSocket."""
+
+    def __init__(self) -> None:
+        self.create_kwargs: dict[str, Any] = {}
+        self.response = self
+
+    async def create(self, **kwargs: Any) -> None:
+        self.create_kwargs = kwargs
+
+
+async def test_ws_create_forwards_server_side_state(openai_model: OpenAIResponsesModel) -> None:
+    """`_ws_create` forwards `conversation` / `context_management` and omits the HTTP-only `stream` flag."""
+    connection = _CapturingConnection()
+    settings: OpenAIResponsesModelSettings = {
+        'openai_conversation_id': 'conv_regression',
+        'openai_context_management': [{'type': 'compaction'}],
+    }
+    messages: list[ModelRequest | ModelResponse] = [ModelRequest(parts=[UserPromptPart(content='hello')])]
+
+    await openai_model._ws_create(  # pyright: ignore[reportPrivateUsage]
+        connection,  # pyright: ignore[reportArgumentType]
+        messages,
+        settings,
+        ModelRequestParameters(),
+    )
+
+    assert connection.create_kwargs['conversation'] == 'conv_regression'
+    assert connection.create_kwargs['context_management'] == [{'type': 'compaction'}]
+    assert 'stream' not in connection.create_kwargs

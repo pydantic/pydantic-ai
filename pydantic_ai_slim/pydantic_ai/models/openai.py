@@ -764,6 +764,13 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
+def _ws_error_message(event: responses.ResponseErrorEvent) -> str:
+    """Format an OpenAI Responses WebSocket `error` event for a `ModelAPIError`."""
+    if event.code:
+        return f'WebSocket error ({event.code}): {event.message}'
+    return f'WebSocket error: {event.message}'
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -1946,6 +1953,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         ws_conn = _WS_CONNECTION.get()
         if ws_conn is not None:
+            # Unlike the HTTP path, there's no `ModelResponse` short-circuit here: the Azure content-filter
+            # recovery only applies to Azure OpenAI, and WebSocket mode connects to OpenAI directly.
             response = await self._ws_send_request(ws_conn, messages, settings, model_request_parameters)
             return self._process_response(response, settings, model_request_parameters)
 
@@ -2377,6 +2386,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
 
+        # `stream`/`background` are HTTP transport fields that the WebSocket protocol doesn't use:
+        # a WebSocket connection always streams events back. See OpenAI's WebSocket-mode guide.
         await connection.response.create(
             model=request_params.model,
             input=request_params.input,
@@ -2385,11 +2396,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools=request_params.tools,
             tool_choice=request_params.tool_choice,
             previous_response_id=request_params.previous_response_id,
+            conversation=request_params.conversation,
             reasoning=request_params.reasoning,
             text=request_params.text,
             truncation=request_params.truncation,
+            context_management=request_params.context_management,
             max_output_tokens=model_settings.get('max_tokens', OMIT),
-            stream=True,
             temperature=model_settings.get('temperature', OMIT),
             top_p=model_settings.get('top_p', OMIT),
             service_tier=_resolve_openai_service_tier(model_settings),
@@ -2414,14 +2426,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             await self._ws_create(connection, messages, model_settings, model_request_parameters)
 
             async for event in connection:
-                if isinstance(event, responses.ResponseCompletedEvent):
+                if isinstance(
+                    event,
+                    (
+                        responses.ResponseCompletedEvent,
+                        responses.ResponseFailedEvent,
+                        responses.ResponseIncompleteEvent,
+                    ),
+                ):
                     return event.response
-                elif isinstance(event, (responses.ResponseFailedEvent, responses.ResponseIncompleteEvent)):
-                    return event.response
+                elif isinstance(event, responses.ResponseErrorEvent):
+                    raise ModelAPIError(model_name=self.model_name, message=_ws_error_message(event))
         finally:
             self._ws_release()
 
-        raise UnexpectedModelBehavior('WebSocket stream ended without a terminal response event')
+        raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
 
     async def _ws_send_stream(
         self,
@@ -2436,6 +2455,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             await self._ws_create(connection, messages, model_settings, model_request_parameters)
 
             async for event in connection:
+                if isinstance(event, responses.ResponseErrorEvent):
+                    raise ModelAPIError(model_name=self.model_name, message=_ws_error_message(event))
                 yield event
                 if isinstance(
                     event,
@@ -2448,6 +2469,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     return
         finally:
             self._ws_release()
+
+        raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
 
     @staticmethod
     def _build_request_options(

@@ -15,6 +15,7 @@ with try_import() as imports_successful:
     from websockets.asyncio.client import connect as _real_ws_connect
 
     from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     from .cassettes import (
         RecordingWebSocket,
@@ -33,7 +34,7 @@ def _cassette_dir_for(request: pytest.FixtureRequest) -> Path:
 def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
     try:
         return cast(Any, request.config).getoption('record_mode')
-    except (ValueError, AttributeError):  # pragma: no cover - depends on pytest-recording plugin presence
+    except (ValueError, AttributeError):  # pragma: no cover
         return None
 
 
@@ -56,7 +57,7 @@ class _ReplayConnect:
         pass
 
 
-class _RecordingConnect:  # pragma: no cover - only used during live cassette recording
+class _RecordingConnect:  # pragma: no cover
     """Mimics websockets.connect — awaitable and async context manager, wrapping real connection."""
 
     def __init__(self, *args: Any, **kwargs: Any):
@@ -101,7 +102,7 @@ def openai_ws_model(
 
     plan = ws_cassette_plan(cassette_exists=cassette_path.exists(), record_mode=record_mode)
 
-    if plan == 'error_missing':  # pragma: no cover - only when cassette files are missing
+    if plan == 'error_missing':  # pragma: no cover
         raise RuntimeError(
             f'Missing WebSocket cassette: {cassette_path}\n'
             'Record with: OPENAI_API_KEY=... uv run pytest --record-mode=once <test> -v'
@@ -118,8 +119,6 @@ def openai_ws_model(
     mock_connect = fake_connect if plan == 'replay' else recording_connect
 
     with patch('websockets.asyncio.client.connect', mock_connect):
-        from pydantic_ai.providers.openai import OpenAIProvider
-
         yield OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):  # pragma: no cover

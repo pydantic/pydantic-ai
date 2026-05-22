@@ -42,7 +42,7 @@ class WebSocketCassette:
         ]
         return cls(version=raw.get('version', 1), interactions=interactions)
 
-    def dump(self, path: Path) -> None:  # pragma: no cover - only used during cassette recording
+    def dump(self, path: Path) -> None:  # pragma: no cover
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {
             'version': self.version,
@@ -101,7 +101,7 @@ class ReplayWebSocket:
     async def __anext__(self) -> str:
         try:
             result = await self.recv()
-        except ConnectionClosedOK:  # pragma: no cover - StopAsyncIteration not tracked by coverage
+        except ConnectionClosedOK:  # pragma: no cover
             raise StopAsyncIteration
         if isinstance(result, bytes):
             return result.decode('utf-8')
@@ -111,7 +111,7 @@ class ReplayWebSocket:
         pass
 
 
-class RecordingWebSocket:  # pragma: no cover - only used during live cassette recording
+class RecordingWebSocket:  # pragma: no cover
     """Wraps a real WebSocket connection, recording all frames to a cassette."""
 
     def __init__(self, ws: Any, cassette: WebSocketCassette) -> None:
