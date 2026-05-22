@@ -24,7 +24,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_ai.toolsets._tool_search import ToolSearchToolset
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import End, NodeRunEndT
 from pydantic_graph.graph_builder import Graph
@@ -1445,7 +1445,7 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
 
 def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived discovered tool names from the current graph state."""
-    discovered_tool_names = ToolSearchToolset._parse_discovered_tools(ctx.state.message_history)  # pyright: ignore[reportPrivateUsage]
+    discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
 
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
