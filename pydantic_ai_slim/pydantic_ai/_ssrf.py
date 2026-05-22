@@ -206,6 +206,12 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     parsed = urlparse(url)
     hostname = parsed.hostname
 
+    # Strip the trailing-dot (FQDN root label): DNS treats `host.` and `host` as the same,
+    # so leaving it in would bypass exact-match domain allow/blocklists and skip the
+    # IP-literal fast path (e.g. `169.254.169.254.`). urlparse already lowercases the host.
+    if hostname:
+        hostname = hostname.rstrip('.')
+
     if not hostname:
         raise ValueError(f'Invalid URL: no hostname found in "{url}"')
 

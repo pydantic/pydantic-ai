@@ -787,6 +787,13 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
 
+    @pytest.mark.parametrize('url', ['https://evil.com./page', 'https://EVIL.com/page', 'https://Evil.Com./page'])
+    async def test_blocked_domains_normalizes_host(self, url: str, mock_dns: AsyncMock) -> None:
+        """A trailing FQDN dot or uppercasing must not bypass the blocked-domains list."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download(url, blocked_domains=['evil.com'])
+
     async def test_blocked_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         """Test that non-blocked domain passes validation."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
