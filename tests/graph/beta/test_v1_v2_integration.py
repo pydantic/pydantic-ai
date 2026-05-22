@@ -7,9 +7,8 @@ from typing import Annotated, Any
 
 import pytest
 
-from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
-from pydantic_graph.beta.join import JoinNode, reduce_list_append
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, StepNode
+from pydantic_graph.join import JoinNode, reduce_list_append
 
 from ..._inline_snapshot import snapshot
 

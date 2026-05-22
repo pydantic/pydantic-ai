@@ -23,6 +23,7 @@ import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
+from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -45,9 +46,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UserPromptPart,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool
@@ -193,6 +196,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -264,6 +268,7 @@ KnownModelName = TypeAliasType(
         'google-cloud:gemini-3.1-flash-image-preview',
         'google-cloud:gemini-3.1-flash-lite-preview',
         'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-3.5-flash',
         'google-cloud:gemini-flash-latest',
         'google-cloud:gemini-flash-lite-latest',
         'google:gemini-2.0-flash-lite',
@@ -280,6 +285,7 @@ KnownModelName = TypeAliasType(
         'google:gemini-3.1-flash-image-preview',
         'google:gemini-3.1-flash-lite-preview',
         'google:gemini-3.1-pro-preview',
+        'google:gemini-3.5-flash',
         'google:gemini-flash-latest',
         'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
@@ -874,6 +880,9 @@ class Model(ABC, Generic[InterfaceClient]):
         inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
         adapter sees a normal function-call exchange against `search_tools`.
 
+        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`.
+
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
@@ -881,7 +890,11 @@ class Model(ABC, Generic[InterfaceClient]):
         if ToolSearchTool not in self.profile.supported_native_tools:
             from .._tool_search import synthesize_local_tool_search_messages
 
-            return synthesize_local_tool_search_messages(messages)
+            messages = synthesize_local_tool_search_messages(messages)
+
+        if not self.profile.supports_inline_system_prompts:
+            messages = _wrap_non_leading_system_prompts(messages)
+
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
@@ -1325,7 +1338,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1334,7 +1347,9 @@ class StreamedResponse(ABC):
             state=state,
         )
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -1789,3 +1804,35 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+
+    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    first_request_idx = next(
+        (i for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
+        None,
+    )
+    if first_request_idx is None:
+        return messages
+
+    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    changed = False
+    for msg in messages[first_request_idx + 1 :]:
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+            new_parts = [
+                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                if isinstance(part, SystemPromptPart)
+                else part
+                for part in msg.parts
+            ]
+            new_messages.append(replace(msg, parts=new_parts))
+            changed = True
+        else:
+            new_messages.append(msg)
+
+    return new_messages if changed else messages

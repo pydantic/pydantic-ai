@@ -34,33 +34,33 @@ pip/uv-add pydantic-graph
 
 ### GraphRunContext
 
-[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to Pydantic AI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
+[`GraphRunContext`][pydantic_graph.basenode.GraphRunContext] — The context for the graph run, similar to Pydantic AI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
 
-`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.nodes.StateT].
+`GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.basenode.StateT].
 
 ### End
 
-[`End`][pydantic_graph.nodes.End] — return value to indicate the graph run should end.
+[`End`][pydantic_graph.basenode.End] — return value to indicate the graph run should end.
 
-`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.nodes.RunEndT].
+`End` is generic in the graph return type of the graph it's used in, [`RunEndT`][pydantic_graph.basenode.RunEndT].
 
 ### Nodes
 
-Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] define nodes for execution in the graph.
+Subclasses of [`BaseNode`][pydantic_graph.basenode.BaseNode] define nodes for execution in the graph.
 
 Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally consist of:
 
 - fields containing any parameters required/optional when calling the node
-- the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
-- return annotations of the [`run`][pydantic_graph.nodes.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
+- the business logic to execute the node, in the [`run`][pydantic_graph.basenode.BaseNode.run] method
+- return annotations of the [`run`][pydantic_graph.basenode.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
 
 Nodes are generic in:
 
-- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.nodes.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
-- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
-- **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
+- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.basenode.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
+- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.basenode.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
+- **graph return type** — this only applies if the node returns [`End`][pydantic_graph.basenode.End]. [`RunEndT`][pydantic_graph.basenode.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
-Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
+Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.basenode.End]:
 
 ```py {title="intermediate_node.py" noqa="F821" test="skip"}
 from dataclasses import dataclass
@@ -112,22 +112,23 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 ### Graph
 
-[`Graph`][pydantic_graph.graph.Graph] — this is the execution graph itself, made up of a set of [node classes](#nodes) (i.e., `BaseNode` subclasses).
+[`Graph`][pydantic_graph.graph_builder.Graph] — the executable graph produced by a [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder]. The builder is the entry point for assembling a graph from [step functions](graph/builder/steps.md), [`BaseNode`](#nodes) classes, and the edges connecting them.
 
-`Graph` is generic in:
+[`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] is generic in:
 
-- **state** the state type of the graph, [`StateT`][pydantic_graph.nodes.StateT]
-- **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
-- **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
+- **state** the state type of the graph, [`StateT`][pydantic_graph.basenode.StateT]
+- **deps** the deps type of the graph, [`DepsT`][pydantic_graph.basenode.DepsT]
+- **input** the type of the initial input passed to the graph, `InputT`
+- **output** the type of the final output produced by the graph, `OutputT`
 
-Here's an example of a simple graph:
+Here's an example of a simple graph built from two `BaseNode` subclasses:
 
 ```py {title="graph_example.py"}
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
@@ -152,52 +153,60 @@ class Increment(BaseNode):  # (2)!
         return DivisibleBy5(self.foo + 1)
 
 
-fives_graph = Graph(nodes=[DivisibleBy5, Increment])  # (3)!
-result = fives_graph.run_sync(DivisibleBy5(4))  # (4)!
-print(result.output)
-#> 5
+g = GraphBuilder(input_type=int, output_type=int)  # (3)!
+
+
+@g.step
+async def start(ctx: StepContext[None, None, int]) -> DivisibleBy5:  # (4)!
+    return DivisibleBy5(ctx.inputs)
+
+
+g.add(
+    g.node(DivisibleBy5),  # (5)!
+    g.node(Increment),
+    g.edge_from(g.start_node).to(start),  # (6)!
+)
+
+fives_graph = g.build()  # (7)!
+
+
+async def main():
+    result = await fives_graph.run(inputs=4)  # (8)!
+    print(result)
+    #> 5
 ```
 
 1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
 2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, state can also be omitted as the graph doesn't use state.
-3. The graph is created with a sequence of nodes.
-4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync]. The initial node is `DivisibleBy5(4)`. Because the graph doesn't use external state or deps, we don't pass `state` or `deps`.
+3. Create a [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] declaring the input and output types of the graph.
+4. Define a [step](graph/builder/steps.md) that wraps the initial input as the first `BaseNode`. The builder calls this when execution leaves [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node].
+5. Register each `BaseNode` subclass with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node] so the builder knows about it; outgoing edges are inferred from each node's `run` return type.
+6. Wire the start node into the entry step.
+7. [`g.build()`][pydantic_graph.graph_builder.GraphBuilder.build] returns a [`Graph`][pydantic_graph.graph_builder.Graph] ready to execute.
+8. [`graph.run()`][pydantic_graph.graph_builder.Graph.run] is async and returns the raw output value (the `int` returned by the `End` node).
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
-
-```py {title="graph_example_diagram.py" requires="graph_example.py"}
-from graph_example import DivisibleBy5, fives_graph
-
-fives_graph.mermaid_code(start_node=DivisibleBy5)
-```
+A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with `print(fives_graph)`, or by calling [`fives_graph.render()`][pydantic_graph.graph_builder.Graph.render]:
 
 ```mermaid
----
-title: fives_graph
----
 stateDiagram-v2
-  [*] --> DivisibleBy5
-  DivisibleBy5 --> Increment
-  DivisibleBy5 --> [*]
+  start
+  DivisibleBy5
+  state decision <<choice>>
+  Increment
+
+  [*] --> start
+  start --> DivisibleBy5
+  DivisibleBy5 --> decision
+  decision --> Increment
+  decision --> [*]
   Increment --> DivisibleBy5
-```
-
-In order to visualize a graph within a `jupyter-notebook`, `IPython.display` needs to be used:
-
-```python {title="jupyter_display_mermaid.py"  test="skip"}
-from graph_example import DivisibleBy5, fives_graph
-from IPython.display import Image, display
-
-display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 ```
 
 ## Stateful Graphs
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
-
-`pydantic-graph` provides state persistence, with the state recorded after each node is run. (See [State Persistence](#state-persistence).)
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -208,7 +217,7 @@ from dataclasses import dataclass
 
 from rich.prompt import Prompt
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
@@ -219,7 +228,7 @@ class MachineState:  # (1)!
 
 @dataclass
 class InsertCoin(BaseNode[MachineState]):  # (3)!
-    async def run(self, ctx: GraphRunContext[MachineState]) -> CoinsInserted:  # (16)!
+    async def run(self, ctx: GraphRunContext[MachineState]) -> CoinsInserted:  # (14)!
         return CoinsInserted(float(Prompt.ask('Insert coins')))  # (4)!
 
 
@@ -229,7 +238,7 @@ class CoinsInserted(BaseNode[MachineState]):
 
     async def run(
         self, ctx: GraphRunContext[MachineState]
-    ) -> SelectProduct | Purchase:  # (17)!
+    ) -> SelectProduct | Purchase:  # (15)!
         ctx.state.user_balance += self.amount  # (6)!
         if ctx.state.product is not None:  # (7)!
             return Purchase(ctx.state.product)
@@ -252,7 +261,7 @@ PRODUCT_PRICES = {  # (2)!
 
 
 @dataclass
-class Purchase(BaseNode[MachineState, None, None]):  # (18)!
+class Purchase(BaseNode[MachineState, None, None]):  # (16)!
     product: str
 
     async def run(
@@ -273,62 +282,76 @@ class Purchase(BaseNode[MachineState, None, None]):  # (18)!
             return SelectProduct()  # (12)!
 
 
-vending_machine_graph = Graph(  # (13)!
-    nodes=[InsertCoin, CoinsInserted, SelectProduct, Purchase]
+g = GraphBuilder(state_type=MachineState)  # (13)!
+
+
+@g.step
+async def start(ctx: StepContext[MachineState, None, None]) -> InsertCoin:
+    return InsertCoin()
+
+
+g.add(
+    g.node(InsertCoin),
+    g.node(CoinsInserted),
+    g.node(SelectProduct),
+    g.node(Purchase),
+    g.edge_from(g.start_node).to(start),
 )
+
+vending_machine_graph = g.build()
 
 
 async def main():
-    state = MachineState()  # (14)!
-    await vending_machine_graph.run(InsertCoin(), state=state)  # (15)!
+    state = MachineState()  # (17)!
+    await vending_machine_graph.run(state=state)  # (18)!
     print(f'purchase successful item={state.product} change={state.user_balance:0.2f}')
     #> purchase successful item=crisps change=0.25
 ```
 
 1. The state of the vending machine is defined as a dataclass with the user's balance and the product they've selected, if any.
 2. A dictionary of products mapped to prices.
-3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.nodes.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
-4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float. Before you start thinking this is a toy too since it's using [rich's `Prompt.ask`][rich.prompt.PromptBase.ask] within nodes, see [below](#example-human-in-the-loop) for how control flow can be managed when nodes require external input.
+3. The `InsertCoin` node, [`BaseNode`][pydantic_graph.basenode.BaseNode] is parameterized with `MachineState` as that's the state used in this graph.
+4. The `InsertCoin` node prompts the user to insert coins. We keep things simple by just entering a monetary amount as a float.
 5. The `CoinsInserted` node; again this is a [`dataclass`][dataclasses.dataclass] with one field `amount`.
 6. Update the user's balance with the amount inserted.
 7. If the user has already selected a product, go to `Purchase`, otherwise go to `SelectProduct`.
 8. In the `Purchase` node, look up the price of the product if the user entered a valid product.
 9. If the user did enter a valid product, set the product in the state so we don't revisit `SelectProduct`.
-10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.nodes.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
+10. If the balance is enough to purchase the product, adjust the balance to reflect the purchase and return [`End`][pydantic_graph.basenode.End] to end the graph. We're not using the run return type, so we call `End` with `None`.
 11. If the balance is insufficient, go to `InsertCoin` to prompt the user to insert more coins.
 12. If the product is invalid, go to `SelectProduct` to prompt the user to select a product again.
-13. The graph is created by passing a list of nodes to [`Graph`][pydantic_graph.graph.Graph]. Order of nodes is not important, but it can affect how [diagrams](#mermaid-diagrams) are displayed.
-14. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
-15. Run the graph with the initial state. Since the graph can be run from any node, we must pass the start node — in this case, `InsertCoin`. [`Graph.run`][pydantic_graph.graph.Graph.run] returns a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] that provides the final data and a history of the run.
-16. The return type of the node's [`run`][pydantic_graph.nodes.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
-17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
-18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
+13. Build the graph with [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder], declaring the `MachineState` type. Each `BaseNode` subclass is registered with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node]; outgoing edges are inferred from the `run` return types. The `start` step constructs the first node.
+14. The return type of the node's [`run`][pydantic_graph.basenode.BaseNode.run] method is important as it is used to determine the outgoing edges of the node. This information in turn is used to render [mermaid diagrams](#mermaid-diagrams) and is enforced at runtime to detect misbehavior as soon as possible.
+15. The return type of `CoinsInserted`'s [`run`][pydantic_graph.basenode.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
+16. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.basenode.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
+17. Initialize the state. This will be passed to the graph run and mutated as the graph runs.
+18. Run the graph with the initial state. The first node to execute is determined by the `start` step we wired into [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node].
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
-
-```py {title="vending_machine_diagram.py" requires="vending_machine.py"}
-from vending_machine import InsertCoin, vending_machine_graph
-
-vending_machine_graph.mermaid_code(start_node=InsertCoin)
-```
-
-The diagram generated by the above code is:
+A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with `print(vending_machine_graph)`:
 
 ```mermaid
----
-title: vending_machine_graph
----
 stateDiagram-v2
-  [*] --> InsertCoin
+  start
+  InsertCoin
+  CoinsInserted
+  state decision <<choice>>
+  Purchase
+  SelectProduct
+  state decision_2 <<choice>>
+
+  [*] --> start
+  start --> InsertCoin
   InsertCoin --> CoinsInserted
-  CoinsInserted --> SelectProduct
-  CoinsInserted --> Purchase
+  CoinsInserted --> decision
+  decision --> Purchase
+  decision --> SelectProduct
   SelectProduct --> Purchase
-  Purchase --> InsertCoin
-  Purchase --> SelectProduct
-  Purchase --> [*]
+  Purchase --> decision_2
+  decision_2 --> InsertCoin
+  decision_2 --> SelectProduct
+  decision_2 --> [*]
 ```
 
 See [below](#mermaid-diagrams) for more information on generating diagrams.
@@ -360,7 +383,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, EmailStr
 
 from pydantic_ai import Agent, ModelMessage, format_as_xml
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
@@ -447,6 +470,23 @@ class Feedback(BaseNode[State, None, Email]):
             return End(self.email)
 
 
+g = GraphBuilder(state_type=State, output_type=Email)
+
+
+@g.step
+async def start(ctx: StepContext[State, None, None]) -> WriteEmail:
+    return WriteEmail()
+
+
+g.add(
+    g.node(WriteEmail),
+    g.node(Feedback),
+    g.edge_from(g.start_node).to(start),
+)
+
+feedback_graph = g.build()
+
+
 async def main():
     user = User(
         name='John Doe',
@@ -454,9 +494,8 @@ async def main():
         interests=['Haskel', 'Lisp', 'Fortran'],
     )
     state = State(user)
-    feedback_graph = Graph(nodes=(WriteEmail, Feedback))
-    result = await feedback_graph.run(WriteEmail(), state=state)
-    print(result.output)
+    result = await feedback_graph.run(state=state)
+    print(result)
     """
     Email(
         subject='Welcome to our tech blog!',
@@ -469,355 +508,22 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Iterating Over a Graph
 
-### Using `Graph.iter` for `async for` iteration
-
-Sometimes you want direct control or insight into each node as the graph executes. The easiest way to do that is with the [`Graph.iter`][pydantic_graph.graph.Graph.iter] method, which returns a **context manager** that yields a [`GraphRun`][pydantic_graph.graph.GraphRun] object. The `GraphRun` is an async-iterable over the nodes of your graph, allowing you to record or modify them as they execute.
-
-Here's an example:
-
-```python {title="count_down.py" noqa="I001"}
-from __future__ import annotations as _annotations
-
-from dataclasses import dataclass
-from pydantic_graph import Graph, BaseNode, End, GraphRunContext
-
-
-@dataclass
-class CountDownState:
-    counter: int
-
-
-@dataclass
-class CountDown(BaseNode[CountDownState, None, int]):
-    async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
-        if ctx.state.counter <= 0:
-            return End(ctx.state.counter)
-        ctx.state.counter -= 1
-        return CountDown()
-
-
-count_down_graph = Graph(nodes=[CountDown])
-
-
-async def main():
-    state = CountDownState(counter=3)
-    async with count_down_graph.iter(CountDown(), state=state) as run:  # (1)!
-        async for node in run:  # (2)!
-            print('Node:', node)
-            #> Node: CountDown()
-            #> Node: CountDown()
-            #> Node: CountDown()
-            #> Node: CountDown()
-            #> Node: End(data=0)
-    print('Final output:', run.result.output)  # (3)!
-    #> Final output: 0
-```
-
-1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
-2. Here, we step through each node as it is executed.
-3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
-
-### Using `GraphRun.next(node)` manually
-
-Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydantic_graph.graph.GraphRun.next] method, which allows you to pass in whichever node you want to run next. You can modify or selectively skip nodes this way.
-
-Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
-
-```python {title="count_down_next.py" noqa="I001" requires="count_down.py"}
-from pydantic_graph import End, FullStatePersistence
-from count_down import CountDown, CountDownState, count_down_graph
-
-
-async def main():
-    state = CountDownState(counter=5)
-    persistence = FullStatePersistence()  # (7)!
-    async with count_down_graph.iter(
-        CountDown(), state=state, persistence=persistence
-    ) as run:
-        node = run.next_node  # (1)!
-        while not isinstance(node, End):  # (2)!
-            print('Node:', node)
-            #> Node: CountDown()
-            #> Node: CountDown()
-            #> Node: CountDown()
-            #> Node: CountDown()
-            if state.counter == 2:
-                break  # (3)!
-            node = await run.next(node)  # (4)!
-
-        print(run.result)  # (5)!
-        #> None
-
-        for step in persistence.history:  # (6)!
-            print('History Step:', step.state, step.state)
-            #> History Step: CountDownState(counter=5) CountDownState(counter=5)
-            #> History Step: CountDownState(counter=4) CountDownState(counter=4)
-            #> History Step: CountDownState(counter=3) CountDownState(counter=3)
-            #> History Step: CountDownState(counter=2) CountDownState(counter=2)
-```
-
-1. We start by grabbing the first node that will be run in the agent's graph.
-2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.result` remains `None`).
-4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
-5. Because we did not continue the run until it finished, the `result` is not set.
-6. The run's history is still populated with the steps we executed so far.
-7. Use [`FullStatePersistence`][pydantic_graph.FullStatePersistence] so we can show the history of the run, see [State Persistence](#state-persistence) below for more information.
-
-## State Persistence
-
-One of the biggest benefits of finite state machine (FSM) graphs is how they simplify the handling of interrupted execution. This might happen for a variety of reasons:
-
-- the state machine logic might fundamentally need to be paused — e.g. the returns workflow for an e-commerce order needs to wait for the item to be posted to the returns center or because execution of the next node needs input from a user so needs to wait for a new http request,
-- the execution takes so long that the entire graph can't reliably be executed in a single continuous run — e.g. a deep research agent that might take hours to run,
-- you want to run multiple graph nodes in parallel in different processes / hardware instances (note: parallel node execution is not yet supported in `pydantic-graph`, see [#704](https://github.com/pydantic/pydantic-ai/issues/704)).
-
-Trying to make a conventional control flow (i.e., boolean logic and nested function calls) implementation compatible with these usage scenarios generally results in brittle and over-complicated spaghetti code, with the logic required to interrupt and resume execution dominating the implementation.
-
-To allow graph runs to be interrupted and resumed, `pydantic-graph` provides state persistence — a system for snapshotting the state of a graph run before and after each node is run, allowing a graph run to be resumed from any point in the graph.
-
-`pydantic-graph` includes three state persistence implementations:
-
-- [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] — Simple in memory state persistence that just hold the latest snapshot. If no state persistence implementation is provided when running a graph, this is used by default.
-- [`FullStatePersistence`][pydantic_graph.FullStatePersistence] — In memory state persistence that hold a list of snapshots.
-- [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] — File-based state persistence that saves snapshots to a JSON file.
-
-In production applications, developers should implement their own state persistence by subclassing [`BaseStatePersistence`][pydantic_graph.persistence.BaseStatePersistence] abstract base class, which might persist runs in a relational database like PostgresQL.
-
-At a high level the role of `StatePersistence` implementations is to store and retrieve [`NodeSnapshot`][pydantic_graph.persistence.NodeSnapshot] and [`EndSnapshot`][pydantic_graph.persistence.EndSnapshot] objects.
-
-[`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] may be used to run the graph based on the state stored in persistence.
-
-We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] and [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence].
-
-As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
-
-```python {title="count_down_from_persistence.py" noqa="I001" requires="count_down.py"}
-from pathlib import Path
-
-from pydantic_graph import End
-from pydantic_graph.persistence.file import FileStatePersistence
-
-from count_down import CountDown, CountDownState, count_down_graph
-
-
-async def main():
-    run_id = 'run_abc123'
-    persistence = FileStatePersistence(Path(f'count_down_{run_id}.json'))  # (1)!
-    state = CountDownState(counter=5)
-    await count_down_graph.initialize(  # (2)!
-        CountDown(), state=state, persistence=persistence
-    )
-
-    done = False
-    while not done:
-        done = await run_node(run_id)
-
-
-async def run_node(run_id: str) -> bool:  # (3)!
-    persistence = FileStatePersistence(Path(f'count_down_{run_id}.json'))
-    async with count_down_graph.iter_from_persistence(persistence) as run:  # (4)!
-        node_or_end = await run.next()  # (5)!
-
-    print('Node:', node_or_end)
-    #> Node: CountDown()
-    #> Node: CountDown()
-    #> Node: CountDown()
-    #> Node: CountDown()
-    #> Node: CountDown()
-    #> Node: End(data=0)
-    return isinstance(node_or_end, End)  # (6)!
-```
-
-1. Create a [`FileStatePersistence`][pydantic_graph.persistence.file.FileStatePersistence] to use to start the graph.
-2. Call [`graph.initialize()`][pydantic_graph.graph.Graph.initialize] to set the initial graph state in the persistence object.
-3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph, except the ID of the run.
-4. Call [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] create a [`GraphRun`][pydantic_graph.graph.GraphRun] object that will run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
-5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.nodes.BaseNode] or an [`End`][pydantic_graph.nodes.End] object.
-6. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-### Example: Human in the loop.
-
-As noted above, state persistence allows graphs to be interrupted and resumed. One use case of this is to allow user input to continue.
-
-In this example, an AI asks the user a question, the user provides an answer, the AI evaluates the answer and ends if the user got it right or asks another question if they got it wrong.
-
-Instead of running the entire graph in a single process invocation, we run the graph by running the process repeatedly, optionally providing an answer to the question as a command line argument.
-
-??? example "`ai_q_and_a_graph.py` — `question_graph` definition"
-
-    ```python {title="ai_q_and_a_graph.py" noqa="I001"}
-    from __future__ import annotations as _annotations
-
-    from typing import Annotated
-    from pydantic_graph import Edge
-    from dataclasses import dataclass, field
-    from pydantic import BaseModel
-    from pydantic_graph import (
-        BaseNode,
-        End,
-        Graph,
-        GraphRunContext,
-    )
-    from pydantic_ai import Agent, format_as_xml
-    from pydantic_ai import ModelMessage
-    from pydantic_ai.capabilities import Instrumentation
-
-    ask_agent = Agent('openai:gpt-5.2', output_type=str, capabilities=[Instrumentation()])
-
-
-    @dataclass
-    class QuestionState:
-        question: str | None = None
-        ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-        evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
-
-
-    @dataclass
-    class Ask(BaseNode[QuestionState]):
-        """Generate question using GPT-5."""
-        docstring_notes = True
-        async def run(
-            self, ctx: GraphRunContext[QuestionState]
-        ) -> Annotated[Answer, Edge(label='Ask the question')]:
-            result = await ask_agent.run(
-                'Ask a simple question with a single correct answer.',
-                message_history=ctx.state.ask_agent_messages,
-            )
-            ctx.state.ask_agent_messages += result.new_messages()
-            ctx.state.question = result.output
-            return Answer(result.output)
-
-
-    @dataclass
-    class Answer(BaseNode[QuestionState]):
-        question: str
-
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-            answer = input(f'{self.question}: ')
-            return Evaluate(answer)
-
-
-    class EvaluationResult(BaseModel, use_attribute_docstrings=True):
-        correct: bool
-        """Whether the answer is correct."""
-        comment: str
-        """Comment on the answer, reprimand the user if the answer is wrong."""
-
-
-    evaluate_agent = Agent(
-        'openai:gpt-5.2',
-        output_type=EvaluationResult,
-        instructions='Given a question and answer, evaluate if the answer is correct.',
-    )
-
-
-    @dataclass
-    class Evaluate(BaseNode[QuestionState, None, str]):
-        answer: str
-
-        async def run(
-            self,
-            ctx: GraphRunContext[QuestionState],
-        ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
-            assert ctx.state.question is not None
-            result = await evaluate_agent.run(
-                format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-                message_history=ctx.state.evaluate_agent_messages,
-            )
-            ctx.state.evaluate_agent_messages += result.new_messages()
-            if result.output.correct:
-                return End(result.output.comment)
-            else:
-                return Reprimand(result.output.comment)
-
-
-    @dataclass
-    class Reprimand(BaseNode[QuestionState]):
-        comment: str
-
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
-            print(f'Comment: {self.comment}')
-            ctx.state.question = None
-            return Ask()
-
-
-    question_graph = Graph(
-        nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
-    )
-    ```
-
-    _(This example is complete, it can be run "as is")_
-
-    ```python {title="ai_q_and_a_run.py" noqa="I001" requires="ai_q_and_a_graph.py"}
-    import sys
-    from pathlib import Path
-
-    from pydantic_graph import End
-    from pydantic_graph.persistence.file import FileStatePersistence
-    from pydantic_ai import ModelMessage  # noqa: F401
-
-    from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answer
-
-
-    async def main():
-        answer: str | None = sys.argv[1] if len(sys.argv) > 1 else None  # (1)!
-        persistence = FileStatePersistence(Path('question_graph.json'))  # (2)!
-        persistence.set_graph_types(question_graph)  # (3)!
-
-        if snapshot := await persistence.load_next():  # (4)!
-            state = snapshot.state
-            assert answer is not None
-            node = Evaluate(answer)
-        else:
-            state = QuestionState()
-            node = Ask()  # (5)!
-
-        async with question_graph.iter(node, state=state, persistence=persistence) as run:
-            while True:
-                node = await run.next()  # (6)!
-                if isinstance(node, End):  # (7)!
-                    print('END:', node.data)
-                    history = await persistence.load_all()  # (8)!
-                    print([e.node for e in history])
-                    break
-                elif isinstance(node, Answer):  # (9)!
-                    print(node.question)
-                    #> What is the capital of France?
-                    break
-                # otherwise just continue
-    ```
-
-    1. Get the user's answer from the command line, if provided. See [question graph example](examples/question-graph.md) for a complete example.
-    2. Create a state persistence instance the `'question_graph.json'` file may or may not already exist.
-    3. Since we're using the [persistence interface][pydantic_graph.persistence.BaseStatePersistence] outside a graph, we need to call [`set_graph_types`][pydantic_graph.persistence.BaseStatePersistence.set_graph_types] to set the graph generic types `StateT` and `RunEndT` for the persistence instance. This is necessary to allow the persistence instance to know how to serialize and deserialize graph nodes.
-    4. If we're run the graph before, [`load_next`][pydantic_graph.persistence.BaseStatePersistence.load_next] will return a snapshot of the next node to run, here we use `state` from that snapshot, and create a new `Evaluate` node with the answer provided on the command line.
-    5. If the graph hasn't been run before, we create a new `QuestionState` and start with the `Ask` node.
-    6. Call [`GraphRun.next()`][pydantic_graph.graph.GraphRun.next] to run the node. This will return either a node or an `End` object.
-    7. If the node is an `End` object, the graph run is complete. The `data` field of the `End` object contains the comment returned by the `evaluate_agent` about the correct answer.
-    8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
-    9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
-
-    _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-For a complete example of this graph, see the [question graph example](examples/question-graph.md).
+For step-by-step execution — inspecting each task as it runs, overriding the next step, or driving the loop manually — use [`graph.iter()`][pydantic_graph.graph_builder.Graph.iter] instead of [`graph.run()`][pydantic_graph.graph_builder.Graph.run]. See [Advanced Execution Control](graph/builder/index.md#advanced-execution-control) in the graph builder docs for the iteration model and examples.
 
 ## Dependency Injection
 
-As with Pydantic AI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
+As with Pydantic AI, `pydantic-graph` supports dependency injection. Pass a `deps_type` to [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder], parameterize each [`BaseNode`][pydantic_graph.basenode.BaseNode] subclass with the deps type, and read it via [`GraphRunContext.deps`][pydantic_graph.basenode.GraphRunContext.deps] inside `run()` (or [`StepContext.deps`][pydantic_graph.step.StepContext] inside step functions).
 
-As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
+As an example, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
-```py {title="deps_example.py" test="skip" hl_lines="4 10-12 35-37 48-49"}
+```py {title="deps_example.py" test="skip" hl_lines="4 8 14-16 39-44 49 56-58"}
 from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
@@ -855,195 +561,33 @@ class Increment(BaseNode[None, GraphDeps]):
         return self.foo + 1
 
 
-fives_graph = Graph(nodes=[DivisibleBy5, Increment])
+g = GraphBuilder(deps_type=GraphDeps, input_type=int, output_type=int)
+
+
+@g.step
+async def start(ctx: StepContext[None, GraphDeps, int]) -> DivisibleBy5:
+    return DivisibleBy5(ctx.inputs)
+
+
+g.add(
+    g.node(DivisibleBy5),
+    g.node(Increment),
+    g.edge_from(g.start_node).to(start),
+)
+
+fives_graph = g.build()
 
 
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result = await fives_graph.run(DivisibleBy5(3), deps=deps, persistence=FullStatePersistence())
-    print(result.output)
+        result = await fives_graph.run(inputs=3, deps=deps)
+    print(result)
     #> 5
-    # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.node for item in result.persistence.history])
-    """
-    [
-        DivisibleBy5(foo=3),
-        Increment(foo=3),
-        DivisibleBy5(foo=4),
-        Increment(foo=4),
-        DivisibleBy5(foo=5),
-        End(data=5),
-    ]
-    """
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Mermaid Diagrams
 
-Pydantic Graph can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for graphs, as shown above.
-
-These diagrams can be generated with:
-
-- [`Graph.mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] to generate the mermaid code for a graph
-- [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
-- [`Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
-
-Beyond the diagrams shown above, you can also customize mermaid diagrams with the following options:
-
-- [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
-- [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
-- The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
-
-Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-human-in-the-loop) example to:
-
-- add labels to some edges
-- add a note to the `Ask` node
-- highlight the `Answer` node
-- save the diagram as a `PNG` image to file
-
-```python {title="ai_q_and_a_graph_extra.py" test="skip" lint="skip" hl_lines="2 4 10-11 14 26 31"}
-from typing import Annotated
-
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
-
-ask_agent = Agent('openai:gpt-5.2', output_type=str, capabilities=[Instrumentation()])
-
-
-@dataclass
-class QuestionState:
-    question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
-
-
-@dataclass
-class Ask(BaseNode[QuestionState]):
-    """Generate question using GPT-5."""
-    docstring_notes = True
-    async def run(
-        self, ctx: GraphRunContext[QuestionState]
-    ) -> Annotated[Answer, Edge(label='Ask the question')]:
-        result = await ask_agent.run(
-            'Ask a simple question with a single correct answer.',
-            message_history=ctx.state.ask_agent_messages,
-        )
-        ctx.state.ask_agent_messages += result.new_messages()
-        ctx.state.question = result.output
-        return Answer(result.output)
-
-
-@dataclass
-class Answer(BaseNode[QuestionState]):
-    question: str
-
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-        answer = input(f'{self.question}: ')
-        return Evaluate(answer)
-
-
-class EvaluationResult(BaseModel, use_attribute_docstrings=True):
-    correct: bool
-    """Whether the answer is correct."""
-    comment: str
-    """Comment on the answer, reprimand the user if the answer is wrong."""
-
-
-evaluate_agent = Agent(
-    'openai:gpt-5.2',
-    output_type=EvaluationResult,
-    instructions='Given a question and answer, evaluate if the answer is correct.',
-)
-
-
-@dataclass
-class Evaluate(BaseNode[QuestionState, None, str]):
-    answer: str
-
-    async def run(
-        self,
-        ctx: GraphRunContext[QuestionState],
-    ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
-        assert ctx.state.question is not None
-        result = await evaluate_agent.run(
-            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-            message_history=ctx.state.evaluate_agent_messages,
-        )
-        ctx.state.evaluate_agent_messages += result.new_messages()
-        if result.output.correct:
-            return End(result.output.comment)
-        else:
-            return Reprimand(result.output.comment)
-
-
-@dataclass
-class Reprimand(BaseNode[QuestionState]):
-    comment: str
-
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
-        print(f'Comment: {self.comment}')
-        ctx.state.question = None
-        return Ask()
-
-
-question_graph = Graph(
-    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
-)
-```
-
-_(This example is not complete and cannot be run directly)_
-
-This would generate an image that looks like this:
-
-```mermaid
----
-title: question_graph
----
-stateDiagram-v2
-  Ask --> Answer: Ask the question
-  note right of Ask
-    Judge the answer.
-    Decide on next step.
-  end note
-  Answer --> Evaluate
-  Evaluate --> Reprimand
-  Evaluate --> [*]: success
-  Reprimand --> Ask
-
-classDef highlighted fill:#fdff32
-class Answer highlighted
-```
-
-### Setting Direction of the State Diagram
-
-You can specify the direction of the state diagram using one of the following values:
-
-- `'TB'`: Top to bottom, the diagram flows vertically from top to bottom.
-- `'LR'`: Left to right, the diagram flows horizontally from left to right.
-- `'RL'`: Right to left, the diagram flows horizontally from right to left.
-- `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
-
-Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
-
-```py {title="vending_machine_diagram.py" requires="vending_machine.py"}
-from vending_machine import InsertCoin, vending_machine_graph
-
-vending_machine_graph.mermaid_code(start_node=InsertCoin, direction='LR')
-```
-
-```mermaid
----
-title: vending_machine_graph
----
-stateDiagram-v2
-  direction LR
-  [*] --> InsertCoin
-  InsertCoin --> CoinsInserted
-  CoinsInserted --> SelectProduct
-  CoinsInserted --> Purchase
-  SelectProduct --> Purchase
-  Purchase --> InsertCoin
-  Purchase --> SelectProduct
-  Purchase --> [*]
-```
+Pydantic Graph can render [mermaid](https://mermaid.js.org/) [`stateDiagram-v2`](https://mermaid.js.org/syntax/stateDiagram.html) diagrams for any built graph. Call [`graph.render()`][pydantic_graph.graph_builder.Graph.render] (or just `print(graph)`) to get the mermaid source — pass `direction` (`'TB'`, `'LR'`, `'RL'`, or `'BT'`) to control layout. See the [graph builder mermaid section](graph/builder/index.md#mermaid-diagrams) for the full set of rendering options.
