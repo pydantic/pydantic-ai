@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -27,13 +27,16 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BaseToolCallPart,
+    BaseToolReturnPart,
     FileUrl,
+    ForceDownloadMode,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     SystemPromptPart,
+    ToolReturnContent,
     UserContent,
     UserPromptPart,
 )
@@ -74,6 +77,10 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
+
+FileUrlT = TypeVar('FileUrlT', bound=FileUrl)
+"""TypeVar for a [`FileUrl`][pydantic_ai.messages.FileUrl] subclass, used to preserve the concrete
+subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
 @runtime_checkable
@@ -180,6 +187,24 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     frontend, add it to this set, e.g. `frozenset({'http', 'https', 's3'})`.
     """
 
+    allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False})
+    """[`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values that are
+    allowed on [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages.
+
+    Defaults to `frozenset({False})`. A `FileUrl` whose `force_download` value is not in this
+    set has it reset to `False` with a warning before the messages are passed to the agent.
+    This applies both to file URLs in user content and to those nested in tool return parts.
+
+    `force_download=True` makes the server download the file itself instead of letting the
+    model provider fetch it. `force_download='allow-local'` additionally opts the URL out of
+    the SSRF private-IP block in [`download_item`][pydantic_ai.models.download_item], which
+    lets a client probe internal services. Neither is safe to honor from untrusted client
+    input by default, so both are reset.
+
+    To opt into a value after auditing your frontend, add it to this set, e.g.
+    `frozenset({False, True})` or `frozenset({False, True, 'allow-local'})`.
+    """
+
     @classmethod
     async def from_request(
         cls,
@@ -188,6 +213,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -201,6 +227,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_force_download=allowed_force_download,
             **kwargs,
         )
 
@@ -285,9 +312,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
         - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download]
-          values of `'allow-local'` on kept parts. `'allow-local'` opts the URL out
-          of the SSRF private-IP block, which is only safe for server-authored URLs;
-          on client-submitted parts it's reset to `False`.
+          values that aren't in
+          [`allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download]
+          on kept parts. By default both `True` and `'allow-local'` are reset to
+          `False`, since `'allow-local'` opts the URL out of the SSRF private-IP block
+          and `True` makes the server fetch the file itself — neither is safe to honor
+          from untrusted client input. This applies to file URLs in user content and
+          to those nested in tool return parts.
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
           [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
           the end of the history that don't have a matching entry in
@@ -306,33 +337,30 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         strip_system_prompt = self.manage_system_prompt == 'server'
         stripped_system_prompt = False
         disallowed_url_schemes: set[str] = set()
-        reset_allow_local_count = 0
+        reset_force_download_values: set[ForceDownloadMode] = set()
         dangling_tool_call_names: list[str] = []
         last_index = len(messages) - 1
 
         sanitized: list[ModelMessage] = []
         for index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                (
-                    new_request_parts,
-                    request_stripped_system_prompt,
-                    request_reset_allow_local_count,
-                ) = self._sanitize_request_parts(
+                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
                     message.parts,
                     strip_system_prompt=strip_system_prompt,
                     disallowed_schemes=disallowed_url_schemes,
+                    reset_force_download_values=reset_force_download_values,
                 )
                 stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
-                reset_allow_local_count += request_reset_allow_local_count
                 if new_request_parts:
                     sanitized.append(replace(message, parts=new_request_parts))
                 # Otherwise drop the request entirely so we don't leave an empty
                 # `ModelRequest(parts=[])` in history.
-            elif isinstance(message, ModelResponse) and index == last_index:
-                new_response_parts = self._sanitize_last_response_parts(
+            elif isinstance(message, ModelResponse):
+                new_response_parts = self._sanitize_response_parts(
                     message.parts,
                     resolved_tool_call_ids=resolved_tool_call_ids,
-                    dangling_names=dangling_tool_call_names,
+                    dangling_names=dangling_tool_call_names if index == last_index else None,
+                    reset_force_download_values=reset_force_download_values,
                 )
                 if new_response_parts:
                     sanitized.append(replace(message, parts=new_response_parts))
@@ -361,13 +389,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        if reset_allow_local_count:
-            file_url_label = 'file URL' if reset_allow_local_count == 1 else 'file URLs'
+        if reset_force_download_values:
             warnings.warn(
-                f'{reset_allow_local_count} client-submitted {file_url_label} had '
-                f"`force_download='allow-local'` reset to `False`. `'allow-local'` opts the URL "
-                f'out of the SSRF private-IP block and is only safe for server-authored URLs; '
-                f'set it on `message_history` passed directly to `Agent.run` instead.',
+                f'Client-submitted file URLs with `force_download` value(s) '
+                f'{sorted(reset_force_download_values, key=repr)!r} were reset to `False` because '
+                f'those values are not in `allowed_force_download` '
+                f'(currently {sorted(self.allowed_force_download, key=repr)!r}). '
+                f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
+                f'the server fetch the file itself, so neither should be accepted from untrusted '
+                f'frontends. To allow a value, add it to `allowed_force_download` on the adapter, '
+                f'or set it on `message_history` passed directly to `Agent.run` instead.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -392,81 +423,137 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         strip_system_prompt: bool,
         disallowed_schemes: set[str],
-    ) -> tuple[list[ModelRequestPart], bool, int]:
+        reset_force_download_values: set[ForceDownloadMode],
+    ) -> tuple[list[ModelRequestPart], bool]:
         """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
-        `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
-        Returns the kept parts, whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped,
-        and the number of `FileUrl` parts whose `force_download='allow-local'` was reset to `False`.
+        `disallowed_schemes` and `reset_force_download_values` are updated in place with any
+        non-allowlisted file URL schemes and `force_download` values encountered.
+        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s
+        were stripped.
         """
         stripped_system_prompt = False
-        reset_allow_local_count = 0
         new_parts: list[ModelRequestPart] = []
         for part in parts:
             if strip_system_prompt and isinstance(part, SystemPromptPart):
                 stripped_system_prompt = True
                 continue
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                filtered_content, part_reset_allow_local_count = self._filter_user_content(
-                    part.content, disallowed_schemes
+                filtered_content = self._filter_user_content(
+                    part.content, disallowed_schemes, reset_force_download_values
                 )
-                reset_allow_local_count += part_reset_allow_local_count
+                new_parts.append(replace(part, content=filtered_content))
+            elif isinstance(part, BaseToolReturnPart):
                 new_parts.append(
                     replace(
                         part,
-                        content=filtered_content,
+                        content=self._sanitize_tool_return_content(part.content, reset_force_download_values),
                     )
                 )
             else:
                 new_parts.append(part)
-        return new_parts, stripped_system_prompt, reset_allow_local_count
+        return new_parts, stripped_system_prompt
 
     def _filter_user_content(
         self,
         content: Sequence[UserContent],
         disallowed_schemes: set[str],
-    ) -> tuple[list[UserContent], int]:
+        reset_force_download_values: set[ForceDownloadMode],
+    ) -> list[UserContent]:
         """Sanitize [`FileUrl`][pydantic_ai.messages.FileUrl] items in client-submitted user content.
 
-        Drops items whose scheme isn't in the allowlist, and resets `force_download='allow-local'`
-        on kept items to `False`.
+        Drops items whose scheme isn't in the allowlist, and resets `force_download` values that
+        aren't in [`allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download] on
+        kept items to `False`.
 
-        `disallowed_schemes` is updated in place with any disallowed schemes encountered.
-        Returns the kept items and the number of `FileUrl` items whose `force_download='allow-local'`
-        was reset to `False`.
+        `disallowed_schemes` and `reset_force_download_values` are updated in place with any
+        disallowed schemes and reset `force_download` values encountered.
         """
         filtered: list[UserContent] = []
-        reset_allow_local_count = 0
         for item in content:
             if isinstance(item, FileUrl):
                 scheme = urlparse(item.url).scheme.lower()
                 if scheme and scheme not in self.allowed_file_url_schemes:
                     disallowed_schemes.add(scheme)
                     continue
-                if item.force_download == 'allow-local':
-                    reset_allow_local_count += 1
-                    item = replace(item, force_download=False)
+                item = self._sanitize_file_url(item, reset_force_download_values)
             filtered.append(item)
-        return filtered, reset_allow_local_count
+        return filtered
 
-    def _sanitize_last_response_parts(
+    def _sanitize_file_url(
+        self,
+        file_url: FileUrlT,
+        reset_force_download_values: set[ForceDownloadMode],
+    ) -> FileUrlT:
+        """Reset a [`FileUrl`][pydantic_ai.messages.FileUrl]'s `force_download` if it's not allowlisted.
+
+        `reset_force_download_values` is updated in place with the original value when it's reset.
+        """
+        if file_url.force_download not in self.allowed_force_download:
+            reset_force_download_values.add(file_url.force_download)
+            return replace(file_url, force_download=False)
+        return file_url
+
+    def _sanitize_tool_return_content(
+        self,
+        content: ToolReturnContent,
+        reset_force_download_values: set[ForceDownloadMode],
+    ) -> ToolReturnContent:
+        """Recursively sanitize [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return content.
+
+        Tool return content is an arbitrarily nested structure of files, sequences, and mappings,
+        so any `FileUrl` it contains — including those introduced by multimodal tool returns — is
+        walked and has its `force_download` reset the same way file URLs in user content are.
+
+        `reset_force_download_values` is updated in place with any reset `force_download` values.
+        """
+        if isinstance(content, FileUrl):
+            return self._sanitize_file_url(content, reset_force_download_values)
+        # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
+        # but resolves to `Any` at type-check time, so pyright can't infer the element types.
+        if isinstance(content, Mapping):
+            mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+            return {
+                key: self._sanitize_tool_return_content(value, reset_force_download_values)
+                for key, value in mapping.items()
+            }
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
+            sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+            return [self._sanitize_tool_return_content(item, reset_force_download_values) for item in sequence]
+        return content
+
+    def _sanitize_response_parts(
         self,
         parts: Sequence[ModelResponsePart],
         *,
         resolved_tool_call_ids: set[str],
-        dangling_names: list[str],
+        dangling_names: list[str] | None,
+        reset_force_download_values: set[ForceDownloadMode],
     ) -> list[ModelResponsePart]:
-        """Sanitize the parts of the trailing client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+        """Sanitize the parts of a client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
-        Drops tool calls that aren't resolved by `deferred_tool_results`. `dangling_names`
-        is appended to with the names of any stripped calls.
+        Resets non-allowlisted `force_download` values on `FileUrl`s nested in tool return parts.
+        When `dangling_names` is not `None` (i.e. this is the trailing response), also drops tool
+        calls that aren't resolved by `deferred_tool_results`, appending their names to it.
         """
         new_parts: list[ModelResponsePart] = []
         for part in parts:
-            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+            if (
+                dangling_names is not None
+                and isinstance(part, BaseToolCallPart)
+                and part.tool_call_id not in resolved_tool_call_ids
+            ):
                 dangling_names.append(part.tool_name)
                 continue
-            new_parts.append(part)
+            if isinstance(part, BaseToolReturnPart):
+                new_parts.append(
+                    replace(
+                        part,
+                        content=self._sanitize_tool_return_content(part.content, reset_force_download_values),
+                    )
+                )
+            else:
+                new_parts.append(part)
         return new_parts
 
     def transform_stream(
@@ -694,6 +781,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -727,6 +815,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+            allowed_force_download: `FileUrl.force_download` values allowed on file URL parts from the
+                client. See [`UIAdapter.allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -755,6 +845,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     allowed_file_url_schemes=allowed_file_url_schemes,
+                    allowed_force_download=allowed_force_download,
                     **kwargs,
                 ),
             )

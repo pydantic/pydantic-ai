@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
     FinalResultEvent,
+    ForceDownloadMode,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -38,6 +39,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import (
@@ -1044,17 +1046,24 @@ def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     assert 'allowed_file_url_schemes' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_file_url_schemes'].default == frozenset({'http', 'https'})
 
+    assert 'allowed_force_download' in from_request_parameters
+    assert from_request_parameters['allowed_force_download'].default == frozenset({False})
+    assert 'allowed_force_download' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_force_download'].default == frozenset({False})
+
 
 def _make_dummy_adapter(
     messages: list[ModelMessage],
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+    allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
 ) -> DummyUIAdapter[None, str]:
     agent: Agent[None, str] = Agent(model=TestModel())
     return DummyUIAdapter(
         agent=agent,
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_force_download=allowed_force_download,
     )
 
 
@@ -1122,8 +1131,13 @@ def test_sanitize_messages_respects_custom_allowed_schemes():
     assert user_part.content == snapshot([ImageUrl(url='s3://bucket/ok.png')])
 
 
-def test_sanitize_messages_resets_force_download_allow_local():
-    """`FileUrl.force_download='allow-local'` on kept parts is reset to `False` with a warning."""
+def test_sanitize_messages_resets_force_download_not_in_allowlist():
+    """`FileUrl.force_download` values outside `allowed_force_download` are reset to `False` with a warning.
+
+    With the default `allowed_force_download` (`frozenset({False})`), both `'allow-local'` and `True`
+    are reset, since `'allow-local'` bypasses the SSRF private-IP block and `True` makes the server
+    fetch the file itself — neither is safe to honor from untrusted client input.
+    """
     adapter = _make_dummy_adapter(
         [
             ModelRequest(
@@ -1132,6 +1146,7 @@ def test_sanitize_messages_resets_force_download_allow_local():
                         content=[
                             ImageUrl(url='https://example.com/img.png', force_download='allow-local'),
                             DocumentUrl(url='https://example.com/doc.pdf', force_download=True),
+                            ImageUrl(url='https://example.com/plain.png'),
                         ]
                     )
                 ]
@@ -1139,23 +1154,26 @@ def test_sanitize_messages_resets_force_download_allow_local():
         ]
     )
 
-    with pytest.warns(UserWarning, match=r"1 client-submitted file URL.*force_download='allow-local'.*reset") as caught:
+    with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local.*reset to `False`') as caught:
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert 'https://example.com/img.png' not in str(caught[0].message)
+    warning_message = str(caught[0].message)
+    assert 'True' in warning_message
+    assert 'https://example.com/img.png' not in warning_message
     assert isinstance(sanitized[0], ModelRequest)
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == snapshot(
         [
             ImageUrl(url='https://example.com/img.png', force_download=False),
-            DocumentUrl(url='https://example.com/doc.pdf', force_download=True),
+            DocumentUrl(url='https://example.com/doc.pdf', force_download=False),
+            ImageUrl(url='https://example.com/plain.png', force_download=False),
         ]
     )
 
 
-def test_sanitize_messages_leaves_force_download_false_alone():
-    """`FileUrl` parts without `force_download='allow-local'` pass through unchanged without warnings."""
+def test_sanitize_messages_leaves_allowlisted_force_download_alone():
+    """`FileUrl` `force_download` values in `allowed_force_download` pass through without warnings."""
     adapter = _make_dummy_adapter(
         [
             ModelRequest(
@@ -1164,11 +1182,13 @@ def test_sanitize_messages_leaves_force_download_false_alone():
                         content=[
                             ImageUrl(url='https://example.com/a.png'),
                             ImageUrl(url='https://example.com/b.png', force_download=True),
+                            ImageUrl(url='https://example.com/c.png', force_download='allow-local'),
                         ]
                     )
                 ]
             )
-        ]
+        ],
+        allowed_force_download=frozenset({False, True, 'allow-local'}),
     )
 
     with warnings.catch_warnings():
@@ -1182,6 +1202,39 @@ def test_sanitize_messages_leaves_force_download_false_alone():
         [
             ImageUrl(url='https://example.com/a.png', force_download=False),
             ImageUrl(url='https://example.com/b.png', force_download=True),
+            ImageUrl(url='https://example.com/c.png', force_download='allow-local'),
+        ]
+    )
+
+
+def test_sanitize_messages_widened_allowlist_lets_true_through_but_resets_allow_local():
+    """A widened `allowed_force_download` keeps `True` but still resets `'allow-local'`."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/a.png', force_download=True),
+                            ImageUrl(url='https://example.com/b.png', force_download='allow-local'),
+                        ]
+                    )
+                ]
+            )
+        ],
+        allowed_force_download=frozenset({False, True}),
+    )
+
+    with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/a.png', force_download=True),
+            ImageUrl(url='https://example.com/b.png', force_download=False),
         ]
     )
 
@@ -1209,7 +1262,7 @@ def test_sanitize_messages_strips_disallowed_scheme_before_reset():
 
     messages = [str(w.message) for w in caught]
     assert any("scheme(s) ['s3']" in m for m in messages)
-    assert any('1 client-submitted file URL' in m and "force_download='allow-local'" in m for m in messages)
+    assert any('force_download' in m and 'allow-local' in m for m in messages)
     assert not any('s3://bucket/key.png' in m for m in messages)
     assert not any('https://example.com/img.png' in m for m in messages)
 
@@ -1217,6 +1270,61 @@ def test_sanitize_messages_strips_disallowed_scheme_before_reset():
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == snapshot([ImageUrl(url='https://example.com/img.png', force_download=False)])
+
+
+def test_sanitize_messages_resets_force_download_in_tool_return_parts():
+    """`FileUrl`s nested in tool return parts have non-allowlisted `force_download` reset.
+
+    Multimodal tool returns (PR #5255) put `FileUrl` objects inside `ToolReturnPart.content`,
+    including nested in dicts and lists, so the sanitizer walks tool return content too.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            ImageUrl(url='https://example.com/top.png', force_download='allow-local'),
+                            {'nested': DocumentUrl(url='https://example.com/deep.pdf', force_download=True)},
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=ImageUrl(url='https://example.com/native.png', force_download='allow-local'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'force_download'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(
+        [
+            'see file',
+            ImageUrl(url='https://example.com/top.png', force_download=False),
+            {'nested': DocumentUrl(url='https://example.com/deep.pdf', force_download=False)},
+        ]
+    )
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content == snapshot(ImageUrl(url='https://example.com/native.png', force_download=False))
 
 
 def test_sanitize_messages_strips_dangling_tool_calls():
