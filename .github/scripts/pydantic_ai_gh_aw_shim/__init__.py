@@ -1,4 +1,4 @@
-"""Native tools the Pydantic AI gh-aw shim exposes to the agent.
+"""Claude Code tools the Pydantic AI gh-aw shim exposes to the agent.
 
 Each tool lives in its own module so individual implementations can be
 swapped without touching the registry or the other tools. The toolset
@@ -19,7 +19,7 @@ Two tools are *not* in this package:
 - **Task** — sub-agent dispatcher; lives in the main shim because it
   needs the shim-level `Agent` factory, the `INSTRUCTIONS` /
   `SUBAGENT_INSTRUCTIONS` / `RUN_TRIGGER` constants, and the
-  event-stream handler. Pass it to `build_native_toolset(task=...)` to
+  event-stream handler. Pass it to `build_claude_code_toolset(task=...)` to
   add it as a regular tool.
 """
 
@@ -41,25 +41,25 @@ from .read import read_file
 from .todo_write import todo_write
 from .write import write_file
 
-# All native tools are sync callables returning `str`. Their argument
+# All Claude Code tools are sync callables returning `str`. Their argument
 # signatures vary by tool (Claude's `Bash` takes `(command, timeout?)`,
 # `MultiEdit` takes `(file_path, edits)`, etc.), so the precise per-tool
 # shape is enforced at the tool's own definition site — at the registry
 # layer the meaningful contract is "callable that returns a string the
 # model can read".
-NativeToolFn: TypeAlias = Callable[..., str]
+ClaudeCodeToolFn: TypeAlias = Callable[..., str]
 
 # `Task` is the only async tool exposed by the shim. Its signature is
-# fully pinned here so that consumers of `build_native_toolset(task=...)`
+# fully pinned here so that consumers of `build_claude_code_toolset(task=...)`
 # pass a compatible callable.
 TaskCallable: TypeAlias = Callable[[RunContext[None], str, str], Awaitable[str]]
 
 __all__ = [
     'MUTATING_TOOLS',
-    'NATIVE_TOOL_NAMES',
+    'CLAUDE_CODE_TOOL_NAMES',
     'READ_ONLY_SUBAGENT_TOOLS',
     'bash',
-    'build_native_toolset',
+    'build_claude_code_toolset',
     'edit_file',
     'exit_plan_mode',
     'glob_search',
@@ -75,7 +75,7 @@ __all__ = [
 # Claude tool name → (callable, one-line description). The function names
 # stay idiomatic snake_case; pydantic-ai's `Tool` exposes them under the
 # Claude names so the model sees the Claude Code surface it was trained on.
-_BASE_TOOLS: tuple[tuple[str, NativeToolFn, str], ...] = (
+_BASE_TOOLS: tuple[tuple[str, ClaudeCodeToolFn, str], ...] = (
     ('Bash', bash, 'Run a shell command in the repository workspace.'),
     ('Read', read_file, 'Read a UTF-8 text file (optional line offset/limit).'),
     ('Write', write_file, 'Create or overwrite a workspace text file.'),
@@ -89,11 +89,11 @@ _BASE_TOOLS: tuple[tuple[str, NativeToolFn, str], ...] = (
 )
 
 
-# Claude Code native tool names the shim implements as Python callables.
+# Claude Code Claude Code tool names the shim implements as Python callables.
 # Excludes `WebFetch` (a `NativeTool` capability) and `Task` (registered by
-# the main shim via `build_native_toolset(task=...)`). Kept as a separate
+# the main shim via `build_claude_code_toolset(task=...)`). Kept as a separate
 # tuple for tests / introspection that just need the name list.
-NATIVE_TOOL_NAMES: tuple[str, ...] = tuple(name for name, _, _ in _BASE_TOOLS)
+CLAUDE_CODE_TOOL_NAMES: tuple[str, ...] = tuple(name for name, _, _ in _BASE_TOOLS)
 
 # Tools that mutate the workspace — withheld in `plan` permission mode.
 MUTATING_TOOLS = frozenset({'Bash', 'Write', 'Edit', 'MultiEdit'})
@@ -104,15 +104,15 @@ MUTATING_TOOLS = frozenset({'Bash', 'Write', 'Edit', 'MultiEdit'})
 READ_ONLY_SUBAGENT_TOOLS = frozenset({'Read', 'Grep', 'Glob', 'LS', 'TodoWrite', 'ExitPlanMode'})
 
 
-def build_native_toolset(*, task: TaskCallable | None = None) -> FunctionToolset[None]:
-    """Build the shim's native-tool `FunctionToolset`.
+def build_claude_code_toolset(*, task: TaskCallable | None = None) -> FunctionToolset[None]:
+    """Build the shim's Claude Code tool `FunctionToolset`.
 
     Pass `task=` to register the sub-agent dispatcher as an additional
     tool named `Task`. Sub-agent toolsets call this with `task=None` so
     sub-agents can't spawn their own sub-agents.
 
     Filter for permission mode / allow-list with `.filtered(predicate)`
-    on the returned toolset (see `select_native_toolset` in the main
+    on the returned toolset (see `select_claude_code_toolset` in the main
     shim).
     """
     tools: list[Tool[None]] = [Tool(fn, name=name, description=desc) for name, fn, desc in _BASE_TOOLS]
