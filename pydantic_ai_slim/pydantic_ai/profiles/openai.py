@@ -107,6 +107,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    supports_inline_system_prompts: bool = True
+    """OpenAI's APIs accept `system`/`developer`/`user`-role messages at any position."""
+
     openai_chat_supports_multiple_system_messages: bool = True
     """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
 

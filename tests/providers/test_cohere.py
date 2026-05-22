@@ -51,3 +51,13 @@ def test_cohere_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv('CO_BASE_URL', custom_base_url)
     provider = CohereProvider(api_key='api-key')
     assert provider.base_url == custom_base_url
+
+
+def test_cohere_provider_model_profile_sets_inline_flag():
+    profile = CohereProvider.model_profile('command-r')
+    assert profile.supports_inline_system_prompts is True
+    assert profile.supports_thinking is False
+
+    reasoning_profile = CohereProvider.model_profile('command-reasoning')
+    assert reasoning_profile.supports_inline_system_prompts is True
+    assert reasoning_profile.supports_thinking is True
