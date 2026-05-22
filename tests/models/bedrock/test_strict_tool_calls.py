@@ -29,6 +29,8 @@ from ...conftest import IsDatetime, IsStr, try_import
 from .conftest import CityInfo, PersonQuery
 
 with try_import() as imports_successful:
+    from botocore.model import Shape, StructureShape
+
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -113,6 +115,56 @@ def test_bedrock_strict_tool_definition_none(
     )
 
     result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
+
+
+def test_bedrock_strict_dropped_when_botocore_too_old(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Old `botocore` (no `strict` on `ToolSpecification`) → `strict` dropped with a warning.
+
+    `botocore` validates params against its own bundled service model, so an explicit
+    `strict=True` crashes with `ParamValidationError` on a `botocore` predating strict tool
+    calls — notably on AWS Lambda, where the runtime's bundled `botocore` can shadow a newer
+    layer-provided one. See https://github.com/pydantic/pydantic-ai/issues/5579.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    # `shape_for` builds a fresh `Shape` each call, so drop `strict` from `ToolSpecification`'s
+    # members on every lookup to mimic a `botocore` that predates strict tool calls.
+    service_model = model.client.meta.service_model
+    real_shape_for = service_model.shape_for
+
+    def shape_for_without_strict(name: str) -> Shape:
+        shape = real_shape_for(name)
+        if name == 'ToolSpecification' and isinstance(shape, StructureShape):
+            object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'strict'})
+        return shape
+
+    monkeypatch.setattr(service_model, 'shape_for', shape_for_without_strict)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    with pytest.warns(UserWarning, match='installed `botocore` is too old'):
+        result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
 
     assert result == snapshot(
         {
