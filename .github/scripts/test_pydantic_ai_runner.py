@@ -398,7 +398,13 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
         async def run(self, prompt, usage_limits=None, usage=None):
             seen['prompt'] = prompt
             seen['request_limit'] = getattr(usage_limits, 'request_limit', None)
-            seen['usage_obj'] = usage  # parent's RunUsage forwarded for aggregation
+            seen['usage_obj'] = usage  # fresh sub-RunUsage; merged into parent after
+            assert usage is not None, 'shim must pass a usage object to the sub-agent'
+            # Simulate the sub-agent consuming some budget so we can verify
+            # the post-run merge into the parent.
+            usage.requests += 3
+            usage.input_tokens += 100
+            usage.output_tokens += 200
 
             class _Result:
                 output = 'SUB: investigated'
@@ -409,7 +415,10 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
 
     from pydantic_ai.usage import RunUsage
 
-    parent_usage = RunUsage()
+    # Parent has already consumed plenty; the bug scenario was that this
+    # broke any sub-agent spawned past `SUBAGENT_REQUEST_LIMIT` parent
+    # requests because the limit checked the shared total.
+    parent_usage = RunUsage(requests=100, input_tokens=20_000, output_tokens=10_000)
 
     class _Ctx:
         model = TestModel()
@@ -448,7 +457,16 @@ def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch):
     assert 'Task' not in sub_names
     assert 'Bash' not in sub_names
     assert seen['request_limit'] == shim.SUBAGENT_REQUEST_LIMIT
-    assert seen['usage_obj'] is parent_usage  # sub-agent tokens roll up into parent
+    # Sub-agent gets a FRESH RunUsage — sharing the parent's would make the
+    # SUBAGENT_REQUEST_LIMIT check fire immediately past the parent's
+    # `SUBAGENT_REQUEST_LIMIT`-th request, silently breaking Task fan-out
+    # on long runs.
+    assert seen['usage_obj'] is not parent_usage
+    # …but after the sub-agent finishes, its cost is merged back into the
+    # parent so the run's final stream-json totals still account for it.
+    assert parent_usage.requests == 103  # 100 + 3
+    assert parent_usage.input_tokens == 20_100
+    assert parent_usage.output_tokens == 10_200
     # Sub-agent gets the same live event handler as the parent (registered
     # as a `ProcessEventStream` capability) so its tool calls stream out
     # interleaved with the parent's — it's spawned inside the parent's
@@ -570,7 +588,13 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
             self.model = model
 
         async def run(self, prompt, usage_limits=None, usage=None):
-            seen_usage['usage'] = usage  # parent's RunUsage forwarded
+            # Capture the usage object passed in and simulate what a real
+            # model call would do: increment the sub-call's local counters.
+            seen_usage['usage'] = usage
+            assert usage is not None, 'shim must pass a usage object to the summariser'
+            usage.requests += 1
+            usage.input_tokens += 17
+            usage.output_tokens += 42
 
             class _R:
                 output = 'SHORT SUMMARY'
@@ -581,23 +605,34 @@ def test_compact_history_summarises_via_run_model(monkeypatch):
 
     from pydantic_ai.usage import RunUsage
 
-    parent_usage = RunUsage()
+    # Simulate a parent that has already done many requests — the bug
+    # scenario the fix targets. With shared usage + `request_limit=2` this
+    # would have raised `UsageLimitExceeded` before the summariser ran.
+    parent_usage = RunUsage(requests=50, input_tokens=10_000, output_tokens=5_000)
 
     class _Ctx:
         model = TestModel()
         usage = parent_usage
 
     out = asyncio.run(shim._compact_history(_Ctx(), msgs))
-    # synthetic summary (1) + last COMPACTION_KEEP_RECENT messages. We no
-    # longer preserve a "head" message — pydantic-ai re-applies the system
-    # `instructions=` on every request, so the task spec stays visible
-    # without our help.
+    # synthetic summary (1) + last COMPACTION_KEEP_RECENT messages.
     assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
-    # Compaction summariser cost rolled up into the parent's usage.
-    assert seen_usage['usage'] is parent_usage
+    # Summariser must receive a FRESH RunUsage, NOT the parent's running total —
+    # otherwise `UsageLimits(request_limit=2)` checks against parent's 50+
+    # requests and raises immediately, making the summariser unreachable.
+    assert seen_usage['usage'] is not parent_usage
+    # After the run, the summariser's cost is merged into the parent so the
+    # final stream-json totals still account for it.
+    assert parent_usage.requests == 51  # 50 + 1 from the summariser
+    assert parent_usage.input_tokens == 10_017
+    assert parent_usage.output_tokens == 5_042
     # Summary present in the leading synthetic ModelRequest.
     summary_msg = out[0]
-    assert any('SHORT SUMMARY' in getattr(p, 'content', '') for p in summary_msg.parts)
+    summary_part = summary_msg.parts[0]
+    from pydantic_ai.messages import UserPromptPart
+
+    assert isinstance(summary_part, UserPromptPart)
+    assert 'SHORT SUMMARY' in str(summary_part.content)
 
 
 def test_trim_dedupes_superseded_reads_and_truncates_large_results():

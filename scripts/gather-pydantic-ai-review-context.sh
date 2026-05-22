@@ -27,6 +27,18 @@ REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 CTX="/tmp/gh-aw/.review-context"
 mkdir -p "$CTX"
 
+# Track every `mktemp` we allocate and unlink them on exit, including the
+# `set -e` early-termination path. Callers use `track_tmp <file>` after each
+# `mktemp` instead of relying on individual cleanup paths.
+_TMP_FILES=()
+track_tmp() { _TMP_FILES+=("$1"); }
+cleanup_tmp() {
+  for f in "${_TMP_FILES[@]:-}"; do
+    [ -n "$f" ] && rm -f "$f"
+  done
+}
+trap cleanup_tmp EXIT
+
 echo "Gathering context for PR #${PR_NUMBER} in ${REPO}..."
 
 # PR details (title, body, author, labels)
@@ -45,6 +57,7 @@ OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
 CURSOR=""
 THREADS_JSON=$(mktemp)
+track_tmp "$THREADS_JSON"
 echo '[]' > "$THREADS_JSON"
 while true; do
   CURSOR_ARG=""
@@ -161,7 +174,6 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
     )
   end
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
-rm -f "$THREADS_JSON"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
 # Related issues: extract issue numbers from PR body
@@ -315,6 +327,7 @@ done
 # Also written as JSON so the orderings below don't have to re-parse the columns.
 echo "  - Changed files"
 FILES_JSON=$(mktemp)
+track_tmp "$FILES_JSON"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   | jq -s 'add // []' > "$FILES_JSON"
 jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/"; "__") | gsub("^\\.+"; "")) + ".diff"] | @tsv' "$FILES_JSON" \

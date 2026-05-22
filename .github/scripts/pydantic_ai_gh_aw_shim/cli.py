@@ -345,13 +345,20 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     )
     try:
         summariser = Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS)
-        # Share the parent's RunUsage so the summariser's tokens roll up into
-        # the run's reported totals.
+        # Use a fresh `RunUsage` for the sub-call so `UsageLimits(request_limit=2)`
+        # checks against the summariser's own request count (which starts at 0),
+        # not the parent's running total. Sharing the parent usage object would
+        # make the limit fire immediately past the second parent request — the
+        # summariser would never run on any real workflow.
+        sub_usage = RunUsage()
         r = await summariser.run(
             f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
             usage_limits=UsageLimits(request_limit=2),
-            usage=ctx.usage,
+            usage=sub_usage,
         )
+        # Roll the summariser's cost up into the parent so the run's reported
+        # totals still account for it.
+        ctx.usage.incr(sub_usage)
         summary = str(r.output or '').strip() or '(empty summary)'
     except Exception as exc:
         # Any failure (network, model error, usage-limit, content filter) must
@@ -823,20 +830,26 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
         ],
     )
     limits = UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT)
-    # Share the parent's RunUsage so the sub-agent's tokens/requests/tool-calls
-    # roll up into the run's final stream-json result — otherwise sub-agent
-    # cost is invisible.
-    before_requests = ctx.usage.requests
+    # Use a fresh `RunUsage` for the sub-agent so `SUBAGENT_REQUEST_LIMIT`
+    # bounds the *sub-agent's* request count, not (parent + sub) together.
+    # Sharing `ctx.usage` directly would silently fail any Task spawned
+    # after the parent's `SUBAGENT_REQUEST_LIMIT`-th request. We merge the
+    # sub-agent's totals back into the parent after the run so its cost
+    # still rolls up into the run's final stream-json result.
+    sub_usage = RunUsage()
     try:
-        result = await sub.run(RUN_TRIGGER, usage_limits=limits, usage=ctx.usage)
+        result = await sub.run(RUN_TRIGGER, usage_limits=limits, usage=sub_usage)
     except Exception as exc:
         # Sub-agent failures (model errors, usage-limit breaches, tool
         # exceptions) surface here as a tool-result string the parent agent
-        # can react to, rather than crashing the whole orchestrator run.
+        # can react to, rather than crashing the whole orchestrator run. Still
+        # merge whatever the sub-agent did manage to do before the exception.
+        ctx.usage.incr(sub_usage)
         return f'error: sub-agent failed: {exc}'
+    ctx.usage.incr(sub_usage)
     logger.info(
-        'Task done: +%d sub-requests (total=%d)',
-        ctx.usage.requests - before_requests,
+        'Task done: +%d sub-requests (run total now %d)',
+        sub_usage.requests,
         ctx.usage.requests,
     )
     return str(result.output or '')
