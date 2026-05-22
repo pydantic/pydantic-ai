@@ -21,9 +21,6 @@ from .messages import (
     ToolReturnPart,
 )
 
-DEFERRED_CAPABILITY_TOOL_METADATA_KEY = 'pydantic_ai_deferred_capability_tool'
-"""Tool metadata key marking function tools owned by an on-demand capability."""
-
 if TYPE_CHECKING:
     from .messages import ModelMessage
 
