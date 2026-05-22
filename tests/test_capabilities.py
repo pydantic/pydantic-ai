@@ -45,6 +45,7 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
+    XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -103,10 +104,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, try_import
-
-with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XSearch
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -128,6 +126,7 @@ def test_capability_types() -> None:
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'XSearch': XSearch,
         }
     )
 
@@ -1193,6 +1192,7 @@ All types must be serializable using Pydantic.\
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
                         'temperature': {'title': 'Temperature', 'type': 'number'},
                         'top_p': {'title': 'Top P', 'type': 'number'},
+                        'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
@@ -1542,6 +1542,13 @@ Supported by:
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
+                    'required': ['XSearch'],
+                    'title': 'spec_XSearch',
+                    'type': 'object',
+                },
                 'spec_params_ReinjectSystemPrompt': {
                     'additionalProperties': False,
                     'properties': {
@@ -1708,6 +1715,8 @@ Supported by:
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'const': 'XSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_XSearch'},
                             ]
                         },
                     },
@@ -1806,6 +1815,47 @@ Supported by:
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
                 },
+                'spec_params_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Image Understanding',
+                        },
+                        'enable_video_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Video Understanding',
+                        },
+                        'include_output': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Include Output'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_XSearch',
+                    'type': 'object',
+                },
             },
             'additionalProperties': False,
             'properties': {
@@ -1896,6 +1946,8 @@ Supported by:
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'const': 'XSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_XSearch'},
                         ]
                     },
                     'title': 'Capabilities',
@@ -6103,13 +6155,19 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 class TestXSearchCapability:
     def test_xsearch_default(self):
-        """XSearch() with defaults → builtin XSearchTool, no local."""
+        """XSearch() with defaults → native XSearchTool, no local."""
         cap = XSearch()
         assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.fallback_model is None
         assert cap.get_toolset() is None
+
+    def test_xsearch_with_fallback_model(self):
+        """XSearch(fallback_model=...) → native XSearchTool, local subagent fallback."""
+        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is not None
 
     def test_xsearch_with_all_constraints(self):
         """XSearch with all constraint fields → XSearchTool configured."""
@@ -6145,9 +6203,229 @@ class TestXSearchCapability:
             XSearch(native=False, local=False)
 
     def test_xsearch_native_false_with_constraints_raises(self):
-        """XSearch(native=False, allowed_x_handles=...) → UserError."""
+        """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(native=False, allowed_x_handles=['handle1'])
+
+    def test_xsearch_resolved_native_merges_overrides(self):
+        """Capability-level kwargs override fields on a passed native instance."""
+        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
+        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
+        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert resolved == snapshot(
+            XSearchTool(
+                allowed_x_handles=['a'],
+                from_date=datetime(2024, 1, 1),
+                enable_image_understanding=False,
+            )
+        )
+
+    def test_xsearch_fallback_model_and_local_conflict(self):
+        """XSearch(fallback_model=..., local=func) raises UserError."""
+
+        def my_search(query: str) -> str:
+            return 'result'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
+
+    def test_xsearch_fallback_model_with_local_false(self):
+        """XSearch(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=False)
+
+    def test_xsearch_callable_native_with_fallback(self):
+        """Callable native with fallback_model still creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = XSearch(
+            native=lambda ctx: XSearchTool(enable_image_understanding=True),
+            fallback_model='xai:grok-4-1-fast-non-reasoning',
+        )
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('What is happening on X?')
+        assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is happening on X?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='x_search',
+                            args='{"query": "latest news"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=55, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='x_search',
+                            content='summary of recent tweets',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_xsearch_sync_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with sync callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('search X')
+        assert result.output == 'done'
+        tool_returns = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(tool_returns) == 1
+        assert tool_returns[0].content == 'summary'
+
+    async def test_xsearch_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from the subagent becomes a retry prompt to the outer model."""
+
+        # Inner model returns an empty response → triggers UnexpectedModelBehavior in the subagent.
+        def empty_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[])
+
+        inner_model = FunctionModel(
+            empty_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=inner_model)])
+        result = await agent.run('search X')
+        assert result.output == 'gave up'
+        retry_parts = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert len(retry_parts) == 1
+        assert retry_parts[0].tool_name == 'x_search'
+
+    def test_x_search_tool_builtin_tool_kwarg_deprecated(self):
+        """`x_search_tool(builtin_tool=...)` warns and forwards to `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_native_tool_wins_over_builtin_tool(self):
+        """`x_search_tool(native_tool=..., builtin_tool=...)` keeps the explicit `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        explicit = XSearchTool(allowed_x_handles=['preferred'])
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=explicit, builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_unknown_kwarg_raises(self):
+        """`x_search_tool(unknown=...)` raises TypeError naming the offending kwarg."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r'unexpected keyword arguments: `bogus`'):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool(), bogus=1)
+
+    def test_x_search_tool_missing_native_tool_raises(self):
+        """`x_search_tool()` without `native_tool=` raises TypeError."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r"missing required argument: 'native_tool'"):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning')
+
+    def test_xsearch_subagent_tool_builtin_tool_attr_deprecated(self):
+        """Reading `XSearchSubagentTool.builtin_tool` warns and returns `.native_tool`."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        native = XSearchTool()
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=native)
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`XSearchSubagentTool\.builtin_tool` is deprecated'):
+            assert subagent.builtin_tool is native
+
+    def test_xsearch_subagent_tool_unknown_attr_raises(self):
+        """Unknown attribute access on `XSearchSubagentTool` raises AttributeError as usual."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
+        with pytest.raises(AttributeError, match='no_such_field'):
+            subagent.no_such_field
 
 
 class TestWebFetchCapability:
@@ -7962,7 +8240,6 @@ def test_web_fetch_unique_id():
     assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()

@@ -11,6 +11,7 @@ class is validated against the same surface area as the legacy `FastMCPToolset`.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import importlib
 import json
@@ -27,6 +28,7 @@ from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .conftest import try_import
@@ -39,6 +41,7 @@ with try_import() as imports_successful:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.server import FastMCP
+    from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
     from mcp.types import (
         BlobResourceContents,
@@ -570,8 +573,6 @@ class TestMCPToolsetIntegration:
         assert 'MCPToolset' in toolset.label
 
     async def test_tool_for_tool_def_uses_default_retries_when_unset(self):
-        from pydantic_ai.tools import ToolDefinition
-
         toolset = MCPToolset('https://example.com/mcp')
         tool = toolset.tool_for_tool_def(
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
@@ -730,6 +731,104 @@ class TestLoadMCPToolsets:
         # Headers flowed through to the FastMCP transport.
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
         assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+
+class TestMCPToolsetBackgroundTasks:
+    """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
+    `execution.taskSupport` and routes the call accordingly:
+    `'required'` and `'optional'` go through `client.call_tool(task=True)` → `tool_task.result()`,
+    while `'forbidden'`/absent stay on the regular sync path."""
+
+    @pytest.fixture
+    async def task_server(self) -> FastMCP[None]:
+        server: FastMCP[None] = FastMCP('task_server')
+
+        @server.tool(task=TaskConfig(mode='required'))
+        async def task_required_tool() -> str:
+            """A tool that requires task-augmented execution."""
+            await asyncio.sleep(0)
+            return 'task_required_completed'
+
+        @server.tool(task=TaskConfig(mode='optional'))
+        async def task_optional_tool() -> str:
+            """A tool that may run either as a task or synchronously."""
+            await asyncio.sleep(0)
+            return 'task_optional_completed'
+
+        @server.tool()
+        async def plain_tool() -> str:
+            """A tool with no task support — `execution` is `None`."""
+            return 'plain_completed'
+
+        return server
+
+    async def test_get_tools_exposes_task_metadata(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`get_tools` exposes `task: bool` so downstream capabilities can target task-augmented tools."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
+
+    async def test_required_tool_routes_through_task_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`mode='required'` succeeds — getting the real result proves `task=True` was sent (the server
+        would otherwise return `-32601: requires task-augmented execution`)."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+        assert result == 'task_required_completed'
+
+    async def test_optional_tool_routes_through_task_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`mode='optional'` also goes through the task path by default — the SEP allows either, and the
+        task path delivers durability/cancellation/progress benefits with no functional downside."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
+        assert result == 'task_optional_completed'
+
+    async def test_plain_tool_stays_on_sync_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """A tool with no `execution.taskSupport` stays on the regular sync `tools/call`. Sending
+        `task=True` to such a server would violate the SEP."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('plain_tool', {}, run_context, tools['plain_tool'])
+        assert result == 'plain_completed'
+
+    async def test_direct_call_tool_with_use_task(self, task_server: FastMCP[None]) -> None:
+        """`direct_call_tool(..., use_task=True)` is the low-level escape hatch for users calling without
+        a `ToolDefinition` — `mode='required'` works directly."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+        assert result == 'task_required_completed'
+
+    async def test_process_tool_call_receives_use_task_partial(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`process_tool_call` gets a `CallToolFunc` that already has `use_task` baked in via `partial`,
+        so a custom wrapper doesn't need to know about the task path to preserve it."""
+
+        async def passthrough(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            return await call_tool(name, args)
+
+        toolset = MCPToolset(task_server, process_tool_call=passthrough)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+        assert result == 'task_required_completed'
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
