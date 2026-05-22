@@ -37,6 +37,7 @@ from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
 )
+
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model as _Model
 from pydantic_ai.tools import RunContext
@@ -791,7 +792,10 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
 
     big = 'x' * 50_000
     prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
-    msgs: list[ModelMessage] = [prior_synthetic, *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12))]
+    msgs: list[ModelMessage] = [
+        prior_synthetic,
+        *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12)),
+    ]
 
     class _FailingAgent:
         def __init__(self, *a: object, **k: object) -> None:
@@ -1015,7 +1019,9 @@ def test_grep_returns_error_when_ripgrep_missing(monkeypatch: pytest.MonkeyPatch
 # --------------------------------------------------------------------------- #
 # safe-outputs log diagnostic
 # --------------------------------------------------------------------------- #
-def test_log_safe_outputs_state_reports_entry_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: LogCaptureFixture):
+def test_log_safe_outputs_state_reports_entry_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: LogCaptureFixture
+):
     safe_path = tmp_path / 'safe-outputs.jsonl'
     safe_path.write_text('{"a": 1}\n{"b": 2}\n\n', encoding='utf-8')
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(safe_path))
@@ -1081,7 +1087,11 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = asyncio.run(shim._run_with_timeout('p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[None], object()), [], 'sess-test'))  # pyright: ignore[reportPrivateUsage]
+        rc = asyncio.run(
+            shim._run_with_timeout(
+                'p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[None], object()), [], 'sess-test'
+            )
+        )  # pyright: ignore[reportPrivateUsage]
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
@@ -1158,7 +1168,10 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
     # whole-server allow
     pred = shim._mcp_tool_allowed('safeoutputs', frozenset({'mcp__safeoutputs'}))  # pyright: ignore[reportPrivateUsage]
     assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__safeoutputs__create_issue')) is True
-    assert pred(cast(RunContext[None], None), ToolDefinition(name='mcp__safeoutputs__create_pull_request_review_comment')) is True
+    assert (
+        pred(cast(RunContext[None], None), ToolDefinition(name='mcp__safeoutputs__create_pull_request_review_comment'))
+        is True
+    )
 
     # specific-tool allow only
     pred = shim._mcp_tool_allowed('github', frozenset({'mcp__github__get_me'}))  # pyright: ignore[reportPrivateUsage]
