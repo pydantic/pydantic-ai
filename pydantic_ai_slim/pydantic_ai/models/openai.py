@@ -17,11 +17,11 @@ from pydantic_core import to_json
 from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._tool_search import REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY
 from .._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
@@ -222,6 +222,8 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
     }
 )
 """Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
+
+_DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
 OpenAIModelName = str | AllModels
 """
@@ -2201,7 +2203,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
-        _apply_client_tool_search_replay(tools, messages, model_request_parameters)
+        _apply_client_tool_search_for_deferred_capability_tools(tools, model_request_parameters)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -2516,10 +2518,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # OpenAI's strict JSON schema mode is opt-in for client tool search — the
                     # `additionalProperties: False` is what it prefers for closed-world schemas.
                     parameters.setdefault('additionalProperties', False)
+                    # OpenAI's generated schema marks this optional, but the live Responses API
+                    # rejects client-executed `tool_search` without a non-null description.
+                    description = (
+                        search_tool_def.description
+                        if search_tool_def and search_tool_def.description
+                        else _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
+                    )
                     tool_search_param: ToolSearchToolParam = {
                         'type': 'tool_search',
                         'execution': 'client',
-                        'description': (search_tool_def.description if search_tool_def else None),
+                        'description': description,
                         'parameters': parameters,
                     }
                     tools.append(tool_search_param)
@@ -4319,20 +4328,18 @@ def _find_search_tool_definition(
     )
 
 
-def _apply_client_tool_search_replay(
+def _apply_client_tool_search_for_deferred_capability_tools(
     tools: list[responses.ToolParam],
-    messages: list[ModelRequest | ModelResponse],
     model_request_parameters: ModelRequestParameters,
 ) -> None:
-    """Switch hosted OpenAI `tool_search` to client execution when replay requires it."""
-    has_marked_replay = any(
-        part.metadata is not None and part.metadata.get(REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY) is True
-        for message in reversed(messages)
-        if isinstance(message, ModelRequest)
-        for part in reversed(message.parts)
-        if isinstance(part, ToolSearchReturnPart)
+    """Switch hosted OpenAI `tool_search` to client execution when capability-owned tools can be revealed."""
+    needs_client_tool_search = any(
+        t.with_native == ToolSearchTool.kind
+        and t.metadata is not None
+        and t.metadata.get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in model_request_parameters.function_tools
     )
-    if not has_marked_replay:
+    if not needs_client_tool_search:
         return
 
     for i, tool in enumerate(tools):
@@ -4346,10 +4353,10 @@ def _apply_client_tool_search_replay(
                 'properties': {'queries': {'type': 'array', 'items': {'type': 'string'}}},
                 'required': ['queries'],
             }
-            description = None
+            description = _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
         else:
             parameters = dict(search_tool_def.parameters_json_schema)
-            description = search_tool_def.description
+            description = search_tool_def.description or _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
         parameters.setdefault('additionalProperties', False)
 
         tool_search_param: ToolSearchToolParam = {

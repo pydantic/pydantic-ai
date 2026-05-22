@@ -61,10 +61,6 @@ custom-callable empty-results path (where wire-time filtering left
 `tool_result.content=[]`, which Anthropic rejects, so we send a single text block instead).
 """
 
-REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY = 'pydantic_ai_requires_client_tool_search'
-"""Metadata key used on synthetic local tool-search returns that need client-executed native replay."""
-
-
 class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 

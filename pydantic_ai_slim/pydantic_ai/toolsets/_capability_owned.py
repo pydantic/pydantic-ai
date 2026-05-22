@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
@@ -24,19 +25,22 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
         tools = await self.wrapped.get_tools(ctx)
         capability_id = _capability_id(ctx, self.capability)
         defer_loading = self.capability.defer_loading is True
-        return {
-            name: replace(
+        result: dict[str, ToolsetTool[AgentDepsT]] = {}
+        for name, tool in tools.items():
+            tool_def = tool.tool_def
+            metadata = tool_def.metadata
+            if defer_loading:
+                metadata = {**(metadata or {}), DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True}
+            result[name] = replace(
                 tool,
                 tool_def=replace(
-                    tool.tool_def,
-                    capability_id=tool.tool_def.capability_id
-                    if tool.tool_def.capability_id is not None
-                    else capability_id,
-                    defer_loading=defer_loading or tool.tool_def.defer_loading,
+                    tool_def,
+                    capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
+                    defer_loading=defer_loading or tool_def.defer_loading,
+                    metadata=metadata,
                 ),
             )
-            for name, tool in tools.items()
-        }
+        return result
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]

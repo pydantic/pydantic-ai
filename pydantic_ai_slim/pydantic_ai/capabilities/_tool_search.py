@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY
 from ..messages import (
     ModelRequest,
     ModelResponse,
@@ -132,10 +131,14 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     """Maximum number of matches returned by the local search algorithm."""
 
     tool_description: str | None = None
-    """Custom description for the local `search_tools` function shown to the model."""
+    """Custom description for the model-facing search tool when search runs on our side.
+
+    Used for the local `search_tools` fallback and for providers with client-executed
+    native tool search.
+    """
 
     parameter_description: str | None = None
-    """Custom description for the `queries` parameter on the local `search_tools` function."""
+    """Custom description for the `queries` parameter when search runs on our side."""
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
@@ -246,7 +249,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                             ]
                         },
                         tool_call_id=call_id,
-                        metadata={REQUIRES_CLIENT_TOOL_SEARCH_METADATA_KEY: True},
                     ),
                 ]
             )
