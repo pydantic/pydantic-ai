@@ -2128,9 +2128,9 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
 async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(allow_model_requests: None):
     """A `load_capability` reveal synthesizes tool-search history for newly visible tools.
 
-    OpenAI requires the current request's top-level `tool_search` registration to be
-    client-executed for that replay shape; the adapter derives that from the current
-    request's revealed capability-owned tool definitions.
+    OpenAI uses client-executed `tool_search` while deferred capability-owned tools are
+    in the tool-search corpus, so the same registration works for initial discovery and
+    later replay of the synthetic history.
     """
     pytest.importorskip('openai')
 
@@ -2187,16 +2187,11 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
         for part in message.parts
     )
     [first_request, second_request] = get_mock_responses_kwargs(mock_client)
-    [first_tool_search] = [
-        tool for tool in cast(list[dict[str, Any]], first_request['tools']) if tool['type'] == 'tool_search'
-    ]
-    assert first_tool_search == {'type': 'tool_search'}
 
-    [second_tool_search] = [
-        tool for tool in cast(list[dict[str, Any]], second_request['tools']) if tool['type'] == 'tool_search'
-    ]
-    assert second_tool_search['execution'] == 'client'
-    assert cast(dict[str, Any], second_tool_search['parameters'])['required'] == ['queries']
+    for request in (first_request, second_request):
+        [tool_search] = [tool for tool in cast(list[dict[str, Any]], request['tools']) if tool['type'] == 'tool_search']
+        assert tool_search['execution'] == 'client'
+        assert cast(dict[str, Any], tool_search['parameters'])['required'] == ['queries']
 
     second_input = cast(list[dict[str, Any]], second_request['input'])
     replay_calls = [item for item in second_input if item.get('type') == 'tool_search_call']
