@@ -68,6 +68,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
@@ -1426,13 +1427,6 @@ async def test_anthropic_native_output_decimal_strict(allow_model_requests: None
     assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
-def _single_request_body(vcr: Cassette) -> dict[str, Any]:
-    """Return the decoded JSON body of the single recorded VCR request."""
-    requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-
 async def test_anthropic_task_budget_adds_output_config_and_beta(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
@@ -1447,7 +1441,7 @@ async def test_anthropic_task_budget_adds_output_config_and_beta(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
     )
 
@@ -3878,7 +3872,7 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'claude-opus-4-7'
-    request_body = _single_request_body(vcr)
+    request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
         {
             'model': 'claude-opus-4-7',
@@ -4022,7 +4016,7 @@ async def test_anthropic_task_budget_coexists_with_effort(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 20_000}}
     )
 

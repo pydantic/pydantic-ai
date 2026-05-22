@@ -1,5 +1,4 @@
 import datetime
-import json
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -32,7 +31,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..cassette_utils import single_request_body
+from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -489,8 +489,7 @@ async def test_openrouter_binary_content_video_public_api(
     )
 
     assert vcr is not None
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
 
     video_content_part = request_body['messages'][0]['content'][1]
     assert video_content_part['type'] == 'video_url'
@@ -941,8 +940,7 @@ async def test_openrouter_document_url_no_force_download(
 
     # Verify URL was passed directly (not downloaded and base64-encoded)
     assert vcr is not None
-    assert len(vcr.requests) == 1, 'Should only have one request (to OpenRouter, not a download)'  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     file_content = request_body['messages'][0]['content'][1]
     assert file_content == snapshot(
         {
@@ -1233,7 +1231,7 @@ async def test_openrouter_thinking_false_profile_gated_model(
         model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
     )
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['reasoning'] == {'enabled': False}
 
     assert not any(isinstance(part, ThinkingPart) for part in response.parts)
@@ -1261,7 +1259,7 @@ async def test_openrouter_thinking_false_on_always_on_route(
         # below proves the disable signal made it to the wire, which is what we're testing.
         pass
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['reasoning'] == {'enabled': False}
 
 
@@ -1277,12 +1275,28 @@ async def test_openrouter_thinking_true_emits_effort_medium(
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
     settings = OpenRouterModelSettings(thinking=True)
 
-    await model_request(
+    response = await model_request(
         model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
     )
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['reasoning'] == {'effort': 'medium', 'enabled': True}
+
+    # Response shape — pinning that `ThinkingPart` parsing survives the new wire format.
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(
+                content=IsStr(),
+                id=None,
+                signature=IsStr(),
+                provider_name='openrouter',
+                provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+            ),
+            TextPart(content='ok'),
+        ]
+    )
+    assert response.timestamp == IsDatetime()
+    assert response.provider_response_id == IsStr()
 
 
 async def test_openrouter_thinking_false_supports_thinking_model(
@@ -1299,7 +1313,7 @@ async def test_openrouter_thinking_false_supports_thinking_model(
         model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
     )
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['reasoning'] == {'enabled': False}
 
     assert not any(isinstance(part, ThinkingPart) for part in response.parts)

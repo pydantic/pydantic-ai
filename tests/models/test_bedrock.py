@@ -62,6 +62,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -2178,9 +2179,31 @@ async def test_bedrock_thinking_high_openai_variant(
     agent = Agent(model, model_settings=ModelSettings(thinking='high'))
     result = await agent.run('Reply with the single word: ok')
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
-    assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content=IsStr()), TextPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=IsInstance(int), output_tokens=IsInstance(int)),
+                model_name='openai.gpt-oss-120b-1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_bedrock_thinking_true_openai_variant(
@@ -2192,7 +2215,7 @@ async def test_bedrock_thinking_true_openai_variant(
     agent = Agent(model, model_settings=ModelSettings(thinking=True))
     await agent.run('Reply with the single word: ok')
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'medium'}
 
 
@@ -2205,7 +2228,7 @@ async def test_bedrock_thinking_false_openai_variant_silent_drop(
     agent = Agent(model, model_settings=ModelSettings(thinking=False))
     await agent.run('Reply with the single word: ok')
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
 
 
@@ -2217,8 +2240,14 @@ async def test_bedrock_thinking_high_qwen_variant(
     agent = Agent(model, model_settings=ModelSettings(thinking='high'))
     result = await agent.run('Reply with the single word: ok')
 
+    # `single_request_body` not used here because qwen3-32b wraps its initial reply in
+    # `<think>` tags, leaving empty visible text and triggering pydantic-ai's
+    # output-validation retry — the cassette captures two recorded interactions. We
+    # only need to assert on the wire shape of the first one.
     sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+    # Loose response-shape pin: at least one ThinkingPart survives the
+    # validation-retry roundtrip and reaches the final response.
     assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
 
 
@@ -2231,7 +2260,7 @@ async def test_bedrock_thinking_false_qwen_variant_silent_drop(
     agent = Agent(model, model_settings=ModelSettings(thinking=False))
     await agent.run('Reply with the single word: ok')
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
 
 

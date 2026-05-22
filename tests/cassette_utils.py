@@ -16,6 +16,19 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
+def single_request_body(cassette: Cassette) -> dict[str, Any]:
+    """Decode the JSON body of the single recorded request in `cassette`.
+
+    Use this for cassette-backed tests that send exactly one request and want to
+    assert directly on the wire body (e.g. that a specific field survived
+    translation). Asserts the single-request invariant — tests with intentional
+    multi-request cassettes should access `cassette.requests` directly.
+    """
+    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
+    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []

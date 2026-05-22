@@ -46,6 +46,16 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'error': 'error',
 }
 
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high']] = {
+    True: 'medium',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to OpenRouter `reasoning.effort` — limited to low/medium/high."""
+
 
 class _VideoURL(TypedDict):
     """Video URL payload for OpenRouter content parts."""
@@ -560,24 +570,13 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         openrouter_reasoning: OpenRouterReasoning = {}
         if thinking is False:
-            # OpenRouter forwards `enabled: false` to the underlying model; downstream
-            # behavior varies (honor, reject, or no-op) — documented in docs/thinking.md.
+            # Explicit disable signal forwarded to the upstream model.
             openrouter_reasoning['enabled'] = False
         else:
-            # OpenRouter only supports low/medium/high; map others to closest
-            effort_map: dict[ThinkingLevel, str] = {
-                True: 'medium',
-                'minimal': 'low',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'high',
-            }
-            openrouter_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
+            openrouter_reasoning['effort'] = _OPENROUTER_EFFORT_MAP[thinking]
             # `enabled` is documented as inferred from `effort`, but some reasoning-optional
-            # routes (e.g. parts of the `google/gemma-*` family) leave reasoning disabled
-            # unless `enabled` is explicit. Safe across the board: a no-op for
-            # reasoning-by-default models, load-bearing for reasoning-optional ones.
+            # routes (parts of `google/gemma-*`) leave reasoning disabled unless `enabled`
+            # is explicit. No-op for reasoning-by-default models.
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 

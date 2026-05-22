@@ -30,7 +30,11 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
     # grok-3-mini always reasons; the API has no `'none'` value for `reasoning_effort`,
-    # so route `thinking=False` through the standard always-on silent-drop path.
+    # so route `thinking=False` through the standard always-on silent-drop path. This
+    # binding to `supports_thinking_effort` is coincidental — grok-3-mini happens to be
+    # the only grok variant that both supports `reasoning_effort` and lacks a disable
+    # value. Newer grok models that accept `reasoning_effort='none'` should set the two
+    # flags independently.
     thinking_always_enabled = supports_thinking_effort
 
     supported_native_tools: frozenset[type[AbstractNativeTool]] = (

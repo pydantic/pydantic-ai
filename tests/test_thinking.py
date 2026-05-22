@@ -806,7 +806,11 @@ class TestXaiThinkingTranslation:
         """grok-3-mini's profile is always-on, so `prepare_request` drops
         `thinking=False` from params. With `thinking_always_enabled=False` the
         same call would pass `False` through — this pins that the always-on flag
-        is what enforces the silent-drop, guarding against a profile revert."""
+        is what enforces the silent-drop, guarding against a profile revert.
+
+        Two separate instances because `Model.profile` is a `cached_property` —
+        mutating `_profile` on a single instance after the first `prepare_request`
+        call wouldn't invalidate the cache."""
         always_on = XaiModel.__new__(XaiModel)
         always_on._profile = grok_model_profile('grok-3-mini')
         always_on._settings = None
