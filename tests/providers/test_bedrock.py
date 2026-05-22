@@ -136,6 +136,20 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.bedrock_supports_adaptive_thinking is False
     assert anthropic_profile.bedrock_supports_effort is False
 
+    # Opus 4.7 supports structured output on the direct Anthropic API but Bedrock lists it as
+    # Messages-API-only, so it stays off the closed-by-default allowlist.
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-7-20251101-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-7-20251101')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5-20251001')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is True
+
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
     assert isinstance(anthropic_profile, BedrockModelProfile)
@@ -147,6 +161,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
     assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is True
     # Opus 4.5 supports `effort` on the direct Anthropic API but Bedrock only honors it
     # alongside adaptive thinking, so the Bedrock flag must stay False here.
     assert anthropic_profile.bedrock_supports_adaptive_thinking is False
@@ -162,6 +178,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-6-20251015-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-6-20251015')
     assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is True
     assert anthropic_profile.bedrock_supports_adaptive_thinking is True
     assert anthropic_profile.bedrock_supports_effort is True
 

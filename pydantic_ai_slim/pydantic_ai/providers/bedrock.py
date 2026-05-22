@@ -175,9 +175,17 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
-    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    # Anthropic models confirmed for structured output on the Bedrock Runtime Converse path
+    # (`outputConfig.textFormat`), per https://platform.claude.com/docs/en/build-with-claude/structured-outputs.
+    # Closed-by-default so a newly-added Anthropic model doesn't inherit Bedrock structured-output
+    # support before AWS confirms it (e.g. Opus 4.7 is listed there as Messages-API-only).
+    bedrock_structured_output_supported = (
+        'claude-haiku-4-5',
+        'claude-sonnet-4-5',
+        'claude-sonnet-4-6',
+        'claude-opus-4-5',
+        'claude-opus-4-6',
+    )
     downstream = anthropic_model_profile(model_name)
     # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
     # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
@@ -196,8 +204,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supports_adaptive_thinking=supports_adaptive,
         bedrock_supports_effort=supports_effort,
     ).update(_without_builtin_tools(downstream))
-    supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
-        bedrock_structured_output_unsupported
+    supports_structured_output = profile.supports_json_schema_output and model_name.startswith(
+        bedrock_structured_output_supported
     )
     return replace(
         profile,
