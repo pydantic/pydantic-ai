@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -138,10 +138,29 @@ class BedrockModelProfile(ModelProfile):
     bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
     """Which thinking API shape to use for unified thinking translation.
 
-    - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
+    - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
+      or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
+    """
+
+    bedrock_supports_adaptive_thinking: bool = False
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+
+    Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
+    `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
+    """
+
+    bedrock_supports_effort: bool = False
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+
+    Only meaningful for the `'anthropic'` variant AND only honored alongside
+    `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
+    `output_config.effort` on the legacy `{'type': 'enabled', 'budget_tokens': N}` path
+    (e.g. Opus 4.5), so the translator skips it there even though the direct Anthropic
+    API accepts it. Effort lives at `additionalModelRequestFields.output_config.effort`
+    (a sibling of `thinking`, not inside it).
     """
 
 
@@ -150,6 +169,14 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
     # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
     bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    downstream = anthropic_model_profile(model_name)
+    # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
+    # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
+    is_anthropic = isinstance(downstream, AnthropicModelProfile)
+    supports_adaptive = is_anthropic and downstream.anthropic_supports_adaptive_thinking
+    # Bedrock only honors effort inside the adaptive branch of `_translate_thinking`, so don't claim
+    # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
+    supports_effort = supports_adaptive and is_anthropic and downstream.anthropic_supports_effort
     profile = BedrockModelProfile(
         bedrock_supports_tool_choice=True,
         bedrock_send_back_thinking_parts=True,
@@ -157,7 +184,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supports_tool_caching=True,
         bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         bedrock_thinking_variant='anthropic',
-    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+        bedrock_supports_adaptive_thinking=supports_adaptive,
+        bedrock_supports_effort=supports_effort,
+    ).update(_without_builtin_tools(downstream))
     supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
         bedrock_structured_output_unsupported
     )

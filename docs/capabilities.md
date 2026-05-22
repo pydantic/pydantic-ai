@@ -23,6 +23,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native when supported, subagent fallback via `fallback_model` | Yes |
+| [`XSearch`][pydantic_ai.capabilities.XSearch] | X search — native on xAI, explicit subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — native when supported, direct connection otherwise | Yes |
 | [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] | Discovery of [deferred tools](tools-advanced.md#tool-search) — native when supported, local `search_tools` function tool otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
@@ -116,17 +117,22 @@ agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[hooks])
 
 All hooks receive [`RunContext`][pydantic_ai.tools.RunContext], which provides access to the running agent via [`ctx.agent`][pydantic_ai.tools.RunContext.agent] — useful for logging, metrics, and other cross-cutting concerns that need to identify which agent is running.
 
+Hooks can also push follow-up messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful for capability
+authors that need to surface an event to the model mid-run without rebuilding the
+cached system prompt. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run).
+
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [native tool](native-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [native tool](native-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
 
-Each accepts `native` and `local` keyword arguments to control which side is used:
+Each accepts `native` and `local` keyword arguments to control which side is used. [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] and [`XSearch`][pydantic_ai.capabilities.XSearch] also accept `fallback_model` to enable their default subagent fallbacks:
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -138,11 +144,15 @@ agent = Agent(
         # Native when supported; falls back to a subagent running an
         # image-generation-capable model
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
+        # Native on xAI; on other models, explicitly delegate to an xAI model
+        XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning'),
         # Native when supported; falls back to a local MCP transport derived from the URL
         MCP(url='https://mcp.example.com/api', native=True),
     ],
 )
 ```
+
+[`XSearch`][pydantic_ai.capabilities.XSearch] is slightly different from [`WebSearch`][pydantic_ai.capabilities.WebSearch] and [`WebFetch`][pydantic_ai.capabilities.WebFetch]: there is no default non-xAI fallback. If your agent is not running on an xAI model, set `fallback_model` explicitly to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool].
 
 To force native-only (errors on unsupported models instead of falling back to local):
 
