@@ -132,4 +132,4 @@ Good fit:
 - big tool catalogs
 - situations where loading all tool schemas would bloat context
 
-For bundle-level progressive disclosure of instructions plus tools, read [Capabilities on Demand](./CAPABILITIES-ON-DEMAND.md) instead.
+For bundle-level progressive disclosure of instructions plus tools, read [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md) instead.

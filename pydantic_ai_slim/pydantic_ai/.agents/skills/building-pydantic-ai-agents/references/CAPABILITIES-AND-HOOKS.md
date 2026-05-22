@@ -105,10 +105,4 @@ For every capability, consider whether `defer_loading=True` would improve the sy
 
 ## Defer Capability Loading
 
-For capabilities on demand, load [Capabilities on Demand](./CAPABILITIES-ON-DEMAND.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.
-
-Keep the distinction clear:
-
-- deferred capabilities hide a named bundle of instructions and function tools until `load_capability(id)`
-- tool search hides individual tools behind `search_tools`
-- deferred tool calls pause or externalize execution of a tool the model can already see
+For capabilities on demand, load [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.

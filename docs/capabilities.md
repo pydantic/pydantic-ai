@@ -270,9 +270,7 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
 | Function tools on other models (local `search_tools` fallback) | **May break between turns** — function-tool visibility changes as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
-On models without native tool search, on-demand capabilities still shrink the initial context window; they just don't preserve the prefix across loads. When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search.
-
-On OpenAI Responses, function tools inside on-demand capabilities are searched through OpenAI's client-executed `tool_search` mode from the first request. This keeps the OpenAI `tools` prefix stable when `load_capability` reveals those tools. Standalone deferred tools still use OpenAI's hosted tool search by default; if a run mixes standalone deferred tools with on-demand capability tools, the shared tool-search registration is optimized for cache stability rather than OpenAI-hosted search.
+On models without native tool search, on-demand capabilities still shrink the initial context window; they just don't preserve the prefix across loads. When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model with native tool search. The provider-specific mechanics that keep the prefix stable — notably OpenAI Responses' client-executed `tool_search` switch — live in [tools-advanced.md](tools-advanced.md#tool-search).
 
 
 ## Native capabilities

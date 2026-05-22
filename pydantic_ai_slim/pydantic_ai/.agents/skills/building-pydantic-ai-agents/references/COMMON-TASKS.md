@@ -6,7 +6,7 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, `WebSearch`, `Hooks`, custom capabilities
-- [CAPABILITIES-ON-DEMAND.md](./CAPABILITIES-ON-DEMAND.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, tool-level deferred loading
@@ -20,7 +20,7 @@ Read [Add Capabilities](./CAPABILITIES-AND-HOOKS.md#add-capabilities-to-an-agent
 
 ## Apply Progressive Disclosure
 
-Read [Capabilities on Demand](./CAPABILITIES-ON-DEMAND.md).
+Read [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md).
 
 ## Intercept Agent Lifecycle with Hooks
 

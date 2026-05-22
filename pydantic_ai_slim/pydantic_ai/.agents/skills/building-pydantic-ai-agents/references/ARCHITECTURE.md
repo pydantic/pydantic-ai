@@ -29,7 +29,7 @@ If the user already knows what they want to do, load the narrower task guide ins
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md)
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md)
-- [CAPABILITIES-ON-DEMAND.md](./CAPABILITIES-ON-DEMAND.md)
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md)
 - [TOOLS-CORE.md](./TOOLS-CORE.md)
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md)
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md)

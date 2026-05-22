@@ -16,8 +16,6 @@ Use this for specialist behavior where instructions and tools should travel toge
 
 Use tool search instead when the agent has a large flat tool catalog and the model should discover individual tools. Tool search uses `search_tools`; capabilities on demand use `load_capability`.
 
-Do not wait for the user to say "progressive disclosure." Raise it during design and review whenever an agent is accumulating optional context, many domain runbooks, large policy text, rarely used tools, or multiple specialist workflows.
-
 ## Opinionated Design Rules
 
 - Treat `defer_loading=True` as a design question for every capability, not a niche option users must ask for.
@@ -119,8 +117,8 @@ account_capability = AccountCapability(id='account-management', defer_loading=Tr
 - Deferred capability ids must be explicit and stable; auto-generated ids are rejected because history replay cannot rely on them.
 - `load_capability` is reserved when any deferred capability exists.
 - Deferred capability instructions and model settings activate only after the capability is loaded.
-- Function tools are supported. Native tools are not currently lazy-loaded; keep native tools always on or set `defer_loading=False`.
-- Capability-level `defer_loading=True` gates the bundle as a unit. Individual tool `defer_loading` values inside that capability do not expose tools before loading or keep them behind `search_tools` after loading.
+- Both function and native tools defer with the capability. Deferring a native tool delays its definition entering the request, which breaks the prompt-cache prefix on load — only worth it for tools that materially bloat the prompt.
+- Capability-level `defer_loading=True` gates the bundle as a unit. A tool's own `defer_loading=True` is preserved after the capability loads, leaving that tool behind `search_tools` even though its siblings became callable.
 
 ## Choosing Between Deferral Mechanisms
 
@@ -133,11 +131,3 @@ Use tool search when the model needs individual tool discovery across many tools
 Use deferred tool calls when the issue is execution timing, approval, or external execution. Deferred tool calls decide whether a visible tool call can run now; they do not control whether the model can see a capability.
 
 When in doubt, ask this question: "Would a high-quality answer to most user prompts get worse if this information were absent until requested?" If no, recommend progressive disclosure.
-
-## Testing Checklist
-
-- Assert the first model request only exposes `load_capability` plus always-on tools.
-- Assert the model can call `load_capability` with the expected id.
-- Assert the next request exposes the loaded capability's function tools.
-- Assert returned instructions include capability and owned toolset instructions when applicable.
-- Add a history replay case if the feature depends on loaded capability state across runs.
