@@ -25,6 +25,7 @@ from .exceptions import (
     SkipToolExecution,
     SkipToolValidation,
     ToolFailed,
+    ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -760,6 +761,17 @@ class ToolManager(Generic[AgentDepsT]):
                 validated.ctx,
                 validated.tool,
             )
+        except ToolFailed as e:
+            if not wrap_validation_errors:
+                raise
+            raise ToolFailedError(
+                _messages.ToolReturnPart(
+                    tool_name=name,
+                    content=e.message,
+                    tool_call_id=validated.call.tool_call_id,
+                    outcome='failed',
+                )
+            ) from e
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise

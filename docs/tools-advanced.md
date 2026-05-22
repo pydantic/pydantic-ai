@@ -488,6 +488,30 @@ Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception
 
 Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(retries={'tools': ...})` as their default when no per-toolset value is set.
 
+### Reporting Failure Without Retrying {#tool-failed}
+
+Not every tool failure is a correction request. When a call has genuinely failed — the resource doesn't exist, the operation isn't supported, the upstream service returned an unrecoverable error — you usually want the model to *see* the failure and decide what to do next (try a different tool, fall back, give up gracefully), rather than be asked to retry the same call. Raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] for this:
+
+```python
+from pydantic_ai import Agent, ToolFailed
+
+agent = Agent('openai:gpt-5')
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    try:
+        with open(path) as f:
+            return f.read()
+    except FileNotFoundError:
+        raise ToolFailed(f'File not found: {path}')
+```
+
+The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'` — the model receives it as a tool result (not a retry prompt) and the call is traced as an error in telemetry. Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level.
+
+Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. `ToolFailed` is also what MCP servers' `isError: true` responses surface as.
+
+To convert arbitrary exceptions from a third-party library to `ToolFailed` without repeating `try`/`except` in every tool, wrap the toolset — see the [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] pattern under [Changing tool execution](toolsets.md#changing-tool-execution).
+
 ### Tool Timeout
 
 You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).

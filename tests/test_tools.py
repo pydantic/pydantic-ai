@@ -1485,14 +1485,88 @@ def test_tool_retries():
 
 
 def test_tool_failed():
-    agent = Agent(TestModel())
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a `RetryPromptPart`), and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Acknowledged.')])
+
+    agent = Agent(FunctionModel(llm))
 
     @agent.tool_plain
-    def infinite_retry_tool() -> int:
-        raise ToolFailed('Tool failed')
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
 
     result = agent.run_sync('Hello')
-    assert result.all_messages() == snapshot()
+    assert result.output == 'Acknowledged.'
+
+    parts = [p for m in result.all_messages() for p in m.parts]
+    tool_returns = [p for p in parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome == 'failed'
+    assert tool_returns[0].content == 'Disk full'
+    assert not any(isinstance(p, RetryPromptPart) for p in parts)
+
+
+def test_tool_failed_parallel():
+    """When one of several parallel tool calls raises `ToolFailed`, the other results still reach the model and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ok_tool', {}, tool_call_id='call_ok'),
+                    ToolCallPart('failing_tool', {}, tool_call_id='call_fail'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def ok_tool() -> str:
+        return 'ok'
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Done.'
+
+    tool_returns = {
+        p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)
+    }
+    assert tool_returns['call_ok'].outcome == 'success'
+    assert tool_returns['call_ok'].content == 'ok'
+    assert tool_returns['call_fail'].outcome == 'failed'
+    assert tool_returns['call_fail'].content == 'Disk full'
+
+
+def test_tool_failed_does_not_consume_retry_budget():
+    """`ToolFailed` is a result, not a correction request — repeated failures must not trigger `UnexpectedModelBehavior` from the per-tool retry counter."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 5:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id=f'call{call_count}')])
+        return ModelResponse(parts=[TextPart('Giving up.')])
+
+    # retries=1 would trip after a single ModelRetry; ToolFailed must not.
+    agent = Agent(FunctionModel(llm), retries=1)
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Still failing')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Giving up.'
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 5
+    assert all(p.outcome == 'failed' for p in tool_returns)
 
 
 def test_tool_raises_call_deferred():
