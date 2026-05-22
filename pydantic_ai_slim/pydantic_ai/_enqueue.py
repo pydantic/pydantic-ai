@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from .exceptions import UserError
 from .messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, UserPromptPart
 
 if TYPE_CHECKING:
@@ -86,7 +87,7 @@ class PendingMessage:
     [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
     """
 
-    messages: tuple[ModelMessage, ...]
+    messages: list[ModelMessage]
     """The message(s) to inject, in order. Always ends in a
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
 
@@ -105,7 +106,7 @@ class PendingMessage:
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
 
         Raises:
-            ValueError: If the assembled messages don't end in a
+            UserError: If the assembled messages don't end in a
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
                 since the agent needs a request to respond to.
         """
@@ -113,8 +114,8 @@ class PendingMessage:
         if not messages:
             return None
         if not isinstance(messages[-1], ModelRequest):
-            raise ValueError(
+            raise UserError(
                 'Enqueued content must end with a `ModelRequest` (or `str` / `Sequence[UserContent]` / '
                 '`ModelRequestPart` items that form one), so the agent has a request to respond to.'
             )
-        return cls(messages=tuple(messages), priority=priority)
+        return cls(messages=messages, priority=priority)

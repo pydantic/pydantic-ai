@@ -2360,6 +2360,18 @@ ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('k
 """Any message sent to or returned by a model."""
 
 
+def fill_run_metadata(message: ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
+    """Fill in framework-tracked metadata (`timestamp`, `run_id`, `conversation_id`) that's still unset.
+
+    Producer-supplied values are preserved; only unset fields are filled in. Centralizing the field
+    list here means a new framework-tracked field only needs to be handled in one place, rather than
+    every site that materializes a message into the history.
+    """
+    message.timestamp = message.timestamp or _now_utc()
+    message.run_id = message.run_id or run_id
+    message.conversation_id = message.conversation_id or conversation_id
+
+
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )

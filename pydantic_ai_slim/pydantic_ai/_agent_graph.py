@@ -899,14 +899,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        if messages[-1].timestamp is None:
-            messages[-1].timestamp = now_utc()
-
-        if messages and messages[-1].run_id is None:
-            messages[-1].run_id = ctx.state.run_id
-        if messages and messages[-1].conversation_id is None:
-            messages[-1].conversation_id = ctx.state.conversation_id
+        # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
+        _messages.fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -963,8 +957,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        _messages.fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -1016,8 +1009,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        _messages.fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)

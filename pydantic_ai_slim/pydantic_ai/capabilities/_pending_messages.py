@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
-from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelRequest, fill_run_metadata
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
@@ -51,12 +51,7 @@ def _stamped_messages(
     messages: list[ModelMessage] = []
     for pending in drained:
         for message in pending.messages:
-            if message.timestamp is None:
-                message.timestamp = now_utc()
-            if message.run_id is None:
-                message.run_id = fallback_run_id
-            if message.conversation_id is None:
-                message.conversation_id = fallback_conversation_id
+            fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
             messages.append(message)
     return messages
 
@@ -149,11 +144,16 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         ]
         # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
         # will re-stamp it during the graph lifecycle. `_stamped_messages` already
-        # stamped it, which is harmless (the lifecycle stamp overwrites). Every
-        # `PendingMessage` ends in a `ModelRequest` (enforced by `from_content`), so the
-        # last flattened message is always one; any earlier responses/requests become
-        # `extras` appended to history before the redirect.
+        # stamped it, which is harmless (the lifecycle stamp overwrites). `from_content`
+        # guarantees each `PendingMessage` ends in a `ModelRequest`, but a producer can
+        # construct `PendingMessage` (or mutate `RunContext.pending_messages`) directly, so
+        # we check rather than assert. Any earlier responses/requests become `extras`
+        # appended to history before the redirect.
         *extras, final = messages
-        assert isinstance(final, ModelRequest), 'enqueued content always ends in a ModelRequest'
+        if not isinstance(final, ModelRequest):
+            raise UserError(
+                'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
+                f'but the last queued message is a `{type(final).__name__}`.'
+            )
         ctx.messages.extend(extras)
         return ModelRequestNode(request=final)

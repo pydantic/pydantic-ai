@@ -421,18 +421,29 @@ Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
 
 ```python {title="enqueue_from_tool.py"}
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import SystemPromptPart
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('anthropic:claude-opus-4-7')
 
 
 @agent.tool
 def trigger_alert(ctx: RunContext[None]) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
+
+
+@agent.tool
+def enter_incident_mode(ctx: RunContext[None]) -> str:
+    # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
+    ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
+    return 'incident mode enabled'
 ```
 
 The `'asap'` message is appended to the agent's message history and is visible to the
-model on the next request, alongside any tool returns from the same step.
+model on the next request, alongside any tool returns from the same step. A
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
+providers that hoist system prompts (e.g. Anthropic, Google) it's rendered inline as a regular
+user-role message so it keeps its mid-conversation position rather than being lifted to the top.
 
 ### From external code driving `agent.iter()`
 
@@ -443,7 +454,7 @@ from outside (e.g. forwarding events from a webhook, chat platform, or job queue
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('anthropic:claude-opus-4-7')
 
 
 async def main():

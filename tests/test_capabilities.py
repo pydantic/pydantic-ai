@@ -11801,7 +11801,7 @@ def test_pending_message_allows_empty_request():
     """
     from pydantic_ai._enqueue import PendingMessage
 
-    msg = PendingMessage(messages=(ModelRequest(parts=[]),))
+    msg = PendingMessage(messages=[ModelRequest(parts=[])])
     assert msg.priority == 'asap'
     assert msg.messages[0].parts == []
 
@@ -12069,15 +12069,48 @@ async def test_enqueue_rejects_content_not_ending_in_request():
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
-        with pytest.raises(ValueError, match='must end with a `ModelRequest`'):
+        with pytest.raises(UserError, match='must end with a `ModelRequest`'):
             ctx.enqueue(lone_response)
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        with pytest.raises(ValueError, match='must end with a `ModelRequest`'):
+        with pytest.raises(UserError, match='must end with a `ModelRequest`'):
             agent_run.enqueue(lone_response)
         async for _ in agent_run:
             pass
+
+
+async def test_drain_rejects_directly_queued_content_not_ending_in_request():
+    """Directly appending a malformed `PendingMessage` raises a `UserError` at end-of-run drain.
+
+    `enqueue` enforces the "ends in a `ModelRequest`" rule up front, but `RunContext.pending_messages`
+    is public, so a producer can append a `PendingMessage` directly. The end-of-run drain catches a
+    request-less message with a helpful `UserError` rather than a bare assertion.
+    """
+    from pydantic_ai._enqueue import PendingMessage
+
+    lone_response = ModelResponse(
+        parts=[TextPart(content='synthetic')], usage=RequestUsage(input_tokens=1, output_tokens=1)
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='queue_bad', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def queue_bad(ctx: RunContext[None]) -> str:
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.append(PendingMessage(messages=[lone_response], priority='when_idle'))
+        return 'ok'
+
+    with pytest.raises(UserError, match='must end with a `ModelRequest`'):
+        await agent.run('hi')
 
 
 async def test_enqueue_asap_with_rich_message_history_tail():
