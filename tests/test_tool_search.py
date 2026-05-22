@@ -67,6 +67,8 @@ from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchToo
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
+from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
@@ -123,7 +125,9 @@ with try_import() as openai_available:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+        _apply_client_tool_search_for_deferred_capability_tools,  # pyright: ignore[reportPrivateUsage]
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
+        _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION,  # pyright: ignore[reportPrivateUsage]
         _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
         _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
@@ -2266,6 +2270,135 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     # list so the OpenAI request carries `get_weather` as a regular function tool.
     tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
     assert 'get_weather' in tool_names
+
+
+def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Compact one-line-per-part trace of a deferred-capability conversation.
+
+    Used by the cross-provider replay tests to assert the *story* of the run
+    (load → search → tool call → answer) without coupling to provider-specific
+    wire shapes."""
+    trace: list[tuple[str, list[dict[str, Any]]]] = []
+    for message in messages:
+        part_trace: list[dict[str, Any]] = []
+        for part in message.parts:
+            part_info: dict[str, Any] = {'type': type(part).__name__}
+            if isinstance(part, UserPromptPart):
+                part_info = {'type': 'user', 'content': part.content}
+            elif isinstance(part, LoadCapabilityCallPart):
+                part_info = {'type': 'load_capability_call', 'id': part.capability_id}
+            elif isinstance(part, LoadCapabilityReturnPart):
+                part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
+            elif isinstance(part, ToolSearchCallPart):
+                queries = part.args['queries'] if isinstance(part.args, dict) else part.args
+                part_info = {'type': 'tool_search_call', 'queries': queries}
+            elif isinstance(part, ToolSearchReturnPart):
+                part_info = {
+                    'type': 'tool_search_return',
+                    'tools': [tool['name'] for tool in part.content['discovered_tools']],
+                }
+            elif isinstance(part, ToolCallPart):
+                part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
+            elif isinstance(part, ToolReturnPart):
+                part_info = {'type': 'tool_return', 'tool_name': part.tool_name, 'content': part.content}
+            elif isinstance(part, TextPart):
+                part_info = {'type': 'text'}
+            part_trace.append(part_info)
+        trace.append((type(message).__name__, part_trace))
+    return trace
+
+
+# Cassette names depend on the parametrize id, so we keep these stable across the
+# matrix. Recording: `pytest --record-mode=new --inline-snapshot=create`.
+@pytest.mark.parametrize(
+    'first_model_name,resume_model_name',
+    [
+        ('anthropic:claude-sonnet-4-5', 'openai:gpt-5.4'),
+        ('openai:gpt-5.4', 'anthropic:claude-sonnet-4-5'),
+        ('google:gemini-3-flash-preview', 'openai:gpt-5.4'),
+        ('openai:gpt-5.4', 'google:gemini-3-flash-preview'),
+    ],
+)
+@pytest.mark.vcr
+@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+async def test_cross_provider_capability_replay(
+    first_model_name: str,
+    resume_model_name: str,
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    gemini_api_key: str,
+) -> None:
+    """A deferred capability registered with the same definition on both turns must
+    replay cleanly across any provider pair: the resuming provider re-marks the
+    capability-owned tools, treats the prior turn's tool-search history as
+    already-discovered, and dispatches `lookup_refund_policy` directly.
+
+    Asserting the trace-level story (`_trace_capability_messages`) over both turns
+    is enough — per-provider wire shape is already covered by the dedicated
+    OpenAI/Anthropic/Google adapter tests."""
+    pytest.importorskip('anthropic')
+    pytest.importorskip('openai')
+    pytest.importorskip('google.genai')
+
+    refunds_toolset = FunctionToolset[None]()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    def make_refunds_cap() -> Capability[None]:
+        return Capability[None](
+            id='refunds',
+            description='Refund policy tools.',
+            instructions='Use the refund policy tool before answering refund questions.',
+            toolset=refunds_toolset,
+            defer_loading=True,
+        )
+
+    first_agent: Agent[None, str] = Agent(model=first_model_name, capabilities=[make_refunds_cap()])
+    first_result = await first_agent.run('Can I get a refund on order-123?')
+
+    resume_agent: Agent[None, str] = Agent(model=resume_model_name, capabilities=[make_refunds_cap()])
+    resume_result = await resume_agent.run(
+        'And what about order-456?',
+        message_history=first_result.all_messages(),
+    )
+
+    # The trajectory of the *first* turn varies per provider (some run native search,
+    # some run the local fallback), so each row gets its own snapshot.
+    assert _trace_capability_messages(first_result.all_messages()) == snapshot()
+    # The *resume* turn should be uniform regardless of which provider ran first: the
+    # capability is already loaded, the tool was discovered, so the resuming provider
+    # calls `lookup_refund_policy` directly.
+    assert _trace_capability_messages(resume_result.new_messages()) == snapshot(
+        [
+            ('ModelRequest', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'ModelResponse',
+                [
+                    {
+                        'type': 'tool_call',
+                        'tool_name': 'lookup_refund_policy',
+                        'args': {'order_id': 'order-456'},
+                    }
+                ],
+            ),
+            (
+                'ModelRequest',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('ModelResponse', [{'type': 'text'}]),
+        ]
+    )
 
 
 @pytest.mark.vcr
@@ -4601,6 +4734,108 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
     # Dict with `paths` present but of a non-list type.
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
         _normalize_tool_search_args({'paths': 'not a list'})
+
+
+# --- `_apply_client_tool_search_for_deferred_capability_tools` branch coverage ---
+#
+# The helper switches OpenAI's hosted `tool_search` to client execution when any
+# capability-owned tool is registered with the deferred marker. The happy path
+# (single hosted `tool_search` to flip, no custom `search_fn`) is covered by the
+# e2e `test_openai_deferred_capability_tool_reveal_uses_client_tool_search`. The
+# tests below cover the remaining input-shape branches.
+
+
+@pytest.fixture
+def capability_marked_tool_def() -> ToolDefinition:
+    """A `ToolDefinition` shaped like one emitted by `CapabilityOwnedToolset` for a
+    `defer_loading=True` capability — `with_native='tool_search'` plus the metadata
+    marker that signals the deferred-capability tool-search switch."""
+    return ToolDefinition(
+        name='lookup_refund_policy',
+        description='Revealed by a deferred capability.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        with_native='tool_search',
+        metadata={DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True},
+    )
+
+
+def test_apply_client_tool_search_skips_non_matching_entries_in_tools_list(
+    capability_marked_tool_def: ToolDefinition,
+) -> None:
+    """Line 4347 (`continue`): the loop must skip past tools that aren't a hosted
+    `tool_search` dict needing conversion — both unrelated entries and a
+    `tool_search` already at `execution='client'` (the second-request state on a
+    multi-turn run) — and convert the first applicable entry it finds."""
+    pytest.importorskip('openai')
+
+    params = ModelRequestParameters(function_tools=[capability_marked_tool_def])
+    tools: list[Any] = [
+        {'type': 'web_search'},
+        {'type': 'tool_search', 'execution': 'client', 'description': 'already client'},
+        {'type': 'tool_search', 'execution': 'auto'},
+    ]
+
+    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
+
+    # The skipped entries (indices 0 and 1) are preserved verbatim and only the
+    # auto-executed `tool_search` at index 2 flips to client mode.
+    converted_indices = [i for i, tool in enumerate(tools) if tool.get('description') == _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION]
+    assert converted_indices == [2]
+
+
+def test_apply_client_tool_search_reuses_custom_search_tool_definition_schema(
+    capability_marked_tool_def: ToolDefinition,
+) -> None:
+    """Lines 4358-4359: when the user configured a custom `search_fn`,
+    `ToolSearchToolset` leaves `search_tools` in `function_tools` with the
+    author's own schema and description. The client-mode `tool_search` we emit
+    must surface *those*, not the default `{queries: array<string>}` shape."""
+    pytest.importorskip('openai')
+
+    custom_schema = {
+        'type': 'object',
+        'properties': {
+            'queries': {'type': 'array', 'items': {'type': 'string'}},
+            'top_k': {'type': 'integer', 'description': 'Max results to return.'},
+        },
+        'required': ['queries'],
+    }
+    search_tool_def = ToolDefinition(
+        name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
+        description='Custom keyword search across the refund tool corpus.',
+        parameters_json_schema=custom_schema,
+    )
+    params = ModelRequestParameters(function_tools=[search_tool_def, capability_marked_tool_def])
+    tools: list[Any] = [{'type': 'tool_search', 'execution': 'auto'}]
+
+    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
+
+    assert tools == [
+        {
+            'type': 'tool_search',
+            'execution': 'client',
+            'description': 'Custom keyword search across the refund tool corpus.',
+            'parameters': {**custom_schema, 'additionalProperties': False},
+        }
+    ]
+
+
+def test_apply_client_tool_search_no_op_when_tools_list_has_no_hosted_tool_search(
+    capability_marked_tool_def: ToolDefinition,
+) -> None:
+    """Line 4345 -> exit: the deferred-capability marker is present but the
+    rendered `tools` list contains no hosted `tool_search` entry (e.g. a
+    downstream caller already stripped or replaced it). The helper should
+    iterate to completion without mutating anything."""
+    pytest.importorskip('openai')
+
+    params = ModelRequestParameters(function_tools=[capability_marked_tool_def])
+    tools: list[Any] = [{'type': 'web_search'}, {'type': 'file_search'}]
+    snapshot_before = [dict(t) for t in tools]
+
+    _apply_client_tool_search_for_deferred_capability_tools(tools, params)
+
+    assert tools == snapshot_before
 
 
 # --- Cross-provider local→native promotion ---
