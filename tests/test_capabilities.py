@@ -11806,22 +11806,17 @@ def test_pending_message_allows_empty_request():
     assert msg.messages[0].parts == []
 
 
-async def test_enqueue_without_live_queue_raises():
+def test_enqueue_without_live_queue_raises():
     """`ctx.enqueue` raises when the `RunContext` isn't backed by a running agent's queue.
 
-    `Agent.system_prompt_parts` builds a synthetic `RunContext` with no live queue — nothing
-    would ever drain it — so enqueuing from a system-prompt callback fails loudly instead of
+    Synthetic contexts (e.g. the one `Agent.system_prompt_parts` builds to resolve system
+    prompts outside a run) have no queue to drain to, so enqueue fails loudly instead of
     silently dropping the message.
     """
-    agent = Agent(TestModel())
-
-    @agent.system_prompt
-    def sp(ctx: RunContext[None]) -> str:
-        ctx.enqueue('this has nowhere to go')
-        return 'prompt'
-
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    assert ctx.pending_messages is None
     with pytest.raises(UserError, match='only available during an agent run'):
-        await agent.system_prompt_parts()
+        ctx.enqueue('this has nowhere to go')
 
 
 async def test_enqueue_parts_style_calls_produce_one_request_per_call():
