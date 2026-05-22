@@ -19,16 +19,18 @@ from .models import create_async_http_client
 
 __all__ = ['safe_download']
 
-# Private IP ranges that should be blocked by default
+# Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
+# IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
+# they are decoded to their embedded IPv4 by `_embedded_ipv4s()` and checked against this table.
 _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     # IPv4 private ranges
-    ipaddress.IPv4Network('127.0.0.0/8'),  # Loopback
+    ipaddress.IPv4Network('0.0.0.0/8'),  # "This" network
     ipaddress.IPv4Network('10.0.0.0/8'),  # Private
+    ipaddress.IPv4Network('100.64.0.0/10'),  # CGNAT (RFC 6598), includes Alibaba Cloud metadata
+    ipaddress.IPv4Network('127.0.0.0/8'),  # Loopback
+    ipaddress.IPv4Network('169.254.0.0/16'),  # Link-local (includes cloud metadata)
     ipaddress.IPv4Network('172.16.0.0/12'),  # Private
     ipaddress.IPv4Network('192.168.0.0/16'),  # Private
-    ipaddress.IPv4Network('169.254.0.0/16'),  # Link-local (includes cloud metadata)
-    ipaddress.IPv4Network('0.0.0.0/8'),  # "This" network
-    ipaddress.IPv4Network('100.64.0.0/10'),  # CGNAT (RFC 6598), includes Alibaba Cloud metadata
     # IPv4 IANA-reserved / special-purpose ranges (not globally routable)
     ipaddress.IPv4Network('192.0.0.0/24'),  # IETF Protocol Assignments (RFC 6890)
     ipaddress.IPv4Network('192.0.2.0/24'),  # TEST-NET-1 (RFC 5737)
@@ -37,32 +39,79 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.IPv4Network('203.0.113.0/24'),  # TEST-NET-3 (RFC 5737)
     ipaddress.IPv4Network('224.0.0.0/4'),  # Multicast (RFC 5771)
     ipaddress.IPv4Network('240.0.0.0/4'),  # Reserved + limited broadcast 255.255.255.255 (RFC 1112)
-    # IPv6 private ranges (6to4 — 2002::/16 — is handled via normalization in _normalize_ip)
+    # IPv6 private ranges
+    ipaddress.IPv6Network('::/128'),  # Unspecified address
     ipaddress.IPv6Network('::1/128'),  # Loopback
     ipaddress.IPv6Network('fe80::/10'),  # Link-local
     ipaddress.IPv6Network('fc00::/7'),  # Unique local address
     # IPv6 IANA-reserved / special-purpose ranges
-    ipaddress.IPv6Network('::/128'),  # Unspecified address
     ipaddress.IPv6Network('100::/64'),  # Discard prefix (RFC 6666)
     ipaddress.IPv6Network('2001::/32'),  # Teredo tunneling (RFC 4380)
     ipaddress.IPv6Network('2001:db8::/32'),  # Documentation (RFC 3849)
     ipaddress.IPv6Network('ff00::/8'),  # Multicast (RFC 4291)
 )
 
-# NAT64 well-known prefix (RFC 6052): 64:ff9b::/96 embeds an IPv4 address in
-# its low 32 bits and, in NAT64-configured networks, transparently translates
-# to that IPv4 endpoint. We normalize these so the embedded IPv4 is checked.
-_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network('64:ff9b::/96')
+# RFC 6052 §2.2: byte offsets (within the 16-byte address) of the embedded IPv4 for each
+# standardized NAT64 prefix length, plus the 6to4 (RFC 3056) position. Byte 8 is the
+# reserved "u" octet that the IPv4 skips in the shorter NAT64 prefixes.
+_NAT64_OFFSETS_BY_PREFIX_LEN: dict[int, tuple[int, int, int, int]] = {
+    32: (4, 5, 6, 7),
+    40: (5, 6, 7, 9),
+    48: (6, 7, 9, 10),
+    56: (7, 9, 10, 11),
+    64: (9, 10, 11, 12),
+    96: (12, 13, 14, 15),
+}
+_LOW32_OFFSETS = (12, 13, 14, 15)  # IPv4-mapped/-compatible, NAT64 /96, ISATAP, generic
+_SIXTOFOUR_OFFSETS = (2, 3, 4, 5)  # 6to4 2002::/16 (bits 16-47)
+_ALL_EMBEDDED_OFFSETS: tuple[tuple[int, int, int, int], ...] = (
+    *_NAT64_OFFSETS_BY_PREFIX_LEN.values(),
+    _SIXTOFOUR_OFFSETS,
+)
 
-# Cloud metadata IPs - always blocked, even with allow_local=True
-# These need to be checked explicitly because when allow_local=True,
-# we skip the private IP check but still need to block metadata endpoints.
-_CLOUD_METADATA_IPS: frozenset[str] = frozenset(
-    {
-        '169.254.169.254',  # AWS, GCP, Azure metadata endpoint
-        'fd00:ec2::254',  # AWS EC2 IPv6 metadata endpoint
-        '100.100.100.200',  # Alibaba Cloud metadata endpoint
-    }
+# NAT64 prefixes paired with the embedding lengths an operator may use within them.
+# RFC 6052 well-known prefix is /96-only; the RFC 8215 local-use prefix is a /48 that
+# operators may further subnet to /56, /64, or /96.
+_NAT64_PREFIXES: tuple[tuple[ipaddress.IPv6Network, tuple[tuple[int, int, int, int], ...]], ...] = (
+    (ipaddress.IPv6Network('64:ff9b::/96'), (_NAT64_OFFSETS_BY_PREFIX_LEN[96],)),
+    (
+        ipaddress.IPv6Network('64:ff9b:1::/48'),
+        tuple(_NAT64_OFFSETS_BY_PREFIX_LEN[pl] for pl in (48, 56, 64, 96)),
+    ),
+)
+
+# ISATAP (RFC 5214) interface identifiers: `::0:5efe:a.b.c.d` and `::200:5efe:a.b.c.d`,
+# i.e. bytes 8-11 of the address carry the marker and bytes 12-15 carry the IPv4.
+_ISATAP_INTERFACE_IDS = (b'\x00\x00\x5e\xfe', b'\x02\x00\x5e\xfe')
+
+# Teredo (RFC 4380): 2001::/32 carries the client IPv4 in the low 32 bits, XOR'd with
+# all-ones (obfuscated). The raw low-32 bytes are meaningless, so it needs its own decode.
+_TEREDO_PREFIX = ipaddress.IPv6Network('2001::/32')
+
+# Cloud metadata / credential endpoints - always blocked, even with allow_local=True.
+# When allow_local=True we skip the private-IP check, so these must be caught explicitly.
+# Most are also covered by the private ranges above, but 168.63.129.16 (Azure) is a public
+# IP, so the metadata guard is the only thing that blocks it.
+_CLOUD_METADATA_IPV4: frozenset[ipaddress.IPv4Address] = frozenset(
+    ipaddress.IPv4Address(ip)
+    for ip in (
+        '169.254.169.254',  # AWS IMDS, GCP, Azure, OCI, DigitalOcean, Hetzner, IBM, OpenStack, ...
+        '169.254.170.2',  # AWS ECS task IAM role credentials
+        '169.254.170.23',  # AWS EKS Pod Identity Agent
+        '168.63.129.16',  # Azure WireServer / platform channel (public IP)
+        '100.100.100.200',  # Alibaba Cloud
+        '192.0.0.192',  # Oracle Cloud (Classic)
+        '169.254.42.42',  # Scaleway
+    )
+)
+_CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
+    ipaddress.IPv6Address(ip)
+    for ip in (
+        'fd00:ec2::254',  # AWS IMDS IPv6
+        'fd00:ec2::23',  # AWS EKS Pod Identity Agent IPv6
+        'fd20:ce::254',  # GCP IPv6 (IPv6-only instances)
+        'fd00:42::42',  # Scaleway IPv6
+    )
 )
 
 _MAX_REDIRECTS = 10
@@ -90,54 +139,81 @@ class ResolvedUrl:
     """The path including query string and fragment."""
 
 
-def _normalize_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Parse `ip_str`, unwrapping IPv6 transition addresses to their embedded IPv4 form.
+def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipaddress.IPv4Address]:
+    """Return the IPv4 addresses `ip` may route to via an IPv6 transition mechanism.
 
-    Dual-stack and translated networks route the IPv6 forms below to the underlying
-    IPv4 endpoint, so the IPv6 wrapper must not be allowed to disguise an
-    otherwise-blocked IPv4 address. Handles:
+    An IPv6 literal can carry an IPv4 destination (IPv4-mapped, IPv4-compatible, 6to4,
+    NAT64, ISATAP, Teredo, ...) that dual-stack or translating networks deliver to the
+    embedded IPv4 endpoint. The blocklist guards must therefore consider that embedded
+    IPv4, not just the IPv6 wrapper, or an attacker can smuggle a blocked IPv4 past them
+    in IPv6 clothing.
 
-    - IPv4-mapped IPv6 (e.g., `::ffff:1.2.3.4`) — RFC 4291 §2.5.5.2
-    - 6to4 (e.g., `2002:0102:0304::`) — RFC 3056
-    - NAT64 well-known prefix (e.g., `64:ff9b::1.2.3.4`) — RFC 6052
-
-    Raises:
-        ValueError: If `ip_str` is not a valid IP address.
+    With `exhaustive=False`, only well-recognized transition contexts are decoded, so a
+    real public IPv6 address whose bytes happen to coincide with a private range is never
+    misclassified. With `exhaustive=True`, every standardized embedding position is
+    decoded unconditionally; this is only used for the cloud-metadata guard, whose target
+    set is small enough that a coincidental match is effectively impossible, and it
+    additionally covers operator-chosen NAT64 prefixes that we cannot enumerate.
     """
-    ip = ipaddress.ip_address(ip_str)
-    if isinstance(ip, ipaddress.IPv6Address):
-        if ip.ipv4_mapped:
-            return ip.ipv4_mapped
-        if ip.sixtofour:
-            return ip.sixtofour
-        if ip in _NAT64_WELL_KNOWN_PREFIX:
-            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-    return ip
+    packed = ip.packed
+
+    def at(offsets: tuple[int, int, int, int]) -> ipaddress.IPv4Address:
+        return ipaddress.IPv4Address(bytes(packed[i] for i in offsets))
+
+    candidates: set[ipaddress.IPv4Address] = set()
+
+    if exhaustive:
+        candidates.update(at(offsets) for offsets in _ALL_EMBEDDED_OFFSETS)
+        if ip in _TEREDO_PREFIX:  # client IPv4 = low 32 bits XOR all-ones (RFC 4380)
+            candidates.add(ipaddress.IPv4Address(int.from_bytes(packed[12:16], 'big') ^ 0xFFFFFFFF))
+        return candidates
+
+    if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d (RFC 4291 §2.5.5.2)
+        candidates.add(ip.ipv4_mapped)
+    if ip.sixtofour is not None:  # 2002::/16 (RFC 3056)
+        candidates.add(ip.sixtofour)
+    for prefix, offsets_list in _NAT64_PREFIXES:  # 64:ff9b::/96 (RFC 6052), 64:ff9b:1::/48 (RFC 8215)
+        if ip in prefix:
+            candidates.update(at(offsets) for offsets in offsets_list)
+    if int(ip) >> 32 == 0 and not ip.is_loopback and not ip.is_unspecified:  # ::a.b.c.d (deprecated)
+        candidates.add(at(_LOW32_OFFSETS))
+    if packed[8:12] in _ISATAP_INTERFACE_IDS:  # ...:[0|200]:5efe:a.b.c.d (RFC 5214)
+        candidates.add(at(_LOW32_OFFSETS))
+    return candidates
 
 
 def is_cloud_metadata_ip(ip_str: str) -> bool:
-    """Check if an IP address is a cloud metadata endpoint.
+    """Check if an IP address is a cloud metadata/credential endpoint.
 
-    These are always blocked for security reasons, even with allow_local=True.
+    These are always blocked for security reasons, even with allow_local=True. IPv6
+    transition forms are decoded so a metadata IP cannot be smuggled in as IPv6.
     """
     try:
-        ip = _normalize_ip(ip_str)
+        ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
-    return str(ip) in _CLOUD_METADATA_IPS
+    if isinstance(ip, ipaddress.IPv4Address):
+        return ip in _CLOUD_METADATA_IPV4
+    if ip in _CLOUD_METADATA_IPV6:
+        return True
+    return any(candidate in _CLOUD_METADATA_IPV4 for candidate in _embedded_ipv4s(ip, exhaustive=True))
 
 
 def is_private_ip(ip_str: str) -> bool:
     """Check if an IP address is in a private/internal range.
 
-    Handles both IPv4 and IPv6 addresses, including IPv4-mapped IPv6 addresses.
+    Handles both IPv4 and IPv6 addresses, including IPv6 transition forms that embed an
+    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP).
     """
     try:
-        ip = _normalize_ip(ip_str)
+        ip = ipaddress.ip_address(ip_str)
     except ValueError:
         # Invalid IP address, treat as potentially dangerous
         return True
-    return any(ip in network for network in _PRIVATE_NETWORKS)
+    targets: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
+    if isinstance(ip, ipaddress.IPv6Address):
+        targets.extend(_embedded_ipv4s(ip, exhaustive=False))
+    return any(target in network for target in targets for network in _PRIVATE_NETWORKS)
 
 
 async def resolve_hostname(hostname: str) -> list[str]:

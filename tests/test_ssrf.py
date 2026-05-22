@@ -115,6 +115,16 @@ class TestIsPrivateIp:
             # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
             '64:ff9b::192.168.1.1',
             '64:ff9b::a9fe:a9fe',  # Wraps 169.254.169.254
+            # NAT64 RFC 8215 local-use prefix 64:ff9b:1::/48 wrapping a private IPv4
+            '64:ff9b:1::192.168.1.1',  # /96-style embedding
+            '64:ff9b:1:c0a8:1:100::',  # proper RFC 6052 /48 embedding of 192.168.1.1
+            # IPv4-compatible IPv6 ::a.b.c.d (deprecated, RFC 4291)
+            '::192.168.1.1',
+            '::10.0.0.1',
+            '::a9fe:a9fe',  # 169.254.169.254
+            # ISATAP (RFC 5214) with a public prefix, embedding a private/link-local IPv4
+            '2606:4700::5efe:192.168.1.1',
+            '2606:4700::200:5efe:169.254.169.254',
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -172,9 +182,17 @@ class TestIsCloudMetadataIp:
     @pytest.mark.parametrize(
         'ip',
         [
-            '169.254.169.254',  # AWS, GCP, Azure
-            'fd00:ec2::254',  # AWS EC2 IPv6
+            '169.254.169.254',  # AWS IMDS, GCP, Azure, OCI, DigitalOcean, Hetzner, IBM, OpenStack
+            '169.254.170.2',  # AWS ECS task IAM role credentials
+            '169.254.170.23',  # AWS EKS Pod Identity Agent
+            '168.63.129.16',  # Azure WireServer / platform channel (public IP)
             '100.100.100.200',  # Alibaba Cloud
+            '192.0.0.192',  # Oracle Cloud (Classic)
+            '169.254.42.42',  # Scaleway
+            'fd00:ec2::254',  # AWS EC2 IMDS IPv6
+            'fd00:ec2::23',  # AWS EKS Pod Identity Agent IPv6
+            'fd20:ce::254',  # GCP IPv6 (IPv6-only instances)
+            'fd00:42::42',  # Scaleway IPv6
         ],
     )
     def test_cloud_metadata_ips_detected(self, ip: str) -> None:
@@ -187,6 +205,10 @@ class TestIsCloudMetadataIp:
             '127.0.0.1',
             '169.254.169.253',  # Close but not the metadata IP
             '169.254.169.255',
+            '169.254.170.1',  # Close but not the ECS creds IP
+            '169.254.170.3',
+            '168.63.129.15',  # Close but not Azure WireServer
+            '168.63.129.17',
             '100.100.100.199',  # Close but not Alibaba metadata
             '100.100.100.201',
         ],
@@ -242,6 +264,48 @@ class TestIsCloudMetadataIp:
         IPv4 `W.X.Y.Z`, so the wrapper must not disguise a metadata IP.
         """
         assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            # NAT64 RFC 8215 local-use prefix 64:ff9b:1::/48
+            '64:ff9b:1::169.254.169.254',  # /96-style embedding
+            '64:ff9b:1:a9fe:a9:fe00::',  # proper RFC 6052 /48 embedding
+            # IPv4-compatible IPv6 ::a.b.c.d (deprecated)
+            '::169.254.169.254',
+            '::a9fe:a9fe',
+            # ISATAP (RFC 5214) with a public prefix
+            '2606:4700::5efe:169.254.169.254',
+            '2606:4700::200:5efe:169.254.169.254',
+            # Operator-chosen NAT64 prefix we cannot enumerate (caught by exhaustive sweep)
+            '2001:db8:64::a9fe:a9fe',
+            # Other clouds via transition forms
+            '64:ff9b::169.254.170.2',  # AWS ECS creds via NAT64
+            # Teredo (RFC 4380): client IPv4 is the low 32 bits XOR all-ones; 169.254.169.254
+            '2001::5601:5601',
+        ],
+    )
+    def test_transition_form_metadata_detected(self, ip: str) -> None:
+        """Every standardized IPv6 transition encoding of a metadata IP must be blocked.
+
+        Closes the class of bypasses behind CVE-2026-25580 / CVE-2026-46678: an IPv4
+        metadata endpoint encoded as IPv4-mapped, IPv4-compatible, 6to4, NAT64 (any
+        prefix), or ISATAP must not slip past the always-on cloud-metadata guard.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            '::8.8.8.8',  # IPv4-compatible embedding public 8.8.8.8
+            '2606:4700::5efe:8.8.8.8',  # ISATAP embedding public 8.8.8.8
+            '64:ff9b::8.8.8.8',  # NAT64 embedding public 8.8.8.8
+            '2606:4700:4700::1111',  # ordinary public IPv6 (low bits must not be misread)
+        ],
+    )
+    def test_transition_form_public_not_metadata(self, ip: str) -> None:
+        """Transition forms embedding a non-metadata IPv4 must not be misflagged."""
+        assert is_cloud_metadata_ip(ip) is False
 
     def test_invalid_ip_not_metadata(self) -> None:
         assert is_cloud_metadata_ip('not-an-ip') is False
@@ -460,15 +524,22 @@ class TestValidateAndResolveUrl:
             'http://[64:ff9b::169.254.169.254]/latest/meta-data/',  # NAT64 wrap of metadata IP
             'http://[64:ff9b::a9fe:a9fe]/latest/meta-data/',  # Same, hex form
             'http://[2002:a9fe:a9fe::]/latest/meta-data/',  # 6to4 wrap of metadata IP
+            'http://[64:ff9b:1::169.254.169.254]/latest/meta-data/',  # NAT64 RFC 8215 local-use prefix
+            'http://[64:ff9b:1:a9fe:a9:fe00::]/latest/meta-data/',  # Same, proper RFC 6052 /48 embedding
+            'http://[::169.254.169.254]/latest/meta-data/',  # IPv4-compatible IPv6
+            'http://[::a9fe:a9fe]/latest/meta-data/',  # Same, hex form
+            'http://[2606:4700::5efe:169.254.169.254]/latest/meta-data/',  # ISATAP, public prefix
+            'http://[2001:db8:64::a9fe:a9fe]/latest/meta-data/',  # operator-chosen NAT64 prefix
         ],
     )
     async def test_transition_address_metadata_url_blocked_with_allow_local(self, url: str) -> None:
         """IPv6-encoded transition forms of metadata URLs must be blocked even with `allow_local=True`.
 
-        Regression test for the incomplete fix of GHSA-2jrp-274c-jhv3: previously the
-        cloud-metadata check did a string-only comparison, so IPv6 wrappers (IPv4-mapped
-        IPv6, NAT64 well-known prefix) bypassed it while dual-stack / NAT64 routing
-        still delivered the request to the underlying IPv4 metadata endpoint.
+        Regression test for the incomplete-fix chain GHSA-2jrp-274c-jhv3 / CVE-2026-46678:
+        an IPv4 metadata endpoint encoded as IPv4-mapped, IPv4-compatible, 6to4, NAT64 (any
+        prefix, including RFC 8215 local-use and operator-chosen prefixes), or ISATAP must
+        not bypass the always-on cloud-metadata guard, since dual-stack / NAT64 routing
+        still delivers the request to the underlying IPv4 metadata endpoint.
         """
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url(url, allow_local=True)
