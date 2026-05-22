@@ -21,7 +21,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset, resolve_capability_id
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
@@ -742,9 +742,5 @@ def _make_output_process_wrap(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    capability_id = next(
-        capability_id
-        for capability_id, registered_capability in ctx.capabilities.items()
-        if registered_capability is capability
-    )
+    capability_id = resolve_capability_id(ctx, capability)
     return replace(ctx, capability_loaded=capability_id in ctx.available_capability_ids)
