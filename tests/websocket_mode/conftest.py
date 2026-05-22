@@ -57,21 +57,21 @@ class _ReplayConnect:
         pass
 
 
-class _RecordingConnect:  # pragma: no cover
+class _RecordingConnect:
     """Mimics websockets.connect — awaitable and async context manager, wrapping real connection."""
 
-    def __init__(self, *args: Any, **kwargs: Any):
+    def __init__(self, *args: Any, **kwargs: Any):  # pragma: no cover
         self._args = args
         self._kwargs = kwargs
         self._real: Any = None
         self._recording_ws: RecordingWebSocket | None = None
         self._cassette: WebSocketCassette | None = None
 
-    def with_cassette(self, cassette: WebSocketCassette) -> _RecordingConnect:
+    def with_cassette(self, cassette: WebSocketCassette) -> _RecordingConnect:  # pragma: no cover
         self._cassette = cassette
         return self
 
-    def __await__(self) -> Any:
+    def __await__(self) -> Any:  # pragma: no cover
         async def _resolve() -> RecordingWebSocket:
             assert self._cassette is not None
             self._real = _real_ws_connect(*self._args, **self._kwargs)
@@ -81,10 +81,10 @@ class _RecordingConnect:  # pragma: no cover
 
         return _resolve().__await__()
 
-    async def __aenter__(self) -> RecordingWebSocket:
+    async def __aenter__(self) -> RecordingWebSocket:  # pragma: no cover
         return await self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> None:  # pragma: no cover
         if self._recording_ws is not None:
             await self._recording_ws.close()
 

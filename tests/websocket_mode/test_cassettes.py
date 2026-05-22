@@ -9,7 +9,13 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from websockets.exceptions import ConnectionClosedOK
 
-    from .cassettes import CassetteInteraction, ReplayWebSocket, WebSocketCassette, ws_cassette_plan
+    from .cassettes import (
+        CassetteInteraction,
+        RecordingWebSocket,
+        ReplayWebSocket,
+        WebSocketCassette,
+        ws_cassette_plan,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='websockets/pyyaml not installed'),
@@ -101,3 +107,46 @@ async def test_replay_aiter_yields_str_frames() -> None:
     )
     received = [frame async for frame in ReplayWebSocket(cassette)]
     assert received == ['{"type": "first"}', '{"type": "second"}']
+
+
+class _FakeRealWebSocket:
+    """Minimal real-WebSocket stand-in for exercising `RecordingWebSocket`."""
+
+    transport_name = 'fake'  # reached via `RecordingWebSocket.__getattr__`
+
+    def __init__(self, frames: list[str | bytes]) -> None:
+        self._frames = iter(frames)
+        self.closed = False
+
+    async def send(self, message: str) -> None:
+        pass
+
+    async def recv(self, **kwargs: object) -> str | bytes:
+        try:
+            return next(self._frames)
+        except StopIteration:
+            raise StopAsyncIteration
+
+    async def close(self, *, code: int = 1000, reason: str = '') -> None:
+        self.closed = True
+
+
+@pytest.mark.anyio
+async def test_recording_websocket_records_and_delegates() -> None:
+    """`RecordingWebSocket` records sent/received frames (bytes and str) and delegates unknown attributes."""
+    cassette = WebSocketCassette()
+    fake = _FakeRealWebSocket([b'{"type": "received_bytes"}', '{"type": "received_str"}'])
+    ws = RecordingWebSocket(fake, cassette)
+
+    await ws.send('{"type": "sent"}')
+    frames = [frame async for frame in ws]
+    await ws.close()
+
+    assert frames == [b'{"type": "received_bytes"}', '{"type": "received_str"}']
+    assert fake.closed is True
+    assert ws.transport_name == 'fake'
+    assert cassette.interactions == [
+        CassetteInteraction(direction='sent', data={'type': 'sent'}),
+        CassetteInteraction(direction='received', data={'type': 'received_bytes'}),
+        CassetteInteraction(direction='received', data={'type': 'received_str'}),
+    ]

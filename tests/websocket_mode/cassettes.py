@@ -101,7 +101,7 @@ class ReplayWebSocket:
     async def __anext__(self) -> str:
         try:
             result = await self.recv()
-        except ConnectionClosedOK:  # pragma: no cover
+        except ConnectionClosedOK:
             raise StopAsyncIteration
         if isinstance(result, bytes):
             return result.decode('utf-8')
@@ -111,7 +111,7 @@ class ReplayWebSocket:
         pass
 
 
-class RecordingWebSocket:  # pragma: no cover
+class RecordingWebSocket:
     """Wraps a real WebSocket connection, recording all frames to a cassette."""
 
     def __init__(self, ws: Any, cassette: WebSocketCassette) -> None:
