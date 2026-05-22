@@ -949,16 +949,18 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        capability_gates_search = _apply_capability_gated_tool_search_promotion(supported_natives, params.function_tools)
+        tool_search_kept_local = _keep_tool_search_local_when_capability_owns_corpus(
+            supported_natives, params.function_tools
+        )
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
             # Rule 1: drop local fallback when the native tool is supported — except for
-            # `search_tools` when capability gating forced client-executed promotion, where
-            # the local function tool is the callback the client-executed native surface
-            # dispatches to.
+            # `search_tools` when tool search was kept local for capability visibility,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
             if t.unless_native and t.unless_native in supported_ids:
-                if not (capability_gates_search and t.unless_native == ToolSearchTool.kind):
+                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
             if t.with_native and t.with_native not in supported_ids and t.defer_loading:
@@ -1760,25 +1762,33 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
     )
 
 
-def _apply_capability_gated_tool_search_promotion(
+def _keep_tool_search_local_when_capability_owns_corpus(
     supported_natives: list[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
 ) -> bool:
-    """Force client-executed tool search when a capability owns a search-corpus tool.
+    """Keep tool search running on our side when a deferred capability owns a corpus tool.
 
     Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
-    can't honor capability gating — it would reveal corpus tools whose owning capability hasn't
-    been loaded yet. When any function tool carries both `with_native='tool_search'` and a
-    `capability_id`, we promote `ToolSearchTool(strategy=None)` to `'custom'` so the adapter
-    wires the client-executed native surface, which dispatches into the local `search_tools`
-    function tool — that's where capability gating is enforced. Named-native strategies have
-    no local equivalent; we raise rather than silently substitute the keyword algorithm.
+    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
+    is only visible after its owning capability has been loaded." Our local search loop in
+    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
+    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
+    search must run client-side or hidden tools will leak.
 
-    Mutates `supported_natives` in place. Returns `True` when promotion fired, so the caller
-    can keep `search_tools` on the wire (its `unless_native='tool_search'` would otherwise
-    drop it now that the native is "supported").
+    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
+    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
+    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
+    (2) the caller keeps `search_tools` on the wire — that callback is what the client-
+    executed surface invokes. Named-native strategies (`'bm25'`/`'regex'`) have no client-
+    executed equivalent, so we raise rather than silently substitute a different algorithm.
+
+    Mutates `supported_natives` in place. Returns `True` when tool search ended up running
+    locally (we flipped to `'custom'`, or the user already chose a client-side strategy), so
+    the caller knows to keep `search_tools` on the wire.
     """
-    capability_gates_search = any(t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in function_tools)
-    if not capability_gates_search:
+    capability_owns_corpus = any(
+        t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in function_tools
+    )
+    if not capability_owns_corpus:
         return False
 
     for i, t in enumerate(supported_natives):
@@ -1795,7 +1805,7 @@ def _apply_capability_gated_tool_search_promotion(
         if t.strategy is None:
             supported_natives[i] = replace(t, strategy='custom')
         return True
-    return True
+    return False
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:

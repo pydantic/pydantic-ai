@@ -62,7 +62,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
@@ -5356,7 +5356,7 @@ def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: 
         function_tools=[_capability_owned_corpus_tool()],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
     )
-    with pytest.raises(UserError, match=rf"strategy={strategy!r}.*incompatible with deferred-loading"):
+    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with deferred-loading'):
         M().prepare_request(None, params)
 
 
@@ -5377,6 +5377,28 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
 
     [native] = prepared.native_tools
     assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
+    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+
+
+def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_strategy_unchanged() -> None:
+    """Promotion must skip past non-`ToolSearchTool` entries in `supported_natives` and
+    leave an already-`'custom'` strategy (set by `ToolSearch(strategy='keywords'|callable)`)
+    untouched — but still report `True` so `search_tools` stays on the wire."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool, WebSearchTool})
+
+    params = ModelRequestParameters(
+        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        # WebSearchTool listed first so the promotion loop must `continue` past it.
+        native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
+    )
+    _, prepared = M().prepare_request(None, params)
+
+    [tool_search] = [t for t in prepared.native_tools if isinstance(t, ToolSearchTool)]
+    assert tool_search.strategy == 'custom'
     assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
 
 
