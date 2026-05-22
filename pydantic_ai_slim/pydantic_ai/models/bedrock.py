@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -18,6 +19,7 @@ from typing_extensions import ParamSpec, assert_never
 try:
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.model import StructureShape
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -503,6 +505,19 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
 
+    @property
+    def _botocore_supports_strict_tool_param(self) -> bool:
+        """Whether the installed `botocore` knows the `strict` field on `toolSpec`.
+
+        `botocore` validates request params against its own bundled service model, so a
+        `botocore` older than the one that introduced strict tool calls rejects `strict`
+        with a `ParamValidationError` regardless of what the Bedrock model itself supports.
+        This notably happens on AWS Lambda, where the runtime's bundled `botocore` can
+        shadow a newer one provided via a layer.
+        """
+        tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
+        return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
@@ -510,7 +525,16 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_spec['description'] = f.description
 
         if f.strict and self.profile.get('bedrock_supports_strict_tool_definition', False):
-            tool_spec['strict'] = f.strict
+            if self._botocore_supports_strict_tool_param:
+                tool_spec['strict'] = f.strict
+            else:
+                warnings.warn(
+                    'The installed `botocore` is too old to send `strict` tool definitions to Bedrock, '
+                    'so the request is sent without `strict`. Upgrade `boto3`/`botocore` to enable strict '
+                    "tool calls; on AWS Lambda, the runtime's bundled `botocore` may be shadowing a newer "
+                    'one from your layer.',
+                    UserWarning,
+                )
 
         return {'toolSpec': tool_spec}
 

@@ -82,6 +82,8 @@ with try_import() as starlette_import_successful:
         DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
         DynamicToolOutputDeniedPart,
+        DynamicToolOutputErrorPart,
+        DynamicToolUIPart,
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
@@ -94,6 +96,7 @@ with try_import() as starlette_import_successful:
         ToolOutputAvailablePart,
         ToolOutputDeniedPart,
         ToolOutputErrorPart,
+        ToolUIPart,
         UIMessage,
     )
     from pydantic_ai.ui.vercel_ai.response_types import (
@@ -134,6 +137,62 @@ def test_build_run_input_allows_regenerate_without_message_id():
 
     assert isinstance(run_input, RegenerateMessage)
     assert run_input.message_id is None
+
+
+@pytest.mark.parametrize(
+    'part',
+    [
+        {'state': 'input-streaming', 'input': '{"query":'},
+        {'state': 'input-available', 'input': {'query': 'test'}},
+        {'state': 'output-available', 'input': {'query': 'test'}, 'output': {'ok': True}},
+        {'state': 'output-error', 'input': {'query': 'test'}, 'errorText': 'boom'},
+        {'state': 'approval-requested', 'input': {'query': 'test'}},
+        {
+            'state': 'approval-responded',
+            'input': {'query': 'test'},
+            'approval': {'id': 'approval_1', 'approved': True},
+        },
+        {'state': 'output-denied', 'input': {'query': 'test'}},
+    ],
+)
+@pytest.mark.parametrize(
+    'part_type, tool_name',
+    [
+        ('tool-web_search', None),
+        ('dynamic-tool', 'web_search'),
+    ],
+)
+def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part_type: str, tool_name: str | None):
+    tool_part: dict[str, object] = {
+        'type': part_type,
+        'toolCallId': 'call_1',
+        'title': 'Web Search',
+        'providerExecuted': True,
+        **part,
+    }
+    if tool_name:
+        tool_part['toolName'] = tool_name
+
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [
+                    tool_part,
+                ],
+            }
+        ],
+    }
+
+    request = SubmitMessage.model_validate(data)
+    parsed_part = request.messages[0].parts[0]
+
+    assert isinstance(parsed_part, ToolUIPart | DynamicToolUIPart)
+    assert parsed_part.title == 'Web Search'
+    assert parsed_part.provider_executed is True
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
@@ -3802,6 +3861,7 @@ async def test_adapter_dump_messages_with_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test query'},
                         'provider_executed': False,
@@ -3869,6 +3929,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -3942,6 +4003,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                     {
                         'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4031,6 +4093,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4187,6 +4250,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': {'status': 'completed'},
@@ -4247,6 +4311,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
+                        'title': None,
                         'state': 'input-available',
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
@@ -4409,6 +4474,7 @@ async def test_adapter_dump_messages_with_retry():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'arg': 'value'},
@@ -4593,6 +4659,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 't1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'output': 'result',
@@ -4878,6 +4945,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
@@ -4951,6 +5019,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
                     {
                         'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'city': 'New York'},
@@ -4985,6 +5054,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
         {
             'type': 'tool-dangerous_action',
             'tool_call_id': 'deferred_tc1',
+            'title': None,
             'state': 'approval-requested',
             'input': {'target': 'production'},
             'provider_executed': False,
@@ -5098,6 +5168,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     {
                         'type': 'tool-t',
                         'tool_call_id': 'tc1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {},
@@ -5710,6 +5781,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'arg': 'value'},
                         'provider_executed': False,
@@ -5775,6 +5847,74 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
             )
         ]
     )
+
+
+async def test_adapter_load_messages_provider_executed_dynamic_tool():
+    """Test dynamic provider-executed tool parts are loaded as native tool parts."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputAvailablePart(
+                    tool_name='web_search',
+                    tool_call_id='tc_123',
+                    title='Web Search',
+                    input={'query': 'pydantic ai'},
+                    output={'results': ['example']},
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {'provider_name': 'openai'},
+                            'return_meta': {'provider_name': 'openai_return'},
+                        }
+                    },
+                ),
+                DynamicToolOutputErrorPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_456',
+                    input={'query': 'logfire'},
+                    error_text='Search failed',
+                    provider_executed=True,
+                ),
+                DynamicToolOutputDeniedPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_789',
+                    input={'query': 'secret'},
+                    provider_executed=True,
+                    approval=ToolApprovalResponded(id='deny_1', approved=False, reason='Blocked by policy'),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(messages) == 1
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert [type(part) for part in response.parts] == [
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+    ]
+
+    tool_calls = [part for part in response.parts if isinstance(part, NativeToolCallPart)]
+    assert [(part.tool_call_id, part.args, part.provider_name) for part in tool_calls] == [
+        ('tc_123', {'query': 'pydantic ai'}, 'openai'),
+        ('tc_456', {'query': 'logfire'}, None),
+        ('tc_789', {'query': 'secret'}, None),
+    ]
+
+    tool_returns = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [(part.tool_call_id, part.content, part.outcome, part.provider_name) for part in tool_returns] == [
+        ('tc_123', {'results': ['example']}, 'success', 'openai_return'),
+        ('tc_456', 'Search failed', 'failed', None),
+        ('tc_789', 'Blocked by policy', 'denied', None),
+    ]
 
 
 async def test_adapter_file_part_with_provider_metadata():
@@ -5912,6 +6052,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': '{"results":[]}',
@@ -5988,6 +6129,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
+                        'title': None,
                         'state': 'output-error',
                         'input': {'query': 'test'},
                         'raw_input': None,
@@ -6247,6 +6389,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                     {
                         'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'x': 1},
@@ -7225,6 +7368,7 @@ async def test_adapter_dump_messages_tool_return_error():
             {
                 'type': 'tool-my_tool',
                 'tool_call_id': 'tc_err',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'x': 1},
@@ -7271,6 +7415,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
             {
                 'type': 'tool-web_search',
                 'tool_call_id': 'bt_old',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'query': 'test'},

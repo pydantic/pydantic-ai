@@ -19,8 +19,9 @@ from pydantic_ai._instrumentation import (
     open_model_request_span,
     serialize_any,
 )
+from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -73,6 +74,10 @@ class Instrumentation(AbstractCapability[Any]):
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
+    _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
+    """Last formatted instructions sent to the model, or `UNSET` before the first request."""
+    _variable_instructions: bool = field(default=False, repr=False, init=False)
+    """Whether agent-level instructions varied across requests in this run."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -201,10 +206,7 @@ class Instrumentation(AbstractCapability[Any]):
         if new_message_index > 0:
             attrs['pydantic_ai.new_message_index'] = new_message_index
 
-        if any(
-            (isinstance(m, ModelRequest) and m.instructions is not None and m.instructions != last_instructions)
-            for m in message_history[new_message_index:]
-        ):
+        if self._variable_instructions:
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
@@ -254,6 +256,16 @@ class Instrumentation(AbstractCapability[Any]):
             # (which includes prompted-output template instructions and is properly sorted)
             # instead of falling back to reading `ModelRequest.instructions` from history.
             self._last_model_request_parameters = prepared_request_context.model_request_parameters
+
+            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
+            # This does an apples-to-apples comparison of the final payload sent to the model.
+            current_instructions = get_instructions(
+                request_context.messages, prepared_request_context.model_request_parameters
+            )
+            if not isinstance(self._last_formatted_instructions, Unset):
+                if current_instructions != self._last_formatted_instructions:
+                    self._variable_instructions = True
+            self._last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
             finish(response)
