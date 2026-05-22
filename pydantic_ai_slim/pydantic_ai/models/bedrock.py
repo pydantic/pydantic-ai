@@ -496,7 +496,7 @@ class BedrockConverseModel(Model[BaseClient]):
         return super().prepare_request(model_settings, model_request_parameters)
 
     @property
-    def _supports_strict_tool_param(self) -> bool:
+    def _botocore_supports_strict_tool_param(self) -> bool:
         """Whether the installed `botocore` knows the `strict` field on `toolSpec`.
 
         `botocore` validates request params against its own bundled service model, so a
@@ -515,7 +515,7 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_spec['description'] = f.description
 
         if f.strict and self.profile.bedrock_supports_strict_tool_definition:
-            if self._supports_strict_tool_param:
+            if self._botocore_supports_strict_tool_param:
                 tool_spec['strict'] = f.strict
             else:
                 warnings.warn(

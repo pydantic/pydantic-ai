@@ -145,7 +145,7 @@ def test_bedrock_strict_dropped_when_botocore_too_old(
 
     # `shape_for` builds a fresh `Shape` each call, so drop `strict` from `ToolSpecification`'s
     # members on every lookup to mimic a `botocore` that predates strict tool calls.
-    # `_supports_strict_tool_param` only ever looks up `ToolSpecification`.
+    # `_botocore_supports_strict_tool_param` only ever looks up `ToolSpecification`.
     service_model = model.client.meta.service_model
     real_shape_for = service_model.shape_for
 
@@ -189,7 +189,7 @@ def test_bedrock_strict_none_not_auto_promoted_end_to_end(
     25 simple `strict=None` tools fed through the real `customize_request_parameters`
     entry point must not be auto-promoted to `strict=True`. Bedrock (like Anthropic)
     caps strict tools at 20 per request, so silent promotion breaks any agent with
-    more than 20 tools — pure regression vs. 1.100 behavior.
+    more than 20 tools — a regression introduced in 1.100 by #4237.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
 
