@@ -6271,6 +6271,97 @@ class TestMultipleToolCalls:
         assert result.output.value == 'corrected'
         assert events == ['output:bad', 'output:corrected']
 
+    def test_graceful_fail_fast_skips_remaining_outputs_after_abort(self):
+        """Once fail-fast aborts a response, later output tools are skipped without side effects."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            assert info.output_tools is not None
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('bad_tool', {}),
+                        ToolCallPart('first_output', {'value': 'premature'}),
+                        ToolCallPart('second_output', {'value': 'also-premature'}),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart('first_output', {'value': 'corrected'})])
+
+        def first_output(output: OutputType) -> OutputType:
+            events.append(f'first:{output.value}')
+            return output
+
+        def second_output(output: OutputType) -> OutputType:  # pragma: no cover
+            events.append(f'second:{output.value}')
+            return output
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(first_output, name='first_output', sequential='fail_fast'),
+                ToolOutput(second_output, name='second_output', sequential='fail_fast'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def bad_tool() -> str:
+            events.append('bad_tool')
+            raise ModelRetry('try again')
+
+        result = agent.run_sync('test')
+
+        assert result.output.value == 'corrected'
+        assert events == ['bad_tool', 'first:corrected']
+
+    def test_graceful_fail_fast_skips_deferred_after_function_retry(self):
+        """Fail-fast also prevents deferred calls from being collected after an earlier retry."""
+        events: list[str] = []
+        round_number = 0
+
+        def return_model(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal round_number
+            round_number += 1
+            if round_number == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('bad_tool', {}),
+                        ToolCallPart('deferred_tool', {}),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(return_model))
+
+        @agent.tool_plain
+        def bad_tool() -> str:
+            events.append('bad_tool')
+            raise ModelRetry('try again')
+
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(sequential='fail_fast', prepare=defer)
+        def deferred_tool() -> str:  # pragma: no cover
+            events.append('deferred_tool')
+            return 'deferred'
+
+        result = agent.run_sync('test')
+
+        assert result.output == 'done'
+        assert events == ['bad_tool']
+        assert result.all_messages()[2].parts[1] == snapshot(
+            ToolReturnPart(
+                tool_name='deferred_tool',
+                content='Tool not executed - a previous tool failed.',
+                tool_call_id=IsStr(),
+                timestamp=IsNow(tz=timezone.utc),
+            )
+        )
+
     def test_exhaustive_fail_fast_skips_downstream_tools_after_retry(self):
         """A fail-fast barrier aborts the rest of an exhaustive response after an earlier retry."""
         events: list[str] = []

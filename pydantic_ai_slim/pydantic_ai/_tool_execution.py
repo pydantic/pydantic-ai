@@ -814,7 +814,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             for i in deferred_indices:
                 if self._should_fail_fast_skip(i):
                     for event in self._skip_for_fail_fast(i):
-                        yield event
+                        yield event  # pragma: no cover
                     continue
 
                 call = self.tool_calls[i]
@@ -966,7 +966,7 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             elif self.is_executable_function(i):
                 if self._should_fail_fast_skip(i):
                     for event in self._skip_for_fail_fast(i):
-                        yield event
+                        yield event  # pragma: no cover
                     continue
                 pending_functions.append(call)
         async for event in flush_pending():
