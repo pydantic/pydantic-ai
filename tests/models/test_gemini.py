@@ -34,10 +34,12 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
+    GeminiStreamedResponse,
     _content_model_response,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
@@ -830,6 +832,39 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+
+
+async def test_stream_thought_text():
+    responses = [
+        gemini_response(
+            _GeminiContent(
+                role='model',
+                parts=[_GeminiTextPart(text='I should think first. ', thought=True)],
+            )
+        ),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Final answer')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+    response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[], output_tools=[], output_mode='text', output_object=None
+        ),
+        _model_name='gemini-1.5-flash',
+        _content=bytearray(),
+        _stream=stream.__aiter__(),
+        _provider_name='google-gla',
+        _provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+    )
+
+    events = [event async for event in response]
+
+    assert events[0] == PartStartEvent(index=0, part=ThinkingPart(content='I should think first. '))
+    assert response.get().parts == [
+        ThinkingPart(content='I should think first. '),
+        TextPart(content='Final answer'),
+    ]
+    assert response.usage == snapshot(RequestUsage(input_tokens=1, output_tokens=2))
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
