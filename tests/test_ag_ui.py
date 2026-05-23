@@ -1573,6 +1573,38 @@ def test_dump_load_roundtrip_thinking() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_thinking_uses_reasoning_message_id() -> None:
+    """Test that a generated ReasoningMessage ID is retained when ThinkingPart.id is unset."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(content='Let me think...')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reasoning_msg = ag_ui_msgs[0]
+    assert isinstance(reasoning_msg, ReasoningMessage)
+    assert reasoning_msg.id
+    assert reasoning_msg.encrypted_value is None
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    response = reloaded[0]
+    assert isinstance(response, ModelResponse)
+    thinking_part = response.parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == reasoning_msg.id
+
+
+def test_dump_load_roundtrip_thinking_sets_reasoning_message_id() -> None:
+    """Test that an explicit ThinkingPart.id is also used as the AG-UI ReasoningMessage ID."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(content='Let me think...', id='thinking-123')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reasoning_msg = ag_ui_msgs[0]
+    assert isinstance(reasoning_msg, ReasoningMessage)
+    assert reasoning_msg.id == 'thinking-123'
+
+
 def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
