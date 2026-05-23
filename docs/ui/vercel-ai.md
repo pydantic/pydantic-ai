@@ -126,11 +126,11 @@ async def search_docs(query: str) -> ToolReturn:
 
 ## Message metadata
 
-[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores response-side fields like timestamp, usage, and provider details under a reserved `pydantic_ai` key for lossless round-trips. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those fields on the way back.
+[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores it on the way back.
 
-When streaming, response metadata is emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. The chunk fires once per run from `AgentRunResultEvent`, so it only carries fields that are known at run completion (timestamp, usage, provider details, finish reason); to attach metadata mid-stream, yield a [`MessageMetadataChunk`][pydantic_ai.ui.vercel_ai.response_types.MessageMetadataChunk] yourself from a custom event source.
+When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message.
 
-`UIMessage.metadata` is fully client-controlled, so behavior-shaping fields are kept out of it entirely: `instructions` is neither written to `UIMessage.metadata` nor read back from it. The agent re-resolves `instructions` on every request, so client-submitted history is never a source of truth for it — mirroring the [`manage_system_prompt`](./overview.md#trust-model-for-client-submitted-messages) filter on `SystemPromptPart`s.
+`UIMessage.metadata` is fully client-controlled, so only `timestamp` is round-tripped: server-side fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns.
 
 ## Trust model
 

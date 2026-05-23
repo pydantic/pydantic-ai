@@ -4,7 +4,6 @@ import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import Mock
@@ -1416,25 +1415,7 @@ Want me to tailor\
             },
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': IsStr(),
-                        'usage': {
-                            'input_tokens': 33151,
-                            'cache_read_tokens': 4352,
-                            'output_tokens': 3367,
-                            'details': {'reasoning_tokens': 2624},
-                        },
-                        'model_name': 'gpt-5-2025-08-07',
-                        'provider_name': 'openai',
-                        'provider_url': 'https://api.openai.com/v1/',
-                        'provider_details': {'timestamp': '2025-10-08T11:16:00Z', 'finish_reason': 'completed'},
-                        'provider_response_id': 'resp_00e767404995b9950068e647f092888191843d25c5285ef895',
-                        'finish_reason': 'stop',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'stop'},
@@ -1497,15 +1478,7 @@ async def test_run_stream_text_and_thinking():
             {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 15},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -1559,15 +1532,7 @@ async def test_run_stream_thinking_with_signature():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 9},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -1788,15 +1753,7 @@ async def test_run_stream_builtin_tool_call():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 47},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -1891,15 +1848,7 @@ async def test_run_stream_tool_call():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 27},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -1959,15 +1908,7 @@ async def test_run_stream_tool_metadata_single_chunk():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 1},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2031,15 +1972,7 @@ async def test_run_stream_tool_metadata_multiple_chunks():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 1},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2119,15 +2052,7 @@ async def test_run_stream_tool_metadata_yields_data_chunks():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 1},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2226,15 +2151,7 @@ async def test_run_stream_tool_return_with_files():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 4},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2407,15 +2324,7 @@ async def test_run_stream_output_tool():
             },
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 7},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2768,16 +2677,7 @@ async def test_run_stream_on_complete():
             {'type': 'data-custom', 'data': {'foo': 'bar'}},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 51, 'output_tokens': 4},
-                        'model_name': 'test',
-                        'provider_name': 'test',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -2878,15 +2778,7 @@ async def test_tool_approval_request_emission():
             },
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 5},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'},
             {'type': 'finish-step'},
@@ -2975,15 +2867,7 @@ async def test_sdk_version_5_does_not_emit_approval_chunks():
             },
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 5},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3075,15 +2959,7 @@ async def test_tool_output_denied_chunk_emission():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 8},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3407,15 +3283,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 4},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3517,16 +3385,7 @@ async def test_adapter_dispatch_request():
             {'type': 'text-end', 'id': IsStr()},
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 51, 'output_tokens': 4},
-                        'model_name': 'test',
-                        'provider_name': 'test',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3624,15 +3483,7 @@ async def test_dispatch_request_with_tool_approval():
             },
             {
                 'type': 'message-metadata',
-                'messageMetadata': {
-                    'pydantic_ai': {
-                        'timestamp': IsStr(),
-                        'run_id': IsStr(),
-                        'conversation_id': 'foo',
-                        'usage': {'input_tokens': 50, 'output_tokens': 5},
-                        'model_name': 'function::stream_function',
-                    }
-                },
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
             {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'},
             {'type': 'finish-step'},
@@ -4965,7 +4816,12 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
 
 
 async def test_adapter_dump_load_roundtrip_with_message_metadata():
-    """Verify lossless round-trip of `UIMessage.metadata` and persisted Pydantic AI message fields."""
+    """`timestamp` and application `metadata` survive the dump/load round-trip; server fields don't.
+
+    The `pydantic_ai` metadata block is deliberately limited to `timestamp` (see
+    `_PydanticAIMessageMetadata`): provider/usage/model fields are neither dumped to the
+    client nor restored from client-controlled history.
+    """
     request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
     original_messages: list[ModelRequest | ModelResponse] = [
@@ -4975,9 +4831,6 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
                 UserPromptPart(content='User message'),
             ],
             timestamp=request_timestamp,
-            instructions='Use terse answers.',
-            run_id='run-123',
-            conversation_id='conversation-456',
             metadata={'createdAt': '2026-04-15T12:00:00Z'},
         ),
         ModelResponse(
@@ -4990,8 +4843,6 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
             provider_details={'tier': 'default'},
             provider_response_id='resp-789',
             finish_reason='stop',
-            run_id='run-123',
-            conversation_id='conversation-456',
             metadata={'createdAt': '2026-04-15T12:00:45Z'},
         ),
     ]
@@ -5003,36 +4854,33 @@ async def test_adapter_dump_load_roundtrip_with_message_metadata():
             None,
             {
                 'createdAt': '2026-04-15T12:00:00Z',
-                'pydantic_ai': {
-                    'timestamp': '2026-04-15T12:00:00Z',
-                    'run_id': 'run-123',
-                    'conversation_id': 'conversation-456',
-                },
+                'pydantic_ai': {'timestamp': '2026-04-15T12:00:00Z'},
             },
             {
                 'createdAt': '2026-04-15T12:00:45Z',
-                'pydantic_ai': {
-                    'timestamp': '2026-04-15T12:00:45Z',
-                    'run_id': 'run-123',
-                    'conversation_id': 'conversation-456',
-                    'usage': {'input_tokens': 10, 'output_tokens': 3},
-                    'model_name': 'gpt-4.1',
-                    'provider_name': 'openai',
-                    'provider_url': 'https://api.openai.com/v1',
-                    'provider_details': {'tier': 'default'},
-                    'provider_response_id': 'resp-789',
-                    'finish_reason': 'stop',
-                },
+                'pydantic_ai': {'timestamp': '2026-04-15T12:00:45Z'},
             },
         ]
     )
 
-    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_request, reloaded_response = VercelAIAdapter.load_messages(ui_messages)
+    assert isinstance(reloaded_request, ModelRequest)
+    assert isinstance(reloaded_response, ModelResponse)
 
-    # `instructions` is neither dumped nor restored: see `apply_message_metadata` docstring.
-    expected = [replace(original_messages[0], instructions=None), original_messages[1]]
-    _sync_timestamps(expected, reloaded_messages)
-    assert reloaded_messages == expected
+    # `timestamp` and application metadata survive the round-trip.
+    assert reloaded_request.timestamp == request_timestamp
+    assert reloaded_request.metadata == {'createdAt': '2026-04-15T12:00:00Z'}
+    assert reloaded_response.timestamp == response_timestamp
+    assert reloaded_response.metadata == {'createdAt': '2026-04-15T12:00:45Z'}
+
+    # Server/provider fields are not round-tripped through client-controlled metadata.
+    assert reloaded_response.model_name is None
+    assert reloaded_response.provider_name is None
+    assert reloaded_response.provider_url is None
+    assert reloaded_response.provider_details is None
+    assert reloaded_response.provider_response_id is None
+    assert reloaded_response.finish_reason is None
+    assert not reloaded_response.usage.has_values()
 
 
 async def test_adapter_message_metadata_application_only_roundtrip():
@@ -5068,7 +4916,7 @@ async def test_adapter_load_ignores_message_metadata_without_target_message():
     ui_message = UIMessage(
         id='msg-empty',
         role='assistant',
-        metadata={'pydantic_ai': {'run_id': 'run-123'}},
+        metadata={'pydantic_ai': {'timestamp': '2026-04-15T12:00:00Z'}},
         parts=[],
     )
 
@@ -5101,11 +4949,7 @@ async def test_adapter_load_ignores_malformed_pydantic_metadata():
         role='assistant',
         metadata={
             'createdAt': '2026-04-15T12:00:45Z',
-            'pydantic_ai': {
-                'run_id': 123,
-                'usage': 'not a dict',
-                'finish_reason': 'not-a-finish-reason',
-            },
+            'pydantic_ai': {'timestamp': 'not-a-valid-datetime'},
         },
         parts=[TextUIPart(text='Response text', state='done')],
     )
@@ -5113,9 +4957,21 @@ async def test_adapter_load_ignores_malformed_pydantic_metadata():
     [reloaded] = VercelAIAdapter.load_messages([ui_message])
     assert isinstance(reloaded, ModelResponse)
     assert reloaded.metadata == {'createdAt': '2026-04-15T12:00:45Z'}
-    assert reloaded.run_id is None
-    assert not reloaded.usage.has_values()
-    assert reloaded.finish_reason is None
+    assert reloaded.timestamp == IsDatetime()
+
+
+async def test_adapter_load_pydantic_metadata_without_timestamp():
+    """A valid `pydantic_ai` block with no `timestamp` leaves the message timestamp untouched."""
+    ui_message = UIMessage(
+        id='msg-1',
+        role='assistant',
+        metadata={'pydantic_ai': {}},
+        parts=[TextUIPart(text='Response text', state='done')],
+    )
+
+    [reloaded] = VercelAIAdapter.load_messages([ui_message])
+    assert isinstance(reloaded, ModelResponse)
+    assert reloaded.timestamp == IsDatetime()
 
 
 async def test_adapter_dump_messages_deterministic_ids():
@@ -5294,14 +5150,7 @@ async def test_event_stream_emits_message_metadata():
                 'type': 'message-metadata',
                 'messageMetadata': {
                     'createdAt': '2026-04-15T12:00:45Z',
-                    'pydantic_ai': {
-                        'timestamp': '2026-04-15T12:00:45Z',
-                        'usage': {'input_tokens': 4, 'output_tokens': 2},
-                        'provider_name': 'openai',
-                        'provider_details': {'model': 'gpt-4.1'},
-                        'provider_response_id': 'resp-123',
-                        'finish_reason': 'stop',
-                    },
+                    'pydantic_ai': {'timestamp': '2026-04-15T12:00:45Z'},
                 },
             },
             {'type': 'finish-step'},
