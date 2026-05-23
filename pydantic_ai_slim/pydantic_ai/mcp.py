@@ -1368,7 +1368,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
-            return self._map_binary_content(part)  # pragma: no cover
+            return self._map_binary_content(part)
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
             return self._get_content(resource)
