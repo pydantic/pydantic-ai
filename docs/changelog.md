@@ -18,7 +18,7 @@ pip/uv-add "pydantic-ai==2.0.0b3"
 
 For the full breaking-change list and the recommended upgrade path, see the [v2.0.0b1](#v200b1-2026-05-20) entry below; the only difference is that the latest V1 to upgrade through first is now **v1.102.0**.
 
-### v2.0.0b2 (2026-05-22)
+### v2.0.0b2 (2026-05-21)
 
 The second V2 beta, forked from **v1.101.0**. There are no new V2 breaking changes since [v2.0.0b1](#v200b1-2026-05-20) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which adds the [pending message queue](https://github.com/pydantic/pydantic-ai/pull/4980) (`ctx.enqueue` / `agent_run.enqueue`).
 
