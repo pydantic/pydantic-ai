@@ -6074,3 +6074,95 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _translate_thinking and _translate_thinking_effort
+# (no network calls required)
+# ---------------------------------------------------------------------------
+
+from groq import NOT_GIVEN
+from pydantic_ai.models import ModelRequestParameters
+
+
+def _make_groq_model(model_name: str) -> GroqModel:
+    """Create a GroqModel instance without a real API key (used for unit tests only)."""
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    return GroqModel(model_name, provider=GroqProvider(groq_client=mock_client))
+
+
+def _mrp(thinking) -> ModelRequestParameters:
+    """Build a minimal ModelRequestParameters with only the thinking field set."""
+    return ModelRequestParameters(thinking=thinking)
+
+
+# --- qwen3 (thinking_always_enabled=False) ---
+
+
+def test_translate_thinking_qwen3_false_returns_not_given() -> None:
+    """For qwen3 with thinking=False, reasoning_format should be NOT_GIVEN (effort handles the disable)."""
+    model = _make_groq_model('qwen/qwen3-32b')
+    result = model._translate_thinking(GroqModelSettings(), _mrp(thinking=False))
+    assert result is NOT_GIVEN
+
+
+def test_translate_thinking_effort_qwen3_false_returns_none() -> None:
+    """For qwen3 with thinking=False, reasoning_effort should be 'none' to truly disable reasoning."""
+    model = _make_groq_model('qwen/qwen3-32b')
+    result = model._translate_thinking_effort(GroqModelSettings(), _mrp(thinking=False))
+    assert result == 'none'
+
+
+def test_translate_thinking_effort_qwen3_true_returns_not_given() -> None:
+    """For qwen3 with thinking=True, we rely on the API default — no explicit effort."""
+    model = _make_groq_model('qwen/qwen3-32b')
+    result = model._translate_thinking_effort(GroqModelSettings(), _mrp(thinking=True))
+    assert result is NOT_GIVEN
+
+
+def test_translate_thinking_effort_qwen3_explicit_effort_overrides() -> None:
+    """groq_reasoning_effort in model settings overrides the unified thinking value."""
+    model = _make_groq_model('qwen/qwen3-32b')
+    settings = GroqModelSettings(groq_reasoning_effort='high')
+    result = model._translate_thinking_effort(settings, _mrp(thinking=False))
+    assert result == 'high'
+
+
+# --- legacy reasoning models (thinking_always_enabled=True) ---
+
+
+def test_translate_thinking_legacy_false_returns_hidden() -> None:
+    """Legacy models (deepseek-r1, qwen-qwq) cannot disable reasoning; 'hidden' suppresses output."""
+    for legacy_model in ('deepseek-r1-distill-llama-70b', 'qwen-qwq-32b'):
+        model = _make_groq_model(legacy_model)
+        result = model._translate_thinking(GroqModelSettings(), _mrp(thinking=False))
+        assert result == 'hidden', f'Expected hidden for {legacy_model}'
+
+
+def test_translate_thinking_effort_legacy_false_returns_not_given() -> None:
+    """Legacy models don't support reasoning_effort; should be NOT_GIVEN."""
+    for legacy_model in ('deepseek-r1-distill-llama-70b', 'qwen-qwq-32b'):
+        model = _make_groq_model(legacy_model)
+        result = model._translate_thinking_effort(GroqModelSettings(), _mrp(thinking=False))
+        assert result is NOT_GIVEN, f'Expected NOT_GIVEN for {legacy_model}'
+
+
+def test_translate_thinking_effort_legacy_explicit_effort_still_passes_through() -> None:
+    """Explicit groq_reasoning_effort is forwarded even for legacy models (user override)."""
+    model = _make_groq_model('deepseek-r1-distill-llama-70b')
+    settings = GroqModelSettings(groq_reasoning_effort='default')
+    result = model._translate_thinking_effort(settings, _mrp(thinking=False))
+    assert result == 'default'
+
+
+# --- non-reasoning models ---
+
+
+def test_translate_thinking_non_reasoning_returns_not_given() -> None:
+    """Non-reasoning models return NOT_GIVEN for all thinking settings."""
+    model = _make_groq_model('llama-3.3-70b-versatile')
+    assert model._translate_thinking(GroqModelSettings(), _mrp(thinking=None)) is NOT_GIVEN
+    assert model._translate_thinking(GroqModelSettings(), _mrp(thinking=False)) is NOT_GIVEN
+    assert model._translate_thinking_effort(GroqModelSettings(), _mrp(thinking=False)) is NOT_GIVEN
