@@ -69,6 +69,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.native_tools import (
+    CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
@@ -6589,3 +6590,64 @@ async def test_google_top_k_propagation(
     assert mock_generate.call_count == 1
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['top_k'] == 40
+
+
+def test_native_tool_return_part_dict_code_execution_list_content():
+    """Test that _native_tool_return_part_dict handles list content for code execution tools (issue #5614)."""
+    from pydantic_ai.models.google import _native_tool_return_part_dict  # pyright: ignore[reportPrivateUsage]
+
+    # List content (e.g. bash code execution results)
+    list_content = [
+        {
+            'return_code': 0,
+            'stderr': '',
+            'stdout': 'hello\n',
+            'type': 'bash_code_execution_result',
+        }
+    ]
+
+    item = NativeToolReturnPart(
+        provider_name='google',
+        tool_name=CodeExecutionTool.kind,
+        content=list_content,
+        tool_call_id='test_id',
+    )
+
+    result = _native_tool_return_part_dict(
+        item,
+        frozenset({'google'}),
+        None,
+        supports_tool_combination=True,
+    )
+
+    assert result is not None
+    assert 'code_execution_result' in result
+    assert result['code_execution_result'] == list_content
+
+
+def test_native_tool_return_part_dict_code_execution_dict_content():
+    """Test that _native_tool_return_part_dict still works with dict content for code execution tools."""
+    from pydantic_ai.models.google import _native_tool_return_part_dict  # pyright: ignore[reportPrivateUsage]
+
+    dict_content = {
+        'outcome': 'OUTCOME_OK',
+        'output': 'hello\n',
+    }
+
+    item = NativeToolReturnPart(
+        provider_name='google',
+        tool_name=CodeExecutionTool.kind,
+        content=dict_content,
+        tool_call_id='test_id',
+    )
+
+    result = _native_tool_return_part_dict(
+        item,
+        frozenset({'google'}),
+        None,
+        supports_tool_combination=True,
+    )
+
+    assert result is not None
+    assert 'code_execution_result' in result
+    assert result['code_execution_result'] == dict_content
