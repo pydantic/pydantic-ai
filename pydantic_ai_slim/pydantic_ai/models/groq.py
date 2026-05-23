@@ -139,6 +139,16 @@ class GroqModelSettings(ModelSettings, total=False):
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format) for more details.
     """
 
+    groq_reasoning_effort: Literal['none', 'default', 'low', 'medium', 'high']
+    """The reasoning effort level for qwen3 models.
+
+    qwen3 models support setting this to ``'none'`` to truly disable reasoning
+    (the model will not run its reasoning chain at all, saving tokens).  Other
+    values control how much compute the model spends on reasoning.
+
+    See [the Groq docs](https://console.groq.com/docs/reasoning) for more details.
+    """
+
 
 @dataclass(init=False)
 class GroqModel(Model[AsyncGroq]):
@@ -271,10 +281,40 @@ class GroqModel(Model[AsyncGroq]):
             return fmt
         thinking = model_request_parameters.thinking
         if thinking is False:
-            # Groq has no true disable; 'hidden' suppresses reasoning output
+            if not self.profile.thinking_always_enabled:
+                # qwen3 and similar models that can truly disable reasoning: skip
+                # reasoning_format entirely and let _translate_thinking_effort handle it.
+                return NOT_GIVEN
+            # Legacy reasoning models (qwen-qwq, deepseek-r1, llama-4-maverick) cannot
+            # truly disable reasoning; 'hidden' suppresses the output.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
+        return NOT_GIVEN
+
+    def _translate_thinking_effort(
+        self,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'default', 'low', 'medium', 'high'] | NotGiven:
+        """Get the reasoning effort level for qwen3 models.
+
+        qwen3 is the only Groq reasoning model that supports ``reasoning_effort``.
+        For models where ``thinking_always_enabled=True`` (legacy reasoning models),
+        this parameter is not meaningful and is omitted.
+        """
+        if effort := model_settings.get('groq_reasoning_effort'):
+            return effort
+        # Only emit reasoning_effort for models that support thinking AND can disable it.
+        # - Non-thinking models: skip entirely (reasoning_effort is not a valid parameter)
+        # - Legacy always-on models (deepseek-r1, qwen-qwq, llama-4-maverick): skip;
+        #   those models cannot disable reasoning, so we leave reasoning_format='hidden'.
+        if not self.profile.supports_thinking or self.profile.thinking_always_enabled:
+            return NOT_GIVEN
+        thinking = model_request_parameters.thinking
+        if thinking is False:
+            return 'none'
+        # 'default' is the API default; only override when explicitly requested.
         return NOT_GIVEN
 
     @overload
@@ -341,6 +381,7 @@ class GroqModel(Model[AsyncGroq]):
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 reasoning_format=self._translate_thinking(model_settings, model_request_parameters),
+                reasoning_effort=self._translate_thinking_effort(model_settings, model_request_parameters),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
