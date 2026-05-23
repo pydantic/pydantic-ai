@@ -142,7 +142,17 @@ ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 - `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
 """
 
-ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+
+def _serialize_provider_details_delta(value: Any) -> dict[str, Any] | None:
+    if callable(value):
+        return None
+    return value
+
+
+ProviderDetailsDelta: TypeAlias = Annotated[
+    dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None,
+    pydantic.PlainSerializer(_serialize_provider_details_delta, return_type=dict[str, Any] | None),
+]
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
