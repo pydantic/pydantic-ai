@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '167'
+      - '222'
       content-type:
       - application/json
       host:
@@ -18,9 +18,13 @@ interactions:
       messages:
       - content: 'Reply with the single word: ok'
         role: user
-      model: anthropic/claude-sonnet-4.5
+      model: google/gemma-4-26b-a4b-it
+      provider:
+        only:
+        - cloudflare
       reasoning:
-        effort: none
+        effort: medium
+        enabled: true
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -32,7 +36,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '855'
+      - '1393'
       content-type:
       - application/json
       permissions-policy:
@@ -49,35 +53,50 @@ interactions:
         logprobs: null
         message:
           content: ok
-          reasoning: null
+          reasoning: |-
+            The user wants me to reply with exactly one word: "ok".
+
+                *   Instruction: "Reply with the single word: ok"
+                *   Target output: "ok"
+            The request is simple and unambiguous. I should comply exactly as requested.
+          reasoning_details:
+          - format: unknown
+            index: 0
+            text: |-
+              The user wants me to reply with exactly one word: "ok".
+
+                  *   Instruction: "Reply with the single word: ok"
+                  *   Target output: "ok"
+              The request is simple and unambiguous. I should comply exactly as requested.
+            type: reasoning.text
           refusal: null
           role: assistant
-        native_finish_reason: end_turn
-      created: 1779496002
-      id: gen-1779496002-wnolQFoQh0rRF7vG3SkP
-      model: anthropic/claude-4.5-sonnet-20250929
+        native_finish_reason: stop
+      created: 1779474931
+      id: gen-1779474931-w20BCAngQY7SOa9Zs5L4
+      model: google/gemma-4-26b-a4b-it-20260403
       object: chat.completion
-      provider: Amazon Bedrock
+      provider: Cloudflare
       system_fingerprint: null
       usage:
-        completion_tokens: 4
+        completion_tokens: 60
         completion_tokens_details:
           audio_tokens: 0
           image_tokens: 0
-          reasoning_tokens: 0
-        cost: 0.000102
+          reasoning_tokens: 57
+        cost: 2.03e-05
         cost_details:
-          upstream_inference_completions_cost: 6.0e-05
-          upstream_inference_cost: 0.000102
-          upstream_inference_prompt_cost: 4.2e-05
+          upstream_inference_completions_cost: 1.8e-05
+          upstream_inference_cost: 2.03e-05
+          upstream_inference_prompt_cost: 2.3e-06
         is_byok: false
-        prompt_tokens: 14
+        prompt_tokens: 23
         prompt_tokens_details:
           audio_tokens: 0
           cache_write_tokens: 0
           cached_tokens: 0
           video_tokens: 0
-        total_tokens: 18
+        total_tokens: 83
     status:
       code: 200
       message: OK

@@ -753,20 +753,20 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'high', 'enabled': True}
 
-    def test_thinking_false_emits_enabled_false(self):
-        """`thinking=False` is forwarded to OpenRouter as `reasoning.enabled=False`."""
+    def test_thinking_false_emits_effort_none(self):
+        """`thinking=False` is forwarded as `reasoning.effort='none'` — the documented OpenRouter disable signal."""
         settings = OpenRouterModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('reasoning') == {'enabled': False}
+        assert extra_body.get('reasoning') == {'effort': 'none'}
 
     def test_provider_profile_passes_thinking_through_gate(self):
         """`OpenRouterProvider.model_profile()` reports `supports_thinking=True` and
         `thinking_always_enabled=False` for every routed model — the former lets the
         unified setting survive the gate, the latter ensures even sub-profiles that
         declare always-on (o-series, magistral, deepseek-R1, gpt-5) don't strip
-        `thinking=False` at the gate. OpenRouter's `reasoning.enabled=False` disable
+        `thinking=False` at the gate. OpenRouter's `reasoning.effort='none'` disable
         signal works at the routing layer regardless of the upstream API's contract."""
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -869,22 +869,15 @@ class TestXaiThinkingTranslation:
         assert resolved_params.thinking is True
 
     def test_grok_3_mini_profile_drops_thinking_false_via_gate(self):
-        """grok-3-mini's profile is always-on, so `prepare_request` drops
-        `thinking=False` from params. With `thinking_always_enabled=False` the
-        same call would pass `False` through — this pins that the always-on flag
-        is what enforces the silent-drop, guarding against a profile revert.
+        """The `thinking_always_enabled` flag is what enforces the gate drop for grok-3-mini.
 
-        Two separate instances because `Model.profile` is a `cached_property` —
-        mutating `_profile` on a single instance after the first `prepare_request`
-        call wouldn't invalidate the cache."""
+        Two instances because `Model.profile` is a `cached_property`."""
         always_on = XaiModel.__new__(XaiModel)
         always_on._profile = grok_model_profile('grok-3-mini')
         always_on._settings = None
         _, resolved = always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is None
 
-        # Inverse: a hypothetical profile that supports thinking but isn't always-on
-        # forwards `thinking=False` to the transformer instead.
         non_always_on = XaiModel.__new__(XaiModel)
         non_always_on._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
         non_always_on._settings = None

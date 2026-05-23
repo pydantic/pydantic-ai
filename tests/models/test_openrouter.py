@@ -1220,7 +1220,7 @@ async def test_openrouter_thinking_false_profile_gated_model(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
     """Hybrid model whose intrinsic profile reports `supports_thinking=False` —
-    `thinking=False` still reaches the wire as `reasoning.enabled=False` because
+    `thinking=False` still reaches the wire as `reasoning.effort='none'` because
     OpenRouter's provider profile carries `supports_thinking=True`. See
     `test_openrouter_with_reasoning` above for the default-on baseline on glm-4.6."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
@@ -1232,7 +1232,7 @@ async def test_openrouter_thinking_false_profile_gated_model(
     )
 
     sent = single_request_body(vcr)
-    assert sent['reasoning'] == {'enabled': False}
+    assert sent['reasoning'] == {'effort': 'none'}
 
     assert not any(isinstance(part, ThinkingPart) for part in response.parts)
 
@@ -1255,12 +1255,12 @@ async def test_openrouter_thinking_false_on_always_on_route(
             model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
         )
     except ModelHTTPError:
-        # Some always-on upstreams reject `enabled=False` with HTTP 4xx; the assertion
+        # Some always-on upstreams reject `effort='none'` with HTTP 4xx; the assertion
         # below proves the disable signal made it to the wire, which is what we're testing.
         pass
 
     sent = single_request_body(vcr)
-    assert sent['reasoning'] == {'enabled': False}
+    assert sent['reasoning'] == {'effort': 'none'}
 
 
 async def test_openrouter_thinking_true_emits_effort_medium(
@@ -1303,8 +1303,8 @@ async def test_openrouter_thinking_false_supports_thinking_model(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
     """Reasoning model whose intrinsic profile reports `supports_thinking=True` —
-    `thinking=False` reaches the wire as `reasoning.enabled=False` via the
-    transformer's explicit-disable branch."""
+    `thinking=False` reaches the wire as `reasoning.effort='none'` via the
+    transformer's unified-emit path."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
     settings = OpenRouterModelSettings(thinking=False)
@@ -1314,6 +1314,54 @@ async def test_openrouter_thinking_false_supports_thinking_model(
     )
 
     sent = single_request_body(vcr)
-    assert sent['reasoning'] == {'enabled': False}
+    assert sent['reasoning'] == {'effort': 'none'}
 
     assert not any(isinstance(part, ThinkingPart) for part in response.parts)
+
+
+async def test_openrouter_thinking_high_emits_effort_high(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """`thinking='high'` is forwarded as `reasoning={'effort': 'high', 'enabled': True}`.
+
+    Companion to `test_openrouter_thinking_true_emits_effort_medium` — exercises the
+    `_OPENROUTER_EFFORT_MAP['high'] → 'high'` branch on the wire. Without this cassette
+    the only wire-level effort value covered was `'medium'` (via `thinking=True`),
+    leaving the `high`/`low`/`xhigh` branches unit-only."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    settings = OpenRouterModelSettings(thinking='high')
+
+    await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'high', 'enabled': True}
+
+
+async def test_openrouter_thinking_true_enables_reasoning_on_optional_route(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Wire+behavior pin for the `enabled: True` annotation.
+
+    `gemma-4-26b-a4b-it` is reasoning-optional on OpenRouter, so bare `effort` leaves
+    reasoning off on some upstreams (notably DekaLLM). The `enabled: True` ensures
+    `thinking=True` actually fires reasoning. Pinned to Cloudflare via `openrouter_provider`
+    to keep the cassette deterministic — without pinning, OpenRouter picks a different
+    upstream at each record."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemma-4-26b-a4b-it', provider=provider)
+    settings = OpenRouterModelSettings(
+        thinking=True,
+        openrouter_provider={'only': ['cloudflare']},
+    )
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'medium', 'enabled': True}
+    assert sent['provider'] == {'only': ['cloudflare']}
+    assert any(isinstance(part, ThinkingPart) for part in response.parts)

@@ -239,8 +239,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable
-    # value. `thinking_always_enabled` routes `thinking=False` through the gate's silent-drop.
+    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
     supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
     return replace(
         BedrockModelProfile(
@@ -343,8 +342,7 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            # Converse rejects `reasoning_effort='none'`, so always-on routes
-            # `thinking=False` through the gate's silent-drop path.
+            # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,

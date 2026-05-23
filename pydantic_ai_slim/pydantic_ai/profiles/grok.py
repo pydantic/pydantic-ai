@@ -29,14 +29,6 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     # See https://docs.x.ai/docs/guides/reasoning
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
-    # grok-3-mini always reasons; the API has no `'none'` value for `reasoning_effort`,
-    # so route `thinking=False` through the standard always-on silent-drop path. This
-    # binding to `supports_thinking_effort` is coincidental — grok-3-mini happens to be
-    # the only grok variant that both supports `reasoning_effort` and lacks a disable
-    # value. Newer grok models that accept `reasoning_effort='none'` should set the two
-    # flags independently.
-    thinking_always_enabled = supports_thinking_effort
-
     supported_native_tools: frozenset[type[AbstractNativeTool]] = (
         SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
     )
@@ -46,7 +38,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=supports_thinking_effort,
-        thinking_always_enabled=thinking_always_enabled,
+        # grok-3-mini reasons by default; xAI's `reasoning_effort` has no `'none'`.
+        thinking_always_enabled=supports_thinking_effort,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_native_tools=supported_native_tools,
     )

@@ -131,19 +131,16 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # `thinking_always_enabled` reflects an underlying-model API constraint (e.g. OpenAI
-        # o-series rejecting `reasoning_effort='none'`), but at the OpenRouter routing layer
-        # the disable signal is `reasoning.enabled=False`, which OpenRouter accepts for every
-        # routed model. Strip the flag from the upstream profile so it doesn't propagate
-        # through `.update()` and let `thinking=False` survive the `prepare_request` gate.
+        # OpenRouter accepts `reasoning.effort='none'` for every routed model, so the
+        # upstream's `thinking_always_enabled` constraint doesn't apply here — strip it
+        # so `thinking=False` survives the `prepare_request` gate.
         if profile is not None:
             profile = replace(profile, thinking_always_enabled=False)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
-        # `supports_thinking=True` lives at the provider level because OpenRouter accepts
-        # the `reasoning` passthrough for every routed model, regardless of whether the
-        # underlying-model profile declares thinking support.
+        # `supports_thinking=True` because OpenRouter accepts the `reasoning` passthrough
+        # for every routed model, regardless of the upstream profile.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',

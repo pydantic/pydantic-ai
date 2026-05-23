@@ -20,7 +20,7 @@ interactions:
         role: user
       model: z-ai/glm-4.6
       reasoning:
-        enabled: false
+        effort: none
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -32,7 +32,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '831'
+      - '825'
       content-type:
       - application/json
       permissions-policy:
@@ -55,11 +55,11 @@ interactions:
           refusal: null
           role: assistant
         native_finish_reason: stop
-      created: 1778684955
-      id: gen-1778684955-4b6tDxPqdngDrs5iY12E
+      created: 1779495970
+      id: gen-1779495970-M9voyAGpwmt8qwVUWJeX
       model: z-ai/glm-4.6
       object: chat.completion
-      provider: SiliconFlow
+      provider: AtlasCloud
       system_fingerprint: null
       usage:
         completion_tokens: 2
@@ -67,11 +67,11 @@ interactions:
           audio_tokens: 0
           image_tokens: 0
           reasoning_tokens: 0
-        cost: 1.004e-05
+        cost: 1.4e-05
         cost_details:
-          upstream_inference_completions_cost: 3.8e-06
-          upstream_inference_cost: 1.004e-05
-          upstream_inference_prompt_cost: 6.24e-06
+          upstream_inference_completions_cost: 4.4e-06
+          upstream_inference_cost: 1.4e-05
+          upstream_inference_prompt_cost: 9.6e-06
         is_byok: false
         prompt_tokens: 16
         prompt_tokens_details:

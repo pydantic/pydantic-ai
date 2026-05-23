@@ -20,7 +20,7 @@ interactions:
         role: user
       model: openai/o3
       reasoning:
-        enabled: false
+        effort: none
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:

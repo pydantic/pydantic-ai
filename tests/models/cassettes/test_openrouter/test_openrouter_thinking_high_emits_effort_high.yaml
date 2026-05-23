@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '167'
+      - '184'
       content-type:
       - application/json
       host:
@@ -20,7 +20,8 @@ interactions:
         role: user
       model: anthropic/claude-sonnet-4.5
       reasoning:
-        effort: none
+        effort: high
+        enabled: true
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -32,7 +33,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '855'
+      - '1858'
       content-type:
       - application/json
       permissions-policy:
@@ -49,35 +50,43 @@ interactions:
         logprobs: null
         message:
           content: ok
-          reasoning: null
+          reasoning: The user is asking me to reply with the single word "ok". This is a straightforward request that doesn't
+            involve anything harmful or problematic. I'll simply respond with "ok" as requested.
+          reasoning_details:
+          - format: anthropic-claude-v1
+            index: 0
+            signature: EugCCkgIDRABGAIqQPO/3ufZc1gKugjv03ufL77WNiAsz39I93VSLf5dQy4mI0Lz23HR/yag9EIjZcMIsn00pwQMMtwA1VZvpD0gq88SDFDZW9LGNZ+MiE6XlxoMAR3MMKjojimkkrviIjCby2a+2T/3vIKa+HeJ9gT0EIXlDlI70vfkXMvnwhzk7GvlA9Ak/hsikCkj2iSqNKQqzQEVnmfTPkfdns5kUm3QdkJzMZz0WXqXp9p7MEnnNAKUdRoVQ61Gb4oxbdUY33whTCe0i9thERv/6xcEBQ+O++saajcSHoVpf6RTORUlFHByaerF+/AKx8H62U03kMURmosOks+neh1DUv+aKN2+E2VsoM+kULTDkGmdwUwzAlrybvCLgT43+MLCTZLi3ZgbbWCRFG/ojj1P6yKg4pB+fGl4h9i7EyAGQo1TJMm7Lq2MrWrChU+w5Bcx5PFZwwbtdejCBHU49xeAGx1aghGzGAE=
+            text: The user is asking me to reply with the single word "ok". This is a straightforward request that doesn't
+              involve anything harmful or problematic. I'll simply respond with "ok" as requested.
+            type: reasoning.text
           refusal: null
           role: assistant
         native_finish_reason: end_turn
-      created: 1779496002
-      id: gen-1779496002-wnolQFoQh0rRF7vG3SkP
+      created: 1779474928
+      id: gen-1779474928-8Ot5WcaCbQBcu9Wvs6Up
       model: anthropic/claude-4.5-sonnet-20250929
       object: chat.completion
       provider: Amazon Bedrock
       system_fingerprint: null
       usage:
-        completion_tokens: 4
+        completion_tokens: 53
         completion_tokens_details:
           audio_tokens: 0
           image_tokens: 0
-          reasoning_tokens: 0
-        cost: 0.000102
+          reasoning_tokens: 48
+        cost: 0.000924
         cost_details:
-          upstream_inference_completions_cost: 6.0e-05
-          upstream_inference_cost: 0.000102
-          upstream_inference_prompt_cost: 4.2e-05
+          upstream_inference_completions_cost: 0.000795
+          upstream_inference_cost: 0.000924
+          upstream_inference_prompt_cost: 0.000129
         is_byok: false
-        prompt_tokens: 14
+        prompt_tokens: 43
         prompt_tokens_details:
           audio_tokens: 0
           cache_write_tokens: 0
           cached_tokens: 0
           video_tokens: 0
-        total_tokens: 18
+        total_tokens: 96
     status:
       code: 200
       message: OK

@@ -46,15 +46,19 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'error': 'error',
 }
 
-_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high']] = {
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
     True: 'medium',
+    False: 'none',
     'minimal': 'low',
     'low': 'low',
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
 }
-"""Maps unified thinking values to OpenRouter `reasoning.effort` — limited to low/medium/high."""
+"""Maps unified thinking values to OpenRouter `reasoning.effort`.
+
+See https://openrouter.ai/docs/guides/best-practices/reasoning-tokens.
+"""
 
 
 class _VideoURL(TypedDict):
@@ -568,15 +572,10 @@ def _openrouter_settings_to_openai_settings(
     # Fall back to unified thinking when openrouter_reasoning is not set
     if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
         thinking = model_request_parameters.thinking
-        openrouter_reasoning: OpenRouterReasoning = {}
-        if thinking is False:
-            # Explicit disable signal forwarded to the upstream model.
-            openrouter_reasoning['enabled'] = False
-        else:
-            openrouter_reasoning['effort'] = _OPENROUTER_EFFORT_MAP[thinking]
-            # `enabled` is documented as inferred from `effort`, but some reasoning-optional
-            # routes (parts of `google/gemma-*`) leave reasoning disabled unless `enabled`
-            # is explicit. No-op for reasoning-by-default models.
+        openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
+        if thinking is not False:
+            # Some reasoning-optional routes (e.g. DekaLLM-routed gemma) need
+            # explicit `enabled` even when `effort` is set.
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
