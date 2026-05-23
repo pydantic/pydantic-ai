@@ -188,22 +188,25 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     frontend, add it to this set, e.g. `frozenset({'http', 'https', 's3'})`.
     """
 
-    allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False})
-    """[`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values that are
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset()
+    """Additional [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values
     allowed on [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages.
 
-    Defaults to `frozenset({False})`. A `FileUrl` whose `force_download` value is not in this
-    set has it reset to `False` with a warning before the messages are passed to the agent.
-    This applies both to file URLs in user content and to those nested in tool return parts.
+    `False` (the safe default that the sanitizer resets to) is always permitted regardless of
+    whether it appears in this set. Values listed here are the *additional* `force_download`
+    values that are trusted from the client. Defaults to `frozenset()`, so by default both
+    `True` and `'allow-local'` are reset to `False` with a warning before the messages are
+    passed to the agent. This applies both to file URLs in user content and to those nested in
+    tool return parts.
 
     `force_download=True` makes the server download the file itself instead of letting the
     model provider fetch it. `force_download='allow-local'` additionally opts the URL out of
     the SSRF private-IP block in [`download_item`][pydantic_ai.models.download_item], which
     lets a client probe internal services. Neither is safe to honor from untrusted client
-    input by default, so both are reset.
+    input by default.
 
     To opt into a value after auditing your frontend, add it to this set, e.g.
-    `frozenset({False, True})` or `frozenset({False, True, 'allow-local'})`.
+    `frozenset({True})` or `frozenset({True, 'allow-local'})`.
     """
 
     @classmethod
@@ -214,7 +217,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
-        allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -228,7 +231,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
-            allowed_force_download=allowed_force_download,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
@@ -313,8 +316,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
         - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download]
-          values that aren't in
-          [`allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download]
+          values other than `False` that aren't in
+          [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]
           on kept parts. By default both `True` and `'allow-local'` are reset to
           `False`, since `'allow-local'` opts the URL out of the SSRF private-IP block
           and `True` makes the server fetch the file itself — neither is safe to honor
@@ -395,12 +398,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             warnings.warn(
                 f'Client-submitted file URLs with `force_download` value(s) '
                 f'{sorted(reset_force_download_values, key=repr)!r} were reset to `False` because '
-                f'those values are not in `allowed_force_download` '
-                f'(currently {sorted(self.allowed_force_download, key=repr)!r}). '
+                f'those values are not in `allowed_file_url_force_download` '
+                f'(currently {sorted(self.allowed_file_url_force_download, key=repr)!r}). '
                 f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
                 f'the server fetch the file itself, so neither should be accepted from untrusted '
-                f'frontends. To allow a value, add it to `allowed_force_download` on the adapter, '
-                f'or set it on `message_history` passed directly to `Agent.run` instead.',
+                f'frontends. To allow a value, add it to `allowed_file_url_force_download` on the '
+                f'adapter, or set it on `message_history` passed directly to `Agent.run` instead.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -470,8 +473,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Sanitize [`FileUrl`][pydantic_ai.messages.FileUrl] items in client-submitted user content.
 
         Drops items whose scheme isn't in the allowlist, and resets `force_download` values that
-        aren't in [`allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download] on
-        kept items to `False`.
+        aren't `False` and aren't in
+        [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]
+        on kept items to `False`.
 
         `disallowed_schemes` and `reset_force_download_values` are updated in place with any
         disallowed schemes and reset `force_download` values encountered.
@@ -496,7 +500,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         `reset_force_download_values` is updated in place with the original value when it's reset.
         """
-        if file_url.force_download not in self.allowed_force_download:
+        if file_url.force_download is not False and file_url.force_download not in self.allowed_file_url_force_download:
             reset_force_download_values.add(file_url.force_download)
             return replace(file_url, force_download=False)
         return file_url
@@ -812,7 +816,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
-        allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -846,8 +850,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
-            allowed_force_download: `FileUrl.force_download` values allowed on file URL parts from the
-                client. See [`UIAdapter.allowed_force_download`][pydantic_ai.ui.UIAdapter.allowed_force_download].
+            allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
+                the client (beyond `False`, which is always allowed). See
+                [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -876,7 +881,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     allowed_file_url_schemes=allowed_file_url_schemes,
-                    allowed_force_download=allowed_force_download,
+                    allowed_file_url_force_download=allowed_file_url_force_download,
                     **kwargs,
                 ),
             )

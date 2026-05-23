@@ -1046,24 +1046,24 @@ def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     assert 'allowed_file_url_schemes' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_file_url_schemes'].default == frozenset({'http', 'https'})
 
-    assert 'allowed_force_download' in from_request_parameters
-    assert from_request_parameters['allowed_force_download'].default == frozenset({False})
-    assert 'allowed_force_download' in dispatch_request_parameters
-    assert dispatch_request_parameters['allowed_force_download'].default == frozenset({False})
+    assert 'allowed_file_url_force_download' in from_request_parameters
+    assert from_request_parameters['allowed_file_url_force_download'].default == frozenset()
+    assert 'allowed_file_url_force_download' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_file_url_force_download'].default == frozenset()
 
 
 def _make_dummy_adapter(
     messages: list[ModelMessage],
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
-    allowed_force_download: frozenset[ForceDownloadMode] = frozenset({False}),
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
 ) -> DummyUIAdapter[None, str]:
     agent: Agent[None, str] = Agent(model=TestModel())
     return DummyUIAdapter(
         agent=agent,
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
-        allowed_force_download=allowed_force_download,
+        allowed_file_url_force_download=allowed_file_url_force_download,
     )
 
 
@@ -1132,11 +1132,12 @@ def test_sanitize_messages_respects_custom_allowed_schemes():
 
 
 def test_sanitize_messages_resets_force_download_not_in_allowlist():
-    """`FileUrl.force_download` values outside `allowed_force_download` are reset to `False` with a warning.
+    """`FileUrl.force_download` values outside `allowed_file_url_force_download` are reset to `False` with a warning.
 
-    With the default `allowed_force_download` (`frozenset({False})`), both `'allow-local'` and `True`
+    With the default `allowed_file_url_force_download` (`frozenset()`), both `'allow-local'` and `True`
     are reset, since `'allow-local'` bypasses the SSRF private-IP block and `True` makes the server
-    fetch the file itself — neither is safe to honor from untrusted client input.
+    fetch the file itself — neither is safe to honor from untrusted client input. `False` is always
+    permitted (the safe default the sanitizer resets to) regardless of the allowlist.
     """
     adapter = _make_dummy_adapter(
         [
@@ -1173,7 +1174,7 @@ def test_sanitize_messages_resets_force_download_not_in_allowlist():
 
 
 def test_sanitize_messages_leaves_allowlisted_force_download_alone():
-    """`FileUrl` `force_download` values in `allowed_force_download` pass through without warnings."""
+    """`FileUrl` `force_download` values in `allowed_file_url_force_download` pass through without warnings."""
     adapter = _make_dummy_adapter(
         [
             ModelRequest(
@@ -1188,7 +1189,7 @@ def test_sanitize_messages_leaves_allowlisted_force_download_alone():
                 ]
             )
         ],
-        allowed_force_download=frozenset({False, True, 'allow-local'}),
+        allowed_file_url_force_download=frozenset({True, 'allow-local'}),
     )
 
     with warnings.catch_warnings():
@@ -1208,7 +1209,7 @@ def test_sanitize_messages_leaves_allowlisted_force_download_alone():
 
 
 def test_sanitize_messages_widened_allowlist_lets_true_through_but_resets_allow_local():
-    """A widened `allowed_force_download` keeps `True` but still resets `'allow-local'`."""
+    """A widened `allowed_file_url_force_download` keeps `True` but still resets `'allow-local'`."""
     adapter = _make_dummy_adapter(
         [
             ModelRequest(
@@ -1222,7 +1223,7 @@ def test_sanitize_messages_widened_allowlist_lets_true_through_but_resets_allow_
                 ]
             )
         ],
-        allowed_force_download=frozenset({False, True}),
+        allowed_file_url_force_download=frozenset({True}),
     )
 
     with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local'):
