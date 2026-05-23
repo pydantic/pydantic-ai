@@ -45,6 +45,21 @@ def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
         return meta_model_profile(model_name)
 
 
+def qwen_groq_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Qwen model used with the Groq provider.
+
+    Overlays Groq-specific reasoning settings (e.g. ``supports_thinking=True`` and
+    ``thinking_always_enabled=False`` for ``qwen/qwen3-*``) on top of the base Qwen
+    profile so that :class:`GroqModel` can correctly map ``thinking=False`` to
+    ``reasoning_effort='none'`` for qwen3 models.
+    """
+    base = qwen_model_profile(model_name)
+    groq_overrides = groq_model_profile(model_name)
+    if base is None:
+        return groq_overrides
+    return base.update(groq_overrides)
+
+
 class GroqProvider(Provider[AsyncGroq]):
     """Provider for Groq API."""
 
@@ -66,7 +81,7 @@ class GroqProvider(Provider[AsyncGroq]):
             'llama': meta_model_profile,
             'meta-llama/': meta_groq_model_profile,
             'gemma': google_model_profile,
-            'qwen': qwen_model_profile,
+            'qwen': qwen_groq_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'moonshotai/': groq_moonshotai_model_profile,
