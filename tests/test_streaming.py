@@ -4142,8 +4142,7 @@ async def test_run_stream_context_completes_after_stream_output_break():
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     async with agent.run_stream('test') as result:
-        async for _ in result.stream_output(debounce_by=None):
-            break
+        await anext(result.stream_output(debounce_by=None))
         assert not result.is_complete
 
     assert result.is_complete
