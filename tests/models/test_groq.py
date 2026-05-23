@@ -2065,7 +2065,9 @@ async def test_groq_model_web_search_tool_stream_single_chunk(allow_model_reques
     assert agent_run.result is not None
 
     # Both call and return parts must be present and correctly paired.
-    call_parts = [e.part for e in event_parts if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolCallPart)]
+    call_parts = [
+        e.part for e in event_parts if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolCallPart)
+    ]
     return_parts = [
         e.part for e in event_parts if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolReturnPart)
     ]
