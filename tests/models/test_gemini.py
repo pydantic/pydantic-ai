@@ -2152,3 +2152,37 @@ def test_map_empty_usage():
     del response['usage_metadata']
 
     assert _metadata_as_usage(response) == RequestUsage()
+
+
+async def test_stream_thinking_parts(get_gemini_client: GetGeminiClient):
+    """Test that thought parts (text with thought=True) are emitted as ThinkingPartDelta in streaming."""
+    responses = [
+        gemini_response(
+            _GeminiContent(
+                role='model',
+                parts=[
+                    {'text': 'Let me think about this...', 'thought': True},
+                    {'text': 'Here is the answer.'},
+                ],
+            )
+        ),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:80], json_data[80:]])
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        data = await result.get_output()
+
+    assert data == 'Here is the answer.'
+    messages = result.all_messages()
+    response_msg = messages[1]
+    assert isinstance(response_msg, ModelResponse)
+    # The thinking part should be present in the response
+    assert any(isinstance(part, ThinkingPart) for part in response_msg.parts)
+    thinking_parts = [p for p in response_msg.parts if isinstance(p, ThinkingPart)]
+    assert thinking_parts[0].content == 'Let me think about this...'
+    text_parts = [p for p in response_msg.parts if isinstance(p, TextPart)]
+    assert text_parts[0].content == 'Here is the answer.'
