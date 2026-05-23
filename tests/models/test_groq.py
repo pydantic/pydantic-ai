@@ -2050,6 +2050,30 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
     )
 
 
+async def test_groq_model_web_search_tool_stream_single_chunk(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What is the weather in San Francisco?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+
+    # Both call and return parts must be present and correctly paired.
+    call_parts = [e.part for e in event_parts if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolCallPart)]
+    return_parts = [
+        e.part for e in event_parts if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolReturnPart)
+    ]
+    assert len(call_parts) == 1, f'Expected 1 NativeToolCallPart, got {len(call_parts)}'
+    assert len(return_parts) == 1, f'Expected 1 NativeToolReturnPart, got {len(return_parts)}'
+    assert call_parts[0].tool_call_id == return_parts[0].tool_call_id, 'tool_call_id must match'
+
+
 async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
     settings = GroqModelSettings(groq_reasoning_format='raw')
