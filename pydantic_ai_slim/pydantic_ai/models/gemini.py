@@ -480,6 +480,15 @@ class GeminiStreamedResponse(StreamedResponse):
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
+                    if gemini_part.get('thought'):
+                        for event in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=None,
+                            content=gemini_part['text'],
+                            provider_name=self.provider_name,
+                        ):
+                            yield event
+                        continue
+
                     # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
                     # amongst the tool call deltas
                     for event in self._parts_manager.handle_text_delta(

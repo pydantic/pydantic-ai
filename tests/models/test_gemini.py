@@ -832,6 +832,64 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
+async def test_stream_text_thought_part(allow_model_requests: None):
+    responses = [
+        gemini_response(
+            _GeminiContent(
+                role='model',
+                parts=[_GeminiTextPart(text='I should answer briefly.', thought=True)],
+            )
+        ),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Done')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith('/gemini-1.5-flash:streamGenerateContent')
+        return httpx.Response(200, stream=stream, headers={'Content-Type': 'application/json'})
+
+    gemini_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg', http_client=gemini_client))
+    agent = Agent(m)
+
+    try:
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+    finally:
+        await gemini_client.aclose()
+
+    assert output == 'Done'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='I should answer briefly.', provider_name='google-gla'),
+                    TextPart(content='Done'),
+                ],
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     responses = [
