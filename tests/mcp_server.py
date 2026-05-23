@@ -297,6 +297,12 @@ def annotated_text_prompt() -> list[UserMessage]:
 
 
 @mcp.prompt()
+def text_meta_prompt() -> list[UserMessage]:
+    """A prompt template with `_meta` text metadata."""
+    return [UserMessage(content=TextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+
+
+@mcp.prompt()
 def image_prompt() -> list[UserMessage]:
     """A prompt template with image content."""
     data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()

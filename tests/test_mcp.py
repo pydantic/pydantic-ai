@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -73,7 +74,6 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
-        TextContent,
         ToolResult,
         load_mcp_servers,
     )
@@ -2940,7 +2940,7 @@ async def test_get_prompt() -> None:
         result = await server.get_prompt('simple_prompt')
         assert result == snapshot(
             PromptResult(
-                messages=[PromptMessage(role='user', content=TextContent(type='text', text='This is a simple prompt'))],
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
                 description='A simple prompt template.',
             )
         )
@@ -2949,11 +2949,7 @@ async def test_get_prompt() -> None:
         result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
         assert result == snapshot(
             PromptResult(
-                messages=[
-                    PromptMessage(
-                        role='user', content=TextContent(type='text', text="Hello Alice, let's talk about AI!")
-                    )
-                ],
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
                 description='A prompt template with parameters.',
             )
         )
@@ -3035,14 +3031,15 @@ async def test_map_prompt_content() -> None:
     assets_dir = Path(__file__).parent / 'assets'
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # TextContent with annotations
+        # TextContent with annotations preserved in metadata
         result = await server.get_prompt('annotated_text_prompt')
         assert result.messages == snapshot(
             [
                 PromptMessage(
                     role='user',
                     content=TextContent(
-                        text='annotated text', annotations=Annotations(audience=['user'], priority=1.0)
+                        content='annotated text',
+                        metadata={'mcp_annotations': Annotations(audience=['user'], priority=1.0)},
                     ),
                 )
             ]
@@ -3054,6 +3051,7 @@ async def test_map_prompt_content() -> None:
         assert isinstance(content, BinaryImage)
         assert content.media_type == 'image/jpeg'
         assert content.data == assets_dir.joinpath('kiwi.jpg').read_bytes()
+        assert content.vendor_metadata == {'mcp_annotations': Annotations(audience=['user'], priority=0.8)}
 
         # AudioContent → BinaryContent
         result = await server.get_prompt('audio_prompt')
@@ -3061,6 +3059,7 @@ async def test_map_prompt_content() -> None:
         assert isinstance(content, BinaryContent)
         assert content.media_type == 'audio/mpeg'
         assert content.data == assets_dir.joinpath('marcelo.mp3').read_bytes()
+        assert content.vendor_metadata == {'mcp_annotations': Annotations(audience=['assistant'], priority=0.3)}
 
         # EmbeddedResource with annotations
         result = await server.get_prompt('embedded_resource_prompt')
@@ -3094,3 +3093,16 @@ async def test_map_prompt_content() -> None:
                 )
             ]
         )
+
+
+async def test_map_prompt_content_text_meta() -> None:
+    """Test that MCP `_meta` on prompt text is preserved in mapped metadata."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.get_prompt('text_meta_prompt')
+        [message] = result.messages
+
+    content = message.content
+
+    assert isinstance(content, TextContent)
+    assert content.metadata == {'mcp_meta': {'source': 'mcp'}}

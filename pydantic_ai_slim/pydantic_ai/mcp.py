@@ -136,9 +136,8 @@ __all__ = (
     'Icon',
     'ResourceLink',
     'EmbeddedResource',
-    'TextContent',
     'ContentBlock',
-    'Role',
+    'PromptRole',
 )
 
 
@@ -296,7 +295,7 @@ class ResourceTemplate(BaseResource):
 
 
 @dataclass(repr=False, kw_only=True)
-class ResourceLink(Resource):
+class ResourceLink:
     """A resource link referenced in a prompt or tool call result.
 
     Unlike :class:`EmbeddedResource`, this does not include the resource content directly —
@@ -308,13 +307,37 @@ class ResourceLink(Resource):
     See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
     """
 
+    uri: str
+    """The URI of the linked resource."""
+
+    name: str
+    """The programmatic name of the linked resource."""
+
+    title: str | None = None
+    """Human-readable title for UI contexts."""
+
+    description: str | None = None
+    """A description of what this linked resource represents."""
+
+    mime_type: str | None = None
+    """The MIME type of the linked resource, if known."""
+
+    size: int | None = None
+    """The size of the raw resource content in bytes (before base64 encoding), if known."""
+
+    annotations: Annotations | None = None
+    """Optional annotations for the linked resource."""
+
+    metadata: dict[str, Any] | None = None
+    """Optional metadata for the linked resource."""
+
     type: Literal['resource_link'] = 'resource_link'
     """Discriminator for resource link content."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     @classmethod
-    def from_mcp_sdk(cls, mcp_resource: mcp_types.ResourceLink) -> ResourceLink:  # type: ignore[override]
+    def from_mcp_sdk(cls, mcp_resource: mcp_types.ResourceLink) -> ResourceLink:
         """Convert from MCP SDK ResourceLink to PydanticAI ResourceLink."""
         return cls(
             type='resource_link',
@@ -421,24 +444,7 @@ class Prompt:
         )
 
 
-Role = Literal['user', 'assistant']
-
-
-@dataclass(repr=False, kw_only=True)
-class TextContent:
-    """Text content for a message."""
-
-    text: str
-    """The text content of the message."""
-    type: Literal['text'] = 'text'
-    """Discriminator for text content."""
-    annotations: Annotations | None = None
-    metadata: dict[str, Any] | None = None
-    """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
-    for notes on _meta usage.
-    """
-    __repr__ = _utils.dataclasses_no_defaults_repr
+PromptRole = Literal['user', 'assistant']
 
 
 @dataclass(repr=False, kw_only=True)
@@ -486,7 +492,7 @@ class EmbeddedResource:
         )
 
 
-ContentBlock = TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
+ContentBlock = messages.TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
 """A content block that can be used in prompts and tool results."""
 
 
@@ -494,7 +500,7 @@ ContentBlock = TextContent | messages.BinaryContent | ResourceLink | EmbeddedRes
 class PromptMessage:
     """A message returned as part of a prompt result."""
 
-    role: Role
+    role: PromptRole
     """The role of the message sender."""
 
     content: ContentBlock
@@ -921,6 +927,9 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Returns:
             The prompt result with description and messages.
+
+        Raises:
+            MCPError: If the server returns an error.
         """
         async with self:
             try:
@@ -1311,17 +1320,37 @@ class MCPServer(AbstractToolset[Any], ABC):
             elif isinstance(message.root, mcp_types.PromptListChangedNotification):
                 self._cached_prompts = None
 
+    def _mcp_part_metadata(
+        self, part: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent
+    ) -> dict[str, Any] | None:
+        metadata: dict[str, Any] = {}
+        if part.annotations:
+            metadata['mcp_annotations'] = Annotations.from_mcp_sdk(part.annotations)
+        if part.meta:
+            metadata['mcp_meta'] = part.meta
+        return metadata or None
+
+    def _map_binary_content(self, part: mcp_types.ImageContent | mcp_types.AudioContent) -> messages.BinaryContent:
+        data = base64.b64decode(part.data)
+        vendor_metadata = self._mcp_part_metadata(part)
+        if isinstance(part, mcp_types.ImageContent):
+            return messages.BinaryImage(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
+        return messages.BinaryContent(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
+
+    def _map_tool_result_text(self, part: mcp_types.TextContent) -> str | dict[str, Any] | list[Any]:
+        text = part.text
+        if text.startswith(('[', '{')):
+            try:
+                return pydantic_core.from_json(text)
+            except ValueError:
+                pass
+        return text
+
     def _map_prompt_content(self, part: mcp_types.ContentBlock) -> ContentBlock:
         if isinstance(part, mcp_types.TextContent):
-            return TextContent(
-                text=part.text,
-                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
-                metadata=part.meta,
-            )
-        elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
-        elif isinstance(part, mcp_types.AudioContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.TextContent(content=part.text, metadata=self._mcp_part_metadata(part))
+        elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
+            return self._map_binary_content(part)
         elif isinstance(part, mcp_types.EmbeddedResource):
             return EmbeddedResource.from_mcp_sdk(part, self._get_content(part.resource))
         elif isinstance(part, mcp_types.ResourceLink):
@@ -1335,21 +1364,11 @@ class MCPServer(AbstractToolset[Any], ABC):
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
         if isinstance(part, mcp_types.TextContent):
-            text = part.text
-            if text.startswith(('[', '{')):
-                try:
-                    return pydantic_core.from_json(text)
-                except ValueError:
-                    pass
-            return text
-        elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
-        elif isinstance(part, mcp_types.AudioContent):
+            return self._map_tool_result_text(part)
+        elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
-            return messages.BinaryContent(
-                data=base64.b64decode(part.data), media_type=part.mimeType
-            )  # pragma: no cover
+            return self._map_binary_content(part)  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
             return self._get_content(resource)
