@@ -619,7 +619,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     encrypted = thinking_encrypted_metadata(part)
                     result.append(
                         ReasoningMessage(
-                            id=_new_message_id(),
+                            id=part.id or _new_message_id(),
                             content=part.content,
                             encrypted_value=json.dumps(encrypted) if encrypted else None,
                         )
