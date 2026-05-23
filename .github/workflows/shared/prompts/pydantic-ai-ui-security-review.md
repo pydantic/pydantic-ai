@@ -28,6 +28,14 @@ This PR was selected because it touches the **UI adapters** or the
 the client/server trust boundary. Say nothing about style, naming, typing, or
 test coverage unless it has a concrete security consequence.
 
+This workflow is **non-voting**. GitHub identifies both this bot and the
+general `pydantic-ai-pr-review` bot as `github-actions[bot]`, so submitting
+an `APPROVE` or `REQUEST_CHANGES` verdict here would silently overwrite the
+other bot's verdict on the merge gate. Your review submission is always
+`COMMENT`-type (see Step 5); the security outcome lives in the body header
+and the inline findings. The merge gate stays with `pydantic-ai-pr-review`
+until check-runs support lands in gh-aw.
+
 ## Why this review exists
 
 The UI adapters (`pydantic_ai_slim/pydantic_ai/ui/` — the Vercel AI SDK
@@ -274,12 +282,19 @@ For each surviving finding, call
 
 Then call `mcp__safeoutputs__submit_pull_request_review` with:
 
-- **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived, else
-  `APPROVE`.
-- **body:** empty for `APPROVE` with no findings. For `REQUEST_CHANGES`,
-  state only the security verdict and any cross-cutting concern that can't
-  be inlined (e.g. "inbound validation added to the Vercel adapter only —
-  AG-UI inherits nothing"). Do not summarize the PR.
+- **type:** **always `COMMENT`** — never `APPROVE` or `REQUEST_CHANGES`.
+  This workflow is informational (see intro); the general
+  `pydantic-ai-pr-review` workflow owns the merge-gate verdict, and both
+  bots post as `github-actions[bot]`, so a verdict from here would
+  overwrite that one.
+- **body:** open with a single-line security-outcome header so a reviewer
+  scanning the PR sees the result at a glance:
+  - no findings → `SECURITY: PASS`
+  - any HIGH or CRITICAL surviving → `SECURITY: REQUEST_CHANGES (N high, M critical)`
+  After the header, include only cross-cutting concerns that can't be
+  inlined (e.g. "inbound validation added to the Vercel adapter only —
+  AG-UI inherits nothing"). Do not summarize the PR or restate inline
+  findings.
 
 **Severity:**
 
@@ -292,15 +307,13 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
   a flag whose *default* is the insecure setting).
 - **LOW** — defense-in-depth gap with no concrete attack path.
 
-Both HIGH and CRITICAL map the verdict to `REQUEST_CHANGES`.
+HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
+review submission itself is always `COMMENT`-type — see above.
 
-**Skip if redundant:** if you have zero new findings and your verdict
-matches this bot's most recent review (in `review-comments.txt`), call
-`mcp__safeoutputs__noop` with a short reason instead of a redundant review.
-
-**Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a bot
-reviewing another bot's PR. If the PR author is a bot, submit a `COMMENT`
-review with the verdict in the body.
+**Skip if redundant:** if you have zero new findings and the most recent
+review from this bot (in `review-comments.txt`) was also `SECURITY: PASS`,
+call `mcp__safeoutputs__noop` with a short reason instead of a redundant
+review.
 
 ## What not to do (recap)
 
