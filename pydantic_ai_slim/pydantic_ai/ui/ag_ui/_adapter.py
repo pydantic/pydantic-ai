@@ -419,18 +419,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
 
                 case ReasoningMessage() as reasoning_msg:
+                    invalid_metadata = False
                     try:
                         metadata: dict[str, Any] = (
                             json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
+                            invalid_metadata = True
                     except json.JSONDecodeError:
                         metadata = {}
+                        invalid_metadata = True
+                    thinking_id = metadata.get('id')
+                    if thinking_id is None and not invalid_metadata:
+                        thinking_id = reasoning_msg.id
                     builder.add(
                         ThinkingPart(
                             content=reasoning_msg.content,
-                            id=metadata.get('id') or reasoning_msg.id,
+                            id=thinking_id,
                             signature=metadata.get('signature'),
                             provider_name=metadata.get('provider_name'),
                             provider_details=metadata.get('provider_details'),

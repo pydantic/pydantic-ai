@@ -1415,6 +1415,36 @@ def test_reasoning_message_thinking_roundtrip() -> None:
     )
 
 
+def test_reasoning_message_thinking_uses_message_id_when_metadata_id_missing() -> None:
+    """Test that valid metadata without an ID falls back to the ReasoningMessage ID."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(
+                id='reasoning-1',
+                content='Let me think about this...',
+                encrypted_value=json.dumps({'signature': 'sig_abc123'}),
+            ),
+            AssistantMessage(id='msg-1', content='Here is my response'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Let me think about this...',
+                        id='reasoning-1',
+                        signature='sig_abc123',
+                    ),
+                    TextPart(content='Here is my response'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
@@ -2016,6 +2046,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
                 parts=[
                     ThinkingPart(
                         content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
+                        id=IsStr(),
                         signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
                         provider_name='anthropic',
                     ),
