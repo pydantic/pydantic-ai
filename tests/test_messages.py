@@ -483,9 +483,16 @@ def test_thinking_part_delta_callable_provider_details_serializable():
     assert callable(chained.provider_details)
 
     event = PartDeltaEvent(index=0, delta=chained)
-    serialized = TypeAdapter(AgentStreamEvent).dump_json(event)
+    adapter = cast(TypeAdapter[AgentStreamEvent], TypeAdapter(AgentStreamEvent))
+    serialized = adapter.dump_json(event)
 
     assert b'"provider_details":null' in serialized
+
+    dict_event = PartDeltaEvent(
+        index=0,
+        delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
+    )
+    assert b'"provider_details":{"provider":"detail"}' in adapter.dump_json(dict_event)
 
 
 def test_pre_usage_refactor_messages_deserializable():
