@@ -2917,6 +2917,7 @@ async def test_list_prompts() -> None:
                     arguments=[PromptArgument(name='name', required=True), PromptArgument(name='topic', required=True)],
                 ),
                 Prompt(name='annotated_text_prompt', description='A prompt template with annotated text content.'),
+                Prompt(name='text_meta_prompt', description='A prompt template with `_meta` text metadata.'),
                 Prompt(name='image_prompt', description='A prompt template with image content.'),
                 Prompt(name='audio_prompt', description='A prompt template with audio content.'),
                 Prompt(
