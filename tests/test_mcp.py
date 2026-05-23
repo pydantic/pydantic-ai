@@ -2927,7 +2927,7 @@ async def test_list_prompts() -> None:
             ]
         )
 
-        # Test caching behaviour
+        # Test caching behavior
         assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
         prompts2 = await server.list_prompts()
         assert prompts2 == prompts
