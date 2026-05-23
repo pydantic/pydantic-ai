@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (pydantic-ai-pr-review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
@@ -88,6 +88,12 @@ safe-outputs:
   noop:
   create-pull-request-review-comment:
     max: 30
+  # Non-voting by design: the prompt restricts the event to COMMENT only,
+  # because both this workflow and pydantic-ai-pr-review submit reviews as
+  # `github-actions[bot]` and GitHub's merge-gate uses the latest verdict
+  # per reviewer login — an APPROVE/REQUEST_CHANGES from here would
+  # overwrite pr-review's. To be reconsidered when gh-aw supports check
+  # runs (https://github.com/githubnext/gh-aw — Bill Easton's WIP).
   submit-pull-request-review:
     max: 1
 timeout-minutes: 30
