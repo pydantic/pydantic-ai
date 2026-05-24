@@ -52,6 +52,7 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
+from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -3343,6 +3344,25 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     )
 
     assert result.new_messages() == snapshot([])
+
+
+def test_clean_message_history_preserves_request_metadata():
+    request_1 = ModelRequest(
+        parts=[UserPromptPart(content='Hello')],
+        run_id='run-1',
+        conversation_id='conversation-1',
+        metadata={'session': 'abc123'},
+    )
+    request_2 = ModelRequest(
+        parts=[UserPromptPart(content='Follow-up')],
+        metadata={'session': 'abc123', 'turn': 'follow-up'},
+    )
+
+    [cleaned] = _clean_message_history([request_1, request_2])
+
+    assert isinstance(cleaned, ModelRequest)
+    assert [p.content for p in cleaned.parts if isinstance(p, UserPromptPart)] == ['Hello', 'Follow-up']
+    assert cleaned.metadata == {'session': 'abc123', 'turn': 'follow-up'}
 
 
 async def test_message_history_ending_on_model_response_with_instructions():

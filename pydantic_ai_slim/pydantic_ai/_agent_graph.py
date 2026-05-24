@@ -2199,6 +2199,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    metadata=message.metadata if message.metadata is not None else last_message.metadata,
                 )
                 clean_messages[-1] = merged_message
             else:
