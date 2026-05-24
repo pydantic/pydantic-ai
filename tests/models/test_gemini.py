@@ -54,6 +54,7 @@ from pydantic_ai.models.gemini import (
     _GeminiToolConfig,
     _GeminiUsageMetaData,
     _metadata_as_usage,
+    _part_discriminator,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
@@ -69,6 +70,10 @@ pytestmark = [
     pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
     pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning'),
 ]
+
+
+def test_part_discriminator_defaults_to_text():
+    assert _part_discriminator({}) == 'text'
 
 
 async def test_model_simple(allow_model_requests: None):
