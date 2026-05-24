@@ -842,7 +842,11 @@ def _map_executed_tool(
 
         if streaming:
             if results:
-                return None, return_part
+                # The streaming handler yields call_part and return_part as
+                # separate events; return both so the consumer can pair them by
+                # tool_call_id.  Previously this branch returned (None,
+                # return_part), silently dropping the NativeToolCallPart.
+                return call_part, return_part
             else:
                 return call_part, None
         else:

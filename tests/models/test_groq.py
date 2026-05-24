@@ -6074,3 +6074,92 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+# ── _map_executed_tool regression tests (issue #5626) ────────────────────────
+
+
+@dataclass
+class _FakeSearchResults:
+    results: list[Any]
+    images: list[Any]
+
+    def model_dump(self, *, mode: str = 'python') -> Any:
+        return {'results': self.results, 'images': self.images}
+
+
+@dataclass
+class _FakeExecutedTool:
+    type: str
+    arguments: str
+    output: Any
+    search_results: Any = None
+
+
+def test_map_executed_tool_streaming_with_results_returns_both_parts() -> None:
+    """Regression test for issue #5626.
+
+    When streaming and `results` is truthy, _map_executed_tool must return
+    *both* call_part and return_part (not (None, return_part)).  The (None,
+    return_part) bug silently dropped the NativeToolCallPart so streaming
+    consumers could not pair call and return events.
+    """
+    from pydantic_ai.models.groq import _map_executed_tool
+    from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+
+    tool = _FakeExecutedTool(
+        type='search',
+        arguments='{"query": "test"}',
+        output={'results': [{'title': 'Test', 'url': 'https://example.com'}]},
+        search_results=_FakeSearchResults(
+            results=[{'title': 'Test', 'url': 'https://example.com'}],
+            images=[],
+        ),
+    )
+
+    call_part, return_part = _map_executed_tool(tool, 'groq', streaming=True)
+
+    assert call_part is not None, "call_part must not be None in streaming+results mode"
+    assert return_part is not None, "return_part must not be None in streaming+results mode"
+    assert isinstance(call_part, NativeToolCallPart)
+    assert isinstance(return_part, NativeToolReturnPart)
+    # Both parts must share the same tool_call_id so consumers can pair them.
+    assert call_part.tool_call_id == return_part.tool_call_id
+
+
+def test_map_executed_tool_streaming_without_results_returns_call_only() -> None:
+    """In streaming mode with no search results, only the call_part is returned."""
+    from pydantic_ai.models.groq import _map_executed_tool
+    from pydantic_ai.messages import NativeToolCallPart
+
+    tool = _FakeExecutedTool(
+        type='search',
+        arguments='{"query": "test"}',
+        output=None,
+    )
+
+    call_part, return_part = _map_executed_tool(tool, 'groq', streaming=True)
+
+    assert call_part is not None
+    assert isinstance(call_part, NativeToolCallPart)
+    assert return_part is None
+
+
+def test_map_executed_tool_non_streaming_returns_both_parts() -> None:
+    """In non-streaming mode, both parts are always returned."""
+    from pydantic_ai.models.groq import _map_executed_tool
+    from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+
+    tool = _FakeExecutedTool(
+        type='search',
+        arguments='{"query": "test"}',
+        output={'results': [{'title': 'Test', 'url': 'https://example.com'}]},
+    )
+
+    call_part, return_part = _map_executed_tool(tool, 'groq', streaming=False)
+
+    assert call_part is not None
+    assert return_part is not None
+    assert isinstance(call_part, NativeToolCallPart)
+    assert isinstance(return_part, NativeToolReturnPart)
+    assert call_part.tool_call_id == return_part.tool_call_id
