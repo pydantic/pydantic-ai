@@ -101,6 +101,7 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
+    "pydocket>=0.20.2",
     "exa-py>=2.0.0",
     "tavily-python>=0.5.0",
     "markdownify>=1.2",
@@ -116,7 +117,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.0",
-    "genai-prices>=0.0.28",
+    "genai-prices>=0.0.56",
     "brotli>=1.2.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
@@ -155,6 +156,8 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
+    ".github/scripts/test_pydantic_ai_runner.py",
 ]
 
 [tool.ruff.lint]
@@ -203,6 +206,7 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -218,6 +222,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    ".github/scripts/pydantic_ai_gh_aw_shim",
+    ".github/scripts/test_pydantic_ai_runner.py",
 ]
 venvPath = '.'
 venv = ".venv"
@@ -225,6 +231,10 @@ venv = ".venv"
 # which are not otherwise used
 executionEnvironments = [
     { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # `extraPaths` lets pyright resolve the shim package (which sits next to
+    # the test file, not under the project root) the same way the runtime
+    # `sys.path.insert(...)` at the top of the test does.
+    { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
