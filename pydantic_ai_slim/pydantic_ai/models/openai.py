@@ -1677,6 +1677,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             assert_never(item)
 
+    async def _map_user_prompt_content_item(
+        self, item: UserContent, content: list[ChatCompletionContentPartParam]
+    ) -> None:
+        mapped_item = await self._map_content_item(item)
+        if mapped_item is not None:
+            content.append(mapped_item)
+
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
@@ -1684,9 +1691,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             content = []
             for item in part.content:
-                mapped_item = await self._map_content_item(item)
-                if mapped_item is not None:
-                    content.append(mapped_item)
+                await self._map_user_prompt_content_item(item, content)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     def _raise_document_input_not_supported_error(self) -> Never:

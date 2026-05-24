@@ -17,7 +17,7 @@ from ..messages import (
     ModelMessage,
     ModelResponseStreamEvent,
     ThinkingPart,
-    UserPromptPart,
+    UserContent,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
@@ -1028,24 +1028,13 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterStreamedResponse
 
     @override
-    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
-        """Map a user prompt, translating CachePoint markers into `cache_control` for supported providers."""
-        if isinstance(part.content, str):
-            return chat.ChatCompletionUserMessageParam(role='user', content=part.content)
-
-        # `super()` would drop CachePoint before we can use its TTL or position.
-        content: list[ChatCompletionContentPartParam] = []
-        for item in part.content:
-            if isinstance(item, CachePoint):
-                self._add_cache_control(content, ttl=item.ttl)
-            else:
-                mapped_item = await self._map_content_item(item)
-                # The base _map_content_item returns None for CachePoint, but we handle
-                # CachePoint earlier in this loop, so remaining items always produce
-                # non-None. The guard is kept for type safety.
-                if mapped_item is not None:  # pragma: no branch
-                    content.append(mapped_item)
-        return chat.ChatCompletionUserMessageParam(role='user', content=content)
+    async def _map_user_prompt_content_item(
+        self, item: UserContent, content: list[ChatCompletionContentPartParam]
+    ) -> None:
+        if isinstance(item, CachePoint):
+            self._add_cache_control(content, ttl=item.ttl)
+        else:
+            await super()._map_user_prompt_content_item(item, content)
 
     @override
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:

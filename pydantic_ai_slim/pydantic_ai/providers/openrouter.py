@@ -146,6 +146,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
+        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
+        # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
