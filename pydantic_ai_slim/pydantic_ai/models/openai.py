@@ -1477,7 +1477,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
-        response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
+        response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {
             'type': 'json_schema',
             'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema},
         }

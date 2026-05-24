@@ -256,9 +256,8 @@ class GeminiModel(Model[httpx.AsyncClient]):
         if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
             request_data['safetySettings'] = gemini_safety_settings
 
-        if gemini_labels := model_settings.get('gemini_labels'):
-            if self._provider.name == 'google-vertex':
-                request_data['labels'] = gemini_labels  # pragma: lax no cover
+        if (gemini_labels := model_settings.get('gemini_labels')) and self._provider.name == 'google-vertex':
+            request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -501,7 +500,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    if not any([key in gemini_part for key in ['function_response', 'thought']]):
+                    if not any(key in gemini_part for key in ['function_response', 'thought']):
                         raise AssertionError(f'Unexpected part: {gemini_part}')  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
@@ -793,10 +792,10 @@ def _part_discriminator(v: Any) -> str:
     if isinstance(v, dict):  # pragma: no branch
         if 'text' in v:
             return 'text'
-        elif 'inlineData' in v:
-            return 'inline_data'  # pragma: no cover
-        elif 'fileData' in v:
-            return 'file_data'  # pragma: no cover
+        elif 'inlineData' in v or 'inline_data' in v:
+            return 'inline_data'
+        elif 'fileData' in v or 'file_data' in v:
+            return 'file_data'
         elif 'thought' in v:
             return 'thought'
         elif 'functionCall' in v or 'function_call' in v:

@@ -389,6 +389,15 @@ async def test_deferred_output_json_schema():
             'anyOf': [
                 {'type': 'string'},
                 {
+                    'description': """\
+Tool calls that require approval or external execution.
+
+This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.\
+""",
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
                         'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
@@ -404,6 +413,7 @@ async def test_deferred_output_json_schema():
             ],
             '$defs': {
                 'ToolCallPart': {
+                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -518,6 +528,15 @@ distinguish multiple files.\
                     'type': 'object',
                 },
                 {
+                    'description': """\
+Tool calls that require approval or external execution.
+
+This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.\
+""",
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
                         'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
@@ -533,6 +552,7 @@ distinguish multiple files.\
             ],
             '$defs': {
                 'ToolCallPart': {
+                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -646,6 +666,7 @@ class DCWithNestedField:
             DCWithDoc,
             snapshot(
                 {
+                    'description': 'The result with name and score.',
                     'properties': {
                         'name': {'title': 'Name', 'type': 'string'},
                         'score': {'default': 0, 'title': 'Score', 'type': 'integer'},
@@ -694,11 +715,13 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
                 {
                     '$defs': {
                         'DCNested': {
+                            'description': 'Nested filter criteria.',
                             'properties': {'category': {'default': 'all', 'title': 'Category', 'type': 'string'}},
                             'title': 'DCNested',
                             'type': 'object',
                         }
                     },
+                    'description': 'Output with nested dataclass.',
                     'properties': {'filters': {'$ref': '#/$defs/DCNested'}},
                     'required': ['filters'],
                     'title': 'DCWithNestedField',

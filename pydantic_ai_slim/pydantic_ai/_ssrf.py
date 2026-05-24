@@ -394,7 +394,7 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
     original_hostname = urlparse(url).hostname
-    effective_headers = dict(headers) if headers else {}
+    effective_headers: dict[str, str] = dict(headers) if headers is not None else {}
 
     async with create_async_http_client(timeout=timeout) as client:
         while True:

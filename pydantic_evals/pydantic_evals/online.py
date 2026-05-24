@@ -311,8 +311,9 @@ async def run_evaluators(
     all_results: list[EvaluationResult] = []
     all_failures: list[EvaluatorFailure] = []
 
+    results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
+
     async with anyio.create_task_group() as tg:
-        results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
 
         async def _run(idx: int, evaluator: Evaluator) -> None:
             results_by_index[idx] = await run_evaluator(evaluator, context)

@@ -15,6 +15,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from exa_py import AsyncExa
+    from exa_py.api import ContentsOptions, TextContentsOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install `exa-py` to use the Exa tools, '
@@ -111,12 +112,15 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
-        text_config: bool | dict[str, int] = {'maxCharacters': self.max_characters} if self.max_characters else True
-        response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
+        text_config: TextContentsOptions | Literal[True] = (
+            {'max_characters': self.max_characters} if self.max_characters is not None else True
+        )
+        contents: ContentsOptions = {'text': text_config}
+        response = await self.client.search(
             query,
             num_results=self.num_results,
             type=search_type,
-            contents={'text': text_config},
+            contents=contents,
         )
 
         return [
@@ -156,11 +160,12 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(  # pyright: ignore[reportUnknownMemberType]
+        contents: ContentsOptions = {'text': True}
+        response = await self.client.find_similar(
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
-            contents={'text': True},
+            contents=contents,
         )
 
         return [
