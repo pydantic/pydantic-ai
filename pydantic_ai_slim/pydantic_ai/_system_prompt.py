@@ -8,7 +8,7 @@ from typing import Any, Generic, cast
 from . import _utils
 from ._run_context import AgentDepsT, RunContext
 from .messages import SystemPromptPart
-from .tools import SystemPromptFunc
+from .tools import SystemPromptFunc as SystemPromptFunc
 
 
 @dataclass

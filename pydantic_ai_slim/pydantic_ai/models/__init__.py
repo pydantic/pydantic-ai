@@ -10,7 +10,7 @@ import base64
 import json
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -25,7 +25,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from .. import _utils
 from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, StructuredTextOutputSchema
+from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -55,7 +55,7 @@ from ..messages import (
 )
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
-from ..output import OutputMode, StructuredOutputMode
+from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
@@ -769,7 +769,7 @@ class Model(ABC, Generic[InterfaceClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
@@ -1409,7 +1409,7 @@ def check_allow_model_requests() -> None:
 
 
 @contextmanager
-def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
+def override_allow_model_requests(allow_model_requests: bool) -> Generator[None]:
     """Context manager to temporarily override [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS].
 
     Args:

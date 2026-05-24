@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -112,7 +112,7 @@ def setup_prefect_test_harness() -> Iterator[None]:
 
 
 @contextmanager
-def flow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def flow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Prefect flow fails with the expected error."""
     with pytest.raises(Exception) as exc_info:
         yield

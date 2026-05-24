@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 from asyncio import Task
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -35,6 +35,7 @@ from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -602,7 +603,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
         try:
@@ -1072,7 +1073,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncGenerator[AsyncIterator[_messages.HandleResponseEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
         stream = self._run_stream(ctx)
         yield stream
@@ -1083,13 +1084,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+    ) -> AsyncGenerator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
             output_schema = ctx.deps.output_schema
 
-            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+            async def _run_stream() -> AsyncGenerator[_messages.HandleResponseEvent]:  # noqa: C901
                 is_empty = not self.model_response.parts
                 is_thinking_only = not is_empty and all(
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
@@ -1706,7 +1707,7 @@ async def process_tool_calls(  # noqa: C901
         if final_result:
             # If the run was already determined to end on deferred tool calls,
             # we shouldn't insert return parts as the deferred tools will still get a real result.
-            if not isinstance(final_result.output, _output.DeferredToolRequests):
+            if not isinstance(final_result.output, DeferredToolRequests):
                 for call in calls:
                     output_parts.append(
                         _messages.ToolReturnPart(
@@ -1740,7 +1741,7 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
-        deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
+        deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
@@ -1797,7 +1798,7 @@ async def process_tool_calls(  # noqa: C901
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
                 if deferred_tool_requests is None:
-                    deferred_tool_requests = _output.DeferredToolRequests()
+                    deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])
                 deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
                 deferred_tool_requests.metadata.update(new_deferred_metadata)
@@ -2018,7 +2019,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 
 @contextmanager
-def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
+def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
     Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.

@@ -30,7 +30,7 @@ import asyncio
 import functools
 import inspect
 import threading
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -153,7 +153,7 @@ _EVALUATION_DISABLED = _online_internal.EVALUATION_DISABLED
 
 
 @contextmanager
-def disable_evaluation() -> Iterator[None]:
+def disable_evaluation() -> Generator[None]:
     """Context manager to disable all online evaluation in the current context.
 
     When active, decorated functions still execute normally but no evaluators are dispatched.
@@ -390,7 +390,7 @@ def _open_call_span(
     msg_template: str,
     span_name: str | None,
     recorded_inputs: dict[str, Any] | None,
-) -> Iterator[Any]:
+) -> Generator[Any]:
     """Open the span that represents the decorated function call.
 
     When logfire is installed, uses `logfire.span` so argument and return

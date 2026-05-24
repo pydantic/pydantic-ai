@@ -221,8 +221,6 @@ reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
-reportDeprecated = "warning"
-reportPrivateImportUsage = false
 include = [
     "pydantic_ai_slim",
     "pydantic_evals",

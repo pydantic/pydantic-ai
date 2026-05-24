@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -191,7 +191,7 @@ def get_current_run_context() -> RunContext[Any] | None:
 
 
 @contextmanager
-def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
+def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
     """Context manager to set the current run context.
 
     Args:

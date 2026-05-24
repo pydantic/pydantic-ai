@@ -161,7 +161,7 @@ class ExaFindSimilarTool:
             Similar pages with text content.
         """
         contents: ContentsOptions = {'text': True}
-        response = await self.client.find_similar(
+        response = await self.client.find_similar(  # pyright: ignore[reportDeprecated]
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
