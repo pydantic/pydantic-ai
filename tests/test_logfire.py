@@ -298,6 +298,7 @@ def test_logfire(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 103}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 12}], "total": 115}}',
             }
         )
     else:
@@ -368,6 +369,7 @@ def test_logfire(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 103}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 12}], "total": 115}}',
             }
         )
     chat_span_attributes = next(
@@ -690,6 +692,7 @@ def test_instructions_with_structured_output(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -806,6 +809,7 @@ def test_instructions_with_structured_output(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -897,6 +901,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     }
                 )
             ),
+            'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
         }
     )
     chat_span_attributes = summary.attributes[1]
@@ -1115,6 +1120,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     }
                 )
             ),
+            'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
         }
     )
     chat_span_attributes = summary.attributes[1]
@@ -1274,6 +1280,35 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
                 'type': 'object',
                 'properties': {'pydantic_ai.all_messages': {'type': 'array'}, 'final_result': {'type': 'object'}},
             },
+            'logfire.metrics': {
+                'gen_ai.client.token.usage': {
+                    'details': [
+                        {
+                            'attributes': {
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.provider.name': 'function',
+                                'gen_ai.request.model': 'function:model_function:',
+                                'gen_ai.response.model': 'function:model_function:',
+                                'gen_ai.system': 'function',
+                                'gen_ai.token.type': 'input',
+                            },
+                            'total': 10,
+                        },
+                        {
+                            'attributes': {
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.provider.name': 'function',
+                                'gen_ai.request.model': 'function:model_function:',
+                                'gen_ai.response.model': 'function:model_function:',
+                                'gen_ai.system': 'function',
+                                'gen_ai.token.type': 'output',
+                            },
+                            'total': 5,
+                        },
+                    ],
+                    'total': 15,
+                }
+            },
         }
     )
 
@@ -1388,6 +1423,35 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
+                    },
+                    'logfire.metrics': {
+                        'gen_ai.client.token.usage': {
+                            'details': [
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'test',
+                                        'gen_ai.request.model': 'test',
+                                        'gen_ai.response.model': 'test',
+                                        'gen_ai.system': 'test',
+                                        'gen_ai.token.type': 'input',
+                                    },
+                                    'total': 51,
+                                },
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'test',
+                                        'gen_ai.request.model': 'test',
+                                        'gen_ai.response.model': 'test',
+                                        'gen_ai.system': 'test',
+                                        'gen_ai.token.type': 'output',
+                                    },
+                                    'total': 4,
+                                },
+                            ],
+                            'total': 55,
+                        }
                     },
                 },
             },
@@ -2625,6 +2689,7 @@ def test_static_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -2741,6 +2806,7 @@ def test_static_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -2875,6 +2941,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 107}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 9}], "total": 116}}',
             }
         )
 
@@ -3023,6 +3090,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 107}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 9}], "total": 116}}',
             }
         )
 
@@ -3156,6 +3224,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 52}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 6}], "total": 58}}',
             }
         )
 
@@ -3290,6 +3359,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 52}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 6}], "total": 58}}',
             }
         )
 
@@ -3389,6 +3459,7 @@ async def test_run_stream(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 4}], "total": 55}}',
             }
         )
 
@@ -3475,6 +3546,7 @@ async def test_run_stream(
                         }
                     )
                 ),
+                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 4}], "total": 55}}',
             }
         )
 

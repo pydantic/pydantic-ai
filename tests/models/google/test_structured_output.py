@@ -688,8 +688,8 @@ async def test_native_output_with_function_and_builtin_tools(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=440,
-                    output_tokens=113,
+                    input_tokens=526,
+                    output_tokens=27,
                     details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -920,8 +920,8 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=432,
-                    output_tokens=96,
+                    input_tokens=510,
+                    output_tokens=18,
                     details={'thoughts_tokens': 18, 'tool_use_prompt_tokens': 78, 'text_prompt_tokens': 301},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -991,8 +991,8 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                     TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=85,
-                    output_tokens=214,
+                    input_tokens=217,
+                    output_tokens=82,
                     details={
                         'thoughts_tokens': 54,
                         'tool_use_prompt_tokens': 132,

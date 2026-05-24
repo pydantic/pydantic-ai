@@ -551,6 +551,17 @@ Keys:
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
+                    'description': """\
+A native tool that allows your agent to execute code.
+
+Supported by:
+
+* Anthropic
+* OpenAI Responses
+* Google
+* Bedrock (Nova2.0)
+* xAI\
+""",
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -559,6 +570,18 @@ Keys:
                     'type': 'object',
                 },
                 'FileSearchTool': {
+                    'description': """\
+A native tool that allows your agent to search through uploaded files using vector search.
+
+This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
+file storage, chunking, embedding generation, and context injection into prompts.
+
+Supported by:
+
+* OpenAI Responses
+* Google (Gemini)
+* xAI (mapped to collections search)\
+""",
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -569,6 +592,14 @@ Keys:
                     'type': 'object',
                 },
                 'ImageGenerationTool': {
+                    'description': """\
+A native tool that allows your agent to generate images.
+
+Supported by:
+
+* OpenAI Responses
+* Google\
+""",
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1124,6 +1155,15 @@ Keys:
                     'type': 'string',
                 },
                 'MCPServerTool': {
+                    'description': """\
+A native tool that allows your agent to use MCP servers.
+
+Supported by:
+
+* OpenAI Responses
+* Anthropic
+* xAI\
+""",
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1155,6 +1195,13 @@ Keys:
                     'type': 'object',
                 },
                 'MemoryTool': {
+                    'description': """\
+A native tool that allows your agent to use memory.
+
+Supported by:
+
+* Anthropic\
+""",
                     'properties': {
                         'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1219,6 +1266,15 @@ All types must be serializable using Pydantic.\
                     'type': 'object',
                 },
                 'ToolOrOutput': {
+                    'description': """\
+Restricts function tools while keeping output tools and direct text/image output available.
+
+Use this when you want to control which function tools the model can use
+in an agent run while still allowing the agent to complete with structured output,
+text, or images.
+
+See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.\
+""",
                     'properties': {
                         'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
                     },
@@ -1227,6 +1283,36 @@ All types must be serializable using Pydantic.\
                     'type': 'object',
                 },
                 'ToolSearchTool': {
+                    'description': """\
+Framework-internal: users access tool search via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability — do not construct directly.
+
+A native tool that enables provider-side tool search.
+
+Tools marked as part of the search corpus (via `with_native='tool_search'`
+on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
+providers with `defer_loading` on the wire; the provider manages their visibility
+and only exposes them once they've been discovered.
+
+The mode of discovery depends on `strategy`:
+
+* A named native strategy (or `None` for the provider default): the provider runs
+  the search server-side using its own indexing (Anthropic `bm25`/`regex`, OpenAI
+  server-executed `tool_search`).
+* `'custom'`: the provider invokes our local search function to answer each search
+  request. On Anthropic this goes via a regular function tool whose return value the
+  adapter re-formats as `tool_reference` blocks; on OpenAI it goes via
+  `ToolSearchToolParam(execution='client')` with our callable's parameter schema.
+
+When the model doesn't support native tool search at all, the
+[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability's local
+implementation handles discovery via its own `search_tools` function tool.
+
+Supported by:
+
+* Anthropic (bm25, regex, custom callable) — Sonnet 4.5+, Opus 4.5+, Haiku 4.5+
+* OpenAI Responses (server default, custom callable via `execution='client'`) — GPT-5.4+
+  (named strategies `'bm25'`/`'regex'` are not supported).\
+""",
                     'properties': {
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1241,6 +1327,12 @@ All types must be serializable using Pydantic.\
                 },
                 'UrlContextTool': {
                     'deprecated': True,
+                    'description': """\
+Deprecated alias for WebFetchTool. Use WebFetchTool instead.
+
+Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
+can be deserialized to UrlContextTool for backward compatibility.\
+""",
                     'properties': {
                         'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1270,6 +1362,16 @@ All types must be serializable using Pydantic.\
                     'type': 'object',
                 },
                 'WebFetchTool': {
+                    'description': """\
+Allows your agent to access contents from URLs.
+
+The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+
+Supported by:
+
+* Anthropic
+* Google\
+""",
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1299,6 +1401,20 @@ All types must be serializable using Pydantic.\
                     'type': 'object',
                 },
                 'WebSearchTool': {
+                    'description': """\
+A native tool that allows your agent to search the web for information.
+
+The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+
+Supported by:
+
+* Anthropic
+* OpenAI Responses
+* Groq
+* Google
+* xAI
+* OpenRouter\
+""",
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1351,6 +1467,19 @@ Supported by:
                     'type': 'object',
                 },
                 'XSearchTool': {
+                    'description': """\
+A native tool that allows your agent to search X/Twitter for posts and content.
+
+See <https://docs.x.ai/developers/tools/x-search> for more details.
+
+When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
+`fallback_model` set, this tool also works with non-xAI models by delegating to a
+subagent running the specified xAI model.
+
+Supported by:
+
+* xAI\
+""",
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
