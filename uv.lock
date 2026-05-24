@@ -23,7 +23,7 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "2026-05-23T14:23:48.498612Z"
+exclude-newer = "2026-05-23T15:03:45.180546Z"
 exclude-newer-span = "P1D"
 
 [options.exclude-newer-package]
@@ -1617,7 +1617,7 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", version = "13.1.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cublas", marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 cudart = [
     { name = "nvidia-cuda-runtime", marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
@@ -1644,7 +1644,7 @@ nvjitlink = [
     { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", version = "13.0.88", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 nvtx = [
     { name = "nvidia-nvtx", marker = "(python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
@@ -4451,13 +4451,13 @@ name = "mlx-lm"
 version = "0.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jinja2" },
+    { name = "jinja2", marker = "python_full_version >= '3.12' or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or sys_platform == 'darwin'" },
     { name = "mlx", marker = "sys_platform == 'darwin' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "sentencepiece" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "numpy", marker = "python_full_version >= '3.12' or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or sys_platform == 'darwin'" },
+    { name = "protobuf", marker = "python_full_version >= '3.12' or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or sys_platform == 'darwin'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.12' or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or sys_platform == 'darwin'" },
+    { name = "sentencepiece", marker = "python_full_version >= '3.12' or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or sys_platform == 'darwin'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version >= '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'darwin' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "transformers", version = "5.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/62/f46e1355256a114808517947f8e83ad6be310c7288c551db0fa678f47923/mlx_lm-0.29.1.tar.gz", hash = "sha256:b99180d8f33d33a077b814e550bfb2d8a59ae003d668fd1f4b3fff62a381d34b", size = 232302, upload-time = "2025-12-16T16:58:27.959Z" }
@@ -5050,30 +5050,10 @@ wheels = [
 name = "nvidia-cublas"
 version = "13.1.0.3"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.11.*' and sys_platform != 'darwin' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version == '3.11.*' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version == '3.11.*' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/a5/fce49e2ae977e0ccc084e5adafceb4f0ac0c8333cb6863501618a7277f67/nvidia_cublas-13.1.0.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c86fc7f7ae36d7528288c5d88098edcb7b02c633d262e7ddbb86b0ad91be5df2", size = 542851226, upload-time = "2025-10-09T08:59:04.818Z" },
     { url = "https://files.pythonhosted.org/packages/e7/44/423ac00af4dd95a5aeb27207e2c0d9b7118702149bf4704c3ddb55bb7429/nvidia_cublas-13.1.0.3-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:ee8722c1f0145ab246bccb9e452153b5e0515fd094c3678df50b2a0888b8b171", size = 423133236, upload-time = "2025-10-09T08:59:32.536Z" },
     { url = "https://files.pythonhosted.org/packages/10/f5/f50bc3f5c2bb57ab8f5b4d78bc1146b57810d42cb8fcb28cbe2e14050376/nvidia_cublas-13.1.0.3-py3-none-win_amd64.whl", hash = "sha256:2a3b94a37def342471c59fad7856caee4926809a72dd5270155d6a31b5b277be", size = 404355960, upload-time = "2025-10-09T09:07:00.987Z" },
-]
-
-[[package]]
-name = "nvidia-cublas"
-version = "13.4.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cuda-nvrtc", version = "13.2.78", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version >= '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'darwin' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/d0/4e327087b6026a15d83b31ee1268fa16292e3bb71fb402bbe017bf6649ac/nvidia_cublas-13.4.1.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:6351d2d921527479d6d5002e620fe1971d3e10c730b544c02a36d65301efb00d", size = 513048233, upload-time = "2026-04-28T21:25:23.612Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/79/0cefdaa1d9e45018a227bac64a79b92d2733cde28a8fd09c65362de08622/nvidia_cublas-13.4.1.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:28c983c8c03aa9a2d7b36cddcef2bfeeea85e13241d77df7622665502159f347", size = 404870806, upload-time = "2026-04-28T21:25:06.483Z" },
 ]
 
 [[package]]
@@ -5110,28 +5090,10 @@ wheels = [
 name = "nvidia-cuda-nvrtc"
 version = "13.0.88"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.11.*' and sys_platform != 'darwin' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version == '3.11.*' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version == '3.11.*' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version < '3.11' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/68/483a78f5e8f31b08fb1bb671559968c0ca3a065ac7acabfc7cee55214fd6/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:ad9b6d2ead2435f11cbb6868809d2adeeee302e9bb94bcf0539c7a40d80e8575", size = 90215200, upload-time = "2025-09-04T08:28:44.204Z" },
     { url = "https://files.pythonhosted.org/packages/b7/dc/6bb80850e0b7edd6588d560758f17e0550893a1feaf436807d64d2da040f/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d27f20a0ca67a4bb34268a5e951033496c5b74870b868bacd046b1b8e0c3267b", size = 43015449, upload-time = "2025-09-04T08:28:20.239Z" },
     { url = "https://files.pythonhosted.org/packages/4a/af/345fedb9f4c76c84ab4fa445b36bd4048a4d9db60e6bc76b4f913ff4b852/nvidia_cuda_nvrtc-13.0.88-py3-none-win_amd64.whl", hash = "sha256:6bcd4e7f8e205cbe644f5a98f2f799bef9556fefc89dd786e79a16312ce49872", size = 76807835, upload-time = "2025-09-04T08:39:15.274Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-nvrtc"
-version = "13.2.78"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/96/237b40b171e06eb65905375c4ad5c96f78c2f861ac6e8ae7f650d95e1dfd/nvidia_cuda_nvrtc-13.2.78-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:a9049031da08cbedd0c20e3470e5a978dc330af0e0326b3b05774718c665dc3e", size = 47019062, upload-time = "2026-04-13T09:45:33.875Z" },
-    { url = "https://files.pythonhosted.org/packages/af/be/8476aa006686fb264d61de43e0408a8dbd001003a702574759b25e645587/nvidia_cuda_nvrtc-13.2.78-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a50367a7e2a0bd00fb27e5648179149cc7a60e7c7811740a5ff559f06234526d", size = 44754755, upload-time = "2026-04-13T09:44:58.919Z" },
-    { url = "https://files.pythonhosted.org/packages/48/35/41b84ff9b4a9acc42590be44e69f32fc867a57d7018e87c532019d627f17/nvidia_cuda_nvrtc-13.2.78-py3-none-win_amd64.whl", hash = "sha256:46aff2df5615c408f23fb968a75e5641060f89fa611a85af51a387dff9bf375b", size = 40817783, upload-time = "2026-04-13T10:06:31.711Z" },
 ]
 
 [[package]]
@@ -5182,8 +5144,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.19.0.56"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", version = "13.1.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "nvidia-cublas", version = "13.4.1.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version >= '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'darwin' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cublas", marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/84/26025437c1e6b61a707442184fa0c03d083b661adf3a3eecfd6d21677740/nvidia_cudnn_cu13-9.19.0.56-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:6ed29ffaee1176c612daf442e4dd6cfeb6a0caa43ddcbeb59da94953030b1be4", size = 433781201, upload-time = "2026-02-03T20:40:53.805Z" },
@@ -5282,7 +5243,7 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", version = "13.1.0.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cublas", marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "nvidia-cusparse", marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "nvidia-nvjitlink", marker = "(python_full_version < '3.12' and sys_platform != 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
@@ -5959,9 +5920,9 @@ llamacpp = [
     { name = "numba", version = "0.65.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 mlxlm = [
-    { name = "datasets", marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "mlx", marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "mlx-lm", marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "datasets", marker = "(python_full_version < '3.12' and sys_platform == 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "mlx", marker = "(python_full_version < '3.12' and sys_platform == 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "mlx-lm", marker = "(python_full_version < '3.12' and sys_platform == 'darwin') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sglang = [
     { name = "openai", marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
@@ -7433,7 +7394,7 @@ requires-dist = [
     { name = "outlines", extras = ["transformers"], marker = "(python_full_version < '3.14' and platform_machine != 'x86_64' and extra == 'outlines-transformers') or (python_full_version < '3.14' and sys_platform != 'darwin' and extra == 'outlines-transformers')", specifier = ">=1.0.0,<1.3.0" },
     { name = "pillow", marker = "python_full_version < '3.14' and extra == 'outlines-sglang'", specifier = ">=12.2.0" },
     { name = "pillow", marker = "python_full_version < '3.14' and extra == 'outlines-transformers'", specifier = ">=12.2.0" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.6.28" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.4.21" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
