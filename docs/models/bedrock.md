@@ -88,6 +88,23 @@ The unified field maps as follows for Bedrock:
 
 To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity reservation), set [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] directly — it isn't reachable through the unified field.
 
+## Structured output and strict tools
+
+Bedrock supports Pydantic AI's [`NativeOutput`][pydantic_ai.output.NativeOutput] mode for models that support AWS Bedrock [structured output](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html). For these models, Pydantic AI sends the output JSON schema to Bedrock so the model is required to return schema-compliant JSON text instead of using the default [tool output](../output.md#tool-output) mode.
+
+The same Bedrock model families also support [strict tool definitions](../tools-advanced.md#prepare-tools). When a tool is marked `strict=True`, Pydantic AI transforms its JSON schema to the subset accepted by Bedrock and strips schema keywords Bedrock rejects in strict mode.
+
+| Model family | Structured output and strict tool support |
+| --- | --- |
+| Anthropic Claude on Bedrock | Claude models that support structured output, except Bedrock models not listed by AWS as structured-output capable |
+| Mistral | `magistral-small`, `ministral-3`, `mistral-large-3`, `voxtral` |
+| Qwen | `qwen3` |
+| Google Gemma | `gemma-3-12b-it`, `gemma-3-27b-it` |
+| MiniMax | `minimax-m2` |
+| NVIDIA | `nemotron-nano` |
+
+For other Bedrock models, use the default [tool output](../output.md#tool-output) mode for structured data, and leave tool definitions non-strict.
+
 ## Prompt Caching
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:

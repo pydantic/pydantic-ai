@@ -261,6 +261,9 @@ To modify output tools, you can set a `prepare_output_tools` function instead.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
+!!! note "Provider support"
+    Strict tool definitions are model-dependent. In addition to compatible OpenAI models, selected Bedrock model families support strict tool definitions; see [Bedrock structured output and strict tools](models/bedrock.md#structured-output-and-strict-tools) for the current Bedrock support notes.
+
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
 
