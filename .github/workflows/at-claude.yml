@@ -91,6 +91,12 @@ jobs:
     if: needs.get-pr-info.outputs.is_fork == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Required-reviewer environment gates execution of fork PR code in this
+    # privileged context. Mitigates CodeQL `actions/untrusted-checkout/high` +
+    # `actions/untrusted-checkout-toctou/high`: a maintainer must approve each
+    # run before the fork's `pr_head_sha` is checked out and exposed to the
+    # `claude-code-action` step.
+    environment: claude-fork-review
     permissions:
       contents: write
       pull-requests: write
