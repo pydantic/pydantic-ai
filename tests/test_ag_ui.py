@@ -1488,7 +1488,7 @@ def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> No
     assert messages == snapshot(
         [
             ModelResponse(
-                parts=[ThinkingPart(content='Thinking...'), TextPart(content='Done')],
+                parts=[ThinkingPart(content='Thinking...', id='r-1'), TextPart(content='Done')],
                 timestamp=IsDatetime(),
             )
         ]
@@ -1571,6 +1571,30 @@ def test_dump_load_roundtrip_thinking() -> None:
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
+
+
+def test_dump_load_roundtrip_thinking_none_id() -> None:
+    """Test round-trip preserves generated ID when original ThinkingPart.id is None."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think...'),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    response = reloaded[1]
+    assert isinstance(response, ModelResponse)
+    thinking = response.parts[0]
+    assert isinstance(thinking, ThinkingPart)
+    assert thinking.content == 'Let me think...'
+    assert thinking.id is not None, 'ThinkingPart.id should be preserved from ReasoningMessage.id after round-trip'
 
 
 def test_dump_load_roundtrip_tools() -> None:
@@ -1984,6 +2008,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
                 parts=[
                     ThinkingPart(
                         content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
+                        id=IsStr(),
                         signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
                         provider_name='anthropic',
                     ),
