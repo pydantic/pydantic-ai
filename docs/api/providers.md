@@ -40,6 +40,8 @@
 
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
+::: pydantic_ai.providers.orcarouter.OrcaRouterProvider
+
 ::: pydantic_ai.providers.vercel.VercelProvider
 
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider

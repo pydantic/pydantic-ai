@@ -579,6 +579,36 @@ agent = Agent(model)
 ...
 ```
 
+### OrcaRouter
+
+To use [OrcaRouter](https://orcarouter.ai), first create an API key in the OrcaRouter dashboard.
+
+You can set the `ORCAROUTER_API_KEY` environment variable and use [`OrcaRouterProvider`][pydantic_ai.providers.orcarouter.OrcaRouterProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('orcarouter:openai/gpt-4o-mini')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.orcarouter import OrcaRouterProvider
+
+model = OpenAIChatModel(
+    'openai/gpt-4o-mini',
+    provider=OrcaRouterProvider(api_key='your-orcarouter-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+You can look up the model identifiers OrcaRouter exposes via `https://api.orcarouter.ai/v1/models`.
+
 ### MoonshotAI
 
 Create an API key in the [Moonshot Console](https://platform.moonshot.ai/console).

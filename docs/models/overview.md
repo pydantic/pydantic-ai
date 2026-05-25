@@ -28,6 +28,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
 - [Ollama](openai.md#ollama)
+- [OrcaRouter](openai.md#orcarouter)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
 - [SambaNova](openai.md#sambanova)

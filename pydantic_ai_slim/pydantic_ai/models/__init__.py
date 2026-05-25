@@ -563,6 +563,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'nebius',
         'ollama',
         'openrouter',
+        'orcarouter',
         'ovhcloud',
         'sambanova',
         'together',
