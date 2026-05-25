@@ -71,6 +71,7 @@ safe-outputs:
     # and the schedule together if you change run frequency.
 timeout-minutes: 60
 imports:
+  - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
 pre-steps:
