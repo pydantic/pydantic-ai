@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -44,6 +44,7 @@ with try_import() as imports_successful:
     from fastmcp.server import FastMCP
     from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
+    from mcp.shared.exceptions import McpError
     from mcp.types import (
         BlobResourceContents,
         EmbeddedResource,
@@ -61,6 +62,8 @@ with try_import() as imports_successful:
         PromptResult,
         ResourceAnnotations,
         ResourceTemplate,
+        ServerCapabilities,
+        _build_message_handler,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
@@ -550,8 +553,6 @@ class TestMCPToolsetIntegration:
             assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
@@ -568,16 +569,10 @@ class TestMCPToolsetIntegration:
         list without round-tripping to the server."""
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            from pydantic_ai.mcp import ServerCapabilities
-
             toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_prompts() == []
 
     async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
-        from unittest.mock import AsyncMock
-
-        from mcp.shared.exceptions import McpError
-
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             toolset.client.list_prompts = AsyncMock(
@@ -593,8 +588,6 @@ class TestMCPToolsetIntegration:
                 await toolset.get_prompt('does_not_exist')
 
     async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
@@ -610,8 +603,6 @@ class TestMCPToolsetIntegration:
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
@@ -622,8 +613,6 @@ class TestMCPToolsetIntegration:
     async def test_message_handler_invalidates_caches(
         self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
     ):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]

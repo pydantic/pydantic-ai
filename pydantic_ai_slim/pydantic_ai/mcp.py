@@ -183,7 +183,7 @@ class MCPError(RuntimeError):
 class ResourceAnnotations:
     """Additional properties describing MCP entities.
 
-    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#annotations).
     """
 
     audience: list[mcp_types.Role] | None = None
@@ -207,6 +207,8 @@ class ResourceAnnotations:
         return cls(
             audience=mcp_annotations.audience,
             priority=mcp_annotations.priority,
+            # `lastModified` is in the 2025-11-25 spec on `Annotations` but absent from `mcp` v1.25.0;
+            # read defensively so we pick it up as soon as the SDK catches up.
             last_modified=getattr(mcp_annotations, 'lastModified', None),
         )
 
@@ -259,7 +261,7 @@ class BaseResource(ABC):
 class Resource(BaseResource):
     """A resource that can be read from an MCP server.
 
-    See the [resources in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    See the [resources in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
     """
 
     uri: str
@@ -296,7 +298,7 @@ class Resource(BaseResource):
 class ResourceTemplate(BaseResource):
     """A template for parameterized resources on an MCP server.
 
-    See the [resource templates in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-templates).
+    See the [resource templates in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resource-templates).
     """
 
     uri_template: str
@@ -329,13 +331,13 @@ class ResourceTemplate(BaseResource):
 class ResourceLink:
     """A resource link referenced in a prompt or tool call result.
 
-    Unlike :class:`EmbeddedResource`, this does not include the resource content directly —
-    it is a reference to a resource that the server can read.
+    Unlike [`EmbeddedResource`][pydantic_ai.mcp.EmbeddedResource], this does not include the resource
+    content directly — it is a reference to a resource that the server can read.
 
     Note: resource links returned by tools are not guaranteed to appear in the results of
     `resources/list` requests.
 
-    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
     """
 
     uri: str
@@ -371,23 +373,23 @@ class ResourceLink:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     @classmethod
-    def from_mcp_sdk(cls, mcp_resource: mcp_types.ResourceLink) -> ResourceLink:
+    def from_mcp_sdk(cls, mcp_resource_link: mcp_types.ResourceLink) -> ResourceLink:
         """Convert from MCP SDK ResourceLink to PydanticAI ResourceLink."""
         return cls(
             type='resource_link',
-            uri=str(mcp_resource.uri),
-            name=mcp_resource.name,
-            title=mcp_resource.title,
-            description=mcp_resource.description,
-            mime_type=mcp_resource.mimeType,
-            size=mcp_resource.size,
-            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
-            if mcp_resource.annotations
+            uri=str(mcp_resource_link.uri),
+            name=mcp_resource_link.name,
+            title=mcp_resource_link.title,
+            description=mcp_resource_link.description,
+            mime_type=mcp_resource_link.mimeType,
+            size=mcp_resource_link.size,
+            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource_link.annotations)
+            if mcp_resource_link.annotations
             else None,
-            icons=[Icon(src=icon.src, mime_type=icon.mimeType, sizes=icon.sizes) for icon in mcp_resource.icons]
-            if mcp_resource.icons
+            icons=[Icon(src=icon.src, mime_type=icon.mimeType, sizes=icon.sizes) for icon in mcp_resource_link.icons]
+            if mcp_resource_link.icons
             else None,
-            metadata=mcp_resource.meta,
+            metadata=mcp_resource_link.meta,
         )
 
 
@@ -397,10 +399,13 @@ class PromptArgument:
 
     name: str
     """The name of the argument."""
+
     title: str | None = None
     """Human-readable title for the argument."""
+
     description: str | None = None
     """A human-readable description of the argument."""
+
     required: bool | None = None
     """Whether the argument is required or optional. If not specified, the server may determine this based on context."""
 
@@ -428,7 +433,7 @@ class Prompt:
 
     metadata: dict[str, Any] | None = None
     """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
     for notes on _meta usage.
     """
 
@@ -448,6 +453,8 @@ class Prompt:
             arguments=[
                 PromptArgument(
                     name=arg.name,
+                    # `title` is in the 2025-11-25 spec on `PromptArgument` (via `BaseMetadata`)
+                    # but absent from `mcp` v1.25.0; read defensively until the SDK catches up.
                     title=getattr(arg, 'title', None),
                     description=arg.description,
                     required=arg.required,
@@ -477,10 +484,10 @@ PromptRole = Literal['user', 'assistant']
 class EmbeddedResource:
     """A resource embedded into a prompt or tool call result.
 
-    Contains the actual resource content alongside its metadata, unlike :class:`ResourceLink`
-    which is only a reference.
+    Contains the actual resource content alongside its metadata, unlike
+    [`ResourceLink`][pydantic_ai.mcp.ResourceLink] which is only a reference.
 
-    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
     """
 
     uri: str
@@ -500,7 +507,7 @@ class EmbeddedResource:
 
     metadata: dict[str, Any] | None = None
     """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
     for notes on _meta usage.
     """
 
@@ -551,7 +558,7 @@ class PromptResult:
 
     metadata: dict[str, Any] | None = None
     """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
     for notes on _meta usage.
     """
 
@@ -806,10 +813,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        *,
         cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        *,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
         id: str | None = None,
@@ -946,8 +953,19 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.prompts:
                 return []
             try:
-                result = await self._get_client().list_prompts()
-                prompts = [Prompt.from_mcp_sdk(p) for p in result.prompts]
+                # Follow `nextCursor` until the server stops handing one back. The pre-existing
+                # `list_tools` / `list_resources` on this class do not paginate yet; tracked as a
+                # follow-up so all three list methods behave the same.
+                # See https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/pagination
+                client = self._get_client()
+                prompts: list[Prompt] = []
+                cursor: str | None = None
+                while True:
+                    result = await client.list_prompts(params=mcp_types.PaginatedRequestParams(cursor=cursor))
+                    prompts.extend(Prompt.from_mcp_sdk(p) for p in result.prompts)
+                    if result.nextCursor is None:
+                        break
+                    cursor = result.nextCursor
                 if self.cache_prompts:
                     self._cached_prompts = prompts
                 return prompts
@@ -977,8 +995,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 description=result.description,
                 metadata=result.meta,
                 messages=[
-                    PromptMessage(role=msg.role, content=self._map_prompt_content(msg.content))
-                    for msg in result.messages
+                    PromptMessage(role=msg.role, content=_map_mcp_prompt_part(msg.content)) for msg in result.messages
                 ],
             )
 
@@ -1176,9 +1193,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise MCPError.from_mcp_sdk(e) from e
 
         return (
-            self._get_content(result.contents[0])
+            _resource_content_to_pai(result.contents[0])
             if len(result.contents) == 1
-            else [self._get_content(resource) for resource in result.contents]
+            else [_resource_content_to_pai(resource) for resource in result.contents]
         )
 
     def _get_client(self) -> ClientSession:
@@ -1357,76 +1374,16 @@ class MCPServer(AbstractToolset[Any], ABC):
             elif isinstance(message.root, mcp_types.PromptListChangedNotification):
                 self._cached_prompts = None
 
-    def _mcp_part_metadata(
-        self, part: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent
-    ) -> dict[str, Any] | None:
-        metadata: dict[str, Any] = {}
-        if part.annotations:
-            metadata['mcp_annotations'] = ResourceAnnotations.from_mcp_sdk(part.annotations)
-        if part.meta:
-            metadata['mcp_meta'] = part.meta
-        return metadata or None
-
-    def _map_binary_content(self, part: mcp_types.ImageContent | mcp_types.AudioContent) -> messages.BinaryContent:
-        data = base64.b64decode(part.data)
-        vendor_metadata = self._mcp_part_metadata(part)
-        if isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryImage(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
-        return messages.BinaryContent(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
-
-    def _map_tool_result_text(self, part: mcp_types.TextContent) -> str | dict[str, Any] | list[Any]:
-        text = part.text
-        if text.startswith(('[', '{')):
-            try:
-                return pydantic_core.from_json(text)
-            except ValueError:
-                pass
-        return text
-
-    def _map_prompt_content(self, part: mcp_types.ContentBlock) -> ContentBlock:
-        if isinstance(part, mcp_types.TextContent):
-            return messages.TextContent(content=part.text, metadata=self._mcp_part_metadata(part))
-        elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
-            return self._map_binary_content(part)
-        elif isinstance(part, mcp_types.EmbeddedResource):
-            return EmbeddedResource.from_mcp_sdk(part, self._get_content(part.resource))
-        elif isinstance(part, mcp_types.ResourceLink):
-            return ResourceLink.from_mcp_sdk(part)
-        else:
-            assert_never(part)
-
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
-
-        if isinstance(part, mcp_types.TextContent):
-            return self._map_tool_result_text(part)
-        elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
-            # NOTE: The FastMCP server doesn't support audio content.
-            # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
-            return self._map_binary_content(part)
-        elif isinstance(part, mcp_types.EmbeddedResource):
-            resource = part.resource
-            return self._get_content(resource)
-        elif isinstance(part, mcp_types.ResourceLink):
+        # The only path that differs from the module-level `_map_mcp_tool_result` is `ResourceLink`:
+        # here we have a live session and can read the resource; the module-level helper used by
+        # `MCPToolset` is sync, so it returns the URI as a string. All other branches share logic.
+        if isinstance(part, mcp_types.ResourceLink):
             return await self.read_resource(str(part.uri))
-        else:
-            assert_never(part)
-
-    def _get_content(
-        self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> str | messages.BinaryContent:
-        if isinstance(resource, mcp_types.TextResourceContents):
-            return resource.text
-        elif isinstance(resource, mcp_types.BlobResourceContents):
-            return messages.BinaryContent.narrow_type(
-                messages.BinaryContent(
-                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
-                )
-            )
-        else:
-            assert_never(resource)
+        return _map_mcp_tool_result(part)
 
     def __eq__(self, value: object, /) -> bool:
         return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
@@ -1565,9 +1522,9 @@ class MCPServerStdio(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
-            cache_prompts,
-            cache_tools,
-            cache_resources,
+            cache_prompts=cache_prompts,
+            cache_tools=cache_tools,
+            cache_resources=cache_resources,
             id=id,
             include_instructions=include_instructions,
             include_return_schema=include_return_schema,
@@ -2845,6 +2802,10 @@ def _map_mcp_tool_results(
 
 
 def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
+    # Tool results don't preserve MCP annotations/`_meta` onto `BinaryContent.vendor_metadata`;
+    # only `_map_mcp_prompt_part` does that via `_map_mcp_binary_content`. The PR that added prompts
+    # made this asymmetric on purpose (tool returns flow to the model; prompt content flows to the
+    # user). Revisit if a future PR decides tool returns should also surface MCP annotations.
     if isinstance(part, mcp_types.TextContent):
         text = part.text
         if text.startswith(('[', '{')):

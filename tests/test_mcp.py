@@ -55,6 +55,8 @@ with try_import() as imports_successful:
         ElicitResult,
         ImageContent,
         Implementation,
+        PromptListChangedNotification,
+        ServerNotification,
         TextContent as McpTextContent,
         ToolUseContent,
     )
@@ -62,6 +64,7 @@ with try_import() as imports_successful:
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
     from pydantic_ai.mcp import (
         CallToolFunc,
+        EmbeddedResource,
         MCPError,
         MCPServerSSE,
         MCPServerStdio,
@@ -72,6 +75,7 @@ with try_import() as imports_successful:
         PromptResult,
         Resource,
         ResourceAnnotations,
+        ResourceLink,
         ResourceTemplate,
         ServerCapabilities,
         ToolResult,
@@ -2928,10 +2932,9 @@ async def test_list_prompts() -> None:
 
 
 async def test_get_prompt() -> None:
-    """Test get_prompt() retrieves specific prompts and handles errors."""
+    """Test get_prompt() retrieves simple and parameterized prompts and surfaces errors."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # Test simple prompt (no parameters)
         result = await server.get_prompt('simple_prompt')
         assert result == snapshot(
             PromptResult(
@@ -2940,7 +2943,6 @@ async def test_get_prompt() -> None:
             )
         )
 
-        # Test parameterized prompt with arguments
         result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
         assert result == snapshot(
             PromptResult(
@@ -2949,7 +2951,6 @@ async def test_get_prompt() -> None:
             )
         )
 
-        # Test error handling for nonexistent prompt
         with pytest.raises(MCPError, match='Unknown prompt'):
             await server.get_prompt('nonexistent_prompt')
 
@@ -2960,11 +2961,9 @@ async def test_prompts_no_caching_when_disabled() -> None:
     async with server:
         assert server.capabilities.prompts
 
-        # First call - should not populate cache
         prompts1 = await server.list_prompts()
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
-        # Second call - cache should still be None
         prompts2 = await server.list_prompts()
         assert prompts2 == prompts1
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
@@ -2972,21 +2971,16 @@ async def test_prompts_no_caching_when_disabled() -> None:
 
 async def test_prompts_cache_invalidation_on_notification() -> None:
     """Test that prompts cache is invalidated when PromptListChangedNotification is received."""
-    from mcp.types import PromptListChangedNotification, ServerNotification
-
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         assert server.capabilities.prompts
 
-        # Populate cache
         await server.list_prompts()
         assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
 
-        # Simulate receiving a prompt list changed notification
         notification = ServerNotification(PromptListChangedNotification())
         await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
 
-        # Cache should be invalidated
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
 
@@ -3020,8 +3014,6 @@ async def test_map_prompt_content() -> None:
     TextContent without annotations is already covered by test_get_prompt via
     simple_prompt/parameterized_prompt, so only annotated text is tested here.
     """
-    from pydantic_ai.mcp import EmbeddedResource, ResourceAnnotations, ResourceLink
-
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         # TextContent with annotations preserved in metadata
