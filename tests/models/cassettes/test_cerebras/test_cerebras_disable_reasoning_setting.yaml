@@ -19,7 +19,7 @@ interactions:
       messages:
       - content: What is 2 + 2?
         role: user
-      model: zai-glm-4.6
+      model: zai-glm-4.7
       stream: false
     uri: https://api.cerebras.ai/v1/chat/completions
   response:
@@ -51,7 +51,7 @@ interactions:
           role: assistant
       created: 1764196889
       id: chatcmpl-e85aab65-95fd-46d8-ab18-07e585698feb
-      model: zai-glm-4.6
+      model: zai-glm-4.7
       object: chat.completion
       system_fingerprint: fp_9eaa76d40d229969234d
       time_info:

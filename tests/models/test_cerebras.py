@@ -35,12 +35,12 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
 
 
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str):
-    """Test that cerebras_disable_reasoning setting is properly transformed to extra_body.
+    """Test that cerebras_disable_reasoning setting is properly transformed to reasoning_effort.
 
-    Note: disable_reasoning is only supported on reasoning models: zai-glm-4.6 and gpt-oss-120b.
+    Note: disable_reasoning is only supported on reasoning models: zai-glm-4.7 and gpt-oss-120b.
     """
     provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('zai-glm-4.6', provider=provider)
+    model = CerebrasModel('zai-glm-4.7', provider=provider)
 
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
@@ -55,19 +55,17 @@ async def test_cerebras_settings_transformation():
 
     params = ModelRequestParameters()
 
-    # Test with disable_reasoning
+    # Test with disable_reasoning → maps to reasoning_effort='none'
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     transformed = _cerebras_settings_to_openai_settings(settings, params)
-    extra_body = cast(dict[str, Any], transformed.get('extra_body', {}))
-    assert extra_body.get('disable_reasoning') is True
+    assert transformed.get('openai_reasoning_effort') == 'none'
 
-    # Test without disable_reasoning (should not have extra_body)
+    # Test without disable_reasoning (should not set reasoning_effort)
     settings_empty = CerebrasModelSettings()
     transformed_empty = _cerebras_settings_to_openai_settings(settings_empty, params)
-    assert transformed_empty.get('extra_body') is None
+    assert transformed_empty.get('openai_reasoning_effort') is None
 
-    # Test with disable_reasoning=False
+    # Test with disable_reasoning=False → maps to reasoning_effort='low'
     settings_false = CerebrasModelSettings(cerebras_disable_reasoning=False)
     transformed_false = _cerebras_settings_to_openai_settings(settings_false, params)
-    extra_body_false = cast(dict[str, Any], transformed_false.get('extra_body', {}))
-    assert extra_body_false.get('disable_reasoning') is False
+    assert transformed_false.get('openai_reasoning_effort') == 'low'

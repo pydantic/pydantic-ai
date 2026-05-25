@@ -48,7 +48,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'zai': zai_model_profile,
         }
 
-        # Reasoning models that support the cerebras_disable_reasoning setting
+        # Reasoning models that support reasoning_effort
         reasoning_prefixes = ('zai', 'gpt-oss')
 
         profile = None
@@ -70,11 +70,19 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
+
+        thinking_profile: ModelProfile | None = None
+        if is_reasoning:
+            # GLM (zai) and Qwen models return thinking in `<think>` tags by default on Cerebras.
+            # We need to set `openai_chat_send_back_thinking_parts='tags'` so that
+            # thinking content is sent back in multi-turn conversations (not silently stripped).
+            thinking_profile = OpenAIModelProfile(openai_chat_send_back_thinking_parts='tags')
+
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
             supports_thinking=is_reasoning,
-        ).update(profile)
+        ).update(profile).update(thinking_profile)
 
     @overload
     def __init__(self) -> None: ...

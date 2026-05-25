@@ -30,7 +30,7 @@ LatestCerebrasModelNames = Literal[
     'llama3.1-8b',
     'qwen-3-235b-a22b-instruct-2507',
     'qwen-3-32b',
-    'zai-glm-4.6',
+    'zai-glm-4.7',
 ]
 
 CerebrasModelName = str | LatestCerebrasModelNames
@@ -52,7 +52,11 @@ class CerebrasModelSettings(ModelSettings, total=False):
     cerebras_disable_reasoning: bool
     """Disable reasoning for the model.
 
-    This setting is only supported on reasoning models: `zai-glm-4.6` and `gpt-oss-120b`.
+    This setting is only supported on reasoning models: `zai-glm-4.7` and `gpt-oss-120b`.
+
+    .. deprecated::
+        Cerebras has deprecated the ``disable_reasoning`` parameter in favor of ``reasoning_effort``.
+        This setting is mapped to ``openai_reasoning_effort='none'`` when enabled.
 
     See [the Cerebras docs](https://inference-docs.cerebras.ai/resources/openai#passing-non-standard-parameters) for more details.
     """
@@ -91,11 +95,11 @@ class CerebrasModel(OpenAIChatModel):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> Any:
-        """Cerebras handles reasoning via extra_body['disable_reasoning'], not reasoning_effort."""
+        """Cerebras handles reasoning via reasoning_effort, not openai_reasoning_effort."""
         from openai import omit
 
         # Only pass through explicit openai_reasoning_effort if set; unified thinking
-        # is handled in _cerebras_settings_to_openai_settings via disable_reasoning.
+        # is handled in _cerebras_settings_to_openai_settings via reasoning_effort.
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
         return omit
@@ -125,16 +129,15 @@ def _cerebras_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
-
     if (disable_reasoning := model_settings.pop('cerebras_disable_reasoning', None)) is not None:
-        extra_body['disable_reasoning'] = disable_reasoning
+        # Map deprecated `disable_reasoning` to `reasoning_effort` for backward compatibility
+        if disable_reasoning:
+            model_settings['openai_reasoning_effort'] = 'none'
+        else:
+            model_settings.setdefault('openai_reasoning_effort', 'low')
     elif model_request_parameters.thinking is False:
-        extra_body['disable_reasoning'] = True
+        model_settings['openai_reasoning_effort'] = 'none'
     elif model_request_parameters.thinking:
-        extra_body['disable_reasoning'] = False
-
-    if extra_body:
-        model_settings['extra_body'] = extra_body
+        model_settings.setdefault('openai_reasoning_effort', 'low')
 
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
