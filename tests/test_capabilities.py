@@ -5797,7 +5797,7 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+        with pytest.warns(UserWarning, match=r'this hides all tool definitions passed to it for this step'):
             result = await agent.run('hello')
         assert result.output == 'tools: []'
 
@@ -5966,7 +5966,7 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+        with pytest.warns(UserWarning, match=r'this hides all tool definitions passed to it for this step'):
             result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 

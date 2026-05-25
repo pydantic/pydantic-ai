@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import inspect
-import warnings
 from dataclasses import dataclass, replace
 
 from .._run_context import AgentDepsT, RunContext
+from .._warnings import warn_on_prepare_callback_returned_none
 from ..exceptions import UserError
 from ..tools import ToolsPrepareFunc
 from .abstract import ToolsetTool
@@ -27,14 +27,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(result):
             result = await result
         if result is None:
-            prepare_func_name = getattr(self.prepare_func, '__name__', self.prepare_func)
-            warnings.warn(
-                f'prepare callback {prepare_func_name!r} returned `None`, '
-                'this disables all tools for this step. Return `[]` for an explicit empty '
-                'tool list, or `tool_defs` to pass the definitions through unchanged.',
-                UserWarning,
-                stacklevel=2,
-            )
+            warn_on_prepare_callback_returned_none(self.prepare_func)
         prepared_tool_defs_by_name = {tool_def.name: tool_def for tool_def in (result or [])}
 
         if len(prepared_tool_defs_by_name.keys() - original_tools.keys()) > 0:

@@ -951,8 +951,9 @@ def consume_deprecated_prepare_tools_as_capabilities(
     """Pop a deprecated `prepare_tools=` kwarg, warn, and return a `PrepareTools` capability wrapper.
 
     Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
-    if no legacy kwarg was passed. The warning also reminds users that `prepare_tools` runs only
-    on function tools — to prepare output tools, they should pair it with `PrepareOutputTools`.
+    if no legacy kwarg was passed or it was explicitly set to `None`. The warning reminds users
+    to omit `prepare_tools` when no callback is needed, and that `prepare_tools` runs only on
+    function tools — to prepare output tools, they should pair it with `PrepareOutputTools`.
     """
     if 'prepare_tools' not in deprecated_kwargs:
         return []
@@ -964,12 +965,16 @@ def consume_deprecated_prepare_tools_as_capabilities(
 
     warnings.warn(
         f'`{owner}(prepare_tools=...)` is deprecated and will be removed in v2.0. '
-        'Use `capabilities=[PrepareTools(prepare_tools)]` instead. '
+        'Use `capabilities=[PrepareTools(prepare_tools)]` instead, or omit `prepare_tools` '
+        'when no callback is needed. '
         'Note: `prepare_tools` runs only on function tools — to prepare output tools, '
         'also pass `PrepareOutputTools(prepare_output_tools)` in `capabilities=[...]`.',
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
+    if legacy is None:
+        return []
+
     return [PrepareTools(legacy)]
 
 
@@ -982,7 +987,8 @@ def consume_deprecated_prepare_output_tools_as_capabilities(
     """Pop a deprecated `prepare_output_tools=` kwarg, warn, and return a `PrepareOutputTools` capability wrapper.
 
     Returns a single-element list to merge into the caller's `capabilities=`, or an empty list
-    if no legacy kwarg was passed.
+    if no legacy kwarg was passed or it was explicitly set to `None`. The warning reminds users
+    to omit `prepare_output_tools` when no callback is needed.
     """
     if 'prepare_output_tools' not in deprecated_kwargs:
         return []
@@ -994,10 +1000,14 @@ def consume_deprecated_prepare_output_tools_as_capabilities(
 
     warnings.warn(
         f'`{owner}(prepare_output_tools=...)` is deprecated and will be removed in v2.0. '
-        'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead.',
+        'Use `capabilities=[PrepareOutputTools(prepare_output_tools)]` instead, or omit '
+        '`prepare_output_tools` when no callback is needed.',
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
+    if legacy is None:
+        return []
+
     return [PrepareOutputTools(legacy)]
 
 

@@ -380,7 +380,7 @@ async def test_prepared_toolset_warns_on_none_return():
 
     prepared_toolset = PreparedToolset(base_toolset, returns_none)
 
-    with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+    with pytest.warns(UserWarning, match=r'this hides all tool definitions passed to it for this step'):
         result = await prepared_toolset.get_tools(context)
     assert result == {}
 

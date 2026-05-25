@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import inspect
-import warnings
 from dataclasses import dataclass
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._warnings import warn_on_prepare_callback_returned_none
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
 from .abstract import AbstractCapability
@@ -96,16 +96,5 @@ async def _call_prepare_func(
     if inspect.isawaitable(result):
         result = await result
     if result is None:
-        # Mirror of the same `None`-return guard in `PreparedToolset.get_tools`: this is the
-        # capability-layer entrypoint (Agent kwarg / PrepareTools / PrepareOutputTools), the
-        # other covers direct `PreparedToolset(...)` and `toolset.prepared(...)` usage. Keep
-        # the two in lockstep — change here, change there.
-        prepare_func_name = getattr(prepare_func, '__name__', prepare_func)
-        warnings.warn(
-            f'prepare callback {prepare_func_name!r} returned `None`, '
-            'this disables all tools for this step. Return `[]` for an explicit empty '
-            'tool list, or `tool_defs` to pass the definitions through unchanged.',
-            UserWarning,
-            stacklevel=2,
-        )
+        warn_on_prepare_callback_returned_none(prepare_func)
     return list(result or [])

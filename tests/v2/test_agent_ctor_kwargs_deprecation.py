@@ -12,6 +12,7 @@ so it's intentionally excluded.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
@@ -116,6 +117,26 @@ async def test_prepare_tools_kwarg_warning_mentions_function_tools_only_rescopin
         Agent(_make_model(), prepare_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
 
 
+async def test_prepare_tools_none_kwarg_matches_omitted_kwarg():
+    """`prepare_tools=None` is the outer "no callback" sentinel, not a callback returning `None`."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(content=f'tools: {tool_names}')])
+
+    def my_tool() -> str:
+        return 'result'  # pragma: no cover
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(prepare_tools=\.\.\.\)` is deprecated'):
+        agent = Agent(FunctionModel(model_function), tools=[my_tool], prepare_tools=None)  # pyright: ignore[reportCallIssue]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        result = await agent.run('hello')
+
+    assert result.output == "tools: ['my_tool']"
+
+
 async def test_prepare_tools_kwarg_remaps_to_capability():
     """The kwarg auto-injects a `PrepareTools` capability into the agent's capability list,
     and the prepare callback fires once during a run."""
@@ -172,6 +193,29 @@ async def test_prepare_output_tools_kwarg_warning_points_at_capability():
         PydanticAIDeprecationWarning, match=r'capabilities=\[PrepareOutputTools\(prepare_output_tools\)\]'
     ):
         Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
+
+
+async def test_prepare_output_tools_none_kwarg_matches_omitted_kwarg():
+    """`prepare_output_tools=None` is the outer "no callback" sentinel, not a callback returning `None`."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=f'output_tools: {len(info.output_tools)}')])
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Agent\(prepare_output_tools=\.\.\.\)` is deprecated',
+    ):
+        agent = Agent(  # pyright: ignore[reportCallIssue]
+            FunctionModel(model_function),
+            output_type=[str, ToolOutput(str, name='final_result')],
+            prepare_output_tools=None,
+        )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UserWarning)
+        result = await agent.run('hello')
+
+    assert result.output == 'output_tools: 1'
 
 
 async def test_prepare_output_tools_kwarg_remaps_to_capability():
