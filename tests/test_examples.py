@@ -6,7 +6,6 @@ import re
 import shutil
 import ssl
 import sys
-import zlib
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
@@ -63,8 +62,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
-# Keep docs examples parallel on CI without spawning one ruff process per xdist worker on high-core machines.
-_DOC_TEST_XDIST_GROUPS = 4
 
 
 @dataclass
@@ -100,8 +97,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if title.endswith('.py'):
                     code_examples[title] = ex
                 test_id += f':{title}'
-            group = zlib.crc32(test_id.encode()) % _DOC_TEST_XDIST_GROUPS
-            yield pytest.param(ex, id=test_id, marks=pytest.mark.xdist_group(name=f'doc_tests_{group}'))
+            yield pytest.param(ex, id=test_id)
 
 
 @pytest.fixture
@@ -132,6 +128,7 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
             pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
 
 
+@pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated',
     'ignore:`BuiltinToolResultEvent` is deprecated',
