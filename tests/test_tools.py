@@ -1535,9 +1535,7 @@ def test_tool_failed_parallel():
     result = agent.run_sync('Hello')
     assert result.output == 'Done.'
 
-    tool_returns = {
-        p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)
-    }
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
     assert tool_returns['call_ok'].outcome == 'success'
     assert tool_returns['call_ok'].content == 'ok'
     assert tool_returns['call_fail'].outcome == 'failed'
