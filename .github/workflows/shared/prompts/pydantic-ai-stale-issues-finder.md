@@ -31,12 +31,17 @@ deprecated/removed features**. Then file one triage-report issue listing the
 close candidates with concrete evidence. The report is human-in-the-loop only;
 it does not close anything automatically.
 
+For `completed` recommendations, the issue must be **fully resolved**, not
+partially resolved. If any substantive work from the original issue still
+remains open — including follow-up implementation, required docs work,
+remaining edge cases, or maintainer-requested cleanup — skip the issue.
+
 **Do NOT add labels, comment on issues, or close issues.** Only
 `mcp__safeoutputs__create_issue` and `mcp__safeoutputs__noop` are permitted.
 
 **The bar is high: only include issues where you are confident.** False
 positives waste maintainer time and erode trust. If you are unsure about an
-issue, skip it.
+issue, or if it looks only partially fixed, skip it.
 
 ---
 
@@ -159,12 +164,14 @@ categories:
 
 2. **Code evidence** — The specific bug, missing feature, or requested change
    described in the issue is verifiably addressed in the current codebase. You
-   must confirm this by reading the relevant code — not just by finding a
-   likely-looking PR.
+  must confirm this by reading the relevant code — not just by finding a
+  likely-looking PR. Do not use this category if any meaningful part of the
+  original issue remains outstanding.
 
 3. **Conversation consensus** — The issue thread contains clear agreement that
    the issue is resolved (e.g., the reporter confirmed the fix, a maintainer
-   said "this is done"), but nobody closed it.
+  said "this is done"), and there is no remaining follow-up work called out,
+  but nobody closed it.
 
 4. **Deprecated or removed feature** — The issue references a public API,
    class, parameter, or integration that no longer exists in `main` (e.g., a
@@ -182,6 +189,9 @@ categories:
 - Issues with activity in the last 14 days — someone is actively working on them
 - Issues labeled `epic`, `tracking`, `umbrella`, or `good first issue`
 - Issues where the resolution is ambiguous or you aren't confident
+- Issues that are only partially resolved, even if the main bug was fixed
+- Issues where code landed but docs, follow-up implementation, or other
+  maintainer-requested work still remains
 - Feature requests where you can't definitively confirm implementation
 - Issues with open/unmerged PRs linked — work may still be in progress
 - Issues that reference ongoing design discussions or open PRs
