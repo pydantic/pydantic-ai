@@ -305,12 +305,11 @@ def text_meta_prompt() -> list[UserMessage]:
 @mcp.prompt()
 def image_prompt() -> list[UserMessage]:
     """A prompt template with image content."""
-    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return [
         UserMessage(
             content=ImageContent(
                 type='image',
-                data=base64.b64encode(data).decode('utf-8'),
+                data=base64.b64encode(b'image-bytes').decode('utf-8'),
                 mimeType='image/jpeg',
                 annotations=Annotations(audience=['user'], priority=0.8),
             )
@@ -321,12 +320,11 @@ def image_prompt() -> list[UserMessage]:
 @mcp.prompt()
 def audio_prompt() -> list[UserMessage]:
     """A prompt template with audio content."""
-    data = Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
     return [
         UserMessage(
             content=AudioContent(
                 type='audio',
-                data=base64.b64encode(data).decode('utf-8'),
+                data=base64.b64encode(b'audio-bytes').decode('utf-8'),
                 mimeType='audio/mpeg',
                 annotations=Annotations(audience=['assistant'], priority=0.3),
             )

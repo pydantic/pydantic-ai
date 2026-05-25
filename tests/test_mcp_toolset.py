@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
@@ -54,10 +55,15 @@ with try_import() as imports_successful:
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         ResourceAnnotations,
         ResourceTemplate,
         load_mcp_toolsets,
     )
+    from pydantic_ai.messages import TextContent
 
 
 pytestmark = [
@@ -289,6 +295,16 @@ async def fastmcp_server() -> FastMCP[None]:
     async def profile(name: str) -> str:
         return f'{{"name": "{name}"}}'
 
+    @server.prompt()
+    def simple_prompt() -> str:
+        """A simple prompt template."""
+        return 'This is a simple prompt'
+
+    @server.prompt()
+    def parameterized_prompt(name: str, topic: str) -> str:
+        """A prompt template with parameters."""
+        return f"Hello {name}, let's talk about {topic}!"
+
     return server
 
 
@@ -468,6 +484,114 @@ class TestMCPToolsetIntegration:
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
 
+    async def test_list_prompts_returns_pai_types(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            prompts = await toolset.list_prompts()
+        assert prompts == snapshot(
+            [
+                Prompt(
+                    name='simple_prompt', description='A simple prompt template.', metadata={'fastmcp': {'tags': []}}
+                ),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[
+                        PromptArgument(
+                            name='name',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                        PromptArgument(
+                            name='topic',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                    ],
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+            ]
+        )
+
+    async def test_get_prompt_simple(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('simple_prompt')
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
+
+    async def test_get_prompt_parameterized(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
+                description='A prompt template with parameters.',
+            )
+        )
+
+    async def test_list_prompts_caches_when_enabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            second = await toolset.list_prompts()
+        assert first == second
+
+    async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, cache_prompts=False)
+        async with toolset:
+            await toolset.list_prompts()
+            assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+
+        await handler(
+            mcp_types.ServerNotification(
+                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            )
+        )
+        assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
+        """When the server's `capabilities.prompts` is `False`, `list_prompts` returns an empty
+        list without round-tripping to the server."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            from pydantic_ai.mcp import ServerCapabilities
+
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            assert await toolset.list_prompts() == []
+
+    async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        from unittest.mock import AsyncMock
+
+        from mcp.shared.exceptions import McpError
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_prompts = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
+            )
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_prompts()
+
+    async def test_get_prompt_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match='Unknown prompt'):
+                await toolset.get_prompt('does_not_exist')
+
     async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
@@ -477,7 +601,10 @@ class TestMCPToolsetIntegration:
         # An unrelated notification shouldn't touch the caches.
         await handler(
             mcp_types.ServerNotification(
-                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+                root=mcp_types.LoggingMessageNotification(
+                    method='notifications/message',
+                    params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+                )
             )
         )
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]

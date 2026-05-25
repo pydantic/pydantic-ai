@@ -2901,10 +2901,9 @@ async def test_server_capabilities_list_changed_fields() -> None:
 
 
 async def test_list_prompts() -> None:
-    """Test list_prompts() basic functionality and caching."""
+    """Test list_prompts() basic functionality."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # Test basic functionality and available prompts
         assert server.capabilities.prompts
 
         prompts = await server.list_prompts()
@@ -2926,11 +2925,6 @@ async def test_list_prompts() -> None:
                 Prompt(name='resource_link_prompt', description='A prompt template with a resource link.'),
             ]
         )
-
-        # Test caching behavior
-        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
-        prompts2 = await server.list_prompts()
-        assert prompts2 == prompts
 
 
 async def test_get_prompt() -> None:
@@ -2956,9 +2950,8 @@ async def test_get_prompt() -> None:
         )
 
         # Test error handling for nonexistent prompt
-        with pytest.raises(MCPError) as exc_info:
+        with pytest.raises(MCPError, match='Unknown prompt'):
             await server.get_prompt('nonexistent_prompt')
-        assert 'unknown' in str(exc_info.value).lower()
 
 
 async def test_prompts_no_caching_when_disabled() -> None:
@@ -3004,6 +2997,8 @@ async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
     )
 
     async with mcp_server:
+        # Patch the client method directly — injecting an `McpError` server-side via FastMCP is
+        # impractical, so we mock the SDK call here to exercise the wrapping branch.
         with patch.object(
             mcp_server._session_state.client,  # pyright: ignore[reportPrivateUsage]
             'list_prompts',
@@ -3025,11 +3020,8 @@ async def test_map_prompt_content() -> None:
     TextContent without annotations is already covered by test_get_prompt via
     simple_prompt/parameterized_prompt, so only annotated text is tested here.
     """
-    from pathlib import Path
+    from pydantic_ai.mcp import EmbeddedResource, ResourceAnnotations, ResourceLink
 
-    from pydantic_ai.mcp import Annotations, EmbeddedResource, ResourceLink
-
-    assets_dir = Path(__file__).parent / 'assets'
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         # TextContent with annotations preserved in metadata
@@ -3040,7 +3032,7 @@ async def test_map_prompt_content() -> None:
                     role='user',
                     content=TextContent(
                         content='annotated text',
-                        metadata={'mcp_annotations': Annotations(audience=['user'], priority=1.0)},
+                        metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=1.0)},
                     ),
                 )
             ]
@@ -3048,19 +3040,33 @@ async def test_map_prompt_content() -> None:
 
         # ImageContent → BinaryImage
         result = await server.get_prompt('image_prompt')
-        content = result.messages[0].content
-        assert isinstance(content, BinaryImage)
-        assert content.media_type == 'image/jpeg'
-        assert content.data == assets_dir.joinpath('kiwi.jpg').read_bytes()
-        assert content.vendor_metadata == {'mcp_annotations': Annotations(audience=['user'], priority=0.8)}
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=BinaryImage(
+                        data=b'image-bytes',
+                        media_type='image/jpeg',
+                        vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=0.8)},
+                    ),
+                )
+            ]
+        )
 
         # AudioContent → BinaryContent
         result = await server.get_prompt('audio_prompt')
-        content = result.messages[0].content
-        assert isinstance(content, BinaryContent)
-        assert content.media_type == 'audio/mpeg'
-        assert content.data == assets_dir.joinpath('marcelo.mp3').read_bytes()
-        assert content.vendor_metadata == {'mcp_annotations': Annotations(audience=['assistant'], priority=0.3)}
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=BinaryContent(
+                        data=b'audio-bytes',
+                        media_type='audio/mpeg',
+                        vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['assistant'], priority=0.3)},
+                    ),
+                )
+            ]
+        )
 
         # EmbeddedResource with annotations
         result = await server.get_prompt('embedded_resource_prompt')
@@ -3072,7 +3078,7 @@ async def test_map_prompt_content() -> None:
                         uri='resource://product_name.txt',
                         content='Pydantic AI',
                         mime_type='text/plain',
-                        annotations=Annotations(audience=['user'], priority=0.5),
+                        annotations=ResourceAnnotations(audience=['user'], priority=0.5),
                     ),
                 )
             ]
