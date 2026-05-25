@@ -94,6 +94,7 @@ from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 model = AnthropicModel('claude-sonnet-4-5')
 settings = AnthropicModelSettings(
     temperature=0.2,
+    top_k=40,
     service_tier='auto',
 )
 agent = Agent(model, model_settings=settings)
