@@ -702,7 +702,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
                 message = '\n'.join(text_parts)
 
-            raise exceptions.ToolFailed(message or 'MCP tool call failed')
+            raise exceptions.ModelRetry(message or 'MCP tool call failed')
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -1780,7 +1780,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Pydantic AI-layer config
         id: str | None = None,
         max_retries: int | None = None,
-        tool_error_behavior: Literal['retry', 'error'] = 'retry',
+        tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -1816,7 +1816,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
-                self-correct; `'error'` propagates the underlying exception.
+                self-correct; `'error'` propagates the underlying exception; `'failed'` raises
+                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
             cache_tools: Whether to cache the list of tools. See
@@ -2137,6 +2138,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
+            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
@@ -2152,12 +2154,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     raise exceptions.ModelRetry(message=str(e)) from e
                 elif self.tool_error_behavior == 'failed':
                     raise exceptions.ToolFailed(message=str(e)) from e
-                # Should I be raising ToolFailed here instead?
-                # Or should I provide a way for users to configure for ToolFailed?
-                # I think I should allow them to configure a new mode
-                # ToolError is basically ToolError propagating just like we allow any error to kill the run
-                # raising ToolFailed here would be a new compromise I would be adding?
-                # I think that should be fine
                 raise
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded

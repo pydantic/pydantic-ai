@@ -26,7 +26,7 @@ import pytest
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -398,6 +398,15 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             with pytest.raises(ToolError):
+                await toolset.call_tool('boom', {}, run_context, tools['boom'])
+
+    async def test_tool_error_raises_tool_failed_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+    ):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ToolFailed, match='boom'):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
     async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):

@@ -55,6 +55,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -9146,7 +9147,102 @@ class TestNodeStreamingWithHooks:
         assert error_log == ['CallToolsNode']
 
 
-# --- ModelRetry from hooks tests ---
+# --- ToolFailed and ModelRetry from hooks tests ---
+
+
+class _BeforeToolFailedCap(AbstractCapability[Any]):
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed before execution')
+
+
+class _WrapToolFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Any,
+    ) -> Any:
+        try:
+            return await handler(args)
+        except RuntimeError as e:
+            raise ToolFailed('failed during wrapper') from e
+
+
+class _AfterToolFailedCap(AbstractCapability[Any]):
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        raise ToolFailed('failed after execution')
+
+
+class _OnToolExecuteErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        raise ToolFailed('failed while handling error')
+
+
+class TestToolFailedFromHooks:
+    """Tests for raising ToolFailed from capability tool-execution hooks."""
+
+    @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
+    async def test_tool_execute_hook_tool_failed(self, hook_name: str):
+        tool_call_count = 0
+        cap_type, expected_message, tool_should_run = {
+            'before': (_BeforeToolFailedCap, 'failed before execution', False),
+            'wrap': (_WrapToolFailedCap, 'failed during wrapper', True),
+            'after': (_AfterToolFailedCap, 'failed after execution', True),
+            'on_error': (_OnToolExecuteErrorFailedCap, 'failed while handling error', True),
+        }[hook_name]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.outcome}:{part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap_type()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            if hook_name in {'wrap', 'on_error'}:
+                raise RuntimeError('tool failed')
+            return 'tool result'
+
+        result = await agent.run('call tool')
+
+        assert result.output == f'got: failed:{expected_message}'
+        assert tool_call_count == int(tool_should_run)
+
+        parts = [part for msg in result.all_messages() for part in msg.parts]
+        tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
+        assert tool_return.outcome == 'failed'
+        assert tool_return.content == expected_message
+        assert not any(isinstance(part, RetryPromptPart) for part in parts)
 
 
 class TestModelRetryFromHooks:

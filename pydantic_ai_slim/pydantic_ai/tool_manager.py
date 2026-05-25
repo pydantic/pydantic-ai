@@ -192,6 +192,17 @@ class ToolManager(Generic[AgentDepsT]):
         m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
         return ToolRetryError(m)
 
+    @staticmethod
+    def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
+        """Convert a ToolFailed to a ToolFailedError with a failed ToolReturnPart."""
+        m = _messages.ToolReturnPart(
+            tool_name=name,
+            content=error.message,
+            tool_call_id=call.tool_call_id,
+            outcome='failed',
+        )
+        return ToolFailedError(m)
+
     def _build_tool_context(
         self,
         call: ToolCallPart,
@@ -329,7 +340,7 @@ class ToolManager(Generic[AgentDepsT]):
                     tool_result = await cap.wrap_tool_execute(
                         ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
                     )
-                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
                 except ToolFailed:
                     raise  # Propagate to outer handler
@@ -352,6 +363,10 @@ class ToolManager(Generic[AgentDepsT]):
                 self._check_max_retries(name, validated.tool.max_retries, e)
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, call, e) from e
+            except ToolFailed as e:
+                if not wrap_validation_errors:
+                    raise
+                raise self._wrap_error_as_failed(call.tool_name, call, e) from e
         else:
             tool_result = await do_execute(validated.validated_args)
 
@@ -764,14 +779,7 @@ class ToolManager(Generic[AgentDepsT]):
         except ToolFailed as e:
             if not wrap_validation_errors:
                 raise
-            raise ToolFailedError(
-                _messages.ToolReturnPart(
-                    tool_name=name,
-                    content=e.message,
-                    tool_call_id=validated.call.tool_call_id,
-                    outcome='failed',
-                )
-            ) from e
+            raise self._wrap_error_as_failed(name, validated.call, e) from e
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise

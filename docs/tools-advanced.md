@@ -508,7 +508,7 @@ def read_file(path: str) -> str:
 
 The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'` — the model receives it as a tool result (not a retry prompt) and the call is traced as an error in telemetry. Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level.
 
-Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. `ToolFailed` is also what MCP servers' `isError: true` responses surface as.
+Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. Some toolsets expose the same choice as configuration; for MCP server tool errors, see [Tool errors](mcp/client.md#tool-errors).
 
 To convert arbitrary exceptions from a third-party library to `ToolFailed` without repeating `try`/`except` in every tool, wrap the toolset — see the [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] pattern under [Changing tool execution](toolsets.md#changing-tool-execution).
 
