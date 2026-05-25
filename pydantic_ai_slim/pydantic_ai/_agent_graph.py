@@ -1155,12 +1155,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 pass
 
                     if is_empty:
-                        # Go back to the model request node with an empty request, which means we'll
-                        # essentially resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
+                        # The model returned a completely empty response (no text, no tool calls,
+                        # no thinking). Send a RetryPromptPart so the model knows what went wrong
+                        # and can attempt to self-correct, rather than silently resubmitting which
+                        # gives the model no signal about the problem.
                         ctx.state.consume_output_retry(ctx.deps.max_output_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                            _messages.ModelRequest(
+                                parts=[
+                                    _messages.RetryPromptPart(
+                                        content='Your response was empty. You must provide a text response or use a tool.',
+                                    )
+                                ]
+                            )
+                        )
                         return
 
                     # For thinking-only responses without recoverable text, fall through to the
