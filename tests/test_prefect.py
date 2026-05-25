@@ -26,11 +26,12 @@ from pydantic_ai import (
     ModelSettings,
     RunContext,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -957,6 +958,29 @@ async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> Non
     """Test that ModelRetry works correctly."""
     result = await model_retry_prefect_agent.run('What is the weather in CDMX?')
     assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
+
+
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool'], custom_output_text='done'), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)
+
+
+async def test_prefect_agent_with_tool_failed() -> None:
+    result = await tool_failed_prefect_agent.run('Call the failing tool')
+
+    tool_returns = [
+        (part.tool_name, part.content, part.outcome)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
 
 
 # Test dynamic toolsets
