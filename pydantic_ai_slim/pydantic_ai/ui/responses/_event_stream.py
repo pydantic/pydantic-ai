@@ -1,0 +1,673 @@
+"""OpenAI Responses protocol event stream transformer for Pydantic AI agents."""
+
+from __future__ import annotations
+
+import json
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from ..._uuid import uuid7
+
+try:
+    from openai.types.responses import (
+        Response as ResponseObject,
+        ResponseCodeInterpreterCallCompletedEvent,
+        ResponseCodeInterpreterCallInProgressEvent,
+        ResponseCodeInterpreterToolCall,
+        ResponseCompletedEvent,
+        ResponseContentPartAddedEvent,
+        ResponseContentPartDoneEvent,
+        ResponseCreatedEvent,
+        ResponseFileSearchCallCompletedEvent,
+        ResponseFileSearchCallInProgressEvent,
+        ResponseFileSearchToolCall,
+        ResponseFunctionCallArgumentsDeltaEvent,
+        ResponseFunctionCallArgumentsDoneEvent,
+        ResponseFunctionToolCall,
+        ResponseFunctionWebSearch,
+        ResponseImageGenCallCompletedEvent,
+        ResponseImageGenCallInProgressEvent,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+        ResponseUsage,
+        ResponseWebSearchCallCompletedEvent,
+        ResponseWebSearchCallInProgressEvent,
+    )
+    from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
+    from openai.types.responses.response_function_web_search import ActionSearch
+    from openai.types.responses.response_output_item import ImageGenerationCall
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+except ImportError as e:  # pragma: no cover
+    raise ImportError(
+        'Please install the `openai` package to use the Responses integration, '
+        'you can use the `responses` optional group — `pip install "pydantic-ai-slim[responses]"`'
+    ) from e
+
+from ...messages import (
+    AgentContextPart,
+    FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    TextPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
+from ...output import OutputDataT
+from ...tools import AgentDepsT
+from .. import UIEventStream
+
+__all__ = ['ResponsesEventStream']
+
+
+_BuiltinItem = (
+    ResponseFunctionWebSearch | ResponseCodeInterpreterToolCall | ResponseFileSearchToolCall | ImageGenerationCall
+)
+
+
+@dataclass
+class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, AgentDepsT, OutputDataT]):
+    """UI event stream transformer for the OpenAI Responses protocol."""
+
+    frontend_tool_names: frozenset[str] = field(default_factory=frozenset[str])
+    """Names of tools the client declared in the request `tools` array.
+
+    Used to distinguish frontend tool calls (echoed back as `function_call` items the
+    client must round-trip) from backend agent-registered tool calls. Backend behavior
+    depends on `mode`:
+
+    - `openai_compat`: backend tool calls are suppressed from the wire — vanilla SDK
+      clients shouldn't see them as `function_call` items since the agent already ran them.
+    - `openresponses`: backend tool calls surface as `pydantic_ai:custom_tool_call`
+      paired with `pydantic_ai:custom_tool_call_output` (lossless round-trip).
+    """
+
+    mode: Literal['openai_compat', 'openresponses'] = 'openai_compat'
+    """Concrete emission mode (already resolved from `auto` by the adapter)."""
+
+    _response_id: str = ''
+    _text_item_id: str = ''
+    _output_index: int = 0
+    _message_item_added: bool = False
+    _sequence_number: int = 0
+    _error: bool = False
+    _accumulated_text: list[str] = field(default_factory=list[str])
+    _open_function_calls: dict[str, tuple[ResponseFunctionToolCall, int]] = field(
+        default_factory=dict[str, tuple[ResponseFunctionToolCall, int]]
+    )
+    _open_builtin_calls: dict[str, tuple[_BuiltinItem, int]] = field(
+        default_factory=dict[str, tuple[_BuiltinItem, int]]
+    )
+    # OpenResponses-mode extension items can't go through the SDK's pydantic union; we hold
+    # the raw `pydantic_ai:custom_tool_call` dicts here and emit them via encode_event's
+    # raw-dict path. Keyed by tool_call_id. Popped on finalize.
+    _open_backend_calls: dict[str, tuple[dict[str, Any], int]] = field(
+        default_factory=dict[str, tuple[dict[str, Any], int]]
+    )
+    # Set of tool_call_ids for which we've emitted a `pydantic_ai:custom_tool_call` extension
+    # item. Unlike `_open_backend_calls` this is never popped — it lets `handle_function_tool_result`
+    # know whether to pair a `pydantic_ai:custom_tool_call_output` even after the call finalized.
+    _emitted_backend_call_ids: set[str] = field(default_factory=set[str])
+
+    @property
+    def content_type(self) -> str:
+        return 'text/event-stream'
+
+    def new_message_id(self) -> str:
+        # Override the base uuid4 with uuid7 so emitted IDs share format with `RunContext.run_id`.
+        # Storage backends keyed by `previous_response_id` end up with the same
+        # lexicographic-time ordering as the agent's own run records.
+        # TODO: once `Agent.iter(run_id=...)` lands, pre-generate the response id here and
+        # pass it into the run so `_response_id == RunContext.run_id` (full A8 correlation).
+        self.message_id = str(uuid7())
+        return self.message_id
+
+    def encode_event(self, event: Any) -> str:
+        # OpenResponses extension events (e.g. `pydantic_ai:custom_tool_call.added`) are emitted
+        # as raw dicts because the OpenAI SDK's response-side pydantic union is closed and
+        # rejects extension-prefixed types. The wire is JSON either way; SDK pydantic models
+        # are just stricter validators we don't need on the producing side.
+        if isinstance(event, dict):
+            return self._encode_extension_event(event)  # pyright: ignore[reportUnknownArgumentType]
+        event_type = getattr(event, 'type', 'message')
+        event_data = event.model_dump_json(exclude_unset=True)
+        return f'event: {event_type}\ndata: {event_data}\n\n'
+
+    @staticmethod
+    def _encode_extension_event(event: dict[str, Any]) -> str:
+        type_value = event.get('type')
+        event_type = type_value if isinstance(type_value, str) else 'message'
+        event_data = json.dumps(event)
+        return f'event: {event_type}\ndata: {event_data}\n\n'
+
+    async def encode_stream(self, stream: AsyncIterator[Any]) -> AsyncIterator[str]:
+        async for event in stream:
+            yield self.encode_event(event)
+        yield 'event: done\ndata: [DONE]\n\n'
+
+    def _next_seq(self) -> int:
+        n = self._sequence_number
+        self._sequence_number += 1
+        return n
+
+    def _model_name(self) -> str:
+        model = self.run_input.get('model')
+        return str(model) if model is not None else 'unknown'
+
+    def _instructions(self) -> str | None:
+        instructions = self.run_input.get('instructions')
+        return instructions if isinstance(instructions, str) else None
+
+    def _empty_usage(self) -> ResponseUsage:
+        return ResponseUsage(
+            input_tokens=0,
+            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            output_tokens=0,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=0,
+        )
+
+    def _build_response(
+        self,
+        *,
+        status: Literal['in_progress', 'completed', 'failed'],
+        usage: ResponseUsage,
+    ) -> ResponseObject:
+        # `tool_choice` and `tools` come from the request-side TypedDict union, which is
+        # structurally compatible with but distinct from the response-side pydantic union;
+        # the runtime accepts both, the static unions don't intersect.
+        return ResponseObject(
+            id=self._response_id,
+            object='response',
+            created_at=time.time(),
+            model=self._model_name(),
+            output=[],
+            status=status,
+            usage=usage,
+            instructions=self._instructions(),
+            parallel_tool_calls=bool(self.run_input.get('parallel_tool_calls', True)),
+            tool_choice=self.run_input.get('tool_choice') or 'auto',  # pyright: ignore[reportArgumentType]
+            tools=self.run_input.get('tools') or [],  # pyright: ignore[reportArgumentType]
+        )
+
+    async def before_stream(self) -> AsyncIterator[Any]:
+        self._response_id = self.new_message_id()
+        self._text_item_id = self.new_message_id()
+        yield ResponseCreatedEvent(
+            type='response.created',
+            response=self._build_response(status='in_progress', usage=self._empty_usage()),
+            sequence_number=self._next_seq(),
+        )
+
+    async def after_stream(self) -> AsyncIterator[Any]:
+        # Close any still-open content/output items so the spec ordering is preserved.
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        usage = self._empty_usage()
+        if self._result is not None:
+            run_usage = self._result.usage
+            usage = ResponseUsage(
+                input_tokens=run_usage.input_tokens or 0,
+                input_tokens_details=InputTokensDetails(cached_tokens=run_usage.cache_read_tokens or 0),
+                output_tokens=run_usage.output_tokens or 0,
+                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                total_tokens=run_usage.total_tokens or 0,
+            )
+
+        status = 'failed' if self._error else 'completed'
+        yield ResponseCompletedEvent(
+            type='response.completed',
+            response=self._build_response(status=status, usage=usage),
+            sequence_number=self._next_seq(),
+        )
+
+    async def on_error(self, error: Exception) -> AsyncIterator[Any]:
+        self._error = True
+        return
+        yield  # Make this an async generator
+
+    async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[Any]:
+        if not self._message_item_added:
+            yield ResponseOutputItemAddedEvent(
+                type='response.output_item.added',
+                item=ResponseOutputMessage(
+                    type='message',
+                    id=self._text_item_id,
+                    role='assistant',
+                    status='in_progress',
+                    content=[],
+                ),
+                output_index=self._output_index,
+                sequence_number=self._next_seq(),
+            )
+            yield ResponseContentPartAddedEvent(
+                type='response.content_part.added',
+                item_id=self._text_item_id,
+                output_index=self._output_index,
+                content_index=0,
+                part=ResponseOutputText(type='output_text', text='', annotations=[]),
+                sequence_number=self._next_seq(),
+            )
+            self._message_item_added = True
+
+        if part.content:
+            self._accumulated_text.append(part.content)
+            yield ResponseTextDeltaEvent(
+                type='response.output_text.delta',
+                item_id=self._text_item_id,
+                output_index=self._output_index,
+                content_index=0,
+                delta=part.content,
+                logprobs=[],
+                sequence_number=self._next_seq(),
+            )
+
+    async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[Any]:
+        if not delta.content_delta:
+            return
+        self._accumulated_text.append(delta.content_delta)
+        yield ResponseTextDeltaEvent(
+            type='response.output_text.delta',
+            item_id=self._text_item_id,
+            output_index=self._output_index,
+            content_index=0,
+            delta=delta.content_delta,
+            logprobs=[],
+            sequence_number=self._next_seq(),
+        )
+
+    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[Any]:
+        if followed_by_text:
+            return
+        async for ev in self._close_open_message_item():
+            yield ev
+
+    async def _close_open_message_item(self) -> AsyncIterator[Any]:
+        if not self._message_item_added:
+            return
+
+        full_text = ''.join(self._accumulated_text)
+        yield ResponseTextDoneEvent(
+            type='response.output_text.done',
+            item_id=self._text_item_id,
+            output_index=self._output_index,
+            content_index=0,
+            text=full_text,
+            logprobs=[],
+            sequence_number=self._next_seq(),
+        )
+        yield ResponseContentPartDoneEvent(
+            type='response.content_part.done',
+            item_id=self._text_item_id,
+            output_index=self._output_index,
+            content_index=0,
+            part=ResponseOutputText(type='output_text', text=full_text, annotations=[]),
+            sequence_number=self._next_seq(),
+        )
+        yield ResponseOutputItemDoneEvent(
+            type='response.output_item.done',
+            item=ResponseOutputMessage(
+                type='message',
+                id=self._text_item_id,
+                role='assistant',
+                status='completed',
+                content=[ResponseOutputText(type='output_text', text=full_text, annotations=[])],
+            ),
+            output_index=self._output_index,
+            sequence_number=self._next_seq(),
+        )
+
+        self._message_item_added = False
+        self._accumulated_text = []
+        self._text_item_id = self.new_message_id()
+        self._output_index += 1
+
+    async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[Any]:
+        is_backend = part.tool_name not in self.frontend_tool_names
+
+        if is_backend and self.mode == 'openai_compat':
+            # Vanilla OpenAI SDK clients treat `function_call` as a request for the client to
+            # act; emitting one for an already-server-executed tool would cause double-fire.
+            # Suppress entirely. Cross-turn round-trip is lossy in this mode (per design).
+            return
+
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        if is_backend:
+            # OpenResponses mode: emit the `pydantic_ai:custom_tool_call` extension item.
+            output_index = self._output_index
+            item: dict[str, Any] = {
+                'type': 'pydantic_ai:custom_tool_call',
+                'id': self.new_message_id(),
+                'call_id': part.tool_call_id,
+                'name': part.tool_name,
+                'arguments': part.args_as_json_str() if part.args else '',
+                'status': 'in_progress',
+            }
+            self._open_backend_calls[part.tool_call_id] = (item, output_index)
+            self._emitted_backend_call_ids.add(part.tool_call_id)
+            yield {
+                'type': 'response.output_item.added',
+                'output_index': output_index,
+                'item': item,
+                'sequence_number': self._next_seq(),
+            }
+            return
+
+        item_id = self.new_message_id()
+        function_item = ResponseFunctionToolCall(
+            id=item_id,
+            type='function_call',
+            call_id=part.tool_call_id,
+            name=part.tool_name,
+            arguments='',
+            status='in_progress',
+        )
+        output_index = self._output_index
+        self._open_function_calls[part.tool_call_id] = (function_item, output_index)
+
+        yield ResponseOutputItemAddedEvent(
+            type='response.output_item.added',
+            item=function_item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+
+        if part.args:
+            initial = part.args_as_json_str()
+            function_item.arguments = initial
+            yield ResponseFunctionCallArgumentsDeltaEvent(
+                type='response.function_call_arguments.delta',
+                item_id=item_id,
+                output_index=output_index,
+                delta=initial,
+                sequence_number=self._next_seq(),
+            )
+
+    async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[Any]:
+        tool_call_id = delta.tool_call_id
+        if not tool_call_id or tool_call_id not in self._open_function_calls:
+            return
+        delta_text = delta.args_delta if isinstance(delta.args_delta, str) else ''
+        if not delta_text:
+            return
+        item, output_index = self._open_function_calls[tool_call_id]
+        item.arguments += delta_text
+        yield ResponseFunctionCallArgumentsDeltaEvent(
+            type='response.function_call_arguments.delta',
+            item_id=item.id or '',
+            output_index=output_index,
+            delta=delta_text,
+            sequence_number=self._next_seq(),
+        )
+
+    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[Any]:
+        if part.tool_call_id in self._open_backend_calls:
+            async for ev in self._finalize_backend_call(part.tool_call_id, final_args=part.args_as_json_str()):
+                yield ev
+            return
+        async for ev in self._finalize_function_call(part.tool_call_id, final_args=part.args_as_json_str()):
+            yield ev
+
+    async def _finalize_function_call(self, tool_call_id: str, *, final_args: str) -> AsyncIterator[Any]:
+        if tool_call_id not in self._open_function_calls:
+            return
+        item, output_index = self._open_function_calls.pop(tool_call_id)
+        item.arguments = final_args
+        item.status = 'completed'
+
+        yield ResponseFunctionCallArgumentsDoneEvent(
+            type='response.function_call_arguments.done',
+            item_id=item.id or '',
+            name=item.name,
+            output_index=output_index,
+            arguments=final_args,
+            sequence_number=self._next_seq(),
+        )
+        yield ResponseOutputItemDoneEvent(
+            type='response.output_item.done',
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+        self._output_index += 1
+
+    async def _finalize_backend_call(self, tool_call_id: str, *, final_args: str) -> AsyncIterator[Any]:
+        item, output_index = self._open_backend_calls.pop(tool_call_id)
+        item['arguments'] = final_args
+        item['status'] = 'completed'
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
+        self._output_index += 1
+
+    async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[Any]:
+        # Backend tool results in `openresponses` mode surface as a paired
+        # `pydantic_ai:custom_tool_call_output` item so the client can reconstruct the full
+        # message history on the next turn. In `openai_compat` mode the result stays on the
+        # server (matching the suppressed `function_call`).
+        if self.mode != 'openresponses':
+            return
+        part = event.part
+        if not isinstance(part, ToolReturnPart):
+            return
+        if part.tool_call_id not in self._emitted_backend_call_ids:
+            # Only emit the extension output for backend tools we already started as extension
+            # items. Frontend `function_call` tools execute on the client; their
+            # `function_call_output` comes back over the wire on the next request, not here.
+            return
+        output_index = self._output_index
+        output_item: dict[str, Any] = {
+            'type': 'pydantic_ai:custom_tool_call_output',
+            'id': self.new_message_id(),
+            'call_id': part.tool_call_id,
+            'output': part.model_response_str(),
+            'status': 'completed',
+        }
+        yield {
+            'type': 'response.output_item.added',
+            'output_index': output_index,
+            'item': output_item,
+            'sequence_number': self._next_seq(),
+        }
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': output_item,
+            'sequence_number': self._next_seq(),
+        }
+        self._output_index += 1
+
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[Any]:
+        item = self._build_builtin_item(part, status='in_progress')
+        if item is None:
+            return
+
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        output_index = self._output_index
+        self._open_builtin_calls[part.tool_call_id] = (item, output_index)
+
+        yield ResponseOutputItemAddedEvent(
+            type='response.output_item.added',
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+        async for ev in self._builtin_in_progress_event(part.tool_name, item, output_index):
+            yield ev
+
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[Any]:
+        # `NativeToolReturnPart` carries the result; closing the item is deferred to that handler.
+        return
+        yield  # Make this an async generator
+
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[Any]:
+        if part.tool_call_id not in self._open_builtin_calls:
+            return
+
+        item, output_index = self._open_builtin_calls.pop(part.tool_call_id)
+        item.status = 'completed'
+
+        async for ev in self._builtin_completed_event(part.tool_name, item, output_index):
+            yield ev
+        yield ResponseOutputItemDoneEvent(
+            type='response.output_item.done',
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+        self._output_index += 1
+
+    async def handle_agent_context(self, part: AgentContextPart) -> AsyncIterator[Any]:
+        # Mirrors the backend-tool suppression policy: extension items never appear on the
+        # wire when the client is a vanilla OpenAI Responses SDK.
+        if self.mode != 'openresponses':
+            return
+
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        output_index = self._output_index
+        item: dict[str, Any] = {
+            'type': 'pydantic_ai:agent_context',
+            'id': part.id or self.new_message_id(),
+            'from_agent': part.from_agent,
+            'role': part.role,
+            'content': part.content,
+        }
+        yield {
+            'type': 'response.output_item.added',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
+        self._output_index += 1
+
+    @staticmethod
+    def _build_builtin_item(
+        part: NativeToolCallPart, *, status: Literal['in_progress', 'completed']
+    ) -> _BuiltinItem | None:
+        item_id = part.tool_call_id
+        match part.tool_name:
+            case 'web_search':
+                return ResponseFunctionWebSearch(
+                    id=item_id,
+                    type='web_search_call',
+                    status=status,
+                    action=ActionSearch(type='search', query=''),
+                )
+            case 'code_execution':
+                return ResponseCodeInterpreterToolCall(
+                    id=item_id,
+                    type='code_interpreter_call',
+                    status=status,
+                    container_id='',
+                )
+            case 'file_search':
+                return ResponseFileSearchToolCall(
+                    id=item_id,
+                    type='file_search_call',
+                    status=status,
+                    queries=[],
+                )
+            case 'image_generation':
+                return ImageGenerationCall(
+                    id=item_id,
+                    type='image_generation_call',
+                    status=status,
+                )
+            case _:
+                return None
+
+    async def _builtin_in_progress_event(
+        self, tool_name: str, item: _BuiltinItem, output_index: int
+    ) -> AsyncIterator[Any]:
+        item_id = item.id
+        seq = self._next_seq()
+        match tool_name:
+            case 'web_search':
+                yield ResponseWebSearchCallInProgressEvent(
+                    type='response.web_search_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'code_execution':
+                yield ResponseCodeInterpreterCallInProgressEvent(
+                    type='response.code_interpreter_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'file_search':
+                yield ResponseFileSearchCallInProgressEvent(
+                    type='response.file_search_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case _:
+                # 'image_generation' is the only remaining mapped kind; `_build_builtin_item`
+                # returns None for any other name so this default arm is unreachable for
+                # those — and reachable only for image_generation here.
+                yield ResponseImageGenCallInProgressEvent(
+                    type='response.image_generation_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+
+    async def _builtin_completed_event(
+        self, tool_name: str, item: _BuiltinItem, output_index: int
+    ) -> AsyncIterator[Any]:
+        item_id = item.id
+        seq = self._next_seq()
+        match tool_name:
+            case 'web_search':
+                yield ResponseWebSearchCallCompletedEvent(
+                    type='response.web_search_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'code_execution':
+                yield ResponseCodeInterpreterCallCompletedEvent(
+                    type='response.code_interpreter_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'file_search':
+                yield ResponseFileSearchCallCompletedEvent(
+                    type='response.file_search_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case _:
+                yield ResponseImageGenCallCompletedEvent(
+                    type='response.image_generation_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )

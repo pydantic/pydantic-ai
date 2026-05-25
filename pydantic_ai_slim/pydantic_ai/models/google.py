@@ -18,6 +18,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
+    AgentContextPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -1591,6 +1592,9 @@ def _content_model_response(
             part = _attach_signature({'inline_data': inline_data_dict}, item_signature)
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
+            part = None
+        elif isinstance(item, AgentContextPart):  # pragma: no cover
+            # Layered-agent context only round-trips via the OpenResponses adapter.
             part = None
         else:
             assert_never(item)

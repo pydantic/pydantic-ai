@@ -16,6 +16,7 @@ from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -389,6 +390,9 @@ class XaiModel(Model[AsyncClient]):
                 pass
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
+                pass
+            elif isinstance(item, AgentContextPart):  # pragma: no cover
+                # Agent context parts are layered-agent metadata; xAI's Chat API has no equivalent slot.
                 pass
             else:
                 assert_never(item)

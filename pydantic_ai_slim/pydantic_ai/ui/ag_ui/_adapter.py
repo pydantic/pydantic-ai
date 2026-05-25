@@ -20,6 +20,7 @@ from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -675,6 +676,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in AG-UI
+            elif isinstance(part, AgentContextPart):  # pragma: no cover
+                pass  # Agent context parts are layered-agent metadata; AG-UI has no equivalent slot.
             else:
                 assert_never(part)
 

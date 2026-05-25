@@ -16,6 +16,7 @@ from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
 from ...messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -663,6 +664,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, AgentContextPart):  # pragma: no cover
+                pass  # Agent context parts are layered-agent metadata; Vercel AI has no equivalent slot.
             else:
                 assert_never(part)
 

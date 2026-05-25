@@ -2058,6 +2058,51 @@ def _model_response_part_discriminator(v: Any) -> str | None:
     return getattr(v, 'part_kind', None)
 
 
+@dataclass(repr=False)
+class AgentContextPart:
+    """A context item contributed by an outer agent to an inner agent (layered-agent comms).
+
+    Surfaces on an agent's response stream so outer-layer clients can see what the agent
+    contributed beyond direct user-facing text. Round-trips through the OpenResponses wire
+    as `pydantic_ai:agent_context` items.
+
+    Outbound only: this part is part of the `ModelResponsePart` union. On the *inbound*
+    side, `pydantic_ai:agent_context` input items currently map to a `SystemPromptPart`
+    with prefix-encoded provenance (`[from <slug>, role=<role>] <content>`); a dedicated
+    inbound part may be introduced once a concrete layered-stacking client surfaces the
+    need for richer inbound handling.
+    """
+
+    content: str
+    """The free-text context content."""
+
+    _: KW_ONLY
+
+    from_agent: str
+    """Slug of the agent that produced this context."""
+
+    role: Literal['developer', 'context', 'observation'] = 'context'
+    """How an inner agent should treat this content."""
+
+    id: str | None = None
+    """Optional identifier for the context part."""
+
+    provider_name: str | None = None
+    """Name of the provider that surfaced this part, when applicable."""
+
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific data carried alongside the part, when applicable."""
+
+    part_kind: Literal['agent-context'] = 'agent-context'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the context content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponsePart = Annotated[
     Annotated[TextPart, pydantic.Tag('text')]
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
@@ -2068,7 +2113,8 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
-    | Annotated[FilePart, pydantic.Tag('file')],
+    | Annotated[FilePart, pydantic.Tag('file')]
+    | Annotated[AgentContextPart, pydantic.Tag('agent-context')],
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
@@ -2710,7 +2756,16 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'agent-context',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -2751,7 +2806,16 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'agent-context',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.
