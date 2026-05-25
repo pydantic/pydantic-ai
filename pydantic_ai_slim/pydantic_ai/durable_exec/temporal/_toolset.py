@@ -11,7 +11,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed
 from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -55,6 +55,12 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+@dataclass
+class _ToolFailed:
+    message: str
+    kind: Literal['tool_failed'] = 'tool_failed'
+
+
 def _result_discriminator(v: Any) -> str:
     if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
         return 'tool-return'
@@ -76,7 +82,7 @@ class _ToolReturn:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn | _ToolFailed,
     Discriminator('kind'),
 ]
 
@@ -129,6 +135,8 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
             return _CallDeferred(metadata=e.metadata)
         except ModelRetry as e:
             return _ModelRetry(message=e.message)
+        except ToolFailed as e:
+            return _ToolFailed(message=e.message)
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         if isinstance(result, _ToolReturn):
@@ -139,6 +147,8 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
             raise CallDeferred(metadata=result.metadata)
         elif isinstance(result, _ModelRetry):
             raise ModelRetry(result.message)
+        elif isinstance(result, _ToolFailed):
+            raise ToolFailed(result.message)
         else:
             assert_never(result)
 
