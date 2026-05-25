@@ -407,6 +407,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
+                                outcome='failed' if tool_msg.error is not None else 'success',
                             )
                         )
                     else:
@@ -415,6 +416,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_name=tool_name,
                                 content=tool_msg.content,
                                 tool_call_id=tool_call_id,
+                                outcome='failed' if tool_msg.error is not None else 'success',
                             )
                         )
 
@@ -544,6 +546,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
+                        error=part.model_response_str() if part.outcome == 'failed' else None,
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -645,6 +648,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
+                            error=builtin_return.model_response_str() if builtin_return.outcome == 'failed' else None,
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):

@@ -1589,6 +1589,31 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_failed_tool_return() -> None:
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='tool failed',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_message = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_message.error == 'tool failed'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    failed_part = reloaded[1].parts[0]
+    assert isinstance(failed_part, ToolReturnPart)
+    assert failed_part.outcome == 'failed'
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [
@@ -1721,6 +1746,37 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    content='search failed',
+                    provider_name='anthropic',
+                    outcome='failed',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_message = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_message.error == 'search failed'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    failed_part = reloaded[0].parts[1]
+    assert isinstance(failed_part, NativeToolReturnPart)
+    assert failed_part.outcome == 'failed'
+
+
 def test_dump_builtin_tool_call_without_return() -> None:
     """Test that NativeToolCallPart without a matching NativeToolReturnPart still dumps correctly."""
     messages: list[ModelMessage] = [
@@ -1821,6 +1877,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     assert isinstance(retry_part, ToolReturnPart)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
+    assert retry_part.outcome == 'failed'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
