@@ -19,6 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -28,6 +29,8 @@ from ...conftest import IsDatetime, IsStr, try_import
 from .conftest import CityInfo, PersonQuery
 
 with try_import() as imports_successful:
+    from botocore.model import StructureShape
+
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -124,6 +127,106 @@ def test_bedrock_strict_tool_definition_none(
             }
         }
     )
+
+
+def test_bedrock_strict_dropped_when_botocore_too_old(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Old `botocore` (no `strict` on `ToolSpecification`) → `strict` dropped with a warning.
+
+    `botocore` validates params against its own bundled service model, so an explicit
+    `strict=True` crashes with `ParamValidationError` on a `botocore` predating strict tool
+    calls — notably on AWS Lambda, where the runtime's bundled `botocore` can shadow a newer
+    layer-provided one. See https://github.com/pydantic/pydantic-ai/issues/5579.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    # `shape_for` builds a fresh `Shape` each call, so drop `strict` from `ToolSpecification`'s
+    # members on every lookup to mimic a `botocore` that predates strict tool calls.
+    # `_botocore_supports_strict_tool_param` only ever looks up `ToolSpecification`.
+    service_model = model.client.meta.service_model
+    real_shape_for = service_model.shape_for
+
+    def shape_for_without_strict(name: str) -> StructureShape:
+        shape = real_shape_for(name)
+        assert isinstance(shape, StructureShape)
+        object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'strict'})
+        return shape
+
+    monkeypatch.setattr(service_model, 'shape_for', shape_for_without_strict)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    with pytest.warns(UserWarning, match='installed `botocore` is too old'):
+        result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
+
+
+def test_bedrock_strict_none_not_auto_promoted_end_to_end(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Regression guard for https://github.com/pydantic/pydantic-ai/issues/5579.
+
+    25 simple `strict=None` tools fed through the real `customize_request_parameters`
+    entry point must not be auto-promoted to `strict=True`. Bedrock (like Anthropic)
+    caps strict tools at 20 per request, so silent promotion breaks any agent with
+    more than 20 tools — a regression introduced in 1.100 by #4237.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tools = [
+        ToolDefinition(
+            name=f'tool_{i}',
+            description=f'Tool number {i}',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'arg': {'type': 'string'}},
+                'required': ['arg'],
+            },
+            strict=None,
+        )
+        for i in range(25)
+    ]
+    params = model.customize_request_parameters(ModelRequestParameters(function_tools=tools))
+
+    assert all(t.strict is not True for t in params.function_tools)
+
+
+def test_bedrock_strict_true_preserved_end_to_end(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Opt-in `strict=True` survives `customize_request_parameters` unchanged."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+    params = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool_def]))
+
+    assert params.function_tools[0].strict is True
 
 
 async def test_bedrock_strict_tool_supported_model(
