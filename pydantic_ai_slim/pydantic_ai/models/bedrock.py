@@ -977,7 +977,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 'toolResult': {
                                     'toolUseId': part.tool_call_id,
                                     'content': tool_result_content,
-                                    'status': 'success',
+                                    'status': 'error' if part.outcome == 'failed' else 'success',
                                 }
                             }
                         ]

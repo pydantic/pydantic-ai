@@ -1109,9 +1109,16 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            response = {'error': part.model_response_str()}
+            # `ToolFailed` only produces string content. A manually constructed failed
+            # tool return with files still sends `fallback_parts` below, but the
+            # `fallback_refs` are not included in the error payload; leave that edge
+            # case undefined until we decide what multimodal failed results should mean.
+        else:
+            response = part.model_response_object()
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,

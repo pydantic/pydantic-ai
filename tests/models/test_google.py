@@ -5843,6 +5843,37 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
     )
 
 
+async def test_google_failed_tool_return_uses_error_response(google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Disk full', tool_call_id='test_id', outcome='failed'),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'final_result',
+                            'response': {'error': 'Disk full'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
 async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
     """Test that an empty user turn is prepended when contents start with a model response.
 
