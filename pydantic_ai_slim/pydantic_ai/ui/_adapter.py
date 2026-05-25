@@ -449,8 +449,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 )
                 new_parts.append(replace(part, content=filtered_content))
             elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-                # Skip narrower subclasses (`tool_kind` set) — their `content` isn't the recursive
-                # `ToolReturnContent` the walker is built for.
+                # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
+                # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
+                # during sanitization would leave it schema-invalid.
                 keep_content, sanitized_content = self._sanitize_tool_return_content(
                     part.content, disallowed_schemes, reset_force_download_values
                 )
@@ -576,8 +577,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 dangling_names.append(part.tool_name)
                 continue
             if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-                # Skip narrower subclasses (`tool_kind` set) — their `content` isn't the recursive
-                # `ToolReturnContent` the walker is built for.
+                # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
+                # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
+                # during sanitization would leave it schema-invalid.
                 keep_content, sanitized_content = self._sanitize_tool_return_content(
                     part.content, disallowed_schemes, reset_force_download_values
                 )
