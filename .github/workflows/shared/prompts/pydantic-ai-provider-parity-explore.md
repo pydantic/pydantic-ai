@@ -58,6 +58,20 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 - Speculative "would be nice" features with no user impact.
 - Gaps already tracked by an open issue — **search issues first**.
 
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-parity-explore]" OR "parity"
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <capability you're auditing>
+```
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
 ## Output — When to Noop
 
 If the matrix shows consistent or clearly-documented behavior, call `mcp__safeoutputs__noop`
