@@ -55,6 +55,8 @@ with try_import() as imports_successful:
         ElicitResult,
         ImageContent,
         Implementation,
+        ListPromptsResult,
+        Prompt as McpPrompt,
         PromptListChangedNotification,
         ServerNotification,
         TextContent as McpTextContent,
@@ -2982,6 +2984,26 @@ async def test_prompts_cache_invalidation_on_notification() -> None:
         await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
 
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_list_prompts_paginates_and_caches(mcp_server: MCPServerStdio) -> None:
+    """`list_prompts` follows `nextCursor` across pages, then returns the cached value on re-call."""
+    page1 = ListPromptsResult(prompts=[McpPrompt(name='p1', description='one')], nextCursor='cursor-2')
+    page2 = ListPromptsResult(prompts=[McpPrompt(name='p2', description='two')], nextCursor=None)
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._session_state.client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=[page1, page2]),
+        ) as list_prompts_mock:
+            prompts = await mcp_server.list_prompts()
+            assert [p.name for p in prompts] == ['p1', 'p2']
+            assert list_prompts_mock.await_count == 2
+
+            cached = await mcp_server.list_prompts()
+            assert cached is prompts
+            assert list_prompts_mock.await_count == 2
 
 
 async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
