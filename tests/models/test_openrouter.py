@@ -29,7 +29,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
@@ -39,6 +38,7 @@ with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
