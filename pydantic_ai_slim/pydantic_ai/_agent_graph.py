@@ -1238,10 +1238,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 except ToolRetryError as e:
                     ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
-                except ToolFailedError as e:
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                        _messages.ModelRequest(parts=[e.tool_failed])
-                    )
 
             self._events_iterator = _run_stream()
 
@@ -1742,9 +1738,6 @@ async def process_tool_calls(  # noqa: C901
                     except ToolRetryError as e:
                         output_parts.append(e.tool_retry)
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
-                    except ToolFailedError as e:
-                        output_parts.append(e.tool_failed)
-                        yield _messages.FunctionToolResultEvent(e.tool_failed)
 
     if not final_result and deferred_calls:
         deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(

@@ -32,7 +32,8 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionPart,
     ModelRequest,
@@ -830,6 +831,51 @@ async def test_handle_call_wrap_validation_errors_false():
     with pytest.raises(ToolRetryError):
         await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
     assert tool_manager.failed_tools == {'needs_int', 'retrying'}
+
+
+async def test_handle_call_raw_mode_propagates_tool_failed_from_body():
+    """Raw mode keeps `ToolFailed` from the tool body as the original exception."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing() -> None:
+        raise ToolFailed('body failed')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    with pytest.raises(ToolFailed) as exc_info:
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing', args={}),
+            wrap_validation_errors=False,
+        )
+    assert str(exc_info.value) == snapshot('body failed')
+
+
+async def test_handle_call_raw_mode_propagates_tool_failed_from_execute_hook():
+    """Raw mode keeps `ToolFailed` from execute hooks as the original exception."""
+
+    class FailingCapability(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            raise ToolFailed('hook failed')
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
+        build_run_context(None)
+    )
+
+    with pytest.raises(ToolFailed) as exc_info:
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='tool', args={}),
+            wrap_validation_errors=False,
+        )
+    assert str(exc_info.value) == snapshot('hook failed')
 
 
 async def test_toolset_max_retries_inherits_from_agent():
