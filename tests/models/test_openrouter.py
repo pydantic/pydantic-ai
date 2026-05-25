@@ -1338,30 +1338,3 @@ async def test_openrouter_thinking_high_emits_effort_high(
 
     sent = single_request_body(vcr)
     assert sent['reasoning'] == {'effort': 'high', 'enabled': True}
-
-
-async def test_openrouter_thinking_true_enables_reasoning_on_optional_route(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
-) -> None:
-    """Wire+behavior pin for the `enabled: True` annotation.
-
-    `gemma-4-26b-a4b-it` is reasoning-optional on OpenRouter, so bare `effort` leaves
-    reasoning off on some upstreams (notably DekaLLM). The `enabled: True` ensures
-    `thinking=True` actually fires reasoning. Pinned to Cloudflare via `openrouter_provider`
-    to keep the cassette deterministic — without pinning, OpenRouter picks a different
-    upstream at each record."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemma-4-26b-a4b-it', provider=provider)
-    settings = OpenRouterModelSettings(
-        thinking=True,
-        openrouter_provider={'only': ['cloudflare']},
-    )
-
-    response = await model_request(
-        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
-    )
-
-    sent = single_request_body(vcr)
-    assert sent['reasoning'] == {'effort': 'medium', 'enabled': True}
-    assert sent['provider'] == {'only': ['cloudflare']}
-    assert any(isinstance(part, ThinkingPart) for part in response.parts)

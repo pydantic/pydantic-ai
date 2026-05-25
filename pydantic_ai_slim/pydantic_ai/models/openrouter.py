@@ -574,8 +574,8 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
-            # Some reasoning-optional routes (e.g. DekaLLM-routed gemma) need
-            # explicit `enabled` even when `effort` is set.
+            # Some reasoning-optional routes need explicit `enabled` even when
+            # `effort` is set (see #5442 for the evidence).
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
