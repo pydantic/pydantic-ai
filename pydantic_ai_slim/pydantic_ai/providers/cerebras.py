@@ -78,11 +78,15 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             # thinking content is sent back in multi-turn conversations (not silently stripped).
             thinking_profile = OpenAIModelProfile(openai_chat_send_back_thinking_parts='tags')
 
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_unsupported_model_settings=unsupported_model_settings,
-            supports_thinking=is_reasoning,
-        ).update(profile).update(thinking_profile)
+        return (
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                openai_unsupported_model_settings=unsupported_model_settings,
+                supports_thinking=is_reasoning,
+            )
+            .update(profile)
+            .update(thinking_profile)
+        )
 
     @overload
     def __init__(self) -> None: ...
