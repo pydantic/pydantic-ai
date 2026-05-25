@@ -1009,10 +1009,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, use_web_tool_20260209: bool
+        tool: WebSearchTool, supports_web_tools_20260209: bool
     ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-        if use_web_tool_20260209:
+        if supports_web_tools_20260209:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
                 type='web_search_20260209',
@@ -1032,10 +1032,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, use_web_tool_20260209: bool
+        tool: WebFetchTool, supports_web_tools_20260209: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-        if use_web_tool_20260209:
+        if supports_web_tools_20260209:
             return (
                 BetaWebFetchTool20260209Param(
                     name='web_fetch',
@@ -1070,16 +1070,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         profile = AnthropicModelProfile.from_profile(self.profile)
-        use_web_tools_20260209 = profile.anthropic_supports_web_tools_20260209
+        supports_web_tools_20260209 = profile.anthropic_supports_web_tools_20260209
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                tools.append(self._map_web_search_tool(tool, use_web_tools_20260209))
+                tools.append(self._map_web_search_tool(tool, supports_web_tools_20260209))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, use_web_tools_20260209)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_web_tools_20260209)
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
