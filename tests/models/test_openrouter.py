@@ -1219,7 +1219,7 @@ def test_openrouter_error_with_metadata() -> None:
     assert 'Provider returned error' in str(exc_info.value)
 
 
-def test_eager_input_streaming_in_tool_def(allow_model_requests: None):
+def test_eager_input_streaming_in_tool_def(allow_model_requests: None) -> None:
     """Test that eager_input_streaming is set in tool definition when enabled for Anthropic models."""
     model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
     my_tool = ToolDefinition(
@@ -1232,7 +1232,7 @@ def test_eager_input_streaming_in_tool_def(allow_model_requests: None):
     assert dict(tool_param).get('eager_input_streaming') is True
 
 
-def test_eager_input_streaming_not_in_tool_def(allow_model_requests: None):
+def test_eager_input_streaming_not_in_tool_def(allow_model_requests: None) -> None:
     """Test that eager_input_streaming is not set in tool definition when not enabled."""
     model_settings = AnthropicModelSettings()
     my_tool = ToolDefinition(
@@ -1245,7 +1245,7 @@ def test_eager_input_streaming_not_in_tool_def(allow_model_requests: None):
     assert 'eager_input_streaming' not in tool_param
 
 
-def test_eager_input_streaming_in_get_tool_choice(allow_model_requests: None):
+def test_eager_input_streaming_in_get_tool_choice(allow_model_requests: None) -> None:
     """Test that eager_input_streaming is set in tools returned by _get_tool_choice for Anthropic models."""
     model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
     my_tool = ToolDefinition(
@@ -1261,7 +1261,7 @@ def test_eager_input_streaming_in_get_tool_choice(allow_model_requests: None):
     assert dict(tools[0]).get('eager_input_streaming') is True
 
 
-def test_eager_input_streaming_not_set_for_non_anthropic_model(allow_model_requests: None):
+def test_eager_input_streaming_not_set_for_non_anthropic_model(allow_model_requests: None) -> None:
     """Test that eager_input_streaming is not set for non-Anthropic OpenRouter models."""
     model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
     my_tool = ToolDefinition(
@@ -1277,7 +1277,7 @@ def test_eager_input_streaming_not_set_for_non_anthropic_model(allow_model_reque
     assert 'eager_input_streaming' not in tools[0]
 
 
-async def test_eager_input_streaming_sent_to_openrouter(allow_model_requests: None):
+async def test_eager_input_streaming_sent_to_openrouter(allow_model_requests: None) -> None:
     """`eager_input_streaming` should appear on the tool payload actually sent to OpenRouter.
 
     Unit tests on `_map_tool_definition` alone wouldn't catch a future `_get_tool_choice`
