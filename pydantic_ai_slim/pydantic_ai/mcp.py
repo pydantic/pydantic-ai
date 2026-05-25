@@ -963,7 +963,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                 while True:
                     result = await client.list_prompts(params=mcp_types.PaginatedRequestParams(cursor=cursor))
                     prompts.extend(Prompt.from_mcp_sdk(p) for p in result.prompts)
-                    if result.nextCursor is None:
+                    # Treat falsy `nextCursor` (`None` or `""`) as end-of-results — guards against a
+                    # misbehaving server that would otherwise loop the client on `cursor=""` forever.
+                    if not result.nextCursor:
                         break
                     cursor = result.nextCursor
                 if self.cache_prompts:
@@ -983,9 +985,15 @@ class MCPServer(AbstractToolset[Any], ABC):
             The prompt result with description and messages.
 
         Raises:
-            MCPError: If the server returns an error.
+            MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
+                an error response.
         """
         async with self:
+            if not self.capabilities.prompts:
+                raise MCPError(
+                    message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
+                    code=-32601,
+                )
             try:
                 result = await self._get_client().get_prompt(name, arguments)
             except mcp_exceptions.McpError as e:
@@ -2571,9 +2579,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             arguments: Arguments to parameterize the prompt, if applicable.
 
         Raises:
-            MCPError: If the server returns an error.
+            MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
+                an error response.
         """
         async with self:
+            if not self.capabilities.prompts:
+                raise MCPError(
+                    message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
+                    code=-32601,
+                )
             try:
                 result = await self.client.get_prompt(name, arguments)
             except mcp_exceptions.McpError as e:

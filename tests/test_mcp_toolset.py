@@ -565,12 +565,14 @@ class TestMCPToolsetIntegration:
         assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
-        """When the server's `capabilities.prompts` is `False`, `list_prompts` returns an empty
-        list without round-tripping to the server."""
+        """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_prompts() == []
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await toolset.get_prompt('does_not_matter')
+            assert exc_info.value.code == -32601
 
     async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)

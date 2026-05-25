@@ -2681,13 +2681,17 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
 
 
 async def test_prompt_methods_without_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that prompt list methods return empty values when prompts capability is not available."""
+    """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
     async with mcp_server:
         mock_capabilities = ServerCapabilities(prompts=False)
         with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
             mcp_server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
             result = await mcp_server.list_prompts()
             assert result == []
+
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await mcp_server.get_prompt('simple_prompt')
+            assert exc_info.value.code == -32601
 
 
 async def test_instructions(mcp_server: MCPServerStdio) -> None:
