@@ -108,6 +108,9 @@ network:
     - logfire-api.pydantic.dev
     - logfire-eu.pydantic.dev
     - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 
     # UI adapter protocol specs (Vercel AI SDK, AG-UI)
     - ai-sdk.dev
