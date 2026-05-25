@@ -1415,6 +1415,35 @@ def test_reasoning_message_thinking_roundtrip() -> None:
     )
 
 
+def test_dump_load_messages_preserves_generated_thinking_id() -> None:
+    """Test that dumped ReasoningMessage ids survive a load round-trip."""
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(content='Let me think...')]),
+    ]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')
+    reasoning_message = next(m for m in ag_ui_messages if isinstance(m, ReasoningMessage))
+    reloaded_messages = AGUIAdapter.load_messages(ag_ui_messages)
+
+    response = reloaded_messages[0]
+    assert isinstance(response, ModelResponse)
+    thinking_part = response.parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == reasoning_message.id
+
+
+def test_dump_messages_preserves_explicit_thinking_id() -> None:
+    """Test that explicit ThinkingPart ids are used as ReasoningMessage ids."""
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(content='Let me think...', id='thinking-1')]),
+    ]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')
+    reasoning_message = next(m for m in ag_ui_messages if isinstance(m, ReasoningMessage))
+
+    assert reasoning_message.id == 'thinking-1'
+
+
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
