@@ -146,6 +146,18 @@ The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.ant
 !!! note
     Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
 
+Anthropic's [`display`](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) parameter controls whether the API returns a summary of the model's thinking (`'summarized'`) or only signatures (`'omitted'`). Defaults vary by model — when the model defaults to `'omitted'`, `thinking=True` produces empty thinking content (the model still thinks and is billed). Set [`anthropic_thinking_display`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking_display] to `'summarized'` to receive thinking content:
+
+```python {title="anthropic_thinking_display.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-opus-4-7')
+settings = AnthropicModelSettings(thinking=True, anthropic_thinking_display='summarized')
+agent = Agent(model, model_settings=settings)
+...
+```
+
 Thinking tokens count against Anthropic's loop-wide [task budgets](models/anthropic.md#task-budgets-beta), so adaptive thinking naturally scales down as the budget depletes.
 
 ## Google
@@ -181,6 +193,8 @@ agent = Agent(model, model_settings=settings)
 ## Bedrock
 
 For Claude Sonnet 4.6+ and Opus 4.6+, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+For Bedrock-hosted Claude models whose upstream API defaults to `'omitted'`, set [`bedrock_thinking_display`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_thinking_display] to `'summarized'` to receive thinking content — same behavior as the [direct Anthropic API](#adaptive-thinking-effort).
 
 For older Claude models or to pin a specific `budget_tokens`, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agent.md#model-run-settings) to pass provider-specific configuration directly:
 
