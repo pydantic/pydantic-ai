@@ -416,7 +416,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             score = len(terms & tool_terms)
             if score == 0:
                 continue
-            scored_matches.append((score, {'name': tool_def.name, 'description': tool_def.description}))
+            scored_matches.append((score, {'name': tool_def.name}))
 
         if not scored_matches:
             return self._empty_return()
@@ -442,7 +442,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         matches: list[ToolSearchMatch] = []
         for name in list(result)[: self.max_results]:
             if (tool_def := tool_defs_by_name.get(name)) is not None:
-                matches.append({'name': tool_def.name, 'description': tool_def.description})
+                matches.append({'name': tool_def.name})
 
         if not matches:
             return self._empty_return()

@@ -63,13 +63,18 @@ custom-callable empty-results path (where wire-time filtering left
 
 
 class ToolSearchMatch(TypedDict):
-    """A single match in a tool-search result."""
+    """A single match in a tool-search result.
+
+    Only `name` is carried: the full
+    [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] (name, description,
+    parameter schema) for each match is injected into the next request's `tools`
+    array via the framework's defer-loading flip, so duplicating `description`
+    here would send the same string twice (once in the tool-search return, once
+    in the tools schema) at input-token cost on every subsequent LLM call.
+    """
 
     name: str
     """Name of the discovered tool, as the model will call it."""
-
-    description: str | None
-    """Human-readable description, if the tool provided one."""
 
 
 class ToolSearchArgs(TypedDict):
