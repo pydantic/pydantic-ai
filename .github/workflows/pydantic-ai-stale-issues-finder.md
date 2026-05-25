@@ -73,6 +73,7 @@ imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
+  - shared/repo-context.md
 pre-steps:
   # Setting engine.command makes gh-aw skip ALL engine installation steps,
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
