@@ -11010,7 +11010,7 @@ Fix the errors and try again.\
 
 
 @pytest.mark.vcr()
-async def test_anthropic_supported_model_invokes_20260209_web_tool_without_code_execution(
+async def test_anthropic_supported_model_uses_20260209_web_tools(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
