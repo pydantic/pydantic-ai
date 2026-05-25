@@ -295,7 +295,17 @@ def test_model_profile_opus():
     assert profile.supports_json_schema_output is True
 
 
-def test_model_profile_opus_47_supports_dynamic_filtering():
-    profile = anthropic_model_profile('claude-opus-4-7')
+@pytest.mark.parametrize(
+    'model_name', ['claude-mythos-preview', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7']
+)
+def test_model_profile_supports_web_tools_20260209(model_name: str):
+    profile = anthropic_model_profile(model_name)
     assert isinstance(profile, AnthropicModelProfile)
-    assert profile.anthropic_supports_dynamic_filtering is True
+    assert profile.anthropic_supports_web_tools_20260209 is True
+
+
+@pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'])
+def test_model_profile_does_not_support_20260209_web_tools(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert isinstance(profile, AnthropicModelProfile)
+    assert profile.anthropic_supports_web_tools_20260209 is False

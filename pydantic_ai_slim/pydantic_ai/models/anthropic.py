@@ -1009,10 +1009,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, use_dynamic_filtering: bool
+        tool: WebSearchTool, use_web_tool_20260209: bool
     ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-        if use_dynamic_filtering:
+        if use_web_tool_20260209:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
                 type='web_search_20260209',
@@ -1032,10 +1032,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, use_dynamic_filtering: bool
+        tool: WebFetchTool, use_web_tool_20260209: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-        if use_dynamic_filtering:
+        if use_web_tool_20260209:
             return (
                 BetaWebFetchTool20260209Param(
                     name='web_fetch',
@@ -1061,23 +1061,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'web-fetch-2025-09-10',
         )
 
-    @staticmethod
-    def _use_dynamic_filtering(
-        tool: WebSearchTool | WebFetchTool,
-        has_code_execution: bool,
-        profile: AnthropicModelProfile,
-        model_name: str,
-    ) -> bool:
-        if tool.dynamic_filtering is True:
-            if not has_code_execution:
-                raise UserError(
-                    '`dynamic_filtering=True` requires `CodeExecutionTool` to be enabled with the Anthropic provider.'
-                )
-            if not profile.anthropic_supports_dynamic_filtering:
-                raise UserError(f'`dynamic_filtering=True` is not supported by Anthropic model {model_name!r}.')
-            return True
-        return tool.dynamic_filtering is None and profile.anthropic_supports_dynamic_filtering and has_code_execution
-
     def _add_native_tools(
         self,
         tools: list[BetaToolUnionParam],
@@ -1087,18 +1070,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         profile = AnthropicModelProfile.from_profile(self.profile)
-        has_code_execution = any(isinstance(tool, CodeExecutionTool) for tool in model_request_parameters.native_tools)
+        use_web_tools_20260209 = profile.anthropic_supports_web_tools_20260209
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile, self.model_name)
-                tools.append(self._map_web_search_tool(tool, dynamic_filtering))
+                tools.append(self._map_web_search_tool(tool, use_web_tools_20260209))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                dynamic_filtering = self._use_dynamic_filtering(tool, has_code_execution, profile, self.model_name)
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, dynamic_filtering)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, use_web_tools_20260209)
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)

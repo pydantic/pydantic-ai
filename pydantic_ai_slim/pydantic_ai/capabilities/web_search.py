@@ -41,12 +41,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     max_uses: int | None
     """Maximum number of web searches per run. Requires native support."""
 
-    dynamic_filtering: bool | None
-    """Enable dynamic filtering for search results. Native-only; ignored by local tools.
-
-    With Anthropic, this requires `CodeExecutionTool` to also be enabled.
-    """
-
     def __init__(
         self,
         *,
@@ -59,7 +53,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
-        dynamic_filtering: bool | None = None,
     ) -> None:
         self.native = native
         self.local = local
@@ -68,7 +61,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         self.blocked_domains = blocked_domains
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
-        self.dynamic_filtering = dynamic_filtering
         self.__post_init__()
 
     def _default_native(self) -> WebSearchTool:
@@ -83,8 +75,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
             kwargs['allowed_domains'] = self.allowed_domains
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
-        if self.dynamic_filtering is not None:
-            kwargs['dynamic_filtering'] = self.dynamic_filtering
         return WebSearchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
@@ -126,12 +116,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return (
-            self.blocked_domains is not None
-            or self.allowed_domains is not None
-            or self.max_uses is not None
-            or self.dynamic_filtering is True
-        )
+        return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
 
 
 install_deprecated_kwarg_alias(WebSearch, old='builtin', new='native')

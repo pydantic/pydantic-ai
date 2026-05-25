@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '552'
+      - '489'
       content-type:
       - application/json
       host:
@@ -21,14 +21,14 @@ interactions:
         - text: 'Reply with exactly: ok'
           type: text
         role: user
-      model: claude-sonnet-4-6
+      model: claude-sonnet-4-5
       stream: false
       tools:
       - allowed_domains: null
         blocked_domains: null
         max_uses: null
         name: web_search
-        type: web_search_20260209
+        type: web_search_20250305
         user_location: null
       - allowed_domains: null
         blocked_domains: null
@@ -36,16 +36,14 @@ interactions:
         max_content_tokens: null
         max_uses: null
         name: web_fetch
-        type: web_fetch_20260209
-      - name: code_execution
-        type: code_execution_20260120
+        type: web_fetch_20250910
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '481'
+      - '497'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -53,7 +51,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-de0ac72345bb769e074e1bbb4f5a5852-46c5acb7665cff22-01
+      - 00-73c2e18e4bf1c81ce302e65156700583-b110c9340fa6f931-01
       transfer-encoding:
       - chunked
       vary:
@@ -62,8 +60,8 @@ interactions:
       content:
       - text: ok
         type: text
-      id: msg_01Qii2uwMmFAgu7Ey2wD7NA7
-      model: claude-sonnet-4-6
+      id: msg_01T7kP6r4z49EEf1GCnnc76a
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
       stop_reason: end_turn
@@ -75,8 +73,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 4786
+        inference_geo: not_available
+        input_tokens: 2743
         output_tokens: 4
         service_tier: standard
     status:

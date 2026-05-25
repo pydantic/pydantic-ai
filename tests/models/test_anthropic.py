@@ -11009,147 +11009,34 @@ Fix the errors and try again.\
     )
 
 
-def _anthropic_vcr_request_body(vcr: Any) -> dict[str, Any]:
-    assert len(vcr.requests) == 1
-    return json.loads(vcr.requests[0].body)
+@pytest.mark.vcr()
+async def test_anthropic_supported_model_invokes_20260209_web_tool_without_code_execution(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
+
+    result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
+
+    assert result.output
+    tool_types = [tool['type'] for tool in _single_request_body(vcr)['tools']]
+    assert tool_types == ['web_search_20260209', 'web_fetch_20260209']
+    response_parts = [part for message in result.all_messages() for part in message.parts]
+    assert any(isinstance(part, NativeToolCallPart) and part.tool_name == 'web_fetch' for part in response_parts)
 
 
 @pytest.mark.vcr()
-async def test_anthropic_dynamic_filtering_auto_detection(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebSearchTool()),
-            NativeTool(WebFetchTool()),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
+async def test_anthropic_unsupported_model_uses_previous_web_tools(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
 
     result = await agent.run('Reply with exactly: ok')
 
     assert result.output
-    request_body = _anthropic_vcr_request_body(vcr)
-    tool_types = {tool['type'] for tool in request_body['tools']}
-    assert 'web_search_20260209' in tool_types
-    assert 'web_fetch_20260209' in tool_types
-
-
-@pytest.mark.vcr()
-async def test_anthropic_dynamic_filtering_explicit_true(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebSearchTool(dynamic_filtering=True)),
-            NativeTool(WebFetchTool(dynamic_filtering=True)),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
-
-    result = await agent.run('Reply with exactly: ok')
-
-    assert result.output
-    request_body = _anthropic_vcr_request_body(vcr)
-    tool_types = {tool['type'] for tool in request_body['tools']}
-    assert 'web_search_20260209' in tool_types
-    assert 'web_fetch_20260209' in tool_types
-
-
-@pytest.mark.vcr()
-async def test_anthropic_dynamic_filtering_explicit_false(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebSearchTool(dynamic_filtering=False)),
-            NativeTool(WebFetchTool(dynamic_filtering=False)),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
-
-    result = await agent.run('Reply with exactly: ok')
-
-    assert result.output
-    request_body = _anthropic_vcr_request_body(vcr)
-    tool_types = {tool['type'] for tool in request_body['tools']}
-    assert 'web_search_20250305' in tool_types
-    assert 'web_fetch_20250910' in tool_types
-
-
-async def test_anthropic_dynamic_filtering_explicit_false_adds_web_fetch_beta(allow_model_requests: None):
-    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebSearchTool(dynamic_filtering=False)),
-            NativeTool(WebFetchTool(dynamic_filtering=False)),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
-
-    result = await agent.run('Reply with exactly: ok')
-
-    assert result.output == 'ok'
-    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    betas = request_kwargs.get('betas')
-    assert isinstance(betas, (list, tuple))
-    assert 'web-fetch-2025-09-10' in betas
-
-
-async def test_anthropic_dynamic_filtering_preserves_web_fetch_citations(allow_model_requests: None):
-    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebFetchTool(enable_citations=True, dynamic_filtering=True)),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
-
-    result = await agent.run('Reply with exactly: ok')
-
-    assert result.output == 'ok'
-    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert request_kwargs.get('tools') == [
-        {
-            'name': 'web_fetch',
-            'type': 'web_fetch_20260209',
-            'max_uses': None,
-            'allowed_domains': None,
-            'blocked_domains': None,
-            'citations': {'enabled': True},
-            'max_content_tokens': None,
-        },
-        {'name': 'code_execution', 'type': 'code_execution_20260120'},
-    ]
-    assert request_kwargs.get('betas') is OMIT
-
-
-async def test_anthropic_dynamic_filtering_requires_code_execution(allow_model_requests: None):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-api-key'))
-    agent = Agent(m, capabilities=[NativeTool(WebSearchTool(dynamic_filtering=True))])
-
-    with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
-        await agent.run('hello')
-
-
-async def test_anthropic_dynamic_filtering_requires_supported_model(allow_model_requests: None):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-api-key'))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(WebSearchTool(dynamic_filtering=True)),
-            NativeTool(CodeExecutionTool()),
-        ],
-    )
-
-    with pytest.raises(UserError, match="not supported by Anthropic model 'claude-sonnet-4-5'"):
-        await agent.run('hello')
+    tool_types = [tool['type'] for tool in _single_request_body(vcr)['tools']]
+    assert tool_types == ['web_search_20250305', 'web_fetch_20250910']
 
 
 async def test_stream_cancel(allow_model_requests: None):
