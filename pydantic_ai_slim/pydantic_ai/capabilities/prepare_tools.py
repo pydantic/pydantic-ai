@@ -14,10 +14,9 @@ from .abstract import AbstractCapability
 class PrepareTools(AbstractCapability[AgentDepsT]):
     """Capability that filters or modifies function tool definitions using a callable.
 
-    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability —
-    sugar for the agent-level `prepare_tools=` constructor argument, which injects this
-    capability automatically. Filters/modifies **function** tools only; for output tools
-    use [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
+    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability.
+    Filters/modifies **function** tools only; for output tools use
+    [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
 
     ```python
     from pydantic_ai import Agent, RunContext

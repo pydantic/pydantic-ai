@@ -4,7 +4,7 @@ import os
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,8 +12,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -23,11 +21,14 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -42,7 +43,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -51,13 +52,14 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
@@ -76,10 +78,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -129,6 +131,16 @@ async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: B
     assert model.client is bedrock_provider.client
 
 
+async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+    new_client = cast(Any, SimpleNamespace(meta=SimpleNamespace(endpoint_url='https://bedrock-runtime.example.com')))
+    model.client = new_client
+    assert model.client is new_client
+    assert model.base_url == 'https://bedrock-runtime.example.com'
+
+
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
@@ -146,7 +158,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -358,7 +370,7 @@ async def test_stub_provider_properties():
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
@@ -380,7 +392,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -547,7 +559,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -590,8 +602,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         model=model,
         instructions='You are a helpful chatbot.',
         model_settings={'temperature': 0.0},
-        tool_retries=2,
-        output_retries=2,
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -1354,6 +1365,553 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 usage=RequestUsage(input_tokens=334, output_tokens=432),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_legacy(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multi-turn thinking on pre-4.6 Claude via the unified `thinking` setting.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive`. Proves the
+    legacy `{'type': 'enabled', 'budget_tokens': N}` translation path works
+    end-to-end on a non-adaptive model (Sonnet 4.5) when the user passes the
+    unified `thinking=True` setting (rather than the manual
+    `bedrock_additional_model_requests_fields` workaround the existing
+    `test_bedrock_model_thinking_part_anthropic` covers).
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='This is a straightforward question about crossing the street safely. I should provide practical safety advice for pedestrians.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross the street safely:
+
+## Basic Steps
+
+1. **Find a safe crossing spot**
+   - Use crosswalks, intersections, or pedestrian signals when available
+   - Avoid crossing between parked cars or on curves where drivers can't see you
+
+2. **Stop at the curb/edge**
+   - Don't step into the street yet
+
+3. **Look left, right, then left again**
+   - Keep looking while you cross
+
+4. **Listen for traffic**
+   - Remove headphones or turn down volume
+   - Listen for engines, horns, or warning sounds
+
+5. **Make eye contact with drivers**
+   - Ensure they see you before crossing
+
+6. **Wait for a safe gap in traffic**
+   - If there's a signal, wait for the "walk" signal
+   - Don't assume cars will stop
+
+7. **Walk, don't run**
+   - Stay alert and keep watching for cars
+   - Be visible--wear bright colors at night
+
+## Extra Tips
+- Put your phone away while crossing
+- Watch for turning vehicles
+- Be extra careful in bad weather or low light
+- Teach children to hold an adult's hand
+
+Is there a specific crossing situation you're dealing with?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=43, output_tokens=306),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the parallel challenges and solutions. Let me think about the key elements:
+
+Crossing a street:
+- Find safe crossing spots (crosswalks, intersections)
+- Look for hazards (traffic)
+- Use infrastructure when available
+- Timing and safety assessment
+- Stay alert during crossing
+
+Crossing a river:
+- Find safe crossing points (bridges, fords, ferries)
+- Look for hazards (current, depth, obstacles)
+- Use infrastructure when available
+- Assess conditions and safety
+- Stay alert during crossing
+
+This is a nice analogy! I should provide helpful, practical information about river crossing.\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how the principles translate:
+
+## Find Safe Crossing Points
+
+**Like using crosswalks:**
+- **Bridges** - the "crosswalk" of rivers (safest option)
+- **Ferries or boats** - the "pedestrian signal" \n\
+- **Fords** - shallow areas (like a quiet intersection)
+- **Stepping stones** - natural crossing infrastructure
+
+## Assess Before Crossing
+
+**Like looking for traffic:**
+- Check water **depth** and **current speed**
+- Look for hazards: debris, slippery rocks, drop-offs
+- Consider **weather** - recent rain means faster current
+- Scout up and downstream for easier spots
+
+## Cross Safely
+
+**Like walking alertly:**
+- Use a **walking stick** for balance (test depth)
+- Cross at an **angle downstream** - don't fight the current
+- **Unbuckle backpack straps** - so you can ditch weight if needed
+- **Never cross alone** if it's risky
+- Turn sideways to reduce resistance in strong current
+
+## Know When NOT to Cross
+
+**Like waiting for traffic to clear:**
+- Water above your knees = dangerous current
+- Fast-moving or murky water
+- Cold water (hypothermia risk)
+- If unsure, find another way
+
+**The key similarity**: Use infrastructure when available, assess the hazards, and don't take unnecessary risks!
+
+What kind of river crossing did you have in mind?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=341, output_tokens=501),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_adaptive(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multi-turn thinking on Sonnet 4.6 via the unified `thinking` setting.
+
+    Reproduces the regression from https://github.com/pydantic/pydantic-ai/issues/5304:
+    pre-fix the legacy `{'type': 'enabled', 'budget_tokens': N}` shape silently disabled
+    thinking on turn 2. With adaptive support wired in, both turns must emit a
+    `ThinkingPart`.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, practical question about how to cross the street safely.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**
+   - Use a crosswalk or intersection when possible
+   - Avoid crossing between parked cars or on curves
+
+2. **Stop at the curb or edge**
+   - Don't stand in the road while waiting
+
+3. **Look both ways**
+   - Look left, then right, then left again
+   - In some countries, the order may differ based on traffic direction
+
+4. **Wait for a safe gap in traffic**
+   - At a traffic light, wait for the walk signal (green light or "WALK" sign)
+   - Make sure cars have actually stopped before stepping out
+
+5. **Make eye contact with drivers** (when possible)
+   - Ensure they see you before crossing
+
+6. **Walk, don't run**
+   - Walk briskly and directly across
+   - Keep watching for traffic as you cross
+
+7. **Stay alert**
+   - Avoid looking at your phone while crossing
+   - Watch for turning vehicles, cyclists, and other hazards
+
+**Additional tips:**
+- Be extra cautious at night or in bad weather
+- Make yourself visible (wear bright clothing if possible)
+- Never assume a driver sees you
+
+Would you like more specific advice for a particular situation?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=322),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to analogously apply the principles of crossing a street to crossing a river. This is a fun and interesting question. Let me think about how the steps for crossing a street map to crossing a river.
+
+Let me map the concepts:
+- Finding a safe place to cross → finding a safe crossing point (shallow ford, bridge, etc.)
+- Looking both ways → assessing the river conditions (current, depth, width)
+- Waiting for a safe gap → waiting for safe conditions (water level, weather)
+- Making eye contact with drivers → being aware of hazards
+- Walking, not running → moving carefully and steadily
+- Staying alert → watching for hazards like slippery rocks, currents, etc.
+
+
+- Now I'm considering how these principles apply differently depending on the crossing method--whether I'm using a bridge, wading through a ford, taking a boat, or swimming across.\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how crossing a street maps to crossing a river:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Or find a **shallow ford** -- avoid deep, wide, or fast-moving sections
+- Avoid crossing near rapids, waterfalls, or steep banks
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and width**
+- Look for **hazards** (rocks, debris, strong current)
+- Check **upstream and downstream** (like looking left and right)
+
+## 3. Wait for Safe Conditions
+- Like waiting for a walk signal, wait if water levels are **high or rising**
+- Avoid crossing after heavy rain or during flooding
+
+## 4. "Make Eye Contact" -- Know Your Hazards
+- Identify slippery rocks, hidden drop-offs, and current strength
+
+## 5. Cross Carefully and Directly
+- Use a **walking stick** for stability (like walking briskly and steadily)
+- Face slightly **upstream**
+- Unbuckle your pack (if carrying one) for safety
+
+## 6. Stay Alert Throughout
+- Keep watching conditions as you cross
+- Don't look at your phone 😄
+
+## Bonus Options (like different types of crosswalks):
+- **Bridge** = safest
+- **Stepping stones** = moderate
+- **Wading/fording** = requires more caution
+- **Swimming** = last resort
+
+Would you like detail on any specific method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=358, output_tokens=574),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sonnet 4.6 with `thinking='high'` — verifies output_config.effort lands on the wire.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive` (which covers bare
+    `thinking=True` and omits effort). Per AWS docs, `effort` must live in the sibling
+    `output_config` field inside `additionalModelRequestFields`, not inside `thinking`.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking='high'),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, everyday question about how to cross the street safely.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**, such as:
+   - A marked crosswalk
+   - An intersection with traffic signals
+   - A pedestrian crossing
+
+2. **Stop at the curb** before stepping into the street
+
+3. **Look both ways:**
+   - Look left
+   - Look right
+   - Look left again
+
+4. **Wait for traffic to clear** or for the walk signal if at a traffic light
+
+5. **Make eye contact** with any drivers to be sure they see you
+
+6. **Walk, don't run** across the street
+
+7. **Stay alert** - avoid looking at your phone while crossing
+
+8. **Cross in a straight line** and keep watching for traffic as you go
+
+**Additional tips:**
+- Use crosswalks and signals whenever possible
+- Be extra cautious at night or in bad weather
+- Watch for turning vehicles, even when you have the right of way
+- Be aware of cyclists as well as cars
+
+Would you like more detail on any specific situation, like crossing with children or crossing without a crosswalk?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=280),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking how to cross a river, using the analogy of crossing the street. They want me to apply similar principles/steps but adapted for crossing a river. Let me think about this carefully.
+
+Crossing a street involves:
+1. Finding a safe place to cross
+2. Stopping and assessing
+3. Looking both ways for hazards
+4. Waiting for the right moment
+5. Moving carefully and alertly
+6. Staying aware throughout
+
+Analogously, crossing a river would involve similar principles but adapted for the river context:
+
+1. Find a safe place to cross (shallow ford, bridge, stepping stones, etc.)
+2. Assess the conditions before entering
+
+
+3. Check upstream and downstream for potential dangers like debris or strong currents
+4. Wait for optimal conditions if the water is too turbulent
+5. Move across deliberately and with full attention
+6. Maintain awareness of changing water conditions the entire time\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross a river, using the same principles as crossing a street:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Find a **shallow ford** where the water is calm and slow
+- Look for **stepping stones**
+- Avoid deep, fast-moving, or narrow sections
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and speed** (like checking for traffic)
+- Look **upstream and downstream** for hazards (like looking left and right)
+- Watch for debris, rocks, or sudden drop-offs
+
+## 3. Wait for Safe Conditions
+- Avoid crossing during **floods or heavy rain**
+- Let fast currents settle, similar to waiting for traffic to clear
+
+## 4. Cross Carefully
+- **Unbuckle your pack** if carrying one, in case you fall
+- Use a **walking stick** for stability
+- Face **upstream** as you cross
+- Move **slowly and deliberately** (don't run)
+- Cross at an **angle** with the current rather than straight across
+
+## 5. Stay Alert Throughout
+- Keep watching for changing conditions
+- Don't look at distractions
+- Have an **exit plan** if you lose footing
+
+## Key Analogy Points:
+| Street | River |
+|--------|-------|
+| Crosswalk | Bridge/ford |
+| Traffic | Current/debris |
+| Walk signal | Calm water conditions |
+| Looking both ways | Checking upstream/downstream |
+
+Would you like more detail on any specific crossing method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=316, output_tokens=573),
+                model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2250,7 +2808,7 @@ async def test_bedrock_cache_point_adds_cache_control(
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
-    usage = result.usage()
+    usage = result.usage
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
     assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
 
@@ -2266,7 +2824,7 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()
@@ -2302,12 +2860,12 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
 
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
-    first_usage = first.usage()
+    first_usage = first.usage
     assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
-    second_usage = second.usage()
+    second_usage = second.usage
     assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
@@ -2356,7 +2914,7 @@ Both documents appear to be test files with minimal content. The main distinctio
 Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2380,7 +2938,7 @@ Both documents are very short - just single sentences. If you're asking about ch
 - Document 2: 49 characters (including spaces)\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2434,7 +2992,7 @@ This is a close-up photograph of a **kiwi fruit cross-section**. Here are the ke
 This type of image is commonly used in food photography, nutritional content, or botanical documentation.\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2449,7 +3007,7 @@ The image dimensions are **597 × 597 pixels** (a perfect square).
 This is a relatively small to medium-sized image by modern standards, suitable for web use, thumbnails, or social media posts, but not high-resolution enough for large-format printing.\
 """)
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -2482,7 +3040,7 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
         'The video depicts a camera mounted on a tripod, capturing a scenic view of a landscape featuring mountains and a road. The camera remains stationary throughout the video, focusing on the picturesque scenery.'
     )
 
-    usage = result.usage()
+    usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
@@ -3597,59 +4155,59 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                # BuiltinToolCallPart (w/dict) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/dict) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args={'snippet': 'print("hello")'},
                     tool_call_id='call_1',
                 ),
-                # BuiltinToolReturnPart for bedrock with empty provider_details (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for bedrock with empty provider_details (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_1',
                     provider_details={},
                 ),
-                # BuiltinToolCallPart for the other provider (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the other provider (should NOT be included)
+                NativeToolCallPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     args={'code': 'print("other")'},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolReturnPart for the other provider (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the other provider (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'other', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolCallPart (w/str) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/str) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args='{"snippet": "10*5"}',
                     tool_call_id='call_3',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider with status (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider with status (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_3',
                     provider_details={'status': 'success'},
                 ),
-                # BuiltinToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     args={'snippet': 'print("unknown")'},
                     tool_call_id='call_4',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     content={'other': 'content'},
@@ -3665,7 +4223,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
         ModelRequestParameters(
             function_tools=[],
             allow_text_output=True,
-            builtin_tools=[CodeExecutionTool()],
+            native_tools=[CodeExecutionTool()],
         ),
         None,
     )
@@ -3714,7 +4272,9 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
 
 async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
 
     class Response(TypedDict):
         result: float
@@ -3735,13 +4295,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '1234 * 5678'},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
@@ -3794,13 +4354,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '7006652 * 2'},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
@@ -3843,7 +4403,9 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
 
 async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
 
     class Response(TypedDict):
         result: float
@@ -3871,13 +4433,13 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"snippet":"1234 * 5678"}',
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3920,8 +4482,10 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
                 ),
             ),
             PartDeltaEvent(
@@ -3932,7 +4496,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3942,7 +4506,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3971,7 +4535,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3979,7 +4543,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -4188,3 +4752,28 @@ async def test_bedrock_model_instructions_only_then_message_history(
             ),
         ]
     )
+
+
+async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')]),
+    ]
+    prepared = model.prepare_messages(messages)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert system_prompt == [{'text': 'You are helpful.'}]
+    text_blocks = [
+        block['text']
+        for msg in cast(list[Any], bedrock_messages)
+        if msg['role'] == 'user'
+        for block in msg['content']
+        if 'text' in block
+    ]
+    assert '<system>Now be terse.</system>' in text_blocks
+    assert 'You are helpful.' not in text_blocks

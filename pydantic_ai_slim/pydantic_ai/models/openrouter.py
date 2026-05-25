@@ -7,9 +7,9 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
-from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
+from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
@@ -577,7 +577,7 @@ def _openrouter_settings_to_openai_settings(
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    for builtin_tool in model_request_parameters.builtin_tools:
+    for builtin_tool in model_request_parameters.native_tools:
         if isinstance(builtin_tool, WebSearchTool):
             extra_body.setdefault('plugins', []).append({'id': 'web'})
             extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
@@ -610,7 +610,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @classmethod
     @override
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle.
 
         OpenRouter supports web search via its plugins system.
