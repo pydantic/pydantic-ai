@@ -17,23 +17,24 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_graph import BaseNode, GraphRunContext
-from pydantic_graph.beta import Graph, GraphBuilder
-from pydantic_graph.nodes import End, NodeRunEndT
+from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
+from pydantic_graph.basenode import End, NodeRunEndT
+from pydantic_graph.graph_builder import Graph
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
-    AgentBuiltinTool,
+    AgentNativeTool,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -46,7 +47,7 @@ from .tools import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from .agent.abstract import AbstractAgent
+    from .agent import Agent
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
@@ -134,6 +135,9 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
+    """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
+    for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -194,13 +198,13 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     root_capability: AbstractCapability[DepsT]
 
-    builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
+    native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
-    agent: AbstractAgent[DepsT, Any] | None = None
+    agent: Agent[DepsT, Any] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -488,22 +492,36 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
-    # resolve dynamic builtin tools
-    builtin_tools: list[AbstractBuiltinTool] = []
-    if ctx.deps.builtin_tools:
-        for tool in ctx.deps.builtin_tools:
-            if isinstance(tool, AbstractBuiltinTool):
-                builtin_tools.append(tool)
+    # resolve dynamic native tools
+    native_tools: list[AbstractNativeTool] = []
+    if ctx.deps.native_tools:
+        for tool in ctx.deps.native_tools:
+            if isinstance(tool, AbstractNativeTool):
+                native_tools.append(tool)
             else:
                 t = tool(run_context)
                 if inspect.isawaitable(t):
                     t = await t
                 if t is not None:
-                    builtin_tools.append(t)
+                    native_tools.append(t)
+
+    # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. Filtering
+    # here (at MRP-construction time) keeps the request shape honest before
+    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
+    # preserved so the request still fails loudly on unsupported models.
+    has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
+    if not has_tool_search_corpus:
+        # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
+        # (e.g. a hypothetical `WebSearchTool(optional=True)`) don't have a corpus and
+        # shouldn't be dropped here — they only get dropped on the unsupported-on-this-model
+        # path in `Model.prepare_request`.
+        native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
     return models.ModelRequestParameters(
         function_tools=function_tools,
-        builtin_tools=builtin_tools,
+        native_tools=native_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -778,6 +796,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await req_ctx.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
+                response = _narrow_tool_call_parts(response, req_ctx.model_request_parameters)
                 _handler_response = response
                 return response
 
@@ -880,14 +899,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        if messages[-1].timestamp is None:
-            messages[-1].timestamp = now_utc()
-
-        if messages and messages[-1].run_id is None:
-            messages[-1].run_id = ctx.state.run_id
-        if messages and messages[-1].conversation_id is None:
-            messages[-1].conversation_id = ctx.state.conversation_id
+        # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
+        fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -900,8 +913,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
-        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
+        #
+        # Run a first pass so `prepare_messages` sees a normalized history.
         messages = _clean_message_history(messages)
+
+        # Hand off to the model class for any history shapes the active provider can't
+        # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
+        # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
+        #
+        # Lives on `Model.prepare_messages` rather than inline here for two reasons:
+        # 1. The translation depends on `self.profile`, which is per-model state.
+        # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
+        #    each candidate runs `prepare_messages` itself with its own profile when chosen.
+        prepared = model.prepare_messages(messages)
+
+        # If `prepare_messages` produced a new list (e.g. tool-search synthesis split a
+        # `ModelResponse(call+return)` into `ModelResponse(call) + ModelRequest(return)`
+        # adjacent to an existing `ModelRequest`), re-run cleanup so consecutive same-role
+        # messages are merged. The default `prepare_messages` returns the input list
+        # unchanged, so the identity check skips the redundant second pass.
+        if prepared is not messages:
+            messages = _clean_message_history(prepared)
+        else:
+            messages = prepared
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -922,8 +957,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -975,8 +1009,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
@@ -1145,12 +1178,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                    elif isinstance(part, _messages.NativeToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
@@ -1269,7 +1302,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                    elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text.
                         text = ''  # pragma: no cover
@@ -1372,6 +1405,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1957,12 +1991,19 @@ async def _call_tool(
     else:
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
+    # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
+    # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
+    # typed identity intact across multi-turn history: the next turn's discovery parser /
+    # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
+    tool_def = tool_manager.get_tool_def(call.tool_name)
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
         content=tool_return.return_value,
         metadata=tool_return.metadata,
+        tool_kind=tool_def.tool_kind if tool_def else None,
     )
+    return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
     return return_part, tool_return.content or None
 
@@ -2052,6 +2093,40 @@ def build_agent_graph(
         ),
     )
     return g.build(validate_graph_structure=False)
+
+
+def _narrow_tool_call_parts(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+
+    Lives here rather than in each model adapter so adapter authors emit base
+    `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
+    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    function handles the non-streaming `Model.request()` return path. Either path produces
+    the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
+    moment the call is emitted by the model.
+    """
+    tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
+        td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
+    }
+    if not tool_kind_by_name:
+        return response
+
+    changed = False
+    new_parts: list[_messages.ModelResponsePart] = []
+    for part in response.parts:
+        if (
+            isinstance(part, _messages.ToolCallPart)
+            and part.tool_kind is None
+            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
+        ):
+            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+            new_parts.append(promoted)
+            changed = True
+        else:
+            new_parts.append(part)
+    return replace(response, parts=new_parts) if changed else response
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:

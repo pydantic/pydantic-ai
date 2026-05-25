@@ -10,7 +10,7 @@ from typing import Annotated, Any, Union
 import pydantic
 from pydantic_core import core_schema
 
-from ..nodes import BaseNode
+from ..basenode import BaseNode
 
 nodes_type_context: ContextVar[Sequence[type[BaseNode[Any, Any, Any]]]] = ContextVar('nodes_type_context')
 

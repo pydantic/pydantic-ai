@@ -12,21 +12,24 @@ import pytest
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -55,6 +58,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 
@@ -78,6 +82,8 @@ with try_import() as starlette_import_successful:
         DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
         DynamicToolOutputDeniedPart,
+        DynamicToolOutputErrorPart,
+        DynamicToolUIPart,
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
@@ -90,6 +96,7 @@ with try_import() as starlette_import_successful:
         ToolOutputAvailablePart,
         ToolOutputDeniedPart,
         ToolOutputErrorPart,
+        ToolUIPart,
         UIMessage,
     )
     from pydantic_ai.ui.vercel_ai.response_types import (
@@ -111,10 +118,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -138,10 +145,66 @@ def test_build_run_input_allows_regenerate_without_message_id():
     assert run_input.message_id is None
 
 
+@pytest.mark.parametrize(
+    'part',
+    [
+        {'state': 'input-streaming', 'input': '{"query":'},
+        {'state': 'input-available', 'input': {'query': 'test'}},
+        {'state': 'output-available', 'input': {'query': 'test'}, 'output': {'ok': True}},
+        {'state': 'output-error', 'input': {'query': 'test'}, 'errorText': 'boom'},
+        {'state': 'approval-requested', 'input': {'query': 'test'}},
+        {
+            'state': 'approval-responded',
+            'input': {'query': 'test'},
+            'approval': {'id': 'approval_1', 'approved': True},
+        },
+        {'state': 'output-denied', 'input': {'query': 'test'}},
+    ],
+)
+@pytest.mark.parametrize(
+    'part_type, tool_name',
+    [
+        ('tool-web_search', None),
+        ('dynamic-tool', 'web_search'),
+    ],
+)
+def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part_type: str, tool_name: str | None):
+    tool_part: dict[str, object] = {
+        'type': part_type,
+        'toolCallId': 'call_1',
+        'title': 'Web Search',
+        'providerExecuted': True,
+        **part,
+    }
+    if tool_name:
+        tool_part['toolName'] = tool_name
+
+    data = {
+        'trigger': 'submit-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [
+                    tool_part,
+                ],
+            }
+        ],
+    }
+
+    request = SubmitMessage.model_validate(data)
+    parsed_part = request.messages[0].parts[0]
+
+    assert isinstance(parsed_part, ToolUIPart | DynamicToolUIPart)
+    assert parsed_part.title == 'Web Search'
+    assert parsed_part.provider_executed is True
+
+
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     data = SubmitMessage(
         trigger='submit-message',
@@ -1590,7 +1653,7 @@ async def test_run_stream_builtin_tool_call():
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -1604,7 +1667,7 @@ async def test_run_stream_builtin_tool_call():
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content=[
                     {
@@ -2257,6 +2320,8 @@ async def test_run_stream_response_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
+    # Default `sdk_version=5` — `tool-input-error` is v6-only, so v5 keeps the pre-PR
+    # lifecycle of `tool-input-available` followed by `tool-output-error` on validation failure.
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -2266,7 +2331,12 @@ async def test_run_stream_response_error():
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+                'input': {},
+            },
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
@@ -2283,13 +2353,21 @@ Fix the errors and try again.\
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+                'input': {},
+            },
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
                 'errorText': 'Tool execution was interrupted by an error.',
             },
-            {'type': 'error', 'errorText': "Tool 'unknown_tool' exceeded max retries count of 1"},
+            {
+                'type': 'error',
+                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1",
+            },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
@@ -2347,7 +2425,7 @@ async def test_run_stream_request_error():
 
 async def test_run_stream_tool_retry_exhaustion():
     """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
-    agent = Agent(model=TestModel(), tool_retries=1, output_retries=1)
+    agent = Agent(model=TestModel(), retries={'tools': 1, 'output': 1})
 
     @agent.tool_plain(retries=1)
     async def flaky_tool(query: str) -> str:
@@ -2419,7 +2497,7 @@ async def test_run_stream_output_tool_error():
         raise ValueError('Output validation failed')
 
     agent = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries={'tools': 0, 'output': 0}
     )
 
     request = SubmitMessage(
@@ -2438,7 +2516,11 @@ async def test_run_stream_output_tool_error():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    # The output tool call must be closed with tool-output-error before the stream error
+    # The output tool's validator raised `UnexpectedModelBehavior` before
+    # `_emit_output_tool_events` could fire, so `_handle_tool_call` never ran.
+    # `_handle_tool_result` backfills `tool-input-available` from the part stashed at
+    # `handle_tool_call_end`, so the chunk lifecycle (input-streaming -> input-available
+    # -> output-error) stays complete for both v5 and v6 frontends.
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
     assert event_types == snapshot(
         [
@@ -2807,15 +2889,20 @@ async def test_tool_output_denied_chunk_emission():
     assert events == snapshot(
         [
             {'type': 'start'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'delete_approved',
+                'toolName': 'delete_file',
+                'input': {'path': 'approved.txt'},
+            },
             {'type': 'tool-output-denied', 'toolCallId': 'delete_1'},
             {'type': 'tool-output-available', 'toolCallId': 'delete_approved', 'output': 'Deleted approved.txt'},
             {'type': 'start-step'},
-            {'type': 'text-start', 'id': IsStr()},
             {
-                'type': 'text-delta',
-                'delta': 'The file deletion was cancelled as requested.',
+                'type': 'text-start',
                 'id': IsStr(),
             },
+            {'type': 'text-delta', 'delta': 'The file deletion was cancelled as requested.', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -3126,6 +3213,12 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     assert events == snapshot(
         [
             {'type': 'start'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'delete_1',
+                'toolName': 'delete_file',
+                'input': {'path': 'test.txt'},
+            },
             {'type': 'tool-output-available', 'toolCallId': 'delete_1', 'output': 'Deleted test.txt'},
             {'type': 'start-step'},
             {'type': 'text-start', 'id': IsStr()},
@@ -3569,26 +3662,26 @@ async def test_adapter_load_messages():
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         timestamp=IsDatetime(),
                         provider_name='openai_return',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
@@ -3603,7 +3696,7 @@ async def test_adapter_load_messages():
                     ToolCallPart(
                         tool_name='get_table_of_contents', args={'repo': 'pydantic'}, tool_call_id='toolu_01XX3rjFfG77h'
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
@@ -3774,6 +3867,7 @@ async def test_adapter_dump_messages_with_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test query'},
                         'provider_executed': False,
@@ -3841,6 +3935,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -3914,6 +4009,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                     {
                         'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4003,6 +4099,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                     {
                         'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'provider_executed': False,
@@ -4122,14 +4219,14 @@ async def test_adapter_dump_messages_with_builtin_tools():
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='tool_456',
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed'},
                     tool_call_id='tool_456',
@@ -4159,6 +4256,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': {'status': 'completed'},
@@ -4190,7 +4288,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'orphan query'},
                     tool_call_id='orphan_tool_id',
@@ -4219,6 +4317,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
+                        'title': None,
                         'state': 'input-available',
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
@@ -4381,6 +4480,7 @@ async def test_adapter_dump_messages_with_retry():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'arg': 'value'},
@@ -4534,13 +4634,13 @@ async def test_adapter_dump_messages_text_with_interruption():
         ModelResponse(
             parts=[
                 TextPart(content='Before tool'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='test',
                     args={},
                     tool_call_id='t1',
                     provider_name='test',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='test',
                     content='result',
                     tool_call_id='t1',
@@ -4565,6 +4665,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 't1',
+                        'title': None,
                         'state': 'output-available',
                         'input': {},
                         'output': 'result',
@@ -4850,6 +4951,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 'call_1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
@@ -4923,6 +5025,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
                     {
                         'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {'city': 'New York'},
@@ -4957,6 +5060,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
         {
             'type': 'tool-dangerous_action',
             'tool_call_id': 'deferred_tc1',
+            'title': None,
             'state': 'approval-requested',
             'input': {'target': 'production'},
             'provider_executed': False,
@@ -5031,7 +5135,7 @@ async def test_adapter_dump_messages_deferred_builtin_tool():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='builtin_deferred_tc1',
@@ -5070,6 +5174,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     {
                         'type': 'tool-t',
                         'tool_call_id': 'tc1',
+                        'title': None,
                         'state': 'input-available',
                         'provider_executed': False,
                         'input': {},
@@ -5219,7 +5324,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
         content=[
             UploadedFile(
                 file_id='files/video123',
-                provider_name='google-gla',
+                provider_name='google',
                 media_type='video/mp4',
                 vendor_metadata={'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                 identifier='my-custom-id',
@@ -5235,7 +5340,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                 provider_metadata={
                     'pydantic_ai': {
                         'file_id': 'files/video123',
-                        'provider_name': 'google-gla',
+                        'provider_name': 'google',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
                     }
@@ -5258,7 +5363,7 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
                     provider_metadata={
                         'pydantic_ai': {
                             'file_id': 'files/video123',
-                            'provider_name': 'google-gla',
+                            'provider_name': 'google',
                             'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                             'identifier': 'my-custom-id',
                         }
@@ -5277,7 +5382,7 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
                         content=[
                             UploadedFile(
                                 file_id='files/video123',
-                                provider_name='google-gla',
+                                provider_name='google',
                                 _media_type='video/mp4',
                                 media_type='video/mp4',
                                 vendor_metadata={
@@ -5552,6 +5657,90 @@ async def test_adapter_load_messages_text_with_provider_metadata():
     )
 
 
+async def test_adapter_load_messages_reasoning_streaming_omits_signature():
+    """Regression test for #5532: streaming reasoning parts omit signatures."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Partial reasoning',
+                    state='streaming',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_123',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Partial reasoning',
+                        id='reasoning_123',
+                        signature=None,
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_reasoning_done_preserves_signature():
+    """Regression test for #5532: completed reasoning parts preserve signatures."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='Complete reasoning',
+                    state='done',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'reasoning_456',
+                            'provider_name': 'anthropic',
+                            'signature': 'abc123signature',
+                            'provider_details': {'model': 'claude-opus-4'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Complete reasoning',
+                        id='reasoning_456',
+                        signature='abc123signature',
+                        provider_name='anthropic',
+                        provider_details={'model': 'claude-opus-4'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_adapter_tool_call_part_with_provider_metadata():
     """Test ToolCallPart with provider_name and provider_details preserves metadata and roundtrips."""
     messages: list[ModelMessage] = [
@@ -5598,6 +5787,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                     {
                         'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'arg': 'value'},
                         'provider_executed': False,
@@ -5663,6 +5853,74 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
             )
         ]
     )
+
+
+async def test_adapter_load_messages_provider_executed_dynamic_tool():
+    """Test dynamic provider-executed tool parts are loaded as native tool parts."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputAvailablePart(
+                    tool_name='web_search',
+                    tool_call_id='tc_123',
+                    title='Web Search',
+                    input={'query': 'pydantic ai'},
+                    output={'results': ['example']},
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {'provider_name': 'openai'},
+                            'return_meta': {'provider_name': 'openai_return'},
+                        }
+                    },
+                ),
+                DynamicToolOutputErrorPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_456',
+                    input={'query': 'logfire'},
+                    error_text='Search failed',
+                    provider_executed=True,
+                ),
+                DynamicToolOutputDeniedPart(
+                    tool_name='web_search',
+                    tool_call_id='tc_789',
+                    input={'query': 'secret'},
+                    provider_executed=True,
+                    approval=ToolApprovalResponded(id='deny_1', approved=False, reason='Blocked by policy'),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(messages) == 1
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert [type(part) for part in response.parts] == [
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        NativeToolCallPart,
+        NativeToolReturnPart,
+    ]
+
+    tool_calls = [part for part in response.parts if isinstance(part, NativeToolCallPart)]
+    assert [(part.tool_call_id, part.args, part.provider_name) for part in tool_calls] == [
+        ('tc_123', {'query': 'pydantic ai'}, 'openai'),
+        ('tc_456', {'query': 'logfire'}, None),
+        ('tc_789', {'query': 'secret'}, None),
+    ]
+
+    tool_returns = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [(part.tool_call_id, part.content, part.outcome, part.provider_name) for part in tool_returns] == [
+        ('tc_123', {'results': ['example']}, 'success', 'openai_return'),
+        ('tc_456', 'Search failed', 'failed', None),
+        ('tc_789', 'Blocked by policy', 'denied', None),
+    ]
 
 
 async def test_adapter_file_part_with_provider_metadata():
@@ -5756,13 +6014,13 @@ async def test_adapter_load_messages_file_with_provider_metadata():
 
 
 async def test_adapter_builtin_tool_part_with_provider_metadata():
-    """Test BuiltinToolCallPart with id, provider_name, provider_details and roundtrips."""
+    """Test NativeToolCallPart with id, provider_name, provider_details and roundtrips."""
     # Use JSON string for content since that's what load_messages produces
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_123',
@@ -5770,7 +6028,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='{"results":[]}',  # JSON string for roundtrip compatibility
                     tool_call_id='bt_123',
@@ -5800,6 +6058,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
+                        'title': None,
                         'state': 'output-available',
                         'input': {'query': 'test'},
                         'output': '{"results":[]}',
@@ -5832,12 +6091,12 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
 
 
 async def test_adapter_builtin_tool_error_part_with_provider_metadata():
-    """Test BuiltinToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
+    """Test NativeToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_err_123',
@@ -5845,7 +6104,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='Search failed: rate limit exceeded',
                     tool_call_id='bt_err_123',
@@ -5876,6 +6135,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
+                        'title': None,
                         'state': 'output-error',
                         'input': {'query': 'test'},
                         'raw_input': None,
@@ -5945,7 +6205,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_load',
@@ -5953,7 +6213,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         provider_details={'tool_type': 'web_search_preview'},
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='{"results": []}',
                         tool_call_id='bt_load',
@@ -6005,7 +6265,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_error',
@@ -6013,7 +6273,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         provider_name='openai',
                         provider_details={'tool_type': 'web_search_preview'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Search failed: rate limit exceeded',
                         tool_call_id='bt_error',
@@ -6135,6 +6395,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                     {
                         'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
+                        'title': None,
                         'state': 'output-error',
                         'raw_input': None,
                         'input': {'x': 1},
@@ -6240,6 +6501,421 @@ async def test_event_stream_text_with_provider_metadata():
     )
 
 
+async def test_event_stream_tool_input_error_with_provider_metadata():
+    """`FunctionToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `FunctionToolResultEvent(RetryPromptPart)` then produces a `tool-input-error` chunk
+    carrying the part's raw args, provider metadata, and the retry prompt as `errorText`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_err',
+            args={'key': 'value'},
+            id='tool_call_id_err',
+            provider_name='anthropic',
+            provider_details={'tool_index': 0},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'tc_err',
+                'toolName': 'my_tool',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_err',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'tc_err', 'inputTextDelta': '{"key":"value"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'tc_err',
+                'toolName': 'my_tool',
+                'input': {'key': 'value'},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_err',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+                'errorText': 'Validation failed: bad arg\n\nFix the errors and try again.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_input_error_sdk_v5_falls_back_to_input_available():
+    """`tool-input-error` is v6-only. For v5, validation failure must keep the pre-PR lifecycle:
+    `tool-input-available` (emitted regardless of `args_valid`) followed by `tool-output-error`
+    from the result handler — so v5 frontends never see an unrecognized chunk."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_v5_err', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_v5_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-error' not in chunk_types
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'finish',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_part_end_does_not_emit_input_available():
+    """`ToolInputAvailableChunk` must be driven by `FunctionToolCallEvent` (post-validation),
+    not by `PartEndEvent` of a `ToolCallPart`. Streaming a `ToolCallPart` without a following
+    `FunctionToolCallEvent` should produce only the start/delta chunks, never `tool-input-available`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_no_func_event',
+            args={'key': 'value'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')]),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-available' not in chunk_types
+    assert 'tool-input-error' not in chunk_types
+    assert chunk_types == snapshot(
+        ['start', 'start-step', 'tool-input-start', 'tool-input-delta', 'finish-step', 'finish']
+    )
+
+
+async def test_event_stream_function_tool_args_valid_none_does_not_emit_input_chunk():
+    """A `FunctionToolCallEvent` with `args_valid=None` (resume of `ToolDenied` / `ModelRetry` /
+    direct return deferred result) must not emit `tool-input-available` — the chunk already
+    fired on the original agent run, and re-announcing it on resume would be misleading."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_none', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-available' not in chunk_types
+    assert 'tool-input-error' not in chunk_types
+
+
+async def test_event_stream_output_tool_input_available():
+    """An `OutputToolCallEvent` with `args_valid=True` produces `tool-input-available` post-validation,
+    matching the function-tool path so output tools surface uniformly to the frontend."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_ok',
+            args={'value': 'hello'},
+            id='output_tool_id',
+            provider_name='openai',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=True)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_ok', 'inputTextDelta': '{"value":"hello"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'input': {'value': 'hello'},
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_output_tool_input_error():
+    """An `OutputToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `OutputToolResultEvent(RetryPromptPart)` produces `tool-input-error` (not
+    `tool-output-error`) so the chunk type reflects the actual cause (validation, not execution)."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_err',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            RetryPromptPart(content='Output validation failed', tool_name='final_result', tool_call_id='out_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_err', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output validation failed\n\nFix the errors and try again.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_output_tool_input_error_with_status_return_part():
+    """Exhaustive output-strategy skip path: a final result already exists, so a second
+    output tool that fails validation is recorded as a status `ToolReturnPart` (not a
+    `RetryPromptPart`). The v6 lifecycle must still complete with `tool-input-error`
+    — not `tool-output-available` — since the call never actually executed.
+
+    Mirrors the `_make_output_status_part` + `_emit_output_tool_events(args_valid=False)`
+    sequence in `_agent_graph.py`."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_skipped',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Output tool not used - output failed validation.',
+                tool_call_id='out_skipped',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    # Crucially: no `tool-output-available` for a call that never executed.
+    assert 'tool-output-available' not in chunk_types
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_skipped', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_skipped',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output tool not used - output failed validation.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_end_backfills_input_available_when_call_event_skipped():
+    """If the agent raises before yielding the tool call event (e.g. output-tool
+    `UnexpectedModelBehavior` with no `final_result`), the base class synthesizes a
+    failed `ToolReturnPart` for the pending call. The adapter must backfill
+    `tool-input-available` from the part stashed at `handle_tool_call_end` before
+    emitting `tool-output-error`, so the chunk lifecycle stays complete."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_interrupted',
+            args={'value': 'x'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
+        # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
+        # The base class then synthesizes an error result for the pending call.
+        yield OutputToolResultEvent(
+            ToolReturnPart(
+                tool_name='final_result',
+                content='Tool execution was interrupted by an error.',
+                tool_call_id='out_interrupted',
+                outcome='failed',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    # The backfilled `tool-input-available` carries the raw args and provider metadata
+    # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_interrupted',
+                'toolName': 'final_result',
+                'input': {'value': 'x'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'out_interrupted',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_tool_call_end_with_provider_metadata_v5():
     """Test that tool-input-start events exclude provider_metadata for SDK v5."""
 
@@ -6254,6 +6930,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v5():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -6311,6 +6988,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v6():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -6369,7 +7047,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v5():
     """Test that builtin tool-input-start events exclude provider_metadata for SDK v5."""
 
     async def event_generator():
-        part = BuiltinToolCallPart(
+        part = NativeToolCallPart(
             tool_name='web_search',
             tool_call_id='btc_meta',
             args={'query': 'test'},
@@ -6427,7 +7105,7 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
     """Test that builtin tool-input-available events include provider_name in provider_metadata for SDK v6."""
 
     async def event_generator():
-        part = BuiltinToolCallPart(
+        part = NativeToolCallPart(
             tool_name='web_search',
             tool_call_id='btc_meta',
             args={'query': 'test'},
@@ -6583,12 +7261,12 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
 
 
 async def test_event_stream_builtin_tool_return_denied():
-    """Test that ToolOutputDeniedChunk is emitted for a denied BuiltinToolReturnPart."""
+    """Test that ToolOutputDeniedChunk is emitted for a denied NativeToolReturnPart."""
 
     async def event_generator():
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolReturnPart(
+            part=NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='tc_denied',
                 content='Blocked by policy',
@@ -6628,7 +7306,7 @@ async def test_event_stream_builtin_tool_return_error():
     async def event_generator():
         yield PartStartEvent(
             index=0,
-            part=BuiltinToolReturnPart(
+            part=NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='tc_err',
                 content='Search failed',
@@ -6696,6 +7374,7 @@ async def test_adapter_dump_messages_tool_return_error():
             {
                 'type': 'tool-my_tool',
                 'tool_call_id': 'tc_err',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'x': 1},
@@ -6716,17 +7395,17 @@ async def test_adapter_dump_messages_tool_return_error():
 
 
 async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
-    """Test that old-format BuiltinToolReturnPart with is_error content is still detected as error."""
+    """Test that old-format NativeToolReturnPart with is_error content is still detected as error."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'test'},
                     tool_call_id='bt_old',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content={'error_text': 'Rate limit exceeded', 'is_error': True},
                     tool_call_id='bt_old',
@@ -6742,6 +7421,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
             {
                 'type': 'tool-web_search',
                 'tool_call_id': 'bt_old',
+                'title': None,
                 'state': 'output-error',
                 'raw_input': None,
                 'input': {'query': 'test'},
@@ -7452,12 +8132,10 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'secret data'},
-                        tool_call_id='tc_builtin_denied',
+                    NativeToolCallPart(
+                        tool_name='web_search', args={'query': 'secret data'}, tool_call_id='tc_builtin_denied'
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc_builtin_denied',
@@ -7524,8 +8202,8 @@ async def test_denied_builtin_tool_round_trip():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                NativeToolReturnPart(
                     tool_name='web_search',
                     content='Blocked by policy',
                     tool_call_id='tc2',
@@ -7551,8 +8229,8 @@ async def test_denied_builtin_tool_round_trip():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
-                    BuiltinToolReturnPart(
+                    NativeToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc2',
