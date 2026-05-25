@@ -226,6 +226,8 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
+    'malformed_model_output': 'error',
+    'malformed_tool_use': 'error',
     'tool_use': 'tool_call',
 }
 
