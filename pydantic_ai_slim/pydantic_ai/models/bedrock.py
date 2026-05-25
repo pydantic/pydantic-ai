@@ -1544,7 +1544,7 @@ def _is_thinking_enabled(
         if (
             (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
             and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') == 'enabled'
+            and thinking.get('type') in ('enabled', 'adaptive')
         ):
             return True
     return False
