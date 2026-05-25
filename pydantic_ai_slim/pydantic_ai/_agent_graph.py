@@ -1560,6 +1560,7 @@ async def process_tool_calls(  # noqa: C901
 
             if not validated.args_valid:
                 assert validated.validation_error is not None
+                assert isinstance(validated.validation_error, ToolRetryError)
                 if final_result:
                     part = _make_output_status_part(
                         call, 'Output tool not used - output failed validation.', output_parts
@@ -1732,12 +1733,13 @@ async def process_tool_calls(  # noqa: C901
                         deferred_calls['unapproved'].append(call)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
+                    # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await tool_manager.execute_tool_call(validated)
-                    except ToolRetryError as e:
-                        output_parts.append(e.tool_retry)
-                        yield _messages.FunctionToolResultEvent(e.tool_retry)
+                    except (ToolRetryError, ToolFailedError) as e:
+                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
 
     if not final_result and deferred_calls:
         deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(

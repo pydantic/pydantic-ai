@@ -878,6 +878,33 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_execute_hook():
     assert str(exc_info.value) == snapshot('hook failed')
 
 
+async def test_handle_call_raw_mode_propagates_tool_failed_from_validate_hook():
+    """Raw mode keeps `ToolFailed` from validation hooks as the original exception."""
+
+    class FailingCapability(AbstractCapability[None]):
+        async def before_tool_validate(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+        ) -> str | dict[str, Any]:
+            raise ToolFailed('validation hook failed')
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    tool_manager = await ToolManager[None](toolset, root_capability=FailingCapability()).for_run_step(
+        build_run_context(None)
+    )
+
+    with pytest.raises(ToolFailed) as exc_info:
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='tool', args={}),
+            wrap_validation_errors=False,
+        )
+    assert str(exc_info.value) == snapshot('validation hook failed')
+
+
 async def test_toolset_max_retries_inherits_from_agent():
     """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
     attempts: list[int] = []

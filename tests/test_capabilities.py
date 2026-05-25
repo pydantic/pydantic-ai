@@ -9199,8 +9199,53 @@ class _OnToolExecuteErrorFailedCap(AbstractCapability[Any]):
         raise ToolFailed('failed while handling error')
 
 
+class _BeforeToolValidateFailedCap(AbstractCapability[Any]):
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> str | dict[str, Any]:
+        raise ToolFailed('failed before validation')
+
+
+class _OnToolValidateErrorFailedCap(AbstractCapability[Any]):
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed while handling validation error')
+
+
+def _tool_failed_roundtrip_model(tool_args: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return make_text_response(f'got: {part.outcome}:{part.content}')
+        if info.function_tools:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.function_tools[0].name, args=tool_args, tool_call_id='call-1')]
+            )
+        return make_text_response('no tools')  # pragma: no cover
+
+    return model_fn
+
+
+def _assert_failed_tool_result(result: AgentRunResult[Any], expected_message: str) -> None:
+    assert result.output == f'got: failed:{expected_message}'
+
+    parts = [part for msg in result.all_messages() for part in msg.parts]
+    tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == expected_message
+    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+
+
 class TestToolFailedFromHooks:
-    """Tests for raising ToolFailed from capability tool-execution hooks."""
+    """Tests for raising ToolFailed from capability tool hooks."""
 
     @pytest.mark.parametrize('hook_name', ['before', 'wrap', 'after', 'on_error'])
     async def test_tool_execute_hook_tool_failed(self, hook_name: str):
@@ -9235,14 +9280,89 @@ class TestToolFailedFromHooks:
 
         result = await agent.run('call tool')
 
-        assert result.output == f'got: failed:{expected_message}'
+        _assert_failed_tool_result(result, expected_message)
         assert tool_call_count == int(tool_should_run)
 
-        parts = [part for msg in result.all_messages() for part in msg.parts]
-        tool_return = next(part for part in parts if isinstance(part, ToolReturnPart))
-        assert tool_return.outcome == 'failed'
-        assert tool_return.content == expected_message
-        assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    async def test_deferred_tool_validate_hook_tool_failed(self):
+        """Deferred tool validation can return a failed tool result instead of a deferred request."""
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            capabilities=[_BeforeToolValidateFailedCap()],
+            output_type=[str, DeferredToolRequests],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, 'failed before validation')
+        assert tool_call_count == 0
+
+    @pytest.mark.parametrize(
+        ('capability', 'tool_args', 'expected_message'),
+        [
+            pytest.param(
+                _BeforeToolValidateFailedCap(), '{"x":1}', 'failed before validation', id='before_tool_validate'
+            ),
+            pytest.param(
+                _OnToolValidateErrorFailedCap(),
+                '{"x":"bad"}',
+                'failed while handling validation error',
+                id='on_tool_validate_error',
+            ),
+        ],
+    )
+    async def test_tool_validate_hook_tool_failed(
+        self, capability: AbstractCapability[Any], tool_args: str, expected_message: str
+    ):
+        tool_call_count = 0
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model(tool_args)),
+            capabilities=[capability],
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain
+        def my_tool(x: int) -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return f'tool result: {x}'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
+
+    async def test_args_validator_tool_failed(self):
+        tool_call_count = 0
+        expected_message = 'failed in args validator'
+
+        def validate_args(ctx: RunContext[Any]) -> None:
+            raise ToolFailed(expected_message)
+
+        agent = Agent(
+            FunctionModel(_tool_failed_roundtrip_model('{}')),
+            retries={'tools': 0, 'output': 2},
+        )
+
+        @agent.tool_plain(args_validator=validate_args)
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+
+        _assert_failed_tool_result(result, expected_message)
+        assert tool_call_count == 0
 
 
 class TestModelRetryFromHooks:
