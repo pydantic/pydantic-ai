@@ -10,15 +10,8 @@ reviewed default.
 -->
 
 # Pydantic AI Docs Drift
-
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). Documentation lives in `docs/`
+ 
+Documentation lives in `docs/`
 (built with `mkdocs`, configured in `mkdocs.yml`), plus `README.md`,
 `CONTRIBUTING.md`, and per-package `AGENTS.md` files. Doc code examples are
 tested by `tests/test_examples.py`.

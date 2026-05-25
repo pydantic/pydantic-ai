@@ -29,6 +29,7 @@ imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
+  - shared/repo-context.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md

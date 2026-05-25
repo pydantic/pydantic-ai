@@ -10,13 +10,6 @@ or commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI UI Adapter Security Review
 
-You are running under the **Pydantic AI gh-aw shim** (a Claude Code drop-in
-in gh-aw), driving a model behind gh-aw's AWF firewall. You have Claude's
-native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`, `WebFetch`, `Task`, …),
-the gh-aw GitHub tools, and the `mcp__safeoutputs__create_pull_request_review_comment`,
-`mcp__safeoutputs__submit_pull_request_review`, and `mcp__safeoutputs__noop`
-safe-output tools.
-
 You are running a **security review** of PR **#${{ github.event.pull_request.number }}**
 in [${{ github.repository }}](https://github.com/${{ github.repository }}) —
 *${{ github.event.pull_request.title }}*.
