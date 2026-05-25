@@ -68,6 +68,29 @@ be triggered by code you wrote and observed to fail.
 - Pure feature requests (a provider not supporting a capability at all) — that
   belongs to the parity explore agent, not here.
 
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-mapping-sweep]" OR "[bug-hunter]"
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <chosen-provider>
+```
+
+If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
+
+## Sandbox notes
+
+- Read the provider file in full (or large ranges). Model files are typically
+  800–1500 lines — read them in 1–2 calls.
+- Do NOT spend time trying to import provider SDK type stubs (`mypy_boto3_*`,
+  etc.) — they are not installed. Instead, grep the raw
+  `botocore/data/*/service-2.json` or use `WebFetch` on the provider's API docs.
+- Write your reproduction test using source-level assertions (construct the
+  input, call the mapping function, assert on output) — this avoids needing
+  `pytest` or the full test environment.
+
 ## Quality Gate — When to Noop
 
 `mcp__safeoutputs__noop` is the expected outcome most runs. Call `mcp__safeoutputs__noop` if you could not write a

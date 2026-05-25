@@ -9,9 +9,10 @@
 # (`pydantic-ai-runner`) is a tiny `runpy` shim that hands off to the
 # `pydantic_ai_gh_aw_shim` package in the same directory.
 #
-# setup-uv points UV_CACHE_DIR at ${RUNNER_TEMP}/setup-uv-cache, which is not
-# writable by the chrooted sandbox user (UID 1001). Only /tmp/gh-aw is owned
-# by that user, so redirect every uv-writable dir there.
+# AWF propagates setup-* tool paths into the container via $GITHUB_PATH and
+# /opt/hostedtoolcache — so `uv` and `rg` should be on PATH already. The
+# launcher just sets up the uv cache dirs (the default cache dir from
+# setup-uv isn't writable by the sandbox user UID 1001).
 set -euo pipefail
 export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
 export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
@@ -22,11 +23,14 @@ mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" "$XDG_DATA_HOME
 runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
 echo "[harness-launch] cwd=$(pwd) GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-unset} UV_CACHE_DIR=${UV_CACHE_DIR}" >&2
 echo "[harness-launch] runner=${runner} exists=$([ -f "${runner}" ] && echo yes || echo no)" >&2
+
+# Find uv — should be on PATH via AWF's hostedtoolcache propagation.
+# Fall back to known paths if not (older AWF versions or non-GHA runners).
 uv_bin=""
 if command -v uv >/dev/null 2>&1; then
   uv_bin="$(command -v uv)"
 else
-  for c in "${HOME}/.local/bin/uv" "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/uv/*/*/uv /opt/hostedtoolcache/uv/*/*/uv /home/runner/work/_tool/uv/*/*/uv /usr/local/bin/uv; do
+  for c in /opt/hostedtoolcache/gh-aw-tools/current/x64/bin/uv /opt/hostedtoolcache/uv/*/*/uv /tmp/gh-aw/bin/uv /usr/local/bin/uv; do
     [ -x "$c" ] && uv_bin="$c" && break
   done
 fi
