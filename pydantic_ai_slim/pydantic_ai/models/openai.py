@@ -1207,6 +1207,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
+    def _get_tools(
+        self, tool_defs: dict[str, ToolDefinition], model_settings: ModelSettings
+    ) -> list[chat.ChatCompletionToolParam]:
+        return [self._map_tool_definition(r, model_settings) for r in tool_defs.values()]
+
     def _get_tool_choice(
         self,
         model_settings: OpenAIChatModelSettings,
@@ -1246,7 +1251,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             assert_never(resolved_tool_choice)
 
-        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
+        tools = self._get_tools(tool_defs, model_settings)
         if not tools:
             return tools, None
 
@@ -1487,7 +1492,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             response_format_param['json_schema']['strict'] = o.strict
         return response_format_param
 
-    def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
+        """Map a tool definition to an OpenAI tool parameter.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom tool mappings.
+        """
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {

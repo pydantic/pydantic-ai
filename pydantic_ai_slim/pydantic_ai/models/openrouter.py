@@ -14,6 +14,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
+from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 
 try:
@@ -757,6 +758,14 @@ class OpenRouterModel(OpenAIChatModel):
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
+        """Add OpenRouter's `eager_input_streaming` flag to tool defs when targeting Anthropic models."""
+        tool_def = super()._map_tool_definition(f, model_settings)
+        if self.model_name.startswith('anthropic/') and model_settings.get('anthropic_eager_input_streaming'):
+            tool_def['eager_input_streaming'] = True  # type: ignore[typeddict-item]
+        return tool_def
 
 
 class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
