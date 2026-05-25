@@ -1,7 +1,7 @@
 ---
 emoji: "📚"
 name: "Pydantic AI Docs Drift"
-description: "Detect code changes that require documentation updates and file an issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
+description: "Detect negative docs drift where existing documentation no longer matches the codebase, and file an issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
 on: weekly on monday
 permissions:
   contents: read

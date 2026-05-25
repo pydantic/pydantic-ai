@@ -86,29 +86,41 @@ issue, skip it.
      of a merged PR number or closure language) that merits escalation?
    - Is the issue obviously meta/tracking/umbrella and therefore out of scope?
 
-   **c) Write one verdict file per issue**
-   - Write to: `/tmp/gh-aw/agent/verdicts/{batch_name}/{issue_number}.json`
-   - JSON schema:
+   **c) Return structured JSON for the whole batch**
+   - Do not write files. `Task` subagents are read-only.
+   - Return one compact JSON object for the batch using this schema:
      ```json
      {
-       "issue": 1234,
-       "verdict": "CANDIDATE" | "SKIP" | "NEEDS_COMMENT_CHECK",
-       "confidence": "high" | "medium" | "low",
-       "reason": "short reason",
-       "evidence": ["bullet 1", "bullet 2"],
-       "recommended_close_reason": "completed" | "not planned" | "duplicate" | "",
-       "linked_pr_numbers": [1111, 2222]
+       "batch_name": "batch-001",
+       "summary": {
+         "candidate_count": 3,
+         "skip_count": 21,
+         "needs_comment_check_count": 1
+       },
+       "verdicts": [
+         {
+           "issue": 1234,
+           "verdict": "CANDIDATE",
+           "confidence": "high",
+           "reason": "short reason",
+           "evidence": ["bullet 1", "bullet 2"],
+           "recommended_close_reason": "completed",
+           "linked_pr_numbers": [1111, 2222]
+         }
+       ]
      }
      ```
 
-   **d) Return only a compact batch summary to supervisor**
-   - Count of `CANDIDATE`, `SKIP`, and `NEEDS_COMMENT_CHECK`
-   - Path to the verdict folder written
+   **d) Keep the response compact**
+   - Include all non-`SKIP` verdicts in full
+   - For `SKIP` issues, include only enough entries for accurate coverage
+     accounting and dedupe-free processing
+   - Output valid JSON only; no prose before or after
 
 3. **Supervisor second pass (targeted comment checks only)**
 
    After all subagents complete:
-   - Aggregate all verdict files under `/tmp/gh-aw/agent/verdicts/`
+   - Aggregate all subagent JSON responses
    - Build shortlist = all `CANDIDATE` + `NEEDS_COMMENT_CHECK`
    - For shortlist only, query comments/timeline as needed using MCP GitHub
      tools to confirm or reject closure confidence

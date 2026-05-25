@@ -1,10 +1,9 @@
 ---
 emoji: "🔍"
 name: "Pydantic AI Stale Issues Finder"
-description: "Find open issues that can be closed because they are already resolved, no longer relevant, or relate to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
-# Twice-a-week schedule (Monday + Thursday): gh-aw scatters runs to a
-# repo-stable off-peak time and auto-adds workflow_dispatch.
-# Adjust to 'daily' or 'weekly on monday' to change frequency.
+description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
+# Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
+# Adjust to 'daily' or another weekly schedule to change frequency.
 on: weekly on monday
 permissions:
   contents: read
