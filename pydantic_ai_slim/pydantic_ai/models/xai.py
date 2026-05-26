@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from typing_extensions import assert_never
 
@@ -60,15 +60,18 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
 
-XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+XaiReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
+
+XAI_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort] = {
+    False: 'none',
     True: 'high',
     'minimal': 'low',
     'low': 'low',
-    'medium': 'high',
+    'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
 }
-"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
+"""Maps unified thinking values to xAI `reasoning_effort` values."""
 
 try:
     import grpc
@@ -77,7 +80,6 @@ try:
     from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
-    from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
         'Please install `xai-sdk` to use the xAI model, '
@@ -107,7 +109,46 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel
+XaiChatModelName: TypeAlias = Literal[
+    'grok-3',
+    'grok-3-fast',
+    'grok-3-fast-latest',
+    'grok-3-latest',
+    'grok-3-mini',
+    'grok-3-mini-fast',
+    'grok-3-mini-fast-latest',
+    'grok-4',
+    'grok-4-0709',
+    'grok-4-1-fast',
+    'grok-4-1-fast-non-reasoning',
+    'grok-4-1-fast-non-reasoning-latest',
+    'grok-4-1-fast-reasoning',
+    'grok-4-1-fast-reasoning-latest',
+    'grok-4-fast',
+    'grok-4-fast-non-reasoning',
+    'grok-4-fast-non-reasoning-latest',
+    'grok-4-fast-reasoning',
+    'grok-4-fast-reasoning-latest',
+    'grok-4-latest',
+    'grok-4.20',
+    'grok-4.20-0309',
+    'grok-4.20-0309-non-reasoning',
+    'grok-4.20-0309-reasoning',
+    'grok-4.20-multi-agent',
+    'grok-4.20-multi-agent-0309',
+    'grok-4.20-multi-agent-latest',
+    'grok-4.20-non-reasoning',
+    'grok-4.20-non-reasoning-latest',
+    'grok-4.20-reasoning',
+    'grok-4.20-reasoning-latest',
+    'grok-4.3',
+    'grok-4.3-latest',
+    'grok-latest',
+    'grok-code-fast-1',
+]
+"""Known xAI chat model names."""
+
+XaiModelName: TypeAlias = str | XaiChatModelName
 """Possible xAI model names."""
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
@@ -191,10 +232,11 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_reasoning_effort: Literal['low', 'high']
+    xai_reasoning_effort: XaiReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
-    See https://docs.x.ai for details.
+    Supported values are `'none'`, `'low'`, `'medium'`, and `'high'`.
+    See https://docs.x.ai/developers/model-capabilities/text/reasoning for details.
     """
 
 
@@ -234,7 +276,7 @@ class XaiModel(Model[AsyncClient]):
         """Initialize the xAI model.
 
         Args:
-            model_name: The name of the xAI model to use (e.g., "grok-4-1-fast-non-reasoning")
+            model_name: The name of the xAI model to use (e.g., `"grok-4.3"`)
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
@@ -688,9 +730,7 @@ class XaiModel(Model[AsyncClient]):
 
         # Fall back to unified thinking when xai_reasoning_effort is not set
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            thinking = model_request_parameters.thinking
-            if thinking is not False:
-                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+            xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[model_request_parameters.thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []

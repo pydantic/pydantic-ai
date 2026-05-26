@@ -145,7 +145,7 @@ agent = Agent(
         # image-generation-capable model
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning'),
+        XSearch(fallback_model='xai:grok-4.3'),
         # Native when supported; falls back to a local MCP transport derived from the URL
         MCP(url='https://mcp.example.com/api', native=True),
     ],

@@ -22,7 +22,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-# https://docs.x.ai/docs/models
+# https://docs.x.ai/developers/models
 GrokModelName = Literal[
     'grok-4',
     'grok-4-0709',

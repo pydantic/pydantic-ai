@@ -22,6 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RunUsage
 
 from ..._inline_snapshot import snapshot
@@ -58,6 +59,7 @@ pytestmark = [
 
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
+XAI_CURRENT_REASONING_MODEL = 'grok-4.3'
 
 
 # =============================================================================
@@ -74,6 +76,12 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         ('grok-4-1-reasoning', False),
         ('grok-4-fast-non-reasoning', False),
         ('grok-4-1-fast-non-reasoning', False),
+        ('grok-4.3', True),
+        ('grok-4.3-latest', True),
+        ('grok-latest', True),
+        ('grok-4.20', False),
+        ('grok-4.20-reasoning', False),
+        ('grok-4.20-multi-agent', False),
         ('grok-3-mini', True),
         ('grok-3-mini-fast', True),
         ('grok-3', False),
@@ -83,6 +91,12 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-4-1-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-4.3',
+        'grok-4.3-latest',
+        'grok-latest',
+        'grok-4.20',
+        'grok-4.20-reasoning',
+        'grok-4.20-multi-agent',
         'grok-3-mini',
         'grok-3-mini-fast',
         'grok-3',
@@ -96,9 +110,8 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -
 
 
 async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:
-    """grok-4 reasoning models reject `reasoning_effort` with INVALID_ARGUMENT, so the profile
-    treats them as unsupported thinking targets and passing `thinking` must not forward the param
-    to the SDK. See https://docs.x.ai/docs/guides/reasoning.
+    """Older Grok fast aliases keep their existing profile behavior and do not opt in to
+    `reasoning_effort` from the unified `thinking` setting.
     """
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
@@ -113,11 +126,40 @@ async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_mo
     assert 'reasoning_effort' not in kwargs[0]
 
 
+@pytest.mark.parametrize(
+    'thinking,expected_reasoning_effort',
+    [
+        (True, 'high'),
+        ('medium', 'medium'),
+        (False, 'none'),
+    ],
+    ids=['true', 'medium', 'false'],
+)
+async def test_grok_4_3_forwards_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_CURRENT_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings={'thinking': thinking})
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert kwargs[0]['reasoning_effort'] == expected_reasoning_effort
+
+
 def test_grok_model_profile_builtin_tools() -> None:
     grok4_profile = grok_model_profile('grok-4-fast-non-reasoning')
     assert grok4_profile is not None
     assert isinstance(grok4_profile, GrokModelProfile)
     assert grok4_profile.grok_supports_builtin_tools is True
+
+    current_profile = grok_model_profile('grok-4.3')
+    assert current_profile is not None
+    assert isinstance(current_profile, GrokModelProfile)
+    assert current_profile.grok_supports_builtin_tools is True
 
     grok3_profile = grok_model_profile('grok-3')
     assert grok3_profile is not None

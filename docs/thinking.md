@@ -48,7 +48,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Supports `'none'`, `'low'`, `'medium'`, and `'high'`; `thinking=False` sends `'none'` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
@@ -172,7 +172,7 @@ xAI reasoning models (Grok) support native thinking. To preserve the thinking co
 from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
-model = XaiModel('grok-4-fast-reasoning')
+model = XaiModel('grok-4.3')
 settings = XaiModelSettings(xai_include_encrypted_content=True)
 agent = Agent(model, model_settings=settings)
 ...

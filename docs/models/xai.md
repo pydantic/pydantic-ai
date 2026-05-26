@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[xai]"
 
 To use xAI models from [xAI](https://x.ai/api) through their API, go to [console.x.ai](https://console.x.ai/team/default/api-keys) to create an API key.
 
-[docs.x.ai](https://docs.x.ai/docs/models) contains a list of available xAI models.
+[docs.x.ai](https://docs.x.ai/developers/models) contains a list of available xAI models.
 
 ## Environment variable
 
@@ -27,7 +27,7 @@ You can then use [`XaiModel`][pydantic_ai.models.xai.XaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('xai:grok-4-1-fast-non-reasoning')
+agent = Agent('xai:grok-4.3')
 ...
 ```
 
@@ -38,7 +38,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 
 # Uses XAI_API_KEY environment variable
-model = XaiModel('grok-4-1-fast-non-reasoning')
+model = XaiModel('grok-4.3')
 agent = Agent(model)
 ...
 ```
@@ -52,7 +52,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 # Custom API key
 provider = XaiProvider(api_key='your-api-key')
-model = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
+model = XaiModel('grok-4.3', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -68,7 +68,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 xai_client = AsyncClient(api_key='your-api-key')
 provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
+model = XaiModel('grok-4.3', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -84,7 +84,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         XSearch(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
@@ -126,7 +126,7 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
     ```python {title="cancel_xai.py" test="skip"}
     from pydantic_ai import Agent
 
-    agent = Agent('xai:grok-4-1-fast-non-reasoning')
+    agent = Agent('xai:grok-4.3')
 
 
     def should_stop(chunk: str) -> bool:
@@ -148,7 +148,7 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
 
     from pydantic_ai import Agent
 
-    agent = Agent('xai:grok-4-1-fast-non-reasoning')
+    agent = Agent('xai:grok-4.3')
 
 
     def should_stop(chunk: str) -> bool:
