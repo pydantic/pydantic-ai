@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import re
 from datetime import datetime, timezone
+from importlib.metadata import version
 
 import httpx
 import pytest
@@ -65,6 +66,40 @@ def test_perplexity_provider_pass_http_client() -> None:
     http_client = httpx.AsyncClient()
     provider = PerplexityProvider(http_client=http_client, api_key='api-key')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_perplexity_provider_sends_attribution_header(allow_model_requests: None) -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'id': 'pplx-test',
+                'choices': [
+                    {
+                        'finish_reason': 'stop',
+                        'index': 0,
+                        'message': {'content': 'Perplexity attribution sent.', 'role': 'assistant'},
+                    }
+                ],
+                'created': 1704067200,
+                'model': 'sonar-pro',
+                'object': 'chat.completion',
+                'usage': {'completion_tokens': 3, 'prompt_tokens': 4, 'total_tokens': 7},
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(http_client=http_client, api_key='api-key'))
+    agent = Agent(model)
+
+    result = await agent.run('Send attribution header.')
+
+    assert result.output == 'Perplexity attribution sent.'
+    assert requests[0].headers['X-Pplx-Integration'] == f'pydantic-ai/{version("pydantic-ai")}'
 
 
 def test_perplexity_pass_openai_client() -> None:

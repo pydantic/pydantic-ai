@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from importlib.metadata import PackageNotFoundError, version
 from typing import overload
 
 import httpx
@@ -90,15 +91,25 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
                 ' to use the Perplexity provider.'
             )
 
+        try:
+            package_version = version('pydantic-ai')
+        except PackageNotFoundError:
+            package_version = version('pydantic-ai-slim')
+        default_headers = {'X-Pplx-Integration': f'pydantic-ai/{package_version}'}
+
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
