@@ -3,8 +3,6 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 
-from pydantic_graph.util import get_callable_name
-
 
 class PydanticAIDeprecationWarning(UserWarning):
     """Warning emitted when a deprecated Pydantic AI API is used.
@@ -17,8 +15,9 @@ class PydanticAIDeprecationWarning(UserWarning):
 
 def warn_on_prepare_callback_returned_none(prepare_func: Callable[..., object]) -> None:
     """Warn that a prepare callback returned `None`."""
+    name = getattr(prepare_func, '__name__', str(prepare_func))
     warnings.warn(
-        f'prepare callback {get_callable_name(prepare_func)!r} returned `None`; '
+        f'prepare callback {name!r} returned `None`; '
         'this hides all tool definitions passed to it for this step and will raise in v2.0. '
         'Return `[]` to hide them explicitly, or `tool_defs` to pass them through unchanged.',
         PydanticAIDeprecationWarning,
