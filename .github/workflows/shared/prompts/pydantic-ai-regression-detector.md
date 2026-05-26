@@ -60,6 +60,21 @@ only "looks risky" in the diff is not a finding.
 - Speculation without an old-passes/new-fails reproduction.
 - Behavior already tracked by an open issue — **search issues first**.
 
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[regression-detector]" OR "regression"
+```
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
+- Use the native `Grep` tool for codebase search.
+
 ## Quality Gate — When to Noop
 
 `mcp__safeoutputs__noop` is the expected outcome most runs. Only file when you have a concrete
