@@ -4974,6 +4974,32 @@ async def test_adapter_load_pydantic_metadata_without_timestamp():
     assert reloaded.timestamp == IsDatetime()
 
 
+async def test_adapter_load_preserves_application_metadata_across_merged_messages():
+    """Consecutive `UIMessage`s that merge into one `ModelRequest` must not lose application metadata.
+
+    When a system + user pair merges into a single `ModelRequest`, only the trailing `UIMessage`
+    carries `pydantic_ai.timestamp`. The leading message's application `metadata` should survive
+    the second `apply_message_metadata` call rather than being clobbered by its empty app-side dict.
+    """
+    system_message = UIMessage(
+        id='sys-1',
+        role='system',
+        metadata={'app_key': 'app_value'},
+        parts=[TextUIPart(text='You are helpful.')],
+    )
+    user_message = UIMessage(
+        id='usr-1',
+        role='user',
+        metadata={'pydantic_ai': {'timestamp': '2026-04-15T12:00:45Z'}},
+        parts=[TextUIPart(text='Hello')],
+    )
+
+    [reloaded] = VercelAIAdapter.load_messages([system_message, user_message])
+    assert isinstance(reloaded, ModelRequest)
+    assert reloaded.metadata == {'app_key': 'app_value'}
+    assert reloaded.timestamp == datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+
+
 async def test_adapter_dump_messages_deterministic_ids():
     """Test that dump_messages produces deterministic IDs for the same messages.
 
@@ -5158,6 +5184,45 @@ async def test_event_stream_emits_message_metadata():
             '[DONE]',
         ]
     )
+
+
+async def test_event_stream_emits_single_message_metadata_per_run():
+    """Multi-step runs must emit exactly one `message-metadata` chunk.
+
+    The AI SDK merges `messageMetadata` into `message.metadata` rather than replacing it,
+    so emitting more than one per run would compound rather than overwrite — the
+    single-chunk invariant in `handle_run_result` keeps merge equivalent to assignment.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id='ping_1')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    event_types = [e['type'] for e in events if isinstance(e, dict)]
+    assert event_types.count('message-metadata') == 1
+    assert event_types.count('finish-step') >= 2  # confirms the run actually had multiple steps
+    # The single chunk must precede the final `finish-step` so AI SDK merges it onto the assistant message.
+    assert event_types.index('message-metadata') < len(event_types) - 1 - event_types[::-1].index('finish-step')
 
 
 async def test_adapter_server_message_id():

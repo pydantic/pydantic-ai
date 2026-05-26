@@ -114,6 +114,9 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
     May return an empty dict for a `ModelRequest` with no application metadata, since
     `ModelRequest.timestamp` is optional. For a `ModelResponse` the result always contains
     at least `{'pydantic_ai': {'timestamp': ...}}` since `ModelResponse.timestamp` is set.
+
+    `UIMessage.metadata` is typed as `unknown` since AI SDK v5, so older frontends will
+    silently ignore the field rather than reject the message.
     """
     metadata = dict(message.metadata) if message.metadata else {}
 
@@ -128,14 +131,16 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 
     Only `timestamp` is restored from the `pydantic_ai` key; see `_PydanticAIMessageMetadata`
     for why other fields are excluded. Application metadata (non-`pydantic_ai` keys) is
-    restored as-is onto `message.metadata`.
+    restored as-is onto `message.metadata`; an empty/missing app-side dict leaves any
+    previously-attached `message.metadata` untouched, which matters when consecutive
+    `UIMessage`s merge into the same `ModelRequest` and only one carries application fields.
     """
     if not is_str_dict(metadata):
         return
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
-    application_metadata = {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY} or None
-    message.metadata = application_metadata
+    if application_metadata := {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY}:
+        message.metadata = application_metadata
 
     if not is_str_dict(raw_pydantic_metadata):
         return

@@ -151,6 +151,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # The AI SDK *merges* `messageMetadata` into `message.metadata` rather than replacing it.
         # Emitting exactly one metadata chunk per run (and none at `start`) keeps merge equivalent
         # to assignment; adding a `start`-time or mid-stream chunk would need the merge revisited.
+        # Request-side messages have no analogous chunk — frontends that rebuild history purely
+        # from streamed chunks see timestamps only on assistant responses, whereas `dump_messages`
+        # populates both sides.
         yield MessageMetadataChunk(message_metadata=dump_message_metadata(event.result.response))
 
         # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
@@ -166,6 +169,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
+        # `timestamp` from, so any partial assistant message rendered on the client is persisted
+        # without one. A future opt-in that broadens the roundtrip should revisit this path.
         self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 

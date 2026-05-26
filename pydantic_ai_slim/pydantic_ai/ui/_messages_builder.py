@@ -7,7 +7,15 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, M
 
 @dataclass(frozen=True)
 class BuilderCheckpoint:
-    """Opaque snapshot of `MessagesBuilder` state, used to query what `add()` touched after the snapshot."""
+    """Opaque snapshot of `MessagesBuilder` state, used to query what `add()` touched after the snapshot.
+
+    Intended as an in-process correlation token: `last_message` holds a live `ModelMessage`
+    reference whose identity matters for the matching `last_modified` lookup, so checkpoints
+    are not meaningful across pickle/JSON roundtrips. Callers must also avoid mutating
+    `last_message.parts` in place between snapshot and query — `MessagesBuilder.add` reassigns
+    the list rather than mutating it, but external in-place edits would silently invalidate
+    `last_message_part_count`.
+    """
 
     message_count: int
     last_message: ModelMessage | None
