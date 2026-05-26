@@ -33,6 +33,7 @@ rules:
       - pydantic-ai-provider-parity-explore.lock.yml
       - pydantic-ai-regression-detector.lock.yml
       - pydantic-ai-roundtrip-sweep.lock.yml
+      - pydantic-ai-stale-issues-finder.lock.yml
       - pydantic-ai-streaming-resilience-sweep.lock.yml
       - pydantic-ai-ui-security-review.lock.yml
 

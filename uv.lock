@@ -22,14 +22,6 @@ conflicts = [[
     { package = "pydantic-ai-slim", extra = "outlines-vllm-offline" },
 ]]
 
-[options]
-exclude-newer = "2026-05-23T15:03:45.180546Z"
-exclude-newer-span = "P1D"
-
-[options.exclude-newer-package]
-strict-no-cover = "2099-01-01T00:00:00Z"
-plaine = "2099-01-01T00:00:00Z"
-
 [manifest]
 members = [
     "clai",
