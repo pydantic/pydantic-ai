@@ -15401,7 +15401,7 @@ class TestOutputHookEdgeCases:
             await toolset.call_tool(tool_name, {}, ctx, tool)
 
         with pytest.raises(NotImplementedError, match='validate_output_tool_call'):
-            asyncio.get_event_loop().run_until_complete(run())
+            asyncio.run(run())
 
     def test_hooks_on_output_process_via_hooks_class(self):
         """Test wrap_output_process via Hooks decorator API."""
