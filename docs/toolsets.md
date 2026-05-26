@@ -958,3 +958,20 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
+
+### pydantic-ai-ejentum {#ejentum-tools}
+
+[`pydantic-ai-ejentum`](https://pypi.org/project/pydantic-ai-ejentum/) wraps the [Ejentum Reasoning Harness](https://ejentum.com) as a `FunctionToolset` subclass. `EjentumToolset` registers four agent-callable tools (`harness_reasoning`, `harness_code`, `harness_anti_deception`, `harness_memory`). The agent calls one before generating; each call returns a structured cognitive scaffold (named failure pattern, executable procedure, suppression vectors, falsification test) that the model reads internally to shape its next response.
+
+You will need to install the `pydantic-ai-ejentum` package and set your Ejentum API key in the `EJENTUM_API_KEY` environment variable (free and paid tiers at <https://ejentum.com/pricing>), or pass `api_key=` to the constructor.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_ejentum import EjentumToolset
+
+toolset = EjentumToolset()
+
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+```
+
+The toolset emits PydanticAI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.

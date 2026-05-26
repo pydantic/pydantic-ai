@@ -2313,19 +2313,27 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, id='enabled'),
+        pytest.param({'type': 'adaptive'}, id='adaptive'),
+    ],
+)
+async def test_bedrock_output_tool_with_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_field: dict[str, Any]
+):
     """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
     `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
-    Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and
+    https://github.com/pydantic/pydantic-ai/issues/5650 (`adaptive`).
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
         provider=bedrock_provider,
-        settings=BedrockModelSettings(
-            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-        ),
+        settings=BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': thinking_field}),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
