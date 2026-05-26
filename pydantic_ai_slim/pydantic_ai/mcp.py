@@ -2337,6 +2337,14 @@ def _build_transport(
             '`headers`, `http_client`, `auth`, and `verify` only apply to HTTP transports built '
             'from a URL string. Pass them on your transport / `fastmcp.Client` directly instead.'
         )
+    if is_url and _HTTPX_IS_DEPRECATED:
+        from ._warnings import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            'Using `httpx` with `pydantic_ai.mcp` is deprecated; install `httpx2` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
     if not needs_explicit_http:
         return client
     url = str(client)
