@@ -879,6 +879,8 @@ def consume_deprecated_builtin_tools_as_capabilities(
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
+    if legacy is None:
+        return []
     return [NativeTool(t) for t in legacy]
 
 
@@ -939,6 +941,8 @@ def consume_deprecated_history_processors_as_capabilities(
         PydanticAIDeprecationWarning,
         stacklevel=stacklevel,
     )
+    if legacy is None:
+        return []
     return [ProcessHistory(p) for p in legacy]
 
 
