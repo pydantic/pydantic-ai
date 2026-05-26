@@ -56,7 +56,7 @@ SystemPromptFunc: TypeAlias = (
     | Callable[[], str | None]
     | Callable[[], Awaitable[str | None]]
 )
-"""A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
+"""A function that may or may not take `RunContext` as an argument, and may or may not be async.
 
 Functions which return None are excluded from model requests.
 
