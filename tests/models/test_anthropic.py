@@ -93,6 +93,7 @@ with try_import() as imports_successful:
         BetaCompactionIterationUsage,
         BetaContentBlock,
         BetaDirectCaller,
+        BetaDocumentBlock,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -104,6 +105,7 @@ with try_import() as imports_successful:
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
         BetaMessageTokensCount,
+        BetaPlainTextSource,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -111,11 +113,14 @@ with try_import() as imports_successful:
         BetaRawMessageStartEvent,
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
+        BetaServerToolCaller20260120,
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
         BetaToolUseBlock,
         BetaUsage,
+        BetaWebFetchBlock,
+        BetaWebFetchToolResultBlock,
         BetaWebSearchResultBlock,
         BetaWebSearchToolResultBlock,
     )
@@ -652,6 +657,99 @@ def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
     )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
+
+
+@pytest.mark.parametrize(
+    'client_cls,base_url,expected_tool_types,expected_betas',
+    [
+        pytest.param(
+            AsyncAnthropic,
+            'https://api.anthropic.com',
+            ['web_search_20260209', 'web_fetch_20260209'],
+            [],
+            id='anthropic',
+        ),
+        pytest.param(
+            AsyncAnthropicBedrockMantle,
+            'https://bedrock-mantle.us-east-1.api.aws',
+            ['web_search_20260209', 'web_fetch_20260209'],
+            [],
+            id='bedrock-mantle',
+        ),
+        pytest.param(
+            AsyncAnthropicFoundry,
+            'https://example.services.ai.azure.com/anthropic',
+            ['web_search_20260209', 'web_fetch_20260209'],
+            [],
+            id='foundry',
+        ),
+    ],
+)
+def test_anthropic_web_tools_20260209_respects_client_support(
+    client_cls: Any, base_url: str, expected_tool_types: list[str], expected_betas: list[str]
+):
+    m = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [],
+        ModelRequestParameters(native_tools=[WebSearchTool(), WebFetchTool()]),
+        AnthropicModelSettings(),
+    )
+
+    assert [tool.get('type') for tool in tools] == expected_tool_types
+    assert sorted(beta_features) == expected_betas
+
+
+def test_anthropic_vertex_web_search_uses_previous_version():
+    m = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(
+                AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
+            )
+        ),
+    )
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [],
+        ModelRequestParameters(native_tools=[WebSearchTool()]),
+        AnthropicModelSettings(),
+    )
+
+    assert [tool.get('type') for tool in tools] == ['web_search_20250305']
+    assert beta_features == set()
+
+
+def test_anthropic_bedrock_rejects_web_search_tool():
+    m = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+
+    assert WebSearchTool not in m.profile.supported_native_tools
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
+        m.prepare_request(None, ModelRequestParameters(native_tools=[WebSearchTool()]))
+
+
+@pytest.mark.parametrize(
+    'client_cls,base_url',
+    [
+        pytest.param(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
+    ],
+)
+def test_anthropic_web_fetch_rejects_unsupported_clients(client_cls: Any, base_url: str):
+    m = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+
+    assert WebFetchTool not in m.profile.supported_native_tools
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebFetchTool'\] not supported by this model"):
+        m.prepare_request(None, ModelRequestParameters(native_tools=[WebFetchTool()]))
 
 
 @pytest.mark.parametrize(
@@ -8422,6 +8520,96 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     assert result2.output == 'The web search result showed that today is January 2, 2025.'
 
 
+async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Pass Anthropic dynamic-filtering caller metadata back with web fetch history."""
+    code_tool_id = 'srvtoolu_code'
+    fetch_tool_id = 'srvtoolu_fetch'
+    fetch_caller = BetaServerToolCaller20260120(tool_id=code_tool_id, type='code_execution_20260120')
+    content: list[BetaContentBlock] = [
+        BetaServerToolUseBlock(
+            id=code_tool_id,
+            name='code_execution',
+            input={'code': 'result = await web_fetch({"url": "https://example.com"})'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        ),
+        BetaServerToolUseBlock(
+            id=fetch_tool_id,
+            name='web_fetch',
+            input={'url': 'https://example.com'},
+            type='server_tool_use',
+            caller=fetch_caller,
+        ),
+        BetaWebFetchToolResultBlock(
+            tool_use_id=fetch_tool_id,
+            type='web_fetch_tool_result',
+            content=BetaWebFetchBlock(
+                content=BetaDocumentBlock(
+                    type='document',
+                    source=BetaPlainTextSource(type='text', media_type='text/plain', data='Example Domain'),
+                ),
+                type='web_fetch_result',
+                url='https://example.com',
+            ),
+            caller=fetch_caller,
+        ),
+        BetaCodeExecutionToolResultBlock(
+            tool_use_id=code_tool_id,
+            type='code_execution_tool_result',
+            content=BetaCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='Example Domain\n',
+                type='code_execution_result',
+            ),
+        ),
+        BetaTextBlock(text='Fetched Example Domain.', type='text'),
+    ]
+    first_response = completion_message(content, BetaUsage(input_tokens=20, output_tokens=30))
+    second_response = completion_message(
+        [BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=50, output_tokens=5)
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())])
+
+    result = await agent.run('Fetch https://example.com')
+    web_fetch_call = next(
+        p
+        for message in result.all_messages()
+        for p in message.parts
+        if isinstance(p, NativeToolCallPart) and p.tool_name == 'web_fetch'
+    )
+    assert web_fetch_call.provider_details == snapshot(
+        {'anthropic_caller': {'tool_id': 'srvtoolu_code', 'type': 'code_execution_20260120'}}
+    )
+
+    await agent.run('Continue.', message_history=result.all_messages())
+
+    assistant_content = cast(
+        list[dict[str, Any]], get_mock_chat_completion_kwargs(mock_client)[1]['messages'][1]['content']
+    )
+    web_fetch_use = next(
+        item
+        for item in assistant_content
+        if isinstance(item, dict) and item.get('type') == 'server_tool_use' and item.get('name') == 'web_fetch'
+    )
+    web_fetch_result = next(
+        item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'web_fetch_tool_result'
+    )
+    assert {
+        'server_tool_use': web_fetch_use['caller'],
+        'web_fetch_tool_result': web_fetch_result['caller'],
+    } == snapshot(
+        {
+            'server_tool_use': {'tool_id': 'srvtoolu_code', 'type': 'code_execution_20260120'},
+            'web_fetch_tool_result': {'tool_id': 'srvtoolu_code', 'type': 'code_execution_20260120'},
+        }
+    )
+
+
 async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing code execution tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
@@ -11019,10 +11207,24 @@ async def test_anthropic_supported_model_uses_20260209_web_tools(
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
 
     assert result.output
-    tool_types = [tool['type'] for tool in _single_request_body(vcr)['tools']]
-    assert tool_types == ['web_search_20260209', 'web_fetch_20260209']
+    assert [tool['type'] for tool in _single_request_body(vcr)['tools']] == snapshot(
+        ['web_search_20260209', 'web_fetch_20260209']
+    )
     response_parts = [part for message in result.all_messages() for part in message.parts]
-    assert any(isinstance(part, NativeToolCallPart) and part.tool_name == 'web_fetch' for part in response_parts)
+    web_fetch_parts = [
+        part
+        for part in response_parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
+    ]
+    assert len(web_fetch_parts) == 2
+    caller_details = [part.provider_details for part in web_fetch_parts]
+    assert caller_details == snapshot(
+        [
+            {'anthropic_caller': {'tool_id': IsStr(), 'type': 'code_execution_20260120'}},
+            {'anthropic_caller': {'tool_id': IsStr(), 'type': 'code_execution_20260120'}},
+        ]
+    )
+    assert caller_details[0] == caller_details[1]
 
 
 @pytest.mark.vcr()

@@ -172,8 +172,11 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Anthropic Web Search Tool Versions"
     Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web search tool version from the model profile: `web_search_20260209` for models whose
-    profile supports Anthropic's dynamic-filtering web tools, and `web_search_20250305` otherwise.
+    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_search_20250305` otherwise.
+    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
+    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
     See the [Anthropic web search docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
@@ -593,8 +596,13 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Anthropic Web Fetch Tool Versions"
     Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
-    the web fetch tool version from the model profile: `web_fetch_20260209` for models whose profile
-    supports Anthropic's dynamic-filtering web tools, and `web_fetch_20250910` otherwise. See the
+    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_fetch_20250910` otherwise.
+    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
+    `AsyncAnthropicVertex`.
+    See the
     [Anthropic web fetch docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
