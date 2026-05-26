@@ -58,6 +58,23 @@ existing suite. The bug must be one you triggered and observed.
 - By-design lossy fields explicitly documented as such.
 - Behavior already tracked by an open issue — **search issues first**.
 
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[roundtrip-sweep]" OR "round-trip" OR "serialize"
+```
+
+Also search for the specific boundary/function you plan to investigate. If a
+matching issue already exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
+- Read files in large ranges (500+ lines per call). Do NOT read in 30–80 line chunks.
+- Use the native `Grep` and `Glob` tools for codebase search.
+
 ## Quality Gate — When to Noop
 
 `mcp__safeoutputs__noop` is the expected outcome most runs. Call `mcp__safeoutputs__noop` unless you have a

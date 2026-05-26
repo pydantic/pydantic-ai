@@ -71,6 +71,30 @@ weak or speculative issue is worse than filing nothing.
   consistent patterns across the codebase, and recent PRs/commits for context.
   If the "bug" requires assuming an error despite an established pattern, it is
   probably by-design.
+- **Cross-provider comparisons.** Different providers have different semantics
+  by design. Do not assume one provider's behavior is the "correct" reference
+  for another. Only flag a bug if the behavior contradicts the provider's own
+  documented API contract.
+
+### Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues that might overlap
+your run's scope. Use the MCP GitHub tools (not the `gh` CLI, which is blocked
+by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[bug-hunter]" OR "[provider-mapping-sweep]" OR "[streaming-resilience-sweep]" OR "[roundtrip-sweep]"
+```
+
+Also search for keywords related to whatever subsystem you're investigating.
+If a matching issue already covers the same root cause, call
+`mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
+"independently confirm" the bug. Confirming is not value-add.
+
+### Sandbox notes
+
+- Read files in large ranges (500+ lines per call). Do NOT read 30–80 lines at a time.
+- Use the native `Grep` and `Glob` tools for codebase search.
 
 ### Quality Gate — When to Noop
 
