@@ -30,6 +30,7 @@ from pydantic_ai import (
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
+from tests.cassette_utils import single_request_body
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -1248,7 +1249,7 @@ async def test_eager_input_streaming_sent_to_openrouter(
         model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
     )
 
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     tool_param = request_body['tools'][0]
     assert tool_param['function']['name'] == 'get_weather'
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
