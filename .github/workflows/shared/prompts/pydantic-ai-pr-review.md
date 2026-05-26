@@ -25,52 +25,13 @@ coverage, and documentation quality are all load-bearing.
 This workflow is **read-only** for the codebase. Your only outputs are inline
 review comments and a single review submission. Do not modify files.
 
-## Rigor
-
-**Silence is better than noise. A false positive wastes a maintainer's time
-and erodes trust in every future review.**
+## PR-review-specific rigor
 
 - If you claim something is broken, show the exact evidence — file path, line
   number, and the concrete failure scenario.
-- "I don't know" beats a wrong answer. `mcp__safeoutputs__noop` beats a speculative finding.
 - Before posting any finding, re-read it as a skeptical maintainer. Ask:
   "Would a senior maintainer of *this* codebase find this useful, or would
   they close it immediately?" If "close", drop it.
-- Only file findings you would confidently defend in a code review. If you
-  need to hedge with "might", "could", or "possibly", the finding is not
-  ready.
-
-## Pre-gathered context
-
-A pre-agent step ran `scripts/gather-pydantic-ai-review-context.sh` and
-wrote everything you need to `/tmp/gh-aw/.review-context/`. **Read these
-files instead of calling the GitHub API.**
-
-- `pr-details.json` — title, body, author, branches, labels, draft/state.
-- `pr-size.txt` — `{N} files, {M} diff lines` (used by the strategy step
-  below; excludes generated files).
-- `changed-files.txt` — paths in this PR with `+N -M` change counts and the
-  matching `diff/<path>.diff` filename. Generated files (uv.lock,
-  cassettes/) appear here but have no per-file diff.
-- `file-orderings/az.txt`, `file-orderings/za.txt`,
-  `file-orderings/largest.txt` — the same file list in three orderings
-  (alphabetical, reverse-alphabetical, and largest-change-first). Used by
-  the sub-agent fan-out below.
-- `diff/<path>.diff` — per-file diffs with function context, annotated
-  with `NL:<n>` for new-side and `OL:<n>` for old-side line numbers.
-  **Inline comments require an `NL:` line** — that's the right-side line
-  GitHub will accept.
-- `pr-comments.txt` — issue-style PR discussion.
-- `review-comments.txt` — inline review threads with diff hunks and
-  per-thread `RESOLVED` / `UNRESOLVED` / `OUTDATED` state.
-- `related-issues.txt` — linked issues referenced by the PR body.
-- `agents-md.txt` — `AGENTS.md` excerpts for directories the PR touches.
-
-The annotated diffs are the **source of truth** for what changed.
-
-**If a file is missing** (the pre-agent step may have warned), fall back to
-`gh pr view` / `gh pr diff` for that piece — but only that piece. Don't
-re-fetch what's already on disk.
 
 ## Review conventions
 
@@ -88,21 +49,6 @@ MEDIUM-only or below → `APPROVE` (post the comments anyway).
 No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
-
-## Handling existing review threads
-
-For each thread in `review-comments.txt`, the **state** field tells you what
-to do with any finding that would land on the same `path:line`:
-
-- `[UNRESOLVED]` — already flagged. **Do not duplicate.**
-- `[RESOLVED]` with a reviewer reply (e.g. "intentional", "won't fix") —
-  decision is final. **Do not re-flag.**
-- `[RESOLVED]` without a reply — author likely fixed it. **Do not re-raise**
-  unless your reading shows the fix introduced a new problem.
-- `[OUTDATED]` — the code has shifted under the comment. Only re-flag if
-  the issue still applies to the *current* diff.
-
-When in doubt, do not duplicate. Redundant comments erode trust.
 
 ## Review process
 
@@ -203,7 +149,8 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
 
 - **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived,
   else `APPROVE`.
-- **body:** empty for `APPROVE` with no findings. For `REQUEST_CHANGES`,
+- **body:** If you are approving, you should most often provide an empty 
+  body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
   expressed inline (e.g. "the new module duplicates logic in `agent.py`
   — consider unifying"). Do not summarise the PR, list reviewed files,

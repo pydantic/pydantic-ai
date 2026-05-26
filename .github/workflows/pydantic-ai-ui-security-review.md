@@ -54,6 +54,8 @@ imports:
   - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
+  - shared/rigor.md
+  - shared/review-context.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md

@@ -145,10 +145,7 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 - OpenAI Responses API (`previous_response_id` / stored conversations) — <https://platform.openai.com/docs/api-reference/responses>
 - SSRF advisories — <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cg7w-rg45-pc59>, <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cqp8-fcvh-x7r3>
 
-## Rigor
-
-**Silence is better than noise. A false positive wastes a maintainer's time
-and erodes trust in every future review.**
+## Security-specific rigor
 
 - If you claim something is exploitable, show the **attack**: which field a
   client controls, the exact call path from `load_messages` /
@@ -158,49 +155,8 @@ and erodes trust in every future review.**
   default is **not** a finding — that is the model working.
 - The server-side `message_history` path (passed directly to `Agent.run`)
   is trusted by design. Do not flag it.
-- "I don't know" beats a wrong answer. `mcp__safeoutputs__noop` beats a
-  speculative finding.
 - Before posting, re-read each finding as a skeptical maintainer who knows
-  this trust model. If you need to hedge with "might", "could", or
-  "possibly", it is not ready.
-
-## Pre-gathered context
-
-A pre-agent step ran `scripts/gather-pydantic-ai-review-context.sh` and
-wrote everything you need to `/tmp/gh-aw/.review-context/`. **Read these
-files instead of calling the GitHub API.**
-
-- `pr-details.json` — title, body, author, branches, labels, draft/state.
-- `pr-size.txt` — `{N} files, {M} diff lines`.
-- `changed-files.txt` — paths with `+N -M` counts and the matching
-  `diff/<path>.diff` filename.
-- `diff/<path>.diff` — per-file diffs with function context, annotated with
-  `NL:<n>` for new-side and `OL:<n>` for old-side line numbers. **Inline
-  comments require an `NL:` line.**
-- `pr-comments.txt` — issue-style PR discussion.
-- `review-comments.txt` — inline review threads with diff hunks and
-  per-thread `RESOLVED` / `UNRESOLVED` / `OUTDATED` state.
-- `related-issues.txt` — linked issues referenced by the PR body.
-- `agents-md.txt` — `AGENTS.md` excerpts for directories the PR touches.
-
-The annotated diffs are the **source of truth** for what changed. If a file
-is missing (the pre-agent step may have warned), fall back to `gh pr view` /
-`gh pr diff` for that piece only.
-
-## Handling existing review threads
-
-For each thread in `review-comments.txt`, the **state** field tells you what
-to do with a finding on the same `path:line`:
-
-- `[UNRESOLVED]` — already flagged. **Do not duplicate.**
-- `[RESOLVED]` with a reviewer reply (e.g. "intentional") — decision is
-  final. **Do not re-flag.**
-- `[RESOLVED]` without a reply — author likely fixed it. **Do not re-raise**
-  unless the fix introduced a new problem.
-- `[OUTDATED]` — the code shifted under the comment. Re-flag only if the
-  issue still applies to the current diff.
-
-When in doubt, do not duplicate. Redundant comments erode trust.
+  this trust model.
 
 ## Review process
 

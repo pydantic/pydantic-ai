@@ -34,6 +34,7 @@ safe-outputs:
   create-pull-request-review-comment:
     max: 30
   submit-pull-request-review:
+    supersede-older-reviews: true
     max: 1
 timeout-minutes: 30
 imports:
@@ -41,6 +42,8 @@ imports:
   - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
+  - shared/rigor.md
+  - shared/review-context.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md
