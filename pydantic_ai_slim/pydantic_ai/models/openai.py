@@ -1492,9 +1492,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
         """Map a tool definition to an OpenAI tool parameter.
 
-        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom tool mappings.
-        `model_settings` is typed as the base `ModelSettings` so subclass overrides can read
-        provider-specific keys (e.g. `OpenRouterModel` reads `anthropic_eager_input_streaming`).
+        This method may be overridden by subclasses to apply custom tool mappings. `model_settings` is
+        typed as the base `ModelSettings` so subclass overrides can read provider-specific keys without
+        narrowing the type.
         """
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
