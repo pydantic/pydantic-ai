@@ -54,9 +54,8 @@ class CerebrasModelSettings(ModelSettings, total=False):
 
     This setting is only supported on reasoning models: `zai-glm-4.7` and `gpt-oss-120b`.
 
-    .. deprecated::
-        Cerebras has deprecated the ``disable_reasoning`` parameter in favor of ``reasoning_effort``.
-        This setting is mapped to ``openai_reasoning_effort='none'`` when enabled.
+    **Deprecated:** Cerebras has deprecated the `disable_reasoning` parameter in favor of `reasoning_effort`.
+    This setting is mapped to `openai_reasoning_effort='none'` when enabled.
 
     See [the Cerebras docs](https://inference-docs.cerebras.ai/resources/openai#passing-non-standard-parameters) for more details.
     """
