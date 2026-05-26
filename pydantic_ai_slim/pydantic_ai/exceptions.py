@@ -79,7 +79,14 @@ class ModelRetry(Exception):
 
 
 class ToolFailed(Exception):
-    """Exception to raise when a tool fails."""
+    """Exception to raise to report a failed tool result to the model.
+
+    Can be raised from tool functions, args validators, and tool validation/execution hooks
+    to send a failed tool result back to the model without consuming the tool's retry budget.
+    """
+
+    message: str
+    """The failure message to return to the model."""
 
     def __init__(self, message: str):
         self.message = message
@@ -319,9 +326,11 @@ class ToolFailedError(Exception):
 
     def __init__(self, tool_failed: ToolReturnPart):
         self.tool_failed = tool_failed
-        super().__init__()
         message = tool_failed.content
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_failed,)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

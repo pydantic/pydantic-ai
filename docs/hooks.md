@@ -360,9 +360,9 @@ Error hooks (`*_error` in the `hooks.on` namespace, `on_*_error` on `AbstractCap
 
 See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery types.
 
-## Triggering retries with `ModelRetry`
+## Triggering retries with `ModelRetry` and failures with `ToolFailed` {#triggering-retries-with-modelretry}
 
-Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators.
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
 
 **Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
@@ -383,6 +383,8 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - For text output, retries count against the output side of the agent's retry budget
 
 `ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
+
+Tool validation and execution hooks can also raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without consuming the tool's retry budget. This is the same behavior as raising `ToolFailed` from the tool function itself, and is useful when an error hook converts a third-party exception into a failure the model can see.
 
 ```python {title="hooks_model_retry.py"}
 from pydantic_ai import Agent, RunContext

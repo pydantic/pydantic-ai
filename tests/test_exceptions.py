@@ -18,12 +18,13 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
 @pytest.mark.parametrize(
@@ -138,6 +139,21 @@ def test_tool_retry_error_pickle_round_trip():
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id
     assert restored.tool_retry.timestamp == part.timestamp
+
+
+def test_tool_failed_error_pickle_round_trip():
+    """Test that ToolFailedError survives pickle round-trip with tool_failed preserved."""
+    part = ToolReturnPart(content='tool failed', tool_name='my_tool', outcome='failed')
+    exc = ToolFailedError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolFailedError
+    assert str(restored) == str(exc)
+    assert restored.tool_failed.content == 'tool failed'
+    assert restored.tool_failed.tool_name == 'my_tool'
+    assert restored.tool_failed.tool_call_id == part.tool_call_id
+    assert restored.tool_failed.timestamp == part.timestamp
+    assert restored.tool_failed.outcome == 'failed'
 
 
 def test_tool_retry_error_str_with_string_content():
