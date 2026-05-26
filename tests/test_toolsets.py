@@ -289,6 +289,24 @@ async def test_prepared_toolset_sync_prepare_func():
     assert list(tools.keys()) == ['add']
 
 
+async def test_prepared_toolset_user_error_none_result():
+    """`PreparedToolset` requires [] when a prepare function intentionally exposes no tools."""
+    base_toolset = FunctionToolset()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    async def prepare_returns_none(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
+        return None
+
+    prepared_toolset = PreparedToolset(base_toolset, prepare_returns_none)
+
+    with pytest.raises(UserError, match='Prepare function returned `None`'):
+        await prepared_toolset.get_tools(build_run_context(None))
+
+
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)
