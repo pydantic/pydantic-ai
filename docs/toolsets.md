@@ -366,9 +366,9 @@ _(This example is complete, it can be run "as is")_
 
 ### Dynamic Tool Definitions {#preparing-tool-definitions}
 
-[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
+[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns the tool definitions to expose for that step.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) capability hook that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -389,7 +389,7 @@ descriptions = {
     'current_time': 'Get the current time',
 }
 
-async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [
         replace(tool_def, description=description)
         if (description := descriptions.get(tool_def.name, None))
