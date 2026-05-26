@@ -144,4 +144,4 @@ def _cerebras_settings_to_openai_settings(
     elif model_request_parameters.thinking:
         openai_settings.setdefault('openai_reasoning_effort', 'low')
 
-    return OpenAIChatModelSettings(**openai_settings)  # type: ignore[reportCallIssue]
+    return OpenAIChatModelSettings(**openai_settings)
