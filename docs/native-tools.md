@@ -181,16 +181,9 @@ _(This example is complete, it can be run "as is")_
     and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
-    Anthropic's web search docs describe dynamic filtering as Claude writing and executing code to
-    filter search results before they enter the context window. Their API examples enable this by
-    sending `web_search_20260209`, not by adding a separate `code_execution` tool. Anthropic's
-    [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#dynamic-filtering-with-code-execution)
-    say the `_20260209` web tool versions "use code execution internally" and warn that adding a
-    standalone `code_execution` tool "creates two execution environments, which can confuse the model."
-    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you also want
-    Anthropic's standalone code execution tool; it is not needed for web search dynamic filtering.
-
-    Anthropic also documents Zero Data Retention behavior for the `_20260209` tool versions in the
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
     [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## X Search Tool
@@ -607,16 +600,9 @@ _(This example is complete, it can be run "as is")_
     and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
-    Anthropic's web fetch docs describe dynamic filtering as Claude writing and executing code to
-    filter fetched content before it enters the context window. Their API examples enable this by
-    sending `web_fetch_20260209`, not by adding a separate `code_execution` tool. Anthropic's
-    [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#dynamic-filtering-with-code-execution)
-    say the `_20260209` web tool versions "use code execution internally" and warn that adding a
-    standalone `code_execution` tool "creates two execution environments, which can confuse the model."
-    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you also want
-    Anthropic's standalone code execution tool; it is not needed for web fetch dynamic filtering.
-
-    Anthropic also documents Zero Data Retention behavior for the `_20260209` tool versions in the
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
     [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool
