@@ -9,7 +9,7 @@ commit is needed. Keep this file in sync as the reviewed default.
 -->
 
 # Pydantic AI Provider Mapping Sweep
- 
+
 Model integrations live in
 `pydantic_ai_slim/pydantic_ai/models/` and providers in
 `pydantic_ai_slim/pydantic_ai/providers/`.

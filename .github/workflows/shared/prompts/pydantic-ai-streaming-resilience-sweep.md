@@ -10,7 +10,7 @@ needed. Keep this file in sync as the reviewed default.
 -->
 
 # Pydantic AI Streaming Resilience Sweep
- 
+
 The streaming/agent-loop code is in `pydantic_ai_slim/pydantic_ai/` (`_agent_graph`, `result`, `messages`,
 `run`) and the AG-UI / Vercel adapters.
 

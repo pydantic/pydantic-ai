@@ -10,7 +10,7 @@ reviewed default.
 -->
 
 # Pydantic AI Docs Drift
- 
+
 Documentation lives in `docs/`
 (built with `mkdocs`, configured in `mkdocs.yml`), plus `README.md`,
 `CONTRIBUTING.md`, and per-package `AGENTS.md` files. Doc code examples are
