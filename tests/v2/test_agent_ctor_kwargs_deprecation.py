@@ -12,7 +12,6 @@ so it's intentionally excluded.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
@@ -130,9 +129,7 @@ async def test_prepare_tools_none_kwarg_matches_omitted_kwarg():
     with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(prepare_tools=\.\.\.\)` is deprecated'):
         agent = Agent(FunctionModel(model_function), tools=[my_tool], prepare_tools=None)  # pyright: ignore[reportCallIssue]
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', UserWarning)
-        result = await agent.run('hello')
+    result = await agent.run('hello')
 
     assert result.output == "tools: ['my_tool']"
 
@@ -211,9 +208,7 @@ async def test_prepare_output_tools_none_kwarg_matches_omitted_kwarg():
             prepare_output_tools=None,
         )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', UserWarning)
-        result = await agent.run('hello')
+    result = await agent.run('hello')
 
     assert result.output == 'output_tools: 1'
 

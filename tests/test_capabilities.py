@@ -5797,12 +5797,16 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.warns(UserWarning, match=r'this hides all tool definitions passed to it for this step'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'will raise in v2\.0'):
             result = await agent.run('hello')
         assert result.output == 'tools: []'
 
     async def test_prepare_tools_empty_list_does_not_warn(self):
-        """Returning [] is the explicit 'disable all' alternative and must not emit the warning."""
+        """Returning [] is the explicit 'disable all' alternative and must not emit the warning.
+
+        Relies on the suite-wide `filterwarnings = ['error']` in `pyproject.toml` to turn any
+        unexpected `PydanticAIDeprecationWarning` into a test failure.
+        """
 
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return []
@@ -5816,9 +5820,7 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', UserWarning)
-            await agent.run('hello')
+        await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5966,7 +5968,7 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        with pytest.warns(UserWarning, match=r'this hides all tool definitions passed to it for this step'):
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'will raise in v2\.0'):
             result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
