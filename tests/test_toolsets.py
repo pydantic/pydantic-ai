@@ -381,7 +381,7 @@ async def test_prepared_toolset_warns_on_none_return():
 
     prepared_toolset = PreparedToolset(base_toolset, returns_none)
 
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'will raise in v2\.0'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
         result = await prepared_toolset.get_tools(context)
     assert result == {}
 
