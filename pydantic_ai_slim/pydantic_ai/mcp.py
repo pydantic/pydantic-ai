@@ -16,8 +16,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, overload
 
 import anyio
-import httpx
 import pydantic_core
+
+if TYPE_CHECKING:
+    import httpx
+
+    _HTTPX_IS_DEPRECATED = False
+else:
+    try:
+        import httpx2 as httpx
+
+        _HTTPX_IS_DEPRECATED = False
+    except ImportError:
+        import httpx
+
+        _HTTPX_IS_DEPRECATED = True
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
@@ -1358,6 +1371,15 @@ class _MCPServerHTTP(MCPServer):
             read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
+
+        if _HTTPX_IS_DEPRECATED:
+            from ._warnings import PydanticAIDeprecationWarning
+
+            warnings.warn(
+                'Using `httpx` with `pydantic_ai.mcp` is deprecated; install `httpx2` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
 
         if read_timeout is None:
             read_timeout = 5 * 60
