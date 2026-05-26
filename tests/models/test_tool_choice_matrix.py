@@ -259,6 +259,33 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: An
         return body.get('tool_choice')
 
 
+def get_bedrock_tool_names_from_cassette(cassette: Any) -> list[str]:
+    """Extract Bedrock tool definition names from the first recorded request body."""
+    if not cassette.requests:
+        return []  # pragma: no cover
+
+    request = None
+    for req in cassette.requests:
+        if req.method == 'POST':
+            request = req
+            break
+    if request is None:  # pragma: no cover
+        return []
+
+    body_bytes = request.body
+    if body_bytes is None:
+        return []  # pragma: no cover
+
+    try:
+        body: dict[str, Any] = json.loads(body_bytes) if isinstance(body_bytes, (str, bytes)) else body_bytes
+    except (json.JSONDecodeError, TypeError):  # pragma: no cover
+        return []
+
+    tool_config: dict[str, Any] = body.get('toolConfig', {})
+    tools: list[dict[str, Any]] = tool_config.get('tools', [])
+    return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
+
+
 def _get_xai_tool_choice(xai_provider: Any) -> Any:
     """Extract tool_choice from xAI provider's underlying client cassette.
 
@@ -412,6 +439,12 @@ async def test_tool_choice_matrix(
     allow_model_requests: None,
     vcr: Any,
 ):
+    """Validate provider tool-choice wire payloads.
+
+    Regression test coverage for https://github.com/pydantic/pydantic-ai/issues/5672 also
+    checks the Bedrock `list_single` tools array, since `toolChoice.tool` can be correct
+    while client-side filtering still breaks cache preservation.
+    """
     if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
@@ -471,3 +504,6 @@ async def test_tool_choice_matrix(
 
     actual_tool_choice = get_tool_choice_from_cassette(vcr, provider, xai_provider)
     assert actual_tool_choice == expected_tool_choice
+
+    if provider == 'bedrock' and scenario == 'list_single':
+        assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'get_time']
