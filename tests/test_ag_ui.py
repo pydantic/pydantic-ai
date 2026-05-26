@@ -177,6 +177,16 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
     assert from_request_parameters['manage_system_prompt'].default == 'server'
 
 
+def test_deprecated_ag_ui_helpers_expose_file_url_force_download_allowlist() -> None:
+    handle_parameters = inspect.signature(handle_ag_ui_request).parameters
+    run_parameters = inspect.signature(run_ag_ui).parameters
+
+    assert 'allowed_file_url_force_download' in handle_parameters
+    assert handle_parameters['allowed_file_url_force_download'].default == frozenset()
+    assert 'allowed_file_url_force_download' in run_parameters
+    assert run_parameters['allowed_file_url_force_download'].default == frozenset()
+
+
 async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
