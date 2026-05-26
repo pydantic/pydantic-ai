@@ -38,6 +38,7 @@ with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -1338,3 +1339,40 @@ async def test_openrouter_thinking_high_emits_effort_high(
 
     sent = single_request_body(vcr)
     assert sent['reasoning'] == {'effort': 'high', 'enabled': True}
+
+
+@pytest.mark.parametrize(
+    'model_name,eager_enabled,expected_eager_key',
+    [
+        ('anthropic/claude-sonnet-4-5', True, True),
+        ('anthropic/claude-sonnet-4-5', False, False),
+        ('openai/gpt-5-mini', True, False),
+    ],
+    ids=['anthropic-enabled', 'anthropic-disabled', 'non-anthropic-enabled'],
+)
+async def test_eager_input_streaming_sent_to_openrouter(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    eager_enabled: bool,
+    expected_eager_key: bool,
+) -> None:
+    """`eager_input_streaming` should appear on the outgoing tool payload only when enabled AND routed to Anthropic."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(model_name, provider=provider)
+    my_tool = ToolDefinition(name='get_weather', description='Get weather for a city')
+
+    await model_request(
+        model,
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=eager_enabled),
+        model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
+    )
+
+    request_body = single_request_body(vcr)
+    tool_param = request_body['tools'][0]
+    assert tool_param['function']['name'] == 'get_weather'
+    assert ('eager_input_streaming' in tool_param) is expected_eager_key
+    if expected_eager_key:
+        assert tool_param['eager_input_streaming'] is True
