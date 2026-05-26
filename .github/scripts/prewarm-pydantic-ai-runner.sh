@@ -16,14 +16,7 @@ export XDG_DATA_HOME=/tmp/gh-aw/uv/data
 export XDG_CACHE_HOME=/tmp/gh-aw/uv/xdg-cache
 mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
 runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
-uv_bin=""
-if command -v uv >/dev/null 2>&1; then
-  uv_bin="$(command -v uv)"
-else
-  for c in "${HOME}/.local/bin/uv" "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/uv/*/*/uv /opt/hostedtoolcache/uv/*/*/uv /home/runner/work/_tool/uv/*/*/uv /usr/local/bin/uv; do
-    [ -x "$c" ] && uv_bin="$c" && break
-  done
-fi
+uv_bin="$(command -v uv 2>/dev/null || true)"
 if [ -z "${uv_bin}" ]; then
   echo "::warning::uv not found for pre-warm; agent will install under the firewall"
   exit 0
