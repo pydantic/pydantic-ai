@@ -129,15 +129,19 @@ def _cerebras_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    if (disable_reasoning := model_settings.pop('cerebras_disable_reasoning', None)) is not None:
+    # Build a plain dict so we can set openai_reasoning_effort (not in CerebrasModelSettings)
+    openai_settings: dict[str, Any] = dict(model_settings)
+    disable_reasoning = openai_settings.pop('cerebras_disable_reasoning', None)
+
+    if disable_reasoning is not None:
         # Map deprecated `disable_reasoning` to `reasoning_effort` for backward compatibility
         if disable_reasoning:
-            model_settings['openai_reasoning_effort'] = 'none'
-        else:
-            model_settings.setdefault('openai_reasoning_effort', 'low')
+            openai_settings['openai_reasoning_effort'] = 'none'
+        elif 'openai_reasoning_effort' not in openai_settings:
+            openai_settings['openai_reasoning_effort'] = 'low'
     elif model_request_parameters.thinking is False:
-        model_settings['openai_reasoning_effort'] = 'none'
+        openai_settings['openai_reasoning_effort'] = 'none'
     elif model_request_parameters.thinking:
-        model_settings.setdefault('openai_reasoning_effort', 'low')
+        openai_settings.setdefault('openai_reasoning_effort', 'low')
 
-    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+    return OpenAIChatModelSettings(**openai_settings)  # type: ignore[reportCallIssue]
