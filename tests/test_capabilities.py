@@ -7002,6 +7002,11 @@ def test_mcp_v2_deprecation_silenced_with_explicit_native():
     pytest.importorskip('mcp', reason='mcp package not installed')
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        warnings.filterwarnings(
+            'ignore',
+            message=r'Using `httpx` with `pydantic_ai\.mcp`',
+            category=PydanticAIDeprecationWarning,
+        )
         MCP(url='http://example.com/mcp', native=True)
         MCP(url='http://example.com/mcp', native=False)
         MCP(url='http://example.com/mcp', native=True, local=False)
@@ -7050,6 +7055,11 @@ def test_mcp_local_true_silent_with_explicit_native():
     pytest.importorskip('mcp', reason='mcp package not installed')
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        warnings.filterwarnings(
+            'ignore',
+            message=r'Using `httpx` with `pydantic_ai\.mcp`',
+            category=PydanticAIDeprecationWarning,
+        )
         cap = MCP(url='http://example.com/mcp', local=True, native=True)
     assert cap.local is not None and cap.local is not False
     assert len(cap.get_native_tools()) == 1
