@@ -761,31 +761,36 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'none'}
 
-    def test_provider_profile_passes_thinking_through_gate(self):
-        """`OpenRouterProvider.model_profile()` reports `supports_thinking=True` and
-        `thinking_always_enabled=False` for every routed model — the former lets the
-        unified setting survive the gate, the latter ensures even sub-profiles that
-        declare always-on (o-series, magistral, deepseek-R1, gpt-5) don't strip
-        `thinking=False` at the gate. OpenRouter's `reasoning.effort='none'` disable
-        signal works at the routing layer regardless of the upstream API's contract."""
+    @pytest.mark.parametrize(
+        ('model_name', 'expected_always_enabled'),
+        [
+            # Hybrid routes — upstream can honor `effort='none'`; gate forwards `thinking=False`.
+            pytest.param('moonshotai/kimi-k2.6', False, id='kimi-k2-hybrid'),
+            pytest.param('qwen/qwen3-235b-a22b', False, id='qwen3-hybrid'),
+            pytest.param('z-ai/glm-4.6', False, id='glm-hybrid'),
+            pytest.param('openai/gpt-oss-120b', False, id='gpt-oss-hybrid'),
+            pytest.param('anthropic/claude-sonnet-4.5', False, id='claude-hybrid'),
+            # Always-on routes — upstream cannot disable; gate silently drops `thinking=False`,
+            # matching the same model's direct-route behavior.
+            pytest.param('openai/o3', True, id='o3-always-on'),
+            pytest.param('openai/gpt-5', True, id='gpt-5-always-on'),
+            pytest.param('mistralai/magistral-medium-2509', True, id='magistral-always-on'),
+            pytest.param('deepseek/deepseek-r1', True, id='deepseek-r1-always-on'),
+            pytest.param('x-ai/grok-3-mini', True, id='grok-3-mini-always-on'),
+        ],
+    )
+    def test_provider_profile_propagates_thinking_capability(self, model_name: str, expected_always_enabled: bool):
+        """OpenRouter's base profile sets `supports_thinking=True` so the gate forwards
+        `thinking` to the transformer for every routed model; `thinking_always_enabled`
+        propagates from the sub-profile via `ModelProfile.update()` so always-on
+        upstream routes silently drop `thinking=False` at the gate — matching their
+        direct-route behavior per the `ModelProfile.thinking_always_enabled` docstring."""
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-        # Mix of sub-profile types: bare ModelProfile (kimi), Anthropic, OpenAI o-series,
-        # OpenAI GPT-5, Mistral always-on, DeepSeek R1, hybrid (glm).
-        for model_name in (
-            'moonshotai/kimi-k2.6',
-            'qwen/qwen3-235b-a22b',
-            'z-ai/glm-4.6',
-            'openai/gpt-oss-120b',
-            'openai/o3',
-            'openai/gpt-5',
-            'mistralai/magistral-medium-2509',
-            'deepseek/deepseek-r1',
-        ):
-            profile = OpenRouterProvider.model_profile(model_name)
-            assert profile is not None
-            assert profile.supports_thinking is True, model_name
-            assert profile.thinking_always_enabled is False, model_name
+        profile = OpenRouterProvider.model_profile(model_name)
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is expected_always_enabled
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
@@ -1273,6 +1278,32 @@ class TestCrossProviderPortability:
         _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
         assert params.thinking is None
 
+        _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
+        assert params.thinking == 'high'
+
+    @pytest.mark.parametrize(
+        'model_name',
+        [
+            'openai/o3',
+            'openai/gpt-5',
+            'mistralai/magistral-medium-2509',
+            'deepseek/deepseek-r1',
+            'x-ai/grok-3-mini',
+        ],
+    )
+    def test_thinking_false_silently_dropped_on_always_on_openrouter_routes(self, model_name: str):
+        """Aggregator-route consistency: OpenRouter routes to always-on upstream models
+        silently drop `thinking=False` at the gate — same behavior the direct route to
+        the same model would exhibit. `ModelProfile.update()` propagates
+        `thinking_always_enabled=True` from the sub-profile, no aggregator-specific
+        override required."""
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        profile = OpenRouterProvider.model_profile(model_name)
+        assert profile is not None
+        model = FunctionModel(_echo, profile=profile)
+        _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        assert params.thinking is None
         _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
         assert params.thinking == 'high'
 

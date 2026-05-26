@@ -131,16 +131,13 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # OpenRouter accepts `reasoning.effort='none'` for every routed model, so the
-        # upstream's `thinking_always_enabled` constraint doesn't apply here — strip it
-        # so `thinking=False` survives the `prepare_request` gate.
-        if profile is not None:
-            profile = replace(profile, thinking_always_enabled=False)
-
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
-        # `supports_thinking=True` because OpenRouter accepts the `reasoning` passthrough
-        # for every routed model, regardless of the upstream profile.
+        # `supports_thinking=True` lets the gate forward `thinking` to the transformer
+        # for every routed model; `thinking_always_enabled` propagates from the
+        # sub-profile via `.update()`, so always-on routes (e.g. `openai/o3`,
+        # `mistralai/magistral-medium-*`) silently drop `thinking=False` at the gate
+        # — matching their direct-route behavior per the `ModelProfile` docstring.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
