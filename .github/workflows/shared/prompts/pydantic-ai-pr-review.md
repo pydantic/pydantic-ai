@@ -149,7 +149,7 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
 
 - **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived,
   else `APPROVE`.
-- **body:** If you are approving, you should most often provide an empty 
+- **body:** If you are approving, you should most often provide an empty
   body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
   expressed inline (e.g. "the new module duplicates logic in `agent.py`
