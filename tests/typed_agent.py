@@ -462,10 +462,3 @@ if not MYPY:
         return tool_defs
 
     Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(wrong_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]
-
-    # PrepareTools callbacks must return a list; return None from the callback is a type error
-
-    async def none_prepare(ctx: RunContext[MyDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
-        return None
-
-    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(none_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]

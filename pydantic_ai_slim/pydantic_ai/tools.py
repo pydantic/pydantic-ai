@@ -122,7 +122,7 @@ Usage `ToolPrepareFunc[AgentDepsT]`.
 
 ToolsPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], list['ToolDefinition']],
-    Awaitable[list['ToolDefinition']] | list['ToolDefinition'],
+    Awaitable['list[ToolDefinition] | None'] | list['ToolDefinition'] | None,
 ]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
@@ -140,7 +140,7 @@ from pydantic_ai.tools import ToolDefinition
 
 def turn_on_strict_if_openai(
     ctx: RunContext, tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition]:
+) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs

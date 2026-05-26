@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from pydantic_ai import _utils
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
@@ -26,7 +25,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
 
     async def hide_admin_tools(
         ctx: RunContext, tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
+    ) -> list[ToolDefinition] | None:
         return [td for td in tool_defs if not td.name.startswith('admin_')]
 
 
@@ -61,7 +60,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
     async def only_after_first_step(
         ctx: RunContext, tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
+    ) -> list[ToolDefinition] | None:
         return tool_defs if ctx.run_step > 0 else []
 
 
@@ -90,9 +89,9 @@ async def _call_prepare_func(
     ctx: RunContext[AgentDepsT],
     tool_defs: list[ToolDefinition],
 ) -> list[ToolDefinition]:
-    # `PreparedToolset.get_tools` validates that the result didn't add or rename tools
-    # when these capabilities' hooks dispatch through it.
+    # Just sync/async + `None` normalization — `PreparedToolset.get_tools` validates that
+    # the result didn't add or rename tools when these capabilities' hooks dispatch through it.
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
-    return _utils.check_tools_prepare_func_result(result)
+    return list(result or [])
