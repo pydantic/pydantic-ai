@@ -1219,51 +1219,38 @@ def test_openrouter_error_with_metadata() -> None:
     assert 'Provider returned error' in str(exc_info.value)
 
 
-class _StopBeforeResponse(Exception):
-    """Raised to short-circuit once the outgoing request has been captured."""
-
-
 @pytest.mark.parametrize(
     'model_name,eager_enabled,expected_eager_key',
     [
         ('anthropic/claude-sonnet-4-5', True, True),
         ('anthropic/claude-sonnet-4-5', False, False),
-        ('openai/gpt-4o', True, False),
+        ('openai/gpt-5-mini', True, False),
     ],
     ids=['anthropic-enabled', 'anthropic-disabled', 'non-anthropic-enabled'],
 )
 async def test_eager_input_streaming_sent_to_openrouter(
-    allow_model_requests: None, model_name: str, eager_enabled: bool, expected_eager_key: bool
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    eager_enabled: bool,
+    expected_eager_key: bool,
 ) -> None:
     """`eager_input_streaming` should appear on the outgoing tool payload only when enabled AND routed to Anthropic."""
-    captured_kwargs: dict[str, Any] = {}
-
-    async def _capture(*_args: Any, **kwargs: Any) -> ChatCompletion:
-        captured_kwargs.update(kwargs)
-        raise _StopBeforeResponse
-
-    provider = OpenRouterProvider(api_key='test-key')
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel(model_name, provider=provider)
-    my_tool = ToolDefinition(name='my_tool', description='This is my tool')
+    my_tool = ToolDefinition(name='get_weather', description='Get weather for a city')
 
-    with patch.object(provider.client.chat.completions, 'create', side_effect=_capture):
-        with pytest.raises(_StopBeforeResponse):
-            await model_request(
-                model,
-                [ModelRequest(parts=[UserPromptPart(content='hello')])],
-                model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=eager_enabled),
-                model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
-            )
+    await model_request(
+        model,
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=eager_enabled),
+        model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
+    )
 
-    expected_tool: dict[str, Any] = {
-        'type': 'function',
-        'function': {
-            'name': 'my_tool',
-            'description': 'This is my tool',
-            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
-        },
-    }
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    tool_param = request_body['tools'][0]
+    assert tool_param['function']['name'] == 'get_weather'
+    assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
-        expected_tool['eager_input_streaming'] = True
-
-    assert captured_kwargs['tools'] == [expected_tool]
+        assert tool_param['eager_input_streaming'] is True

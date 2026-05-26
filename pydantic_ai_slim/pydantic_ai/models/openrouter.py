@@ -761,7 +761,12 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
-        """Add OpenRouter's `eager_input_streaming` flag to tool defs when targeting Anthropic models."""
+        """Map a tool definition, forwarding downstream-provider tool flags through OpenRouter.
+
+        For example, when routing to an Anthropic model with `anthropic_eager_input_streaming`
+        set, the `eager_input_streaming` flag is added to the tool param so OpenRouter forwards
+        it to Anthropic.
+        """
         tool_def = super()._map_tool_definition(f, model_settings)
         if self.model_name.startswith('anthropic/') and model_settings.get('anthropic_eager_input_streaming'):
             tool_def['eager_input_streaming'] = True  # type: ignore[typeddict-item]
