@@ -1219,74 +1219,23 @@ def test_openrouter_error_with_metadata() -> None:
     assert 'Provider returned error' in str(exc_info.value)
 
 
-def test_eager_input_streaming_in_tool_def(allow_model_requests: None) -> None:
-    """Test that eager_input_streaming is set in tool definition when enabled for Anthropic models."""
-    model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='This is my tool',
-    )
-
-    m = OpenRouterModel('anthropic/claude-sonnet-4-5', provider=OpenRouterProvider(api_key='test-key'))
-    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
-    assert dict(tool_param).get('eager_input_streaming') is True
+class _StopBeforeResponse(Exception):
+    """Raised to short-circuit once the outgoing request has been captured."""
 
 
-def test_eager_input_streaming_not_in_tool_def(allow_model_requests: None) -> None:
-    """Test that eager_input_streaming is not set in tool definition when not enabled."""
-    model_settings = AnthropicModelSettings()
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='This is my tool',
-    )
-
-    m = OpenRouterModel('anthropic/claude-sonnet-4-5', provider=OpenRouterProvider(api_key='test-key'))
-    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
-    assert 'eager_input_streaming' not in tool_param
-
-
-def test_eager_input_streaming_in_get_tool_choice(allow_model_requests: None) -> None:
-    """Test that eager_input_streaming is set in tools returned by _get_tool_choice for Anthropic models."""
-    model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='This is my tool',
-    )
-    model_request_parameters = ModelRequestParameters(function_tools=[my_tool], allow_text_output=True)
-
-    m = OpenRouterModel('anthropic/claude-sonnet-4-5', provider=OpenRouterProvider(api_key='test-key'))
-    tools, _ = m._get_tool_choice(model_settings, model_request_parameters)  # type: ignore[reportPrivateUsage]
-
-    assert len(tools) == 1
-    assert dict(tools[0]).get('eager_input_streaming') is True
-
-
-def test_eager_input_streaming_not_set_for_non_anthropic_model(allow_model_requests: None) -> None:
-    """Test that eager_input_streaming is not set for non-Anthropic OpenRouter models."""
-    model_settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='This is my tool',
-    )
-    model_request_parameters = ModelRequestParameters(function_tools=[my_tool], allow_text_output=True)
-
-    m = OpenRouterModel('openai/gpt-4o', provider=OpenRouterProvider(api_key='test-key'))
-    tools, _ = m._get_tool_choice(model_settings, model_request_parameters)  # type: ignore[reportPrivateUsage]
-
-    assert len(tools) == 1
-    assert 'eager_input_streaming' not in tools[0]
-
-
-async def test_eager_input_streaming_sent_to_openrouter(allow_model_requests: None) -> None:
-    """`eager_input_streaming` should appear on the tool payload actually sent to OpenRouter.
-
-    Unit tests on `_map_tool_definition` alone wouldn't catch a future `_get_tool_choice`
-    refactor that stops threading the flag into the request, so we assert on the real kwargs.
-    """
-
-    class _StopBeforeResponse(Exception):
-        """Raised to short-circuit once the outgoing request has been captured."""
-
+@pytest.mark.parametrize(
+    'model_name,eager_enabled,expected_eager_key',
+    [
+        ('anthropic/claude-sonnet-4-5', True, True),
+        ('anthropic/claude-sonnet-4-5', False, False),
+        ('openai/gpt-4o', True, False),
+    ],
+    ids=['anthropic-enabled', 'anthropic-disabled', 'non-anthropic-enabled'],
+)
+async def test_eager_input_streaming_sent_to_openrouter(
+    allow_model_requests: None, model_name: str, eager_enabled: bool, expected_eager_key: bool
+) -> None:
+    """`eager_input_streaming` should appear on the outgoing tool payload only when enabled AND routed to Anthropic."""
     captured_kwargs: dict[str, Any] = {}
 
     async def _capture(*_args: Any, **kwargs: Any) -> ChatCompletion:
@@ -1294,7 +1243,7 @@ async def test_eager_input_streaming_sent_to_openrouter(allow_model_requests: No
         raise _StopBeforeResponse
 
     provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('anthropic/claude-sonnet-4-5', provider=provider)
+    model = OpenRouterModel(model_name, provider=provider)
     my_tool = ToolDefinition(name='my_tool', description='This is my tool')
 
     with patch.object(provider.client.chat.completions, 'create', side_effect=_capture):
@@ -1302,10 +1251,19 @@ async def test_eager_input_streaming_sent_to_openrouter(allow_model_requests: No
             await model_request(
                 model,
                 [ModelRequest(parts=[UserPromptPart(content='hello')])],
-                model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=True),
+                model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=eager_enabled),
                 model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
             )
 
-    tools = captured_kwargs['tools']
-    assert len(tools) == 1
-    assert tools[0]['eager_input_streaming'] is True
+    expected_tool: dict[str, Any] = {
+        'type': 'function',
+        'function': {
+            'name': 'my_tool',
+            'description': 'This is my tool',
+            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        },
+    }
+    if expected_eager_key:
+        expected_tool['eager_input_streaming'] = True
+
+    assert captured_kwargs['tools'] == [expected_tool]
