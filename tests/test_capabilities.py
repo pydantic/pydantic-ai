@@ -5690,7 +5690,7 @@ class TestPrepareToolsCapability:
         """PrepareTools capability filters tools using the provided callable."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5710,25 +5710,25 @@ class TestPrepareToolsCapability:
         result = await agent.run('hello')
         assert result.output == "tools: ['public_tool']"
 
-    async def test_prepare_tools_rejects_none(self):
-        """PrepareTools rejects `None`; return [] to disable all tools explicitly."""
+    async def test_prepare_tools_none_disables_all(self):
+        """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
+        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = [t.name for t in info.function_tools]
             return make_text_response(f'tools: {sorted(tool_names)}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(invalid)])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
 
         @agent.tool_plain
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.raises(UserError, match='Prepare function returned `None`'):
-            await agent.run('hello')
+        result = await agent.run('hello')
+        assert result.output == 'tools: []'
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5736,7 +5736,7 @@ class TestPrepareToolsCapability:
 
         from pydantic_ai.capabilities import PrepareTools
 
-        async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [dc_replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5786,7 +5786,7 @@ class TestPrepareToolsCapability:
 
         executed: list[str] = []
 
-        async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         call_count = 0
@@ -5864,8 +5864,8 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
-        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return []
+        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response(f'output_tools: {len(info.output_tools)}')
@@ -5878,25 +5878,6 @@ class TestPrepareOutputToolsCapability:
 
         result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
-
-    async def test_prepare_output_tools_rejects_none(self):
-        """PrepareOutputTools rejects `None`; return [] to disable all output tools explicitly."""
-        from pydantic_ai.capabilities import PrepareOutputTools
-
-        class Out(BaseModel):
-            value: str
-
-        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
-            return None
-
-        agent = Agent(
-            'test',
-            output_type=[str, ToolOutput(Out, name='out')],
-            capabilities=[PrepareOutputTools(invalid)],
-        )
-
-        with pytest.raises(UserError, match='Prepare function returned `None`'):
-            await agent.run('hello')
 
     async def test_only_sees_output_tools(self):
         """`PrepareOutputTools` only receives output tools — function tools route to `PrepareTools`."""

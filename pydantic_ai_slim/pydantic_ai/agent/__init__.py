@@ -2451,8 +2451,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if run_capability is not None:
             # Dispatch the `prepare_tools` capability hook through a `PreparedToolset` wrapped
             # **inside** any other capability `get_wrapper_toolset` results (e.g. `ToolSearch`,
-            # `CodeMode`): filter/modify defs first, let other toolset transformations layer on
-            # top. The hook sees **function** tools only — output tools route through
+            # `CodeMode`), matching the original ordering of the agent-level `prepare_tools=`
+            # kwarg in main: filter/modify defs first, let other toolset transformations layer
+            # on top. The hook sees **function** tools only — output tools route through
             # `prepare_output_tools` below.
             fn_cap = run_capability
 
