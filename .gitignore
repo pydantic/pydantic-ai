@@ -21,6 +21,9 @@ node_modules/
 /test_tmp/
 .mcp.json
 CLAUDE.local.md
+AGENTS.local.md
+AGENTS.override.md
+.codex/*
 .agents/*
 !.agents/skills/
 .agents/skills/*
@@ -34,3 +37,4 @@ CLAUDE.local.md
 /.cursor/
 /.devcontainer/
 .claude/plans/
+local-notes/
