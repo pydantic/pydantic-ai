@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
+# Provider-specific cassette extractors — group new ones under this header so the module
+# doesn't grow into a flat bag of `get_<provider>_*` helpers.
+
+
 def get_bedrock_tool_config_from_cassette(cassette: Cassette) -> dict[str, Any]:
     """Return the `toolConfig` from the first POST request body in a Bedrock VCR cassette."""
     for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
