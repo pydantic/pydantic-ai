@@ -136,7 +136,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         # `supports_thinking=True` lets the gate forward `thinking` to the transformer
         # for every routed model; `thinking_always_enabled` propagates from the
         # sub-profile via `.update()`, so always-on routes (e.g. `openai/o3`,
-        # `mistralai/magistral-medium-*`) silently drop `thinking=False` at the gate
+        # `mistralai/magistral-medium-*`) silently ignore `thinking=False` at the gate
         # — matching their direct-route behavior per the `ModelProfile` docstring.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
