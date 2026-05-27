@@ -167,12 +167,16 @@ pytestmark = [
 http_client = create_async_http_client()
 
 
-@pytest.fixture(autouse=True, scope='module')
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+# Scoped to `session` rather than `module`: the `http_client` and the module-level agents that
+# capture it are constructed at import time, so they must outlive a single module entry. This is a
+# sync fixture so it doesn't force AnyIO to reuse a session-level event loop for all Temporal async
+# fixtures; the `temporal_env` teardown can make that loop unusable for later tests.
+@pytest.fixture(autouse=True, scope='session')
+def close_cached_httpx_client() -> Iterator[None]:
     try:
         yield
     finally:
-        await http_client.aclose()
+        asyncio.run(http_client.aclose())
 
 
 # `LogfirePlugin` calls `logfire.instrument_pydantic_ai()`, so we need to make sure this doesn't bleed into other tests.
