@@ -202,7 +202,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
+      - run: uv sync --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 

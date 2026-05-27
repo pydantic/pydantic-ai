@@ -511,7 +511,7 @@ class PromptMessage:
 
 @dataclass(repr=False, kw_only=True)
 class PromptResult:
-    """The result of a [`get_prompt`][pydantic_ai.mcp.MCPServer.get_prompt] request."""
+    """The result of a [`get_prompt`][pydantic_ai.mcp.MCPToolset.get_prompt] request."""
 
     messages: list[PromptMessage]
     """The prompt messages."""
