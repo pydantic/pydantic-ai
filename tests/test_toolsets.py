@@ -298,12 +298,12 @@ async def test_prepared_toolset_user_error_none_result():
         """Add two numbers"""
         return a + b  # pragma: no cover
 
-    async def prepare_returns_none(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
+    async def prepare_returns_none(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         return None
 
-    prepared_toolset = PreparedToolset(base_toolset, prepare_returns_none)
+    prepared_toolset = PreparedToolset(base_toolset, prepare_returns_none)  # pyright: ignore[reportArgumentType]
 
-    with pytest.raises(UserError, match='Prepare function returned `None`'):
+    with pytest.raises(UserError, match="Prepare function 'prepare_returns_none' returned `None`"):
         await prepared_toolset.get_tools(build_run_context(None))
 
 

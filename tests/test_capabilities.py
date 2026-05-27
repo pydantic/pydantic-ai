@@ -5714,20 +5714,20 @@ class TestPrepareToolsCapability:
         """PrepareTools rejects `None`; return [] to disable all tools explicitly."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
+        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = [t.name for t in info.function_tools]
             return make_text_response(f'tools: {sorted(tool_names)}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(invalid)])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(invalid)])  # pyright: ignore[reportArgumentType]
 
         @agent.tool_plain
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.raises(UserError, match='Prepare function returned `None`'):
+        with pytest.raises(UserError, match="Prepare function 'invalid' returned `None`"):
             await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
@@ -5886,16 +5886,16 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
-        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Any:
+        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         agent = Agent(
             'test',
             output_type=[str, ToolOutput(Out, name='out')],
-            capabilities=[PrepareOutputTools(invalid)],
+            capabilities=[PrepareOutputTools(invalid)],  # pyright: ignore[reportArgumentType]
         )
 
-        with pytest.raises(UserError, match='Prepare function returned `None`'):
+        with pytest.raises(UserError, match="Prepare function 'invalid' returned `None`"):
             await agent.run('hello')
 
     async def test_only_sees_output_tools(self):

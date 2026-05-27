@@ -27,7 +27,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(result):
             result = await result
         prepared_tool_defs_by_name = {
-            tool_def.name: tool_def for tool_def in _utils.check_tools_prepare_func_result(result)
+            tool_def.name: tool_def for tool_def in _utils.check_tools_prepare_func_result(result, self.prepare_func)
         }
 
         if len(prepared_tool_defs_by_name.keys() - original_tools.keys()) > 0:

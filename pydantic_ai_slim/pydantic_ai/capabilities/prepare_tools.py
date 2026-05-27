@@ -3,10 +3,10 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from pydantic_ai import _utils
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
+from .. import _utils
 from .abstract import AbstractCapability
 
 
@@ -95,4 +95,4 @@ async def _call_prepare_func(
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
-    return _utils.check_tools_prepare_func_result(result)
+    return _utils.check_tools_prepare_func_result(result, prepare_func)
