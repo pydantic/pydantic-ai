@@ -2920,7 +2920,6 @@ async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedroc
         pytest.param('us.amazon.nova-lite-v1:0', False, id='nova'),
     ],
 )
-@pytest.mark.vcr()
 async def test_bedrock_single_tool_choice_preserves_cache(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -2965,6 +2964,8 @@ async def test_bedrock_single_tool_choice_preserves_cache(
     prompt = 'Call `catalog_lookup`, then answer with only its return value.'
     first = await agent.run(prompt, model_settings=force_catalog_lookup_before_result)
     assert '21' in first.output
+    # Either a write or a read is acceptable on first run: the cassette may have been recorded
+    # while Bedrock's prefix cache was already warm.
     assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
 
     second = await agent.run(prompt, model_settings=force_catalog_lookup_before_result)

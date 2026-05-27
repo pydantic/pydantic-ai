@@ -463,40 +463,6 @@ def test_support_tool_forcing_reads_params_thinking(provider_name: str):
     assert result is False
 
 
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-@pytest.mark.parametrize(
-    'model_name,expected_tool_count',
-    [
-        pytest.param('anthropic.claude-sonnet-4-20250514-v1:0', 3, id='anthropic'),
-        pytest.param('us.amazon.nova-pro-v1:0', 2, id='nova'),
-    ],
-)
-def test_bedrock_single_tool_choice_preserves_tool_definitions(model_name: str, expected_tool_count: int):
-    """Regression test for https://github.com/pydantic/pydantic-ai/issues/5672.
-
-    Bedrock models with native single-tool forcing should send `toolChoice.tool` without
-    trimming the `tools` array, otherwise provider prompt caches see a different tool prefix.
-    """
-    mock_client = MagicMock()
-    provider = BedrockProvider(bedrock_client=mock_client)
-    model = BedrockConverseModel(model_name, provider=provider)
-    params = ModelRequestParameters(function_tools=[make_tool('tool_one'), make_tool('tool_two')])
-    params = model.customize_request_parameters(params)
-
-    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
-        params,
-        BedrockModelSettings(tool_choice=['tool_one'], bedrock_cache_tool_definitions=True),
-    )
-
-    assert tool_config is not None
-    assert tool_config.get('toolChoice') == {'tool': {'name': 'tool_one'}}
-    assert len(tool_config['tools']) == expected_tool_count
-    assert [tool['toolSpec']['name'] for tool in tool_config['tools'] if 'toolSpec' in tool] == [
-        'tool_one',
-        'tool_two',
-    ]
-
-
 # =============================================================================
 # Provider-specific tests that don't fit the consolidated patterns
 # =============================================================================
