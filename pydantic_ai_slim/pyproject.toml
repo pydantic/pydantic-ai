@@ -72,7 +72,7 @@ openai = ["openai>=2.29.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 google = ["google-genai>=1.70.0"]
 anthropic = ["anthropic>=0.97.0"]
-xai = ["xai-sdk>=1.6.0"]
+xai = ["xai-sdk>=1.12.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]
 # `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
