@@ -24,6 +24,7 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -926,7 +927,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
     capability = Capability[None](
         id='example',
         description='Example capability.',
-        toolset=toolset,
+        toolsets=[toolset],
     )
 
     seen_tool_names: list[list[str]] = []
@@ -998,7 +999,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
         id='example',
         description='Example capability.',
         defer_loading=True,
-        toolset=toolset,
+        toolsets=[toolset],
     )
 
     seen_tool_names: list[list[str]] = []
@@ -1065,7 +1066,7 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         id='reports',
         description='Report tools.',
         defer_loading=True,
-        toolset=toolset,
+        toolsets=[toolset],
     )
     cap_toolset = CombinedCapability([capability]).get_toolset()
     assert isinstance(cap_toolset, AbstractToolset)
@@ -1328,6 +1329,31 @@ def test_parse_discovered_tools_reads_legacy_metadata():
         ),
     ]
     assert parse_discovered_tools(malformed) == set()
+
+
+async def test_run_context_seeds_discovered_tool_names_from_history_before_first_step():
+    """Pre-first-step hooks see tool-search discoveries replayed from message history."""
+    seen_discovered_tool_names: list[set[str]] = []
+
+    @dataclass
+    class ObserveDiscoveredTools(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            seen_discovered_tool_names.append(set(ctx.discovered_tool_names))
+
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                ),
+            ]
+        )
+    ]
+    agent = Agent(TestModel(), capabilities=[ObserveDiscoveredTools()])
+
+    await agent.run('hello', message_history=history)
+
+    assert seen_discovered_tool_names == [{'calculate_mortgage'}]
 
 
 async def test_deferred_loading_toolset_marks_all_tools():
@@ -2148,7 +2174,7 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
         description='Refund policy tools.',
         instructions='Use the refund policy tool before answering refund questions.',
         defer_loading=True,
-        toolset=refunds_toolset,
+        toolsets=[refunds_toolset],
     )
     responses = [
         response_message(
@@ -2586,7 +2612,7 @@ async def test_cross_provider_capability_replay(
             id='refunds',
             description='Refund policy tools.',
             instructions='Use the refund policy tool before answering refund questions.',
-            toolset=refunds_toolset,
+            toolsets=[refunds_toolset],
             defer_loading=True,
         )
 
@@ -2631,7 +2657,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             id='refunds',
             description='Refund policy tools.',
             instructions='Use the refund policy tool before answering refund questions.',
-            toolset=refunds_toolset,
+            toolsets=[refunds_toolset],
             defer_loading=True,
         )
 
@@ -5336,6 +5362,7 @@ def _capability_owned_corpus_tool() -> ToolDefinition:
         with_native=ToolSearchTool.kind,
         capability_id='refunds',
         defer_loading=True,
+        metadata={DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True},
     )
 
 

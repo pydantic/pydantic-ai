@@ -98,8 +98,10 @@ from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, Text
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
@@ -2471,17 +2473,50 @@ def test_combined_capability_get_model_settings_deferred():
     assert seen_dynamic_loaded == [True]
 
 
+async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
+    """Hooks owned by a deferred capability are skipped until `load_capability` succeeds."""
+    hooks = Hooks[None](id='audit', description='Audit request flow.', defer_loading=True)
+    seen_loaded: list[bool | None] = []
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        seen_loaded.append(ctx.capability_loaded)
+        return request_context
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'audit'},
+                        tool_call_id='load-audit',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    assert seen_loaded == [True]
+
+
 def test_toolset_capability_get_toolset():
     """Toolset capability returns its toolset."""
     ts = FunctionToolset[None]()
     cap = Toolset(toolset=ts)
     assert cap.get_toolset() is ts
 
-    convenience_cap = Capability[None](toolset=ts)
+    convenience_cap = Capability[None](toolsets=[ts])
     assert convenience_cap.get_toolset() is ts
-
-    plural_cap = Capability[None](toolsets=[ts])
-    assert plural_cap.get_toolset() is ts
 
     ts_b = FunctionToolset[None]()
     combined_cap = Capability[None](toolsets=[ts, ts_b])
@@ -2500,28 +2535,21 @@ def _noop_greet_with_context(_ctx: RunContext[None], name: str) -> str:
 
 
 def test_capability_rejects_toolset_and_tools_together():
-    """`Capability(toolset=..., tools=...)` is ambiguous and must raise."""
+    """`Capability(toolsets=..., tools=...)` is ambiguous and must raise."""
     with pytest.raises(UserError, match='Cannot use both `toolsets` and `tools`'):
-        Capability[None](toolset=FunctionToolset[None](), tools=[_noop_greet])
-
-
-def test_capability_rejects_toolset_and_toolsets_together():
-    """`Capability(toolset=..., toolsets=...)` is ambiguous and must raise."""
-    ts = FunctionToolset[None]()
-    with pytest.raises(UserError, match='Cannot use both `toolset` and `toolsets`'):
-        Capability[None](toolset=ts, toolsets=[FunctionToolset[None]()])
+        Capability[None](toolsets=[FunctionToolset[None]()], tools=[_noop_greet])
 
 
 def test_capability_tool_plain_rejected_when_toolsets_is_set():
     """`Capability.tool_plain()` cannot register against a capability that already owns toolsets."""
-    cap = Capability[None](toolset=FunctionToolset[None]())
+    cap = Capability[None](toolsets=[FunctionToolset[None]()])
     with pytest.raises(UserError, match=r'`Capability\.tool_plain\(\)` cannot be used when `toolsets=` is set\.'):
         cap.tool_plain(_noop_greet)
 
 
 def test_capability_tool_rejected_when_toolsets_is_set():
     """`Capability.tool()` cannot register against a capability that already owns toolsets."""
-    cap = Capability[None](toolset=FunctionToolset[None]())
+    cap = Capability[None](toolsets=[FunctionToolset[None]()])
     with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolsets=` is set\.'):
         cap.tool(_noop_greet_with_context)
 
@@ -2709,7 +2737,18 @@ async def test_deferred_capability_partitions_native_tools() -> None:
         defer_loading=True,
     )
 
-    assert CombinedCapability([native_cap]).get_native_tools() == []
+    [native_tool_func] = CombinedCapability([native_cap]).get_native_tools()
+    assert callable(native_tool_func)
+    native_tool_ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        capabilities={'web-search': native_cap},
+        capability_id_by_instance={id(native_cap): 'web-search'},
+    )
+    assert native_tool_func(native_tool_ctx) is None
+    native_tool_ctx.loaded_capability_ids.add('web-search')
+    assert native_tool_func(native_tool_ctx) == WebSearchTool()
 
     seen_web_search_tools: list[list[WebSearchTool]] = []
 
@@ -2885,7 +2924,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
             add_account_context,
             empty_instruction,
         ],
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
 
@@ -3066,7 +3105,7 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools.',
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
 
@@ -3130,7 +3169,7 @@ async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict
     def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
         return f'{order_id}: refund allowed'
 
-    refunds = Capability[None](id='refunds', toolset=toolset, defer_loading=True)
+    refunds = Capability[None](id='refunds', toolsets=[toolset], defer_loading=True)
 
     seen_tools: list[dict[str, ToolDefinition]] = []
 
@@ -3168,7 +3207,7 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools.',
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
 
@@ -3251,8 +3290,8 @@ async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available
         """Capability B's tool."""
         return 'beta-result'
 
-    cap_a = Capability[None](id='alpha', description='Alpha tools.', toolset=toolset_a, defer_loading=True)
-    cap_b = Capability[None](id='beta', description='Beta tools.', toolset=toolset_b, defer_loading=True)
+    cap_a = Capability[None](id='alpha', description='Alpha tools.', toolsets=[toolset_a], defer_loading=True)
+    cap_b = Capability[None](id='beta', description='Beta tools.', toolsets=[toolset_b], defer_loading=True)
 
     available_per_turn: list[set[str]] = []
 
@@ -3329,7 +3368,7 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
         """Look up the refund policy for an order."""
         return f'{order_id}: refundable'
 
-    refunds = Capability[None](id='refunds', description='Refund tools.', toolset=cap_toolset, defer_loading=True)
+    refunds = Capability[None](id='refunds', description='Refund tools.', toolsets=[cap_toolset], defer_loading=True)
 
     available_per_turn: list[set[str]] = []
 
@@ -3399,7 +3438,7 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
         """Look up the refund policy for an order."""
         return f'{order_id}: refund allowed for 30 days'
 
-    refunds = Capability[None](id='refunds', description='Refund policy tools.', toolset=toolset, defer_loading=True)
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', toolsets=[toolset], defer_loading=True)
 
     available_per_turn: list[set[str]] = []
 
@@ -3484,7 +3523,7 @@ async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it(
         return f'{order_id}: refund allowed for 30 days'
 
     refunds = Capability[None](
-        id='refunds', description='Refund policy tools.', toolset=cap_toolset, defer_loading=True
+        id='refunds', description='Refund policy tools.', toolsets=[cap_toolset], defer_loading=True
     )
 
     available_per_turn: list[set[str]] = []
@@ -3539,7 +3578,7 @@ def _load_calls(messages: list[ModelMessage]) -> list[LoadCapabilityCallPart]:
 
 def standalone_capability(toolset: FunctionToolset[None]) -> Capability[None]:
     """Wrap a toolset of standalone deferred tools in an eager capability (tools keep their own defer flag)."""
-    return Capability[None](id='standalone', description='Standalone searchable tools.', toolset=toolset)
+    return Capability[None](id='standalone', description='Standalone searchable tools.', toolsets=[toolset])
 
 
 async def test_deferred_capability_load_includes_toolset_instructions() -> None:
@@ -3559,7 +3598,7 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
         id='refunds',
         description='Refund tools.',
         instructions='Quote the refund policy verbatim.',
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
 
@@ -3647,7 +3686,7 @@ async def test_deferred_capability_load_drops_empty_toolset_instructions() -> No
             '',
         ),
     )
-    cap = Capability[None](id='cap', description='Custom-toolset cap.', toolset=toolset, defer_loading=True)
+    cap = Capability[None](id='cap', description='Custom-toolset cap.', toolsets=[toolset], defer_loading=True)
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         already_loaded = any(
@@ -3691,7 +3730,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     hidden = Capability[None](
         id='hidden',
         description='Hidden tool access.',
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
     seen_tool_state: list[list[tuple[str, bool]]] = []
@@ -3780,6 +3819,24 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), run_step=0)
 
 
+def test_resolve_capability_id_uses_run_context_reverse_lookup() -> None:
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        pass
+
+    target = SimpleCap()
+    fallback = SimpleCap()
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        capabilities={'fallback': fallback},
+        capability_id_by_instance={id(target): 'target'},
+    )
+
+    assert resolve_capability_id(ctx, target) == 'target'
+
+
 async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
 
@@ -3809,6 +3866,38 @@ async def test_run_context_available_tool_names_empty_before_tool_manager_is_rea
     assert seen_available_tool_names == [set()]
     # The `tools` empty-guard mirrors `available_tool_names`: no tool manager yet → empty dict.
     assert seen_tools == [{}]
+
+
+def test_run_context_available_tool_names_includes_discovered_before_tool_manager() -> None:
+    ctx = _build_run_context()
+    ctx.discovered_tool_names = {'discovered_tool'}
+
+    assert ctx.tools == {}
+    assert ctx.available_tool_names == {'discovered_tool'}
+
+
+async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
+    """Available tool names are always-visible current tools plus discovered current tools."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_tool() -> str:  # pragma: no cover
+        return 'always'
+
+    @toolset.tool_plain(defer_loading=True)
+    def discovered_tool() -> str:  # pragma: no cover
+        return 'discovered'
+
+    @toolset.tool_plain(defer_loading=True)
+    def pending_tool() -> str:  # pragma: no cover
+        return 'pending'
+
+    ctx = _build_run_context()
+    ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
+    tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=await toolset.get_tools(ctx))
+    ctx.tool_manager = tool_manager
+
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
 
 
 async def test_combined_capability_for_run_propagates():
@@ -10441,7 +10530,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools.',
-        toolset=toolset,
+        toolsets=[toolset],
         defer_loading=True,
     )
     wrapped = PrefixTools(refunds, prefix='refunds')
@@ -20327,7 +20416,7 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
         return Capability[None](
             id='dynamic-refunds',
             description='Refund policy tools.',
-            toolset=toolset,
+            toolsets=[toolset],
             defer_loading=True,
         )
 

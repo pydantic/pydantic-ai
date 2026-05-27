@@ -8,13 +8,14 @@ from pydantic import TypeAdapter
 from pydantic_ai._instructions import resolve_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn, ToolReturn
+from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
+LOAD_CAPABILITY_TOOL_DESCRIPTION = 'Load a capability to access its full instructions and tools.'
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
@@ -36,7 +37,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
-            description=('Load a capability to access its full instructions and tools.'),
+            description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
             tool_kind='capability-load',
         )
@@ -59,25 +60,26 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             return await self._load_capability(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn:
+    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> LoadCapabilityReturn:
         capability_id = tool_args['id']
         if capability_id not in ctx.capabilities:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
 
-        parts: list[str] = []
+        parts = [
+            InstructionPart(content=instruction, dynamic=True)
+            for instruction in await resolve_instructions(ctx.capabilities[capability_id].get_instructions(), ctx)
+        ]
 
-        parts.extend(await resolve_instructions(ctx.capabilities[capability_id].get_instructions(), ctx))
+        parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 
-        if toolset_instructions := await self._collect_owned_toolset_instructions(capability_id, ctx):
-            parts.append(toolset_instructions)
-
-        instructions_text = '\n\n'.join(parts) or None
+        instructions_text = InstructionPart.join(parts)
 
         ctx.loaded_capability_ids.add(capability_id)
-        content: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
-        return ToolReturn(return_value=content)
+        return {'instructions': instructions_text} if instructions_text is not None else {}
 
-    async def _collect_owned_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def _collect_owned_toolset_instructions(
+        self, capability_id: str, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionPart]:
         owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
@@ -95,4 +97,4 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
                 part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
                 if part.content.strip():
                     parts.append(part)
-        return InstructionPart.join(parts)
+        return parts

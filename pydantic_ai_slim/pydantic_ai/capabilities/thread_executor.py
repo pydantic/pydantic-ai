@@ -18,7 +18,7 @@ class ThreadExecutor(AbstractCapability[Any]):
     """Use a custom executor for running sync functions in threads.
 
     By default, sync tool functions and other sync callbacks are run in threads using
-    [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads.
+    `anyio.to_thread.run_sync`, which creates ephemeral threads.
     In long-running servers (e.g. FastAPI), this can lead to thread accumulation under sustained load.
 
     This capability provides a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor]

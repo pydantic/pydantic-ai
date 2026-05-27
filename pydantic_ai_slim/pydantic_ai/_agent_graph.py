@@ -201,6 +201,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     root_capability: AbstractCapability[DepsT]
 
     capabilities: dict[str, AbstractCapability[DepsT]]
+    capability_id_by_instance: dict[int, str]
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -498,15 +499,7 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
-    # Loaded deferred native tools are added here because they are absent from
-    # the baseline native-tool list.
     raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
-
-    def add_loaded_native_tools(capability: AbstractCapability[DepsT]) -> None:
-        if capability.defer_loading is True and capability.id in ctx.deps.loaded_capability_ids:
-            raw_native_tools.extend(capability.get_native_tools() or ())
-
-    ctx.deps.root_capability.apply(add_loaded_native_tools)
 
     # resolve dynamic native tools
     native_tools: list[AbstractNativeTool] = []
@@ -1426,6 +1419,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
+        capability_id_by_instance=ctx.deps.capability_id_by_instance,
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,

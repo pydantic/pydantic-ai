@@ -72,6 +72,36 @@ print(result.output)
 
 Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
 
+### On-demand hooks
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
+
+```python {title="deferred_hooks_capability.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Hooks
+
+approval_hooks = Hooks(
+    id='approval-hooks',
+    description='Use when a workflow needs approval before destructive actions.',
+    defer_loading=True,
+)
+
+
+@approval_hooks.on.before_tool_execute
+async def require_approval(ctx, *, call, tool_def, args):
+    # Runs only after the model loads `approval-hooks`.
+    return args
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[approval_hooks])
+```
+
+You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
+
+If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
+
+`before_run` on a deferred hooks capability only fires when that capability is already loaded at the start of the run, for example after resuming from message history. It cannot fire before the model has had a chance to load the capability in a new conversation.
+
 ## Hook types
 
 ### Run hooks
@@ -94,7 +124,7 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 | `node_run` | `node_run=` | `wrap_node_run` |
 | `node_run_error` | `node_run_error=` | `on_node_run_error` |
 
-Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]).
+Node hooks fire for each graph step (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`).
 
 !!! note
     `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
@@ -108,7 +138,7 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNo
 | `model_request` | `model_request=` | `wrap_model_request` |
 | `model_request_error` | `model_request_error=` | `on_model_request_error` |
 
-Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
+Model request hooks fire around each LLM call. `ModelRequestContext` bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
@@ -348,7 +378,11 @@ When multiple hooks are registered for the same event (either on the same `Hooks
 * **`after_*`** hooks fire in reverse order
 * **`wrap_*`** hooks nest as middleware — the first registered hook is the outermost layer
 
-See [Composition](capabilities.md#composition) for details on how hooks from multiple capabilities interact.
+Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
+
+For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
+
+See [Composition and middleware semantics](capabilities.md#composition-and-middleware-semantics) for details on how hooks from multiple capabilities interact.
 
 ## Error hooks
 
@@ -362,7 +396,7 @@ See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery
 
 ## Triggering retries with `ModelRetry`
 
-Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators.
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
 
 **Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
 

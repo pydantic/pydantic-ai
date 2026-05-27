@@ -23,6 +23,7 @@ import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
+from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
@@ -949,9 +950,11 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
-        tool_search_kept_local = _keep_tool_search_local_when_capability_owns_corpus(
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
             supported_natives, params.function_tools
         )
+        supported_natives = tool_search_resolution.native_tools
+        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
@@ -1762,10 +1765,16 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
     )
 
 
-def _keep_tool_search_local_when_capability_owns_corpus(
-    supported_natives: list[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
-) -> bool:
-    """Keep tool search running on our side when a deferred capability owns a corpus tool.
+@dataclass
+class _ToolSearchNativeResolution:
+    native_tools: list[AbstractNativeTool]
+    keep_search_tools_local: bool
+
+
+def _resolve_tool_search_native_for_capability_owned_corpus(
+    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> _ToolSearchNativeResolution:
+    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
 
     Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
     is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
@@ -1780,32 +1789,33 @@ def _keep_tool_search_local_when_capability_owns_corpus(
     (2) the caller keeps `search_tools` on the wire — that callback is what the client-
     executed surface invokes. Named-native strategies (`'bm25'`/`'regex'`) have no client-
     executed equivalent, so we raise rather than silently substitute a different algorithm.
-
-    Mutates `supported_natives` in place. Returns `True` when tool search ended up running
-    locally (we flipped to `'custom'`, or the user already chose a client-side strategy), so
-    the caller knows to keep `search_tools` on the wire.
     """
     capability_owns_corpus = any(
-        t.with_native == ToolSearchTool.kind and t.capability_id is not None for t in function_tools
+        t.with_native == ToolSearchTool.kind and (t.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in function_tools
     )
     if not capability_owns_corpus:
-        return False
+        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
 
-    for i, t in enumerate(supported_natives):
+    resolved_natives: list[AbstractNativeTool] = []
+    keep_search_tools_local = False
+    for t in supported_natives:
         if not isinstance(t, ToolSearchTool):
+            resolved_natives.append(t)
             continue
-        if t.strategy in ('bm25', 'regex'):
+        if t.strategy not in (None, 'custom'):
             raise UserError(
                 f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
-                "capabilities. Named-native strategies run server-side, where the provider can't "
+                "capabilities. Server-side strategies can't "
                 "honor capability gating and would reveal tools whose owning capability hasn't "
                 'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
                 "deferred capability is present), `strategy='keywords'`, or a custom callable."
             )
+        keep_search_tools_local = True
         if t.strategy is None:
-            supported_natives[i] = replace(t, strategy='custom')
-        return True
-    return False
+            t = replace(t, strategy='custom')
+        resolved_natives.append(t)
+    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:

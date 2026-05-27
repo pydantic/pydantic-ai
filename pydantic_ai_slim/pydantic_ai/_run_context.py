@@ -126,8 +126,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """All capabilities registered for the current run, including deferred ones."""
 
+    capability_id_by_instance: dict[int, str] = field(default_factory=dict[int, str], repr=False)
+    """Run-local capability id lookup keyed by `id(capability)`.
+
+    Some capabilities have derived run-local ids rather than explicit
+    [`id`][pydantic_ai.capabilities.AbstractCapability.id] values. The agent builds this
+    map from `capabilities` once per run so hook dispatch and capability-owned toolsets can
+    recover those ids without scanning the registry for every hook/toolset call.
+    """
+
     loaded_capability_ids: set[str] = field(default_factory=set[str])
-    """IDs of the deferred capabilities the model has explicitly loaded via `load_capability`.
+    """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
     Seeded during run preparation from message history (`parse_loaded_capabilities`); the
@@ -136,9 +145,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     capability_loaded: bool | None = None
-    """Whether the capability whose hook is currently running is loaded.
+    """Whether the capability whose hook or callback is currently running is loaded.
 
-    This is `None` outside capability hook dispatch, where there is no current capability.
+    This is `None` outside capability dispatch, where there is no current capability.
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
@@ -179,7 +188,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         of `available_capability_ids`: `available = auto/always ∪ runtime-revealed`, so
         `available_tool_names - discovered_tool_names` is the always-visible subset.
         """
-        return {name for name, tool_def in self.tools.items() if not tool_def.defer_loading}
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return set[str]() | self.discovered_tool_names
+        tools = self.tools
+        always_available = {name for name, tool_def in tools.items() if not tool_def.defer_loading}
+        runtime_revealed = self.discovered_tool_names & set(tools)
+        return always_available | runtime_revealed
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

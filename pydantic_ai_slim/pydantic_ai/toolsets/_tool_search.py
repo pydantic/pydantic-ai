@@ -181,7 +181,7 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
     return schema, _SEARCH_TOOL_VALIDATOR
 
 
-def parse_discovered_tools(messages: list[ModelMessage]) -> set[str]:
+def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Scan message history for previously-discovered tool names.
 
     Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._utils import UNSET, Unset, is_set
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import (
@@ -30,15 +29,17 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 
 @dataclass
 class Capability(AbstractCapability[AgentDepsT]):
-    """Convenience capability for bundling instructions and a toolset without subclassing.
+    """Convenience capability for bundling instructions, tools, and toolsets without subclassing.
 
-    Use this when you just need to attach instructions, a toolset, or a description
-    to an agent. Instructions passed via `instructions=` are available through
-    [`get_instructions`][pydantic_ai.capabilities.Capability.get_instructions];
+    Use this to group related instructions and function tools or toolsets under a
+    capability identity. Instructions passed via `instructions=` are available through
+    `get_instructions()`;
     [`instructions`][pydantic_ai.capabilities.Capability.instructions] is the decorator
     for registering instruction functions. For dynamic behavior or lifecycle hooks, subclass
     [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
     """
+
+    _: KW_ONLY
 
     toolsets: Sequence[AgentToolset[AgentDepsT]] = ()
     """Toolsets to register with the agent. Combined via [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] when more than one is provided."""
@@ -47,7 +48,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     """Function tools to register with the agent."""
 
     description: str | None = None
-    """Human-readable description, surfaced in the `load_capability` catalog when `defer_loading=True`."""
+    """Human-readable description, surfaced in the `load_capability` tool catalog when `defer_loading=True`."""
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
     _instructions: list[str | SystemPromptFunc[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
@@ -57,23 +58,15 @@ class Capability(AbstractCapability[AgentDepsT]):
         self,
         *,
         instructions: AgentInstructions[AgentDepsT] | None = None,
-        toolset: AgentToolset[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        id: str | Unset = UNSET,
+        id: str | None = None,
         description: CapabilityDescription[AgentDepsT] | None = None,
         defer_loading: bool = False,
     ) -> None:
-        if toolset is not None and toolsets is not None:
-            raise UserError(
-                'Cannot use both `toolset` and `toolsets` on the same capability. '
-                'Use `toolsets` to register one or more toolsets.'
-            )
         resolved_toolsets: tuple[AgentToolset[AgentDepsT], ...]
         if toolsets is not None:
             resolved_toolsets = tuple(toolsets)
-        elif toolset is not None:
-            resolved_toolsets = (toolset,)
         else:
             resolved_toolsets = ()
         if resolved_toolsets and tools:
@@ -81,7 +74,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                 'Cannot use both `toolsets` and `tools` on the same capability. '
                 'Use `toolsets` to register toolsets, or `tools` to register individual tools.'
             )
-        self.id = id if is_set(id) else None
+        self.id = id
         self.description = description if isinstance(description, str) else None
         self._description = description
         self.defer_loading = defer_loading
@@ -269,7 +262,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
-        Mirrors [`Agent.instructions`][pydantic_ai.Agent.instructions]: the function may take
+        Mirrors `Agent.instructions`: the function may take
         [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments), may be sync or async, and is
         appended to any instructions provided via the `instructions=` field.
 

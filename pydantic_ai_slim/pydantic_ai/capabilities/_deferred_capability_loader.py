@@ -4,16 +4,44 @@ from dataclasses import dataclass
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
 
 from .abstract import (
     AbstractCapability,
+    CapabilityDescription,
     CapabilityOrdering,
-    resolve_capability_description,
 )
 from .instrumentation import Instrumentation
+
+DEFERRED_CAPABILITY_CATALOG_PREFIX = (
+    'The following capabilities are deferred and can be loaded using the `load_capability` tool:'
+)
+
+
+async def _resolve_capability_description(
+    description: CapabilityDescription[AgentDepsT] | None,
+    ctx: RunContext[AgentDepsT],
+) -> str | None:
+    if description is None:
+        return None
+    if isinstance(description, str):
+        return description
+    return await SystemPromptRunner[AgentDepsT](description).run(ctx)
+
+
+async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> str:
+    catalog = {
+        cap_id: await _resolve_capability_description(cap.get_description(), ctx)
+        for cap_id, cap in ctx.capabilities.items()
+        if cap.defer_loading is True
+    }
+    entries = '\n'.join(
+        f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog.items()
+    )
+    return f'{DEFERRED_CAPABILITY_CATALOG_PREFIX}\n{entries}'
 
 
 @dataclass
@@ -21,21 +49,7 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     """Internal capability that installs deferred capability catalog and loading support."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        async def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
-            catalog: list[tuple[str, str | None]] = []
-            for cap_id, cap in ctx.capabilities.items():
-                if cap.defer_loading is not True:
-                    continue
-
-                description = await resolve_capability_description(cap.get_description(), ctx)
-                catalog.append((cap_id, description))
-
-            entries = '\n'.join(
-                f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog
-            )
-            return f'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n{entries}'
-
-        return create_catalog
+        return _render_deferred_capability_catalog
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])

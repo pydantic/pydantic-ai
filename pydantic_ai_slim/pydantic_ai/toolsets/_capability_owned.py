@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
@@ -27,12 +28,16 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in tools.items():
             tool_def = tool.tool_def
+            metadata = tool_def.metadata
+            if defer_loading:
+                metadata = {**(metadata or {}), DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True}
             result[name] = replace(
                 tool,
                 tool_def=replace(
                     tool_def,
                     capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
                     defer_loading=defer_loading or tool_def.defer_loading,
+                    metadata=metadata,
                 ),
             )
         return result
@@ -53,9 +58,11 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     """Recover the run-local id a capability was registered under in `ctx.capabilities`.
 
     A capability with no explicit `id` is registered under a derived id (see
-    `_build_run_capabilities`), so the resolved id only exists as a registry key — look it up by
-    identity rather than reading `capability.id`.
+    `_build_run_capabilities`), so the resolved id only exists as a registry key.
     """
+    capability_id = ctx.capability_id_by_instance.get(id(capability))
+    if capability_id is not None:
+        return capability_id
     return next(
         capability_id
         for capability_id, registered_capability in ctx.capabilities.items()

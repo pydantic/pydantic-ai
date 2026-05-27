@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
 
 import pydantic
@@ -21,12 +21,15 @@ from .messages import (
     ToolReturnPart,
 )
 
+DEFERRED_CAPABILITY_TOOL_METADATA_KEY = 'pydantic_ai_deferred_capability_tool'
+"""Tool metadata key marking function tools owned by an on-demand capability."""
+
 if TYPE_CHECKING:
     from .messages import ModelMessage
 
 
 class LoadCapabilityArgs(TypedDict):
-    """Typed arguments for a `load_capability` call."""
+    """Typed arguments for a `load_capability` tool call."""
 
     id: Annotated[
         str,
@@ -38,7 +41,7 @@ class LoadCapabilityArgs(TypedDict):
 
 
 class LoadCapabilityReturn(TypedDict):
-    """Typed return value for `load_capability`."""
+    """Typed return value for the `load_capability` tool."""
 
     instructions: NotRequired[str]
     """Instructions for the loaded capability."""
@@ -46,7 +49,9 @@ class LoadCapabilityReturn(TypedDict):
 
 @dataclass(repr=False)
 class LoadCapabilityCallPart(ToolCallPart):
-    """Typed `ToolCallPart` for `load_capability`."""
+    """Typed `ToolCallPart` for the `load_capability` tool."""
+
+    _: KW_ONLY
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Tool name for the typed subclass."""
@@ -78,9 +83,11 @@ class LoadCapabilityCallPart(ToolCallPart):
 
 @dataclass(repr=False)
 class LoadCapabilityReturnPart(ToolReturnPart):
-    """Typed `ToolReturnPart` for `load_capability`."""
+    """Typed `ToolReturnPart` for the `load_capability` tool."""
 
-    content: LoadCapabilityReturn = field(kw_only=True)
+    _: KW_ONLY
+
+    content: LoadCapabilityReturn
     """Load-capability return payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
@@ -133,7 +140,7 @@ _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityReturnPart] = 'capability-load-return'
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via `load_capability`."""
+    """Parse message history to find capabilities loaded via the `load_capability` tool."""
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
     for msg in messages:

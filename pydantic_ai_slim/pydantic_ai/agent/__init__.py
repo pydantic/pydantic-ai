@@ -12,7 +12,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -83,6 +83,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -1374,10 +1375,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
-        capabilities_dict = _build_run_capabilities(run_capability)
-        if any(capability.defer_loading is True for capability in capabilities_dict.values()):
+        run_capabilities = _build_run_capabilities(run_capability)
+        if any(capability.defer_loading is True for capability in run_capabilities.by_id.values()):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
-            capabilities_dict = _build_run_capabilities(run_capability)
+            run_capabilities = _build_run_capabilities(run_capability)
+        capabilities_dict = run_capabilities.by_id
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1473,6 +1475,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # for pre-first-step access. Non-deferred capabilities are folded in by the
         # `RunContext.available_capability_ids` property.
         loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
+        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1490,8 +1493,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=self._validation_context,
             root_capability=run_capability,
             capabilities=capabilities_dict,
+            capability_id_by_instance=run_capabilities.id_by_instance,
             loaded_capability_ids=loaded_capability_ids,
-            discovered_tool_names=set(),
+            discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -2927,7 +2931,13 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
             capabilities.append(cap_type())
 
 
-def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+@dataclasses.dataclass
+class _RunCapabilities(Generic[AgentDepsT]):
+    by_id: dict[str, AbstractCapability[AgentDepsT]]
+    id_by_instance: dict[int, str]
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> _RunCapabilities[AgentDepsT]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
@@ -2942,7 +2952,8 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
             )
         explicit_ids.add(capability.id)
 
-    result: dict[str, AbstractCapability[AgentDepsT]] = {}
+    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    id_by_instance: dict[int, str] = {}
     for capability in capabilities:
         capability_id = capability.id
         if capability.defer_loading is True and capability_id is None:
@@ -2955,13 +2966,14 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
             base_id = to_snake(type(capability).__name__)
             capability_id = base_id
             suffix = 2
-            while capability_id in result or capability_id in explicit_ids:
+            while capability_id in by_id or capability_id in explicit_ids:
                 capability_id = f'{base_id}_{suffix}'
                 suffix += 1
 
-        result[capability_id] = capability
+        by_id[capability_id] = capability
+        id_by_instance.setdefault(id(capability), capability_id)
 
-    return result
+    return _RunCapabilities(by_id=by_id, id_by_instance=id_by_instance)
 
 
 def _validate_spec(
