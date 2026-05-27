@@ -463,6 +463,34 @@ def test_support_tool_forcing_reads_params_thinking(provider_name: str):
     assert result is False
 
 
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+def test_bedrock_single_tool_fallback_filters_when_unsupported():
+    """When a Bedrock model can't force a single tool (here: thinking enabled blocks `toolChoice.tool`),
+    the single-output-tool path must trim `tool_defs` to the forced name and emit `toolChoice={'auto': {}}`.
+    The cache-preserving full-array shape only applies when `_support_tool_forcing` returns True.
+
+    Reaches lines 872-873 via thinking-enabled fallback: `tool_choice='none'` + one output tool
+    + no direct output resolves to `('required', {single_name})`, and `_support_tool_forcing`
+    returns False (without raising) because explicit `tool_choice` is `'none'`, not `'required'`/list.
+    """
+    mock_client = MagicMock()
+    provider = BedrockProvider(bedrock_client=mock_client)
+    profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+    model = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
+    params = ModelRequestParameters(
+        function_tools=[make_tool('helper_tool')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=False,
+        thinking=True,
+    )
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == {'auto': {}}
+    assert [tool['toolSpec']['name'] for tool in tool_config['tools'] if 'toolSpec' in tool] == ['final_result']
+
+
 # =============================================================================
 # Provider-specific tests that don't fit the consolidated patterns
 # =============================================================================
