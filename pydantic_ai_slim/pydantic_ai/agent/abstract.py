@@ -869,9 +869,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 stream,
                                 on_complete,
                             )
-                            yield stream_result
-                            if not stream_result.is_complete:
-                                await stream_result.get_output()
+                            try:
+                                yield stream_result
+                            finally:
+                                # If the user exits the context without driving the stream
+                                # to completion (clean early break or exception in body),
+                                # cancel so the partial response is appended to
+                                # `all_messages()` with `state='interrupted'`. Without this,
+                                # the model response would be missing from history entirely.
+                                if not stream_result.is_complete:
+                                    await stream_result.cancel()
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle

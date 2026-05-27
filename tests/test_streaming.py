@@ -4134,7 +4134,17 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
 
 
-async def test_run_stream_context_completes_after_stream_output_break():
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+async def test_run_stream_records_partial_response_after_early_break(debounce_by: float | None):
+    """Exiting `run_stream`'s context without draining the stream records the partial response.
+
+    Without this, the model response would be missing from `all_messages()` entirely. The
+    cancel path (matching `StreamedRunResult.cancel()`) is preferred over force-draining so
+    side-effecting tool calls and provider-side token generation don't fire on a user-driven
+    early break — and so the response state stays out of `'complete'`, mirroring the contract
+    `node.stream()` already honors.
+    """
+
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         for chunk in ['Hello', ' ', 'world', '!']:
             yield chunk
@@ -4142,11 +4152,56 @@ async def test_run_stream_context_completes_after_stream_output_break():
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     async with agent.run_stream('test') as result:
-        await anext(result.stream_output(debounce_by=None))
+        await anext(result.stream_output(debounce_by=debounce_by))
         assert not result.is_complete
 
     assert result.is_complete
-    assert result.response.state == 'complete'
+    assert result.response.state == 'interrupted'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::sf',
+                timestamp=IsNow(tz=timezone.utc),
+                state='interrupted',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_run_stream_records_partial_response_on_exception_in_body():
+    """An exception inside the `async with run_stream(...)` body still records the partial response.
+
+    Symmetric to the clean early-break case: the user catches the exception and inspects
+    `all_messages()` to see what was produced before the failure.
+    """
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        for chunk in ['Hello', ' ', 'world', '!']:
+            yield chunk
+
+    agent = Agent(FunctionModel(stream_function=sf), output_type=str)
+
+    captured: list[StreamedRunResult[None, str]] = []
+    with pytest.raises(RuntimeError, match='boom'):
+        async with agent.run_stream('test') as result:
+            captured.append(result)
+            await anext(result.stream_output(debounce_by=None))
+            raise RuntimeError('boom')
+
+    (result,) = captured
+    assert result.is_complete
+    assert result.response.state == 'interrupted'
+    assert any(isinstance(m, ModelResponse) for m in result.all_messages())
 
 
 async def test_args_validator_failure_events():
