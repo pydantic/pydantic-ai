@@ -69,7 +69,7 @@ async def test_bedrock_single_tool_choice_preserves_cache(
         return BedrockModelSettings(tool_choice=['catalog_lookup'])
 
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover
+    def catalog_lookup() -> str:
         return '21'
 
     @agent.tool_plain
