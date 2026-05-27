@@ -46,7 +46,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
-| OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `reasoning.effort='none'` on hybrid routes; silently ignored on always-on upstream routes (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`) to match their direct-route behavior; via `extra_body` |
+| OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'`, on `grok-3-mini` only; `thinking=False` silently ignored |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |

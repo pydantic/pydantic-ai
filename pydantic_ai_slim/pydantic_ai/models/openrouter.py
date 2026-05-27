@@ -47,6 +47,7 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'error': 'error',
 }
 
+# https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 _OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
     True: 'medium',
     False: 'none',
@@ -56,10 +57,6 @@ _OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'no
     'high': 'high',
     'xhigh': 'high',
 }
-"""Maps unified thinking values to OpenRouter `reasoning.effort`.
-
-See https://openrouter.ai/docs/guides/best-practices/reasoning-tokens.
-"""
 
 
 class _VideoURL(TypedDict):
@@ -575,8 +572,7 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
-            # Some reasoning-optional routes need explicit `enabled` even when
-            # `effort` is set (see #5442 for the evidence).
+            # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
