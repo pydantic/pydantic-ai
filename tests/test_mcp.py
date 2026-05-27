@@ -294,8 +294,6 @@ async def fastmcp_server() -> FastMCP[None]:
 
 
 def _register_prompts(server: FastMCP[None]) -> None:
-    """Register the prompt surface used by the prompt tests on `server`."""
-
     @server.prompt()
     def simple_prompt() -> str:
         """A simple prompt template."""
@@ -805,12 +803,7 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        # An unrelated notification shouldn't touch the caches. This previously used a
-        # `PromptListChangedNotification`, but prompt support means that *is* now a handled
-        # list-changed notification (it invalidates the prompt cache), so it no longer fits this
-        # test. A `LoggingMessageNotification` is a genuinely unrelated notification. (No behavior
-        # change — `PromptListChangedNotification` handling is asserted by
-        # `test_prompts_cache_invalidation_on_notification`.)
+        # `LoggingMessageNotification` is unrelated to any cache.
         await handler(
             mcp_types.ServerNotification(
                 root=mcp_types.LoggingMessageNotification(
