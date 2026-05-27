@@ -3690,6 +3690,45 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     assert isinstance(last.parts[1], UserPromptPart)
 
 
+def test_clean_message_history_preserves_merged_request_metadata() -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='lookup', content='done', tool_call_id='call-1')],
+            metadata={'source': 'tool-search'},
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content='follow-up')],
+            metadata={'source': 'app'},
+        ),
+    ]
+
+    cleaned = _clean_message_history(history)
+
+    assert len(cleaned) == 1
+    merged = cleaned[0]
+    assert isinstance(merged, ModelRequest)
+    assert isinstance(merged.parts[0], ToolReturnPart)
+    assert isinstance(merged.parts[1], UserPromptPart)
+    assert merged.metadata == {'source': 'app'}
+
+
+def test_clean_message_history_keeps_existing_request_metadata_when_next_request_has_none() -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='lookup', content='done', tool_call_id='call-1')],
+            metadata={'source': 'tool-search'},
+        ),
+        ModelRequest(parts=[UserPromptPart(content='follow-up')]),
+    ]
+
+    cleaned = _clean_message_history(history)
+
+    assert len(cleaned) == 1
+    merged = cleaned[0]
+    assert isinstance(merged, ModelRequest)
+    assert merged.metadata == {'source': 'tool-search'}
+
+
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
