@@ -4182,7 +4182,8 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
     """An exception inside the `async with run_stream(...)` body still records the partial response.
 
     Symmetric to the clean early-break case: the user catches the exception and inspects
-    `all_messages()` to see what was produced before the failure.
+    `all_messages()` to see what was produced before the failure. The body exception must
+    not be shadowed by a cancel-side failure during unwinding.
     """
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
@@ -4199,6 +4200,52 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
             raise RuntimeError('boom')
 
     (result,) = captured
+    assert result.is_complete
+    assert result.response.state == 'interrupted'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::sf',
+                timestamp=IsNow(tz=timezone.utc),
+                state='interrupted',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeypatch: pytest.MonkeyPatch):
+    """Clean early break must not raise when the provider doesn't implement `close_stream()`.
+
+    Mirrors Gemini and Outlines, which inherit `StreamedResponse.close_stream()`'s
+    `NotImplementedError`. The implicit cancel in `run_stream`'s `__aexit__` must swallow
+    that error, and the partial response must still be recorded in `all_messages()`.
+    """
+    from pydantic_ai.models.function import FunctionStreamedResponse
+
+    async def unsupported_close_stream(self: FunctionStreamedResponse) -> None:
+        raise NotImplementedError('this provider does not support cancellation')
+
+    monkeypatch.setattr(FunctionStreamedResponse, 'close_stream', unsupported_close_stream)
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        for chunk in ['Hello', ' ', 'world', '!']:
+            yield chunk
+
+    agent = Agent(FunctionModel(stream_function=sf), output_type=str)
+
+    async with agent.run_stream('test') as result:
+        await anext(result.stream_output(debounce_by=None))
+
     assert result.is_complete
     assert result.response.state == 'interrupted'
     assert any(isinstance(m, ModelResponse) for m in result.all_messages())

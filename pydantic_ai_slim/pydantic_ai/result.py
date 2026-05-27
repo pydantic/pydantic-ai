@@ -759,13 +759,17 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         `all_messages()` includes it.
         """
         if self._stream_response is not None:  # pragma: no branch
-            await self._stream_response.cancel()
-            # Record the interrupted response in _all_messages so all_messages()
-            # includes it. is_complete guard prevents double-append if the stream
-            # was already fully consumed before cancel was called.
-            if not self.is_complete:
-                self.is_complete = True
-                self._record_response(self.response)
+            try:
+                await self._stream_response.cancel()
+            finally:
+                # Record the partial response even if close_stream() raised
+                # (NotImplementedError on providers without cancellation support,
+                # transport errors mid-cancel) so all_messages() is consistent.
+                # _cancelled is set on the underlying stream before close_stream
+                # runs, so the recorded state is 'interrupted' either way.
+                if not self.is_complete:
+                    self.is_complete = True
+                    self._record_response(self.response)
 
     @property
     def cancelled(self) -> bool:

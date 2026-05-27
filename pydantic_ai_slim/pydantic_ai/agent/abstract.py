@@ -875,10 +875,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # If the user exits the context without driving the stream
                                 # to completion (clean early break or exception in body),
                                 # cancel so the partial response is appended to
-                                # `all_messages()` with `state='interrupted'`. Without this,
-                                # the model response would be missing from history entirely.
+                                # `all_messages()` with `state='interrupted'`. Suppress
+                                # cancel-side failures so they don't shadow an in-flight
+                                # user exception or fail clean breaks against providers
+                                # that don't implement `close_stream()`. The partial
+                                # response is still recorded by `cancel()`'s own finally.
                                 if not stream_result.is_complete:
-                                    await stream_result.cancel()
+                                    try:
+                                        await stream_result.cancel()
+                                    except Exception:
+                                        pass
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
